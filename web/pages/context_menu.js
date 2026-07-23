@@ -1,0 +1,424 @@
+/**
+ * Carminium — 右键悬浮菜单
+ */
+(function () {
+  'use strict';
+
+  window.App = window.App || {};
+  const cm = {};
+  window.App.contextMenu = cm;
+
+  let overlayEl;
+  let menuContainer;
+  let submenuEl;       // 「添加到歌单」子菜单
+  let submenuTimer = null;
+  let submenuGeneration = 0; // 防止过期的异步回调
+
+  function init() {
+    overlayEl = document.createElement('div');
+    overlayEl.className = 'context-menu-layer';
+    overlayEl.style.display = 'none';
+
+    menuContainer = document.createElement('div');
+    menuContainer.className = 'context-menu-container';
+    overlayEl.appendChild(menuContainer);
+
+    // 子菜单容器（添加到歌单）
+    submenuEl = document.createElement('div');
+    submenuEl.className = 'context-submenu';
+    submenuEl.style.display = 'none';
+    overlayEl.appendChild(submenuEl);
+
+    document.body.appendChild(overlayEl);
+
+    // 点击空白处关闭
+    overlayEl.addEventListener('mousedown', function(e) {
+      if (e.target === overlayEl) {
+        hide();
+      }
+    });
+
+    // 拦截全局右键菜单
+    document.addEventListener('contextmenu', function(e) {
+      const trackRow = e.target.closest('.track-row');
+      if (trackRow && trackRow._trackData) {
+        e.preventDefault();
+        // 如果右键的曲目不在当前选中集中，清除选中并仅选中此曲目
+        if (!App.selection || !App.selection.isSelected(trackRow._trackData.id)) {
+          if (App.selection) App.selection.selectOnly(trackRow._trackData, trackRow);
+        }
+        show(e.clientX, e.clientY, trackRow._trackData);
+      } else {
+        // 如果不是针对歌曲，阻止默认的 qwebengine 菜单
+        e.preventDefault();
+        hide();
+      }
+    });
+
+    // 子菜单 hover 保持：鼠标移入子菜单时取消隐藏定时器
+    submenuEl.addEventListener('mouseenter', function () {
+      if (submenuTimer) { clearTimeout(submenuTimer); submenuTimer = null; }
+    });
+    submenuEl.addEventListener('mouseleave', function () {
+      submenuTimer = setTimeout(function () {
+        _hideSubmenu();
+      }, 300);
+    });
+  }
+
+  function hide() {
+    overlayEl.classList.remove('open');
+    _hideSubmenu();
+    setTimeout(function () {
+      if (!overlayEl.classList.contains('open')) {
+        overlayEl.style.display = 'none';
+      }
+    }, 180);
+  }
+
+  function _hideSubmenu() {
+    submenuGeneration++; // 使任何待处理的异步显示无效
+    if (submenuEl) {
+      submenuEl.style.display = 'none';
+      submenuEl.innerHTML = '';
+    }
+  }
+
+  /**
+   * 构建「添加到歌单」子菜单
+   * @param {Array} tracks  要添加的曲目数组
+   */
+  function _showPlaylistSubmenu(tracks) {
+    _hideSubmenu();
+    var gen = ++submenuGeneration;
+
+    // 异步获取歌单列表
+    App.utils.call('get_playlists').then(function (res) {
+      if (gen !== submenuGeneration) return; // 过期回调
+      var playlists = JSON.parse(res);
+      var frag = document.createDocumentFragment();
+
+      // 歌单列表
+      if (playlists.length === 0) {
+        var empty = document.createElement('div');
+        empty.className = 'context-submenu-empty';
+        empty.textContent = '暂无歌单';
+        frag.appendChild(empty);
+      } else {
+        playlists.forEach(function (pl) {
+          var item = document.createElement('div');
+          item.className = 'context-submenu-item';
+          item.innerHTML =
+            '<span class="material-symbols-rounded context-submenu-item-icon">playlist_play</span>' +
+            '<span class="context-submenu-item-name">' + App.utils.esc(pl.name) + '</span>' +
+            '<span class="context-submenu-item-count">' + (pl.track_count || 0) + '</span>';
+          item.addEventListener('click', function () {
+            var ids = tracks.map(function (t) { return t.id; });
+            App.utils.call('add_tracks_to_playlist', pl.id, JSON.stringify(ids)).then(function (res) {
+              try {
+                var r = JSON.parse(res);
+                App.utils.toast((r.added || 0) + ' 首曲目已添加到「' + pl.name + '」');
+              } catch (e) { /* ignore */ }
+            });
+            hide();
+          });
+          frag.appendChild(item);
+        });
+      }
+
+      // 分隔线 + 新建歌单
+      var divider = document.createElement('div');
+      divider.className = 'context-submenu-divider';
+      frag.appendChild(divider);
+
+      var createItem = document.createElement('div');
+      createItem.className = 'context-submenu-item context-submenu-create';
+      createItem.innerHTML =
+        '<span class="material-symbols-rounded context-submenu-item-icon">add</span>' +
+        '<span class="context-submenu-item-name">新建歌单</span>';
+      createItem.addEventListener('click', function () {
+        hide();
+        _promptCreatePlaylistAndAdd(tracks);
+      });
+      frag.appendChild(createItem);
+
+      submenuEl.innerHTML = '';
+      submenuEl.appendChild(frag);
+      submenuEl.style.display = 'block';
+
+      // 定位：主菜单右侧
+      var rect = menuContainer.getBoundingClientRect();
+      var subRect = submenuEl.getBoundingClientRect();
+      var posX = rect.right + 4;
+      var posY = rect.top;
+      // 如果右侧空间不足，放到主菜单左侧
+      if (posX + subRect.width > window.innerWidth - 8) {
+        posX = rect.left - subRect.width - 4;
+      }
+      if (posX < 8) posX = 8;
+      if (posY + subRect.height > window.innerHeight - 8) {
+        posY = window.innerHeight - subRect.height - 8;
+      }
+      if (posY < 8) posY = 8;
+      submenuEl.style.left = posX + 'px';
+      submenuEl.style.top = posY + 'px';
+    });
+  }
+
+  /**
+   * 新建歌单并将曲目添加进去
+   */
+  function _promptCreatePlaylistAndAdd(tracks) {
+    var overlay = document.createElement('div');
+    overlay.className = 'cmd-dialog-overlay';
+    var dlg = document.createElement('div');
+    dlg.className = 'cmd-dialog';
+    dlg.innerHTML =
+      '<div class="cmd-dialog-title">新建歌单</div>' +
+      '<div class="cmd-dialog-body">' +
+        '<div class="cmd-text-field">' +
+          '<input type="text" id="cm-new-pl-input" class="cmd-text-field__input" placeholder=" " autocomplete="off">' +
+          '<label class="cmd-text-field__label">歌单名称</label>' +
+        '</div>' +
+      '</div>' +
+      '<div class="cmd-dialog-actions">' +
+        '<button class="cmd-dialog-btn cmd-dialog-btn--cancel">取消</button>' +
+        '<button class="cmd-dialog-btn cmd-dialog-btn--confirm">创建并添加</button>' +
+      '</div>';
+    overlay.appendChild(dlg);
+    document.body.appendChild(overlay);
+    requestAnimationFrame(function () { overlay.classList.add('open'); });
+
+    var input = dlg.querySelector('#cm-new-pl-input');
+    var confirmBtn = dlg.querySelector('.cmd-dialog-btn--confirm');
+    setTimeout(function () { input.focus(); }, 50);
+
+    var done = false;
+    var creating = false;
+    function close() {
+      if (done) return;
+      done = true;
+      overlay.classList.remove('open');
+      setTimeout(function () {
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      }, 180);
+    }
+
+    function create() {
+      if (creating) return;
+      var name = (input.value || '').trim();
+      if (!name) { input.focus(); return; }
+      creating = true;
+      confirmBtn.disabled = true;
+      var ids = tracks.map(function (t) { return t.id; });
+      App.utils.call('create_playlist', name).then(function (res) {
+        var pl = JSON.parse(res);
+        return App.utils.call('add_tracks_to_playlist', pl.id, JSON.stringify(ids));
+      }).then(function () {
+        close();
+        App.utils.toast('已创建歌单「' + name + '」并添加 ' + ids.length + ' 首曲目');
+      }).catch(function (err) {
+        console.error('[context_menu] 创建歌单失败:', err);
+        creating = false;
+        confirmBtn.disabled = false;
+        input.focus();
+      });
+    }
+
+    dlg.querySelector('.cmd-dialog-btn--cancel').addEventListener('click', close);
+    confirmBtn.addEventListener('click', create);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') create();
+      else if (e.key === 'Escape') close();
+    });
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) close();
+    });
+  }
+
+  function show(x, y, track) {
+    menuContainer.innerHTML = '';
+    _hideSubmenu();
+
+    // 获取所有选中曲目（如果右键的曲目在选中集中）
+    var selectedTracks = [];
+    if (App.selection && App.selection.isSelected(track.id)) {
+      selectedTracks = App.selection.getSelectedTracks();
+    }
+    if (selectedTracks.length === 0) {
+      selectedTracks = [track];
+    }
+    var isMulti = selectedTracks.length > 1;
+
+    // 1. 顶部卡片 (歌曲信息)
+    const header = document.createElement('div');
+    header.className = 'context-menu-header';
+
+    let coverHtml = '';
+    if (track.has_cover) {
+      coverHtml = `<img src="${window.coverUrl(track.id)}" alt="Cover">`;
+    } else {
+      const bg = App.utils.hashColor(track.album || track.title);
+      coverHtml = `<div class="cm-cover-placeholder" style="background:${bg}">${App.utils.initial(track.album || track.title)}</div>`;
+    }
+
+    const title = track.title || '未知曲目';
+    const artist = track.artist || '未知艺术家';
+
+    var headerInfo;
+    if (isMulti) {
+      headerInfo =
+        '<div class="context-menu-info">' +
+          '<div class="context-menu-title">已选中 ' + selectedTracks.length + ' 首曲目</div>' +
+          '<div class="context-menu-artist">' + App.utils.esc(title) + ' 等</div>' +
+        '</div>';
+    } else {
+      headerInfo =
+        '<div class="context-menu-info">' +
+          '<div class="context-menu-title">' + App.utils.esc(title) + '</div>' +
+          '<div class="context-menu-artist">' + App.utils.esc(artist) + '</div>' +
+        '</div>';
+    }
+
+    header.innerHTML = `
+      ${coverHtml}
+      ${headerInfo}
+      <button class="icon-btn" title="复制信息">
+        <span class="material-symbols-rounded" style="font-size:20px; color:var(--md-primary)">content_copy</span>
+      </button>
+    `;
+
+    header.querySelector('.icon-btn').addEventListener('click', () => {
+      if (isMulti) {
+        var lines = selectedTracks.map(function (t) {
+          return (t.title || '未知') + ' - ' + (t.artist || '未知');
+        });
+        navigator.clipboard.writeText(lines.join('\n'));
+      } else {
+        navigator.clipboard.writeText(`${title} - ${artist}`);
+      }
+      hide();
+    });
+
+    // 2. 底部功能列表
+    const list = document.createElement('div');
+    list.className = 'context-menu-list';
+
+    const items = [
+      { id: 'play', icon: 'play_arrow', text: isMulti ? '播放选中曲目' : '立即播放', color: 'var(--md-primary)' },
+      { id: 'play_next', icon: 'queue_play_next', text: isMulti ? '下一首播放（选中）' : '下一首播放' },
+      { id: 'add_queue', icon: 'playlist_play', text: isMulti ? '添加到队列（选中）' : '添加到播放队列' },
+      { id: 'add_to_playlist', icon: 'playlist_add', text: '添加到歌单', hasSubmenu: true },
+      { id: 'copy_path', icon: 'content_copy', text: isMulti ? '复制文件路径（选中）' : '复制文件路径' },
+      { id: 'explorer', icon: 'folder_open', text: '在资源管理器中显示' },
+      { id: 'info', icon: 'info', text: '文件属性', color: 'var(--md-tertiary)' }
+    ];
+
+    items.forEach(item => {
+      const el = document.createElement('div');
+      el.className = 'context-menu-item';
+      if (item.hasSubmenu) el.classList.add('has-submenu');
+
+      const iconColorStyle = item.color ? `style="color:${item.color}"` : '';
+      const arrowHtml = item.hasSubmenu
+        ? '<span class="material-symbols-rounded context-submenu-arrow">chevron_right</span>'
+        : '';
+
+      el.innerHTML = `
+        <span class="material-symbols-rounded" ${iconColorStyle}>${item.icon}</span>
+        <span class="context-menu-text">${App.utils.esc(item.text)}</span>
+        ${arrowHtml}
+      `;
+
+      // 子菜单 hover 处理
+      if (item.hasSubmenu) {
+        el.addEventListener('mouseenter', function () {
+          if (submenuTimer) { clearTimeout(submenuTimer); submenuTimer = null; }
+          // 等待下一帧再显示，确保菜单已渲染
+          requestAnimationFrame(function () {
+            _showPlaylistSubmenu(selectedTracks);
+          });
+        });
+        el.addEventListener('mouseleave', function () {
+          // 延迟隐藏子菜单，让用户有时间移入子菜单
+          submenuTimer = setTimeout(function () {
+            _hideSubmenu();
+          }, 300);
+        });
+      } else {
+        // 非 submenu 项 hover 时隐藏子菜单
+        el.addEventListener('mouseenter', function () {
+          if (submenuTimer) { clearTimeout(submenuTimer); submenuTimer = null; }
+          _hideSubmenu();
+        });
+      }
+
+      el.addEventListener('click', () => {
+        if (item.hasSubmenu) return; // 子菜单项不触发 click
+        hide();
+        if (item.id === 'play') {
+          App.backend.play_from_list(JSON.stringify(selectedTracks), 0);
+        } else if (item.id === 'play_next') {
+          selectedTracks.forEach(function (t) {
+            App.backend.add_next(JSON.stringify(t));
+          });
+        } else if (item.id === 'add_queue') {
+          selectedTracks.forEach(function (t) {
+            App.backend.append_queue(JSON.stringify(t));
+          });
+        } else if (item.id === 'copy_path') {
+          if (isMulti) {
+            var paths = selectedTracks.map(function (t) { return t.path; });
+            navigator.clipboard.writeText(paths.join('\n'));
+          } else {
+            navigator.clipboard.writeText(track.path);
+          }
+        } else if (item.id === 'explorer') {
+          App.backend.show_in_explorer(track.path);
+        } else if (item.id === 'info') {
+          if (isMulti) {
+            var info = '【选中曲目信息】\n' +
+                       '数量: ' + selectedTracks.length + ' 首\n' +
+                       '总时长: ' + App.utils.formatDuration(selectedTracks.reduce(function (s, t) { return s + (t.duration_ms || 0); }, 0));
+            alert(info);
+          } else {
+            const sizeMB = track.file_size ? (track.file_size / (1024 * 1024)).toFixed(2) + ' MB' : '未知';
+            const info = `【歌曲信息】\n` +
+                         `标题: ${track.title || '未知'}\n` +
+                         `艺术家: ${track.artist || '未知'}\n` +
+                         `专辑: ${track.album || '未知'}\n` +
+                         `比特率: ${track.bitrate ? Math.round(track.bitrate/1000) + ' kbps' : '未知'}\n` +
+                         `大小: ${sizeMB}\n` +
+                         `路径: ${track.path}`;
+            alert(info);
+          }
+        }
+      });
+      list.appendChild(el);
+    });
+
+    menuContainer.appendChild(header);
+    menuContainer.appendChild(list);
+
+    overlayEl.style.display = 'block';
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        overlayEl.classList.add('open');
+      });
+    });
+
+    // 调整位置以防超出屏幕边界
+    const rect = menuContainer.getBoundingClientRect();
+    let posX = x;
+    let posY = y;
+    if (posX + rect.width > window.innerWidth) posX = window.innerWidth - rect.width - 16;
+    if (posY + rect.height > window.innerHeight) posY = window.innerHeight - rect.height - 16;
+
+    menuContainer.style.left = posX + 'px';
+    menuContainer.style.top = posY + 'px';
+  }
+
+  cm.init = init;
+  document.addEventListener('DOMContentLoaded', init);
+
+})();

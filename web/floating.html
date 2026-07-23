@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Carminium — 正在播放</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght,GRAD@8..48,100..700,-200..150&display=swap">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Google Sans Flex', 'Google Sans', 'Segoe UI', 'Microsoft YaHei', sans-serif;
+      background: var(--md-surface-container-low);
+      color: var(--md-on-surface);
+      user-select: none;
+    }
+
+    .floating-root {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .floating-titlebar {
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+      height: 40px;
+      padding: 0 8px 0 16px;
+      gap: 8px;
+    }
+    .floating-titlebar-label {
+      flex: 1;
+      font-size: 14px;
+      font-weight: 500;
+      font-variation-settings: 'wght' 500, 'GRAD' 0, 'opsz' 14;
+      color: var(--md-on-surface);
+      letter-spacing: 0.1px;
+    }
+    .floating-titlebar .icon-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 9999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      color: var(--md-on-surface-variant);
+      cursor: pointer;
+      transition: background-color 0.2s cubic-bezier(0.2, 0, 0, 1);
+    }
+    .floating-titlebar .icon-btn:hover {
+      background: var(--md-surface-container-high);
+    }
+    .floating-titlebar .icon-btn:active {
+      background: var(--md-surface-container-highest);
+    }
+    .floating-titlebar .icon-btn .material-symbols-rounded {
+      font-size: 20px;
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+    }
+    .floating-titlebar .close-btn:hover {
+      background: var(--md-error-container) !important;
+      color: var(--md-on-error-container) !important;
+    }
+
+    /* 浮动窗内 padding 微調整 */
+    .floating-root .np-cover-wrap {
+      padding: 12px 24px 16px;
+    }
+    .floating-root .np-main-controls {
+      padding: 12px 24px;
+    }
+    .floating-root .np-volume {
+      padding: 12px 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="floating-root">
+
+    <div class="floating-titlebar" id="floating-titlebar">
+      <span class="floating-titlebar-label pywebview-drag-region">正在播放</span>
+      <button class="icon-btn" id="btn-dock" title="还原到侧边栏">
+        <span class="material-symbols-rounded">dock_to_right</span>
+      </button>
+      <button class="icon-btn" id="btn-minimize" title="最小化">
+        <span class="material-symbols-rounded">horizontal_rule</span>
+      </button>
+      <button class="icon-btn close-btn" id="btn-close" title="关闭">
+        <span class="material-symbols-rounded">close</span>
+      </button>
+    </div>
+
+    <!-- Pivot タブ -->
+    <div class="np-pivot" role="tablist">
+      <button class="np-pivot-tab active" data-tab="info" role="tab" aria-selected="true">音乐信息</button>
+      <button class="np-pivot-tab" data-tab="queue" role="tab" aria-selected="false">接下来播放</button>
+      <button class="np-pivot-tab" data-tab="lyrics" role="tab" aria-selected="false">歌词</button>
+      <div class="np-pivot-indicator" id="np-pivot-indicator"></div>
+    </div>
+
+    <!-- ミニ曲情報バー（非音楽情報タブ時に表示） -->
+    <div class="np-mini-info" id="np-mini-info" style="display:none;">
+      <div class="np-mini-cover" id="np-mini-cover">
+        <span class="material-symbols-rounded" id="np-mini-cover-icon">music_note</span>
+        <img id="np-mini-cover-img" src="" alt="" style="display:none">
+      </div>
+      <div class="np-mini-text">
+        <p class="np-mini-title" id="np-mini-title">未在播放</p>
+        <p class="np-mini-artist" id="np-mini-artist">—</p>
+      </div>
+    </div>
+
+    <!-- 切り替わるパネル -->
+    <div class="np-panels">
+      <!-- 音乐信息 -->
+      <div class="np-panel np-panel--info active" data-panel="info">
+        <!-- 封面 -->
+        <div class="np-cover-wrap">
+          <div class="np-cover" id="np-cover">
+            <span class="np-cover-placeholder material-symbols-rounded" id="np-cover-icon">music_note</span>
+            <img id="np-cover-img" src="" alt="专辑封面" style="display:none">
+          </div>
+        </div>
+
+        <!-- 曲目信息 -->
+        <div class="np-info">
+          <div class="np-text">
+            <p class="np-title" id="np-title">未在播放</p>
+            <p class="np-artist" id="np-artist">—</p>
+            <p class="np-album" id="np-album"></p>
+          </div>
+        </div>
+
+        <!-- 进度条 -->
+        <div class="np-progress-wrap">
+          <div class="np-progress-bar" id="np-progress-bar" role="slider"
+               aria-label="播放进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="np-progress-track">
+              <div class="np-progress-fill" id="np-progress-fill"></div>
+              <div class="np-progress-thumb" id="np-progress-thumb"></div>
+            </div>
+          </div>
+          <div class="np-time-row">
+            <span id="np-time-cur">0:00</span>
+            <span id="np-time-dur">0:00</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 接下来播放 -->
+      <div class="np-panel np-panel--queue" data-panel="queue">
+        <div class="np-queue-list" id="np-queue-list">
+          <!-- Filled by JS -->
+        </div>
+      </div>
+
+      <!-- 歌词 -->
+      <div class="np-panel np-panel--lyrics" data-panel="lyrics">
+        <div class="np-lyrics-wrap" id="np-lyrics-wrap">
+          <div class="np-lyrics" id="np-lyrics">
+            <div class="np-lyrics-placeholder">
+              <span class="material-symbols-rounded">lyrics</span>
+              <p>暂无歌词</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 播放控制 - 主按钮 -->
+    <div class="np-main-controls">
+      <button class="np-control-pill" id="btn-prev" aria-label="上一首" title="上一首">
+        <span class="material-symbols-rounded">skip_previous</span>
+      </button>
+      <button class="np-play-pill" id="btn-play-pause" aria-label="播放/暂停">
+        <span class="material-symbols-rounded" id="play-icon">play_arrow</span>
+      </button>
+      <button class="np-control-pill" id="btn-next" aria-label="下一首" title="下一首">
+        <span class="material-symbols-rounded">skip_next</span>
+      </button>
+    </div>
+
+    <!-- 播放控制 - 辅助按钮 -->
+    <div class="np-secondary-controls">
+      <button class="icon-btn np-secondary-btn" id="btn-shuffle" aria-label="随机" title="随机播放">
+        <span class="material-symbols-rounded">shuffle</span>
+      </button>
+      <button class="icon-btn np-secondary-btn" id="btn-repeat" aria-label="循环" title="循环播放">
+        <span class="material-symbols-rounded">repeat</span>
+      </button>
+      <button class="icon-btn np-secondary-btn" id="btn-like" aria-label="收藏" title="收藏">
+        <span class="material-symbols-rounded">favorite</span>
+      </button>
+      <button class="np-audio-mode-btn" id="btn-audio-mode" aria-label="切换音频模式" title="音频模式">
+        <span class="np-audio-mode-label" id="audio-mode-label">shrd</span>
+      </button>
+    </div>
+
+    <!-- 音量 -->
+    <div class="np-volume">
+      <button class="icon-btn volume-icon-btn" id="btn-mute" aria-label="静音" title="静音">
+        <span class="material-symbols-rounded" id="vol-icon">volume_up</span>
+      </button>
+      <input type="range" class="volume-slider" id="volume-slider"
+             min="0" max="100" value="80" aria-label="音量">
+      <span class="vol-label" id="vol-label">80</span>
+    </div>
+
+  </div>
+
+  <script src="bridge.js"></script>
+  <script src="pages/utils.js"></script>
+  <script src="pages/floating.js"></script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+{
+  "name": "carminium",
+  "version": "0.4.1",
+  "description": "Carminium — 本地音乐播放器 (Electron)",
+  "main": "electron/main.js",
+  "author": "Project Carminium",
+  "license": "MIT",
+  "scripts": {
+    "start": "node scripts/start-electron.js .",
+    "dev": "node scripts/start-electron.js . --dev",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "build": "electron-builder --win",
+    "build:dir": "electron-builder --win --dir"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.1.2",
+    "koffi": "^3.1.2",
+    "music-metadata": "^10.0.0",
+    "pinyin-pro": "^3.0.0"
+  },
+  "build": {
+    "appId": "ProjectCarminium.Player",
+    "productName": "Project Carminium",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**/*",
+      "web/**/*",
+      "version.json",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Project Carminium"
+    },
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**/*",
+      "electron/bin/**/*"
+    ]
+  }
+}
