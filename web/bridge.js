@@ -44,7 +44,7 @@
     'duration_changed', 'volume_changed', 'shuffle_changed',
     'repeat_changed', 'queue_changed', 'liked_changed',
     'library_updated', 'folders_updated', 'settings_changed',
-    'floating_window_closed', 'play_command', 'bpm_analyzed',
+    'floating_window_closed', 'bpm_analyzed',
     'lyrics_changed', 'playlists_changed', 'history_changed',
     'liked_tracks_changed', 'subsonic_servers_changed',
     'automix_takeover'
@@ -152,12 +152,12 @@
    * 创建一个静音的隐藏 <audio> 元素，作为 SMTC "心跳"。
    *
    * Chromium 的 SMTC（系统媒体传输控件）只有在检测到 HTMLMediaElement
-   * 正在播放时才会激活。本项目使用 Web Audio API（AudioBufferSourceNode）
-   * 渲染音频，不经过 HTMLMediaElement，因此 SMTC 不会触发。
+   * 正在播放时才会激活。本项目使用原生 DLL (Zig + miniaudio) 渲染音频，
+   * 不经过 HTMLMediaElement，因此 SMTC 不会触发。
    *
    * 解决方案：创建一个静音、循环播放的 <audio> 元素，在播放时启动它，
    * 让 Chromium 认为有活跃的媒体播放，从而激活 SMTC。
-   * 实际音频仍由 Web Audio API 负责渲染，此元素不输出任何声音。
+   * 实际音频由原生 DLL 负责渲染，此元素不输出任何声音。
    */
   var _silenceAudio = null;
   var _silenceUnlocked = false;

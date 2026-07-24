@@ -127,79 +127,6 @@
       window.pywebview.api.get_cover_base_url().then(function (url) {
         window.__coverBase = url || '';
 
-        // 获取 media HTTP server base URL（用于前端 Web Audio API 加载音频）
-        return window.pywebview.api.get_media_base_url();
-      }).then(function (murl) {
-        window.__mediaBase = murl || '';
-
-        // 初始化前端 Web Audio 播放器
-        if (App.audioPlayer) {
-          App.audioPlayer.init();
-          // 设置回调：状态变化同步给后端
-          App.audioPlayer.onStateChange = function (state, pos) {
-            App.state.playbackState = state;
-            if (App.nowPlaying) App.nowPlaying.updateState(state);
-            // 同步给后端（SMTC / 持久化）
-            if (App.backend && App.backend.report_playback_state) {
-              App.backend.report_playback_state(state, Math.round(pos));
-            }
-          };
-          App.audioPlayer.onDuration = function (dur) {
-            if (App.nowPlaying) App.nowPlaying.updateDuration(dur);
-            if (App.backend && App.backend.report_duration) {
-              App.backend.report_duration(dur);
-            }
-          };
-          App.audioPlayer.onEnded = function () {
-            if (App.backend && App.backend.report_ended) {
-              App.backend.report_ended();
-            }
-          };
-          App.audioPlayer.onPositionTick = function (pos) {
-            if (App.nowPlaying) App.nowPlaying.updatePosition(pos);
-            // 上报位置给后端（SMTC 歌词更新、BeatShake 鼓点震动、SMTC 时间轴需要）
-            if (App.backend && App.backend.report_position) {
-              App.backend.report_position(Math.round(pos));
-            }
-          };
-          // AutoMix 交叉淡化完成后：通知后端推进曲目索引
-          App.audioPlayer.onAdvanceTrack = function () {
-            if (App.backend && App.backend.advance_to_next) {
-              App.backend.advance_to_next();
-            }
-          };
-          // AutoMix 交叉淡化开始：隐藏曲目信息（显示 ???）
-          App.audioPlayer.onCrossfadeStart = function () {
-            if (App.nowPlaying && App.nowPlaying.setTrackInfoHidden) {
-              App.nowPlaying.setTrackInfoHidden(true);
-            }
-          };
-          // AutoMix 交叉淡化结束：被取消时恢复当前曲目信息
-          // 正常完成时不恢复——track_changed 信号随后到达，updateTrack 自动恢复
-          App.audioPlayer.onCrossfadeEnd = function (completed) {
-            if (!completed && App.nowPlaying && App.nowPlaying.setTrackInfoHidden) {
-              App.nowPlaying.setTrackInfoHidden(false);
-            }
-          };
-          // 加载状态（Subsonic 等网络音频加载时显示）
-          App.audioPlayer.onLoadingStart = function () {
-            if (App.nowPlaying && App.nowPlaying.setTrackLoading) {
-              App.nowPlaying.setTrackLoading(true);
-            }
-          };
-          App.audioPlayer.onLoadingEnd = function () {
-            if (App.nowPlaying && App.nowPlaying.setTrackLoading) {
-              App.nowPlaying.setTrackLoading(false);
-            }
-          };
-          // BeatShake
-          App.audioPlayer.onBeatDetected = function () {
-            if (App.backend && App.backend.trigger_beat_shake) {
-              App.backend.trigger_beat_shake();
-            }
-          };
-        }
-
         // Connect Signals（Proxy 将 .signal_name.connect(cb) 路由到 __bridge.on）
         App.backend.track_changed.connect(_onTrackChanged);
         App.backend.playback_state_changed.connect(_onStateChanged);
@@ -210,7 +137,6 @@
         App.backend.repeat_changed.connect(_onRepeatChanged);
         App.backend.queue_changed.connect(_onQueueChanged);
         App.backend.liked_changed.connect(_onLikedChanged);
-        App.backend.play_command.connect(_onPlayCommand);
 
         // 歌单 / 历史 / 喜爱列表变化
         App.backend.playlists_changed.connect(function (json) {
@@ -265,14 +191,9 @@
           } catch (e) { /* ignore */ }
         });
 
-        // BPM 分析完成：转发到前端音频播放器，供 AutoMix 变速过渡使用
+        // BPM 分析完成：目前仅作元数据存储，前端音频播放器已移除
         App.backend.bpm_analyzed.connect(function (json) {
-          try {
-            var data = JSON.parse(json);
-            if (App.audioPlayer && App.audioPlayer.setBpm && data.track_id && data.bpm > 0) {
-              App.audioPlayer.setBpm(data.track_id, data.bpm);
-            }
-          } catch (e) { /* ignore */ }
+          /* AutoMix 变速过渡依赖前端 Web Audio API，已随前端模式一并移除 */
         });
 
         App.backend.library_updated.connect(function (json) {
@@ -305,17 +226,7 @@
             if (s.ui_font !== undefined) {
               _applyUiFont(s.ui_font || '');
             }
-            // AutoMix 开关变化：同步到前端音频播放器
-            if (s.automix !== undefined && App.audioPlayer && App.audioPlayer.setAutomixEnabled) {
-              App.audioPlayer.setAutomixEnabled(!!s.automix);
-            }
-            // 无间隙播放开关变化：同步到前端音频播放器
-            if (s.gapless !== undefined && App.audioPlayer && App.audioPlayer.setGaplessEnabled) {
-              App.audioPlayer.setGaplessEnabled(!!s.gapless);
-            }
-            if (s.window_beat_shake !== undefined && App.audioPlayer && App.audioPlayer.setBeatShakeEnabled) {
-              App.audioPlayer.setBeatShakeEnabled(!!s.window_beat_shake);
-            }
+            // AutoMix / gapless / BeatShake 依赖前端 Web Audio API，已随前端模式一并移除
           } catch (e) { /* ignore */ }
         });
 
@@ -362,25 +273,17 @@
       App.state.playbackState = state.state || 'stopped';
       App.state.shuffle = state.shuffle;
       App.state.repeat = state.repeat;
-      // 同步独占模式标志（frontend_playback=false 表示独占模式）
-      App.state.isExclusive = !state.frontend_playback;
-      
+      // 同步独占模式标志
+      App.state.isExclusive = !!state.wasapi_exclusive;
+
       App.nowPlaying.updateTrack(App.state.currentTrack);
       App.nowPlaying.updateVolume(state.volume);
       App.nowPlaying.updateModes(state.shuffle, state.repeat);
       App.nowPlaying.updateState(App.state.playbackState);
 
-      // 前端播放模式：后端初始化时发的 play_command 可能因时序丢失，
-      // 此处主动恢复——如果有当前曲目，加载到 audioPlayer
-      if (state.frontend_playback && App.audioPlayer && state.current_track) {
-        var pos = state.position || 0;
-        var autoPlay = state.state === 'playing';
-        App.audioPlayer.loadAndPlay(state.current_track, pos, autoPlay);
-      } else {
-        // 独占模式或无曲目：使用后端上报的 position/duration
-        App.nowPlaying.updateDuration(state.duration);
-        App.nowPlaying.updatePosition(state.position);
-      }
+      // 音频由原生 DLL (Zig + miniaudio) 渲染，position/duration 均由后端上报
+      App.nowPlaying.updateDuration(state.duration);
+      App.nowPlaying.updatePosition(state.position);
 
       return App.utils.call('is_current_liked').then(function(liked) {
         App.state.currentLiked = liked;
@@ -432,27 +335,7 @@
         App.nowPlaying.updateAudioMode(!!settings.wasapi_exclusive);
       }
 
-      // 同步 AutoMix 开关到前端音频播放器
-      if (App.audioPlayer && App.audioPlayer.setAutomixEnabled) {
-        App.audioPlayer.setAutomixEnabled(!!settings.automix);
-      }
-      // 同步无间隙播放开关到前端音频播放器
-      if (App.audioPlayer && App.audioPlayer.setGaplessEnabled) {
-        App.audioPlayer.setGaplessEnabled(!!settings.gapless);
-      }
-      if (App.audioPlayer && App.audioPlayer.setBeatShakeEnabled) {
-        App.audioPlayer.setBeatShakeEnabled(!!settings.window_beat_shake);
-      }
-
-      // 前端播放模式：恢复保存的输出设备（Web Audio API setSinkId）
-      if (App.audioPlayer && App.audioPlayer.setSinkId && settings.audio_output_device) {
-        // 确认非独占模式（独占模式设备 ID 不兼容 Web Audio）
-        if (!settings.wasapi_exclusive) {
-          App.audioPlayer.setSinkId(settings.audio_output_device).catch(function (e) {
-            console.warn('[app] 恢复输出设备失败:', e);
-          });
-        }
-      }
+      // AutoMix / gapless / BeatShake / setSinkId 依赖前端 Web Audio API，已随前端模式一并移除
     });
 
     // 监听系统主题变化
@@ -491,31 +374,16 @@
   }
 
   function _onPositionChanged(ms) {
-    // 独占模式：position 由 BASS 上报，直接使用
-    if (App.state.isExclusive) {
-      App.nowPlaying.updatePosition(ms);
-      return;
-    }
-    // 共享模式：position 由 audioPlayer 上报，后端的 position_changed 可能重复
-    if (App.audioPlayer && App.audioPlayer.getState() !== 'stopped') return;
+    // position/duration 均由原生 DLL (Zig + miniaudio) 通过后端上报
     App.nowPlaying.updatePosition(ms);
   }
 
   function _onDurationChanged(ms) {
-    // 独占模式：duration 由 BASS 上报，直接使用
-    if (App.state.isExclusive) {
-      App.nowPlaying.updateDuration(ms);
-      return;
-    }
-    // 共享模式：duration 由 audioPlayer 上报
-    if (App.audioPlayer && App.audioPlayer.getDuration() > 0) return;
     App.nowPlaying.updateDuration(ms);
   }
 
   function _onVolumeChanged(vol) {
     App.nowPlaying.updateVolume(vol);
-    // 前端播放模式：同步音量到 GainNode
-    if (App.audioPlayer) App.audioPlayer.setVolume(vol);
   }
 
   function _onShuffleChanged(enabled) {
@@ -538,35 +406,6 @@
   function _onLikedChanged(liked) {
     App.state.currentLiked = liked;
     App.nowPlaying.updateLiked(liked);
-  }
-
-  // ── 前端播放指令处理 ──────────────────────────────────────────────────
-
-  function _onPlayCommand(cmdJson) {
-    if (!App.audioPlayer) return;
-    var cmd;
-    try {
-      cmd = JSON.parse(cmdJson);
-    } catch (e) {
-      console.error('[app] play_command parse error:', e);
-      return;
-    }
-    var action = cmd.action;
-    if (action === 'load') {
-      // 加载曲目并播放
-      var track = cmd.track;
-      var pos = cmd.position_ms || 0;
-      var auto = cmd.auto_play !== false;
-      App.audioPlayer.loadAndPlay(track, pos, auto);
-    } else if (action === 'play') {
-      App.audioPlayer.play();
-    } else if (action === 'pause') {
-      App.audioPlayer.pause();
-    } else if (action === 'stop') {
-      App.audioPlayer.stop();
-    } else if (action === 'seek') {
-      App.audioPlayer.seek(cmd.position_ms || 0);
-    }
   }
 
   // ── 3. 路由与导航 ────────────────────────────────────────────────────────

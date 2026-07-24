@@ -2,34 +2,40 @@
  * Carminium — 音乐播放器
  * 管理播放队列、随机和循环模式。
  *
- * 通常モード: 前端 Web Audio API が音声レンダリングを担当。
- * 排他モード: WASAPI COM 直接呼び出しで排他モード再生（ffmpeg デコード）。
+ * 常にネイティブレンダラー (Zig + miniaudio + SoundTouch) で音声を再生。
+ * 共有モード / 排他モードは設定で切り替え。デコードは ffmpeg が担当。
  * 本モジュールはキュー管理と状態調整を担当し、EventEmitter 経由で信号を転送する。
  */
 'use strict';
 
 const { EventEmitter } = require('events');
-const crypto = require('crypto');
+const { SHARE_SHARED, SHARE_EXCLUSIVE } = require('./wasapi');
 
 class MusicPlayer extends EventEmitter {
-  constructor(settings = null, library = null, wasapi = null) {
+  constructor(settings = null, library = null, renderer = null) {
     super();
 
     this._settings = settings;
     this._library = library;
 
-    // WASAPI 排他モードレンダラー（null の場合は排他モード無効）
-    this._bass = wasapi;
+    // ネイティブオーディオレンダラー（null の場合は再生不可）
+    this._renderer = renderer;
 
-    // 前端播放模式（Electron 版本始终为前端播放）
-    this._frontend_playback = true;
     this._fe_state = 'stopped';
     this._fe_position = 0;
     this._fe_duration = 0;
     this._fe_volume = 80;
 
-    // 排他モードフラグ
-    this._exclusive = false;
+    // 排他モードフラグ（設定から復元）
+    this._exclusive = settings ? !!settings.get('wasapi_exclusive', false) : false;
+
+    // _playNative の同時実行抑制用トークン（monotonic）
+    this._nativePlayToken = 0;
+
+    // SoundTouch パラメータ（レンダラーと同期）
+    this._tempo = 1.0;
+    this._pitch = 1.0;
+    this._rate = 1.0;
 
     this._original_queue = [];
     this._queue = [];
@@ -49,77 +55,66 @@ class MusicPlayer extends EventEmitter {
       }
     }
 
-    // AutoMix 接管状态
+    // AutoMix
     this._automix_active = false;
+    this._automixEnabled = settings ? !!settings.get('automix', false) : false;
+    this._crossfadeDurationMs = settings ? parseInt(settings.get('crossfade_duration', 4000), 10) || 4000 : 4000;
 
-    // WASAPI 排他モードのイベントハンドリング
-    if (this._bass) {
-      this._bass.onPositionTick = (pos) => {
+    // Gapless
+    this._gaplessEnabled = settings ? !!settings.get('gapless', false) : false;
+
+    // ネイティブレンダラーのイベントハンドリング
+    if (this._renderer) {
+      // Gapless と AutoMix は相互排他: 両方有効なら AutoMix 優先
+      if (this._automixEnabled && this._gaplessEnabled) {
+        this._gaplessEnabled = false;
+        if (settings) settings.set('gapless', false);
+      }
+      this._renderer.setCrossfadeEnabled(this._automixEnabled);
+      this._renderer.setCrossfadeDuration(this._crossfadeDurationMs);
+      this._renderer.setGaplessEnabled(this._gaplessEnabled);
+
+      this._renderer.onPositionTick = (pos) => {
         this._fe_position = pos;
         this.emit('position_changed', pos);
       };
-      this._bass.onEnded = () => {
+      this._renderer.onEnded = () => {
         if (this._automix_active) {
           this.emit('automix_takeover');
           return;
         }
         this.nextTrack();
       };
-      this._bass.on('state_changed', (state) => {
+      this._renderer.onCrossfadeComplete = () => {
+        this._onCrossfadeComplete();
+      };
+      this._renderer.on('state_changed', (state) => {
         this._fe_state = state;
         this.emit('state_changed', state);
+      });
+      this._renderer.on('position_changed', (pos) => {
+        this._fe_position = pos;
+        this.emit('position_changed', pos);
       });
     }
   }
 
-  // ── 前端播放模式辅助 ──────────────────────────────────────────────────────
+  // ── 内部ヘルパー ──────────────────────────────────────────────────────────
 
-  _emitPlayCommand(action, track = null, positionMs = null, autoPlay = false) {
-    const cmd = { action };
-    if (track !== null) cmd.track = track;
-    if (positionMs !== null) cmd.position_ms = positionMs;
-    if (autoPlay) cmd.auto_play = true;
-    this.emit('play_command', JSON.stringify(cmd));
+  /** 設定から現在の出力デバイスインデックスを取得 */
+  _getDeviceIndex() {
+    const devId = this._settings ? this._settings.get('audio_output_device', '') : '';
+    const idx = parseInt(devId, 10);
+    return isNaN(idx) ? -1 : idx;
   }
 
-  /** 独占モード回退時に設定を同期し、フロントエンド UI を更新 */
+  /** 排他モード回退時に設定を同期し、UI を更新 */
   _fallbackToShared() {
     this._exclusive = false;
-    this._frontend_playback = true;
     if (this._settings) {
       this._settings.set('wasapi_exclusive', false);
     }
-    // settings_changed を発行してフロントエンド UI を同期
     this.emit('settings_changed', JSON.stringify(this._settings.all()));
-  }
-
-  reportPlaybackState(state, positionMs) {
-    this._fe_state = state;
-    this._fe_position = Math.max(0, parseInt(positionMs, 10) || 0);
-    this.emit('state_changed', state);
-    this.emit('position_changed', this._fe_position);
-  }
-
-  reportDuration(durationMs) {
-    this._fe_duration = Math.max(0, parseInt(durationMs, 10) || 0);
-    this.emit('duration_changed', this._fe_duration);
-  }
-
-  reportEnded() {
-    if (this._automix_active) {
-      this.emit('automix_takeover');
-      return;
-    }
-    this.nextTrack();
-  }
-
-  reportVolume(volume) {
-    this._fe_volume = Math.max(0, Math.min(100, parseInt(volume, 10) || 0));
-  }
-
-  reportPosition(positionMs) {
-    this._fe_position = Math.max(0, parseInt(positionMs, 10) || 0);
-    this.emit('position_changed', this._fe_position);
   }
 
   // ── Queue management ──────────────────────────────────────────────────────
@@ -235,48 +230,44 @@ class MusicPlayer extends EventEmitter {
     this._fe_position = 0;
     this._fe_state = 'stopped';
 
-    // 排他モード時は WASAPI で直接レンダリング
-    if (this._exclusive && this._bass) {
-      this._playExclusive(track);
-      return;
-    }
-
-    this._emitPlayCommand('load', track, null, true);
-    this.emit('track_changed', JSON.stringify(track));
-    this.emit('liked_changed', this.isCurrentLiked);
-    this._emitQueueChanged();
+    this._playNative(track);
   }
 
   /**
-   * WASAPI 排他モードでトラックを再生する
+   * ネイティブレンダラーでトラックを再生する
+   *
+   * 同時実行の抑制には monotonic なトークンを使う。古い呼び出しは await 後に
+   * トークンが無効化されていれば早期リターンし、新しい呼び出しが支配する。
+   * これにより「2曲が交互に再生される」競合を防ぐ。
    */
-  async _playExclusive(track) {
-    if (!this._bass || !track) return;
-    // 同時実行を防止
-    if (this._exclusivePending) {
-      console.warn('[player] WASAPI exclusive playback already in progress, queuing');
-      this._exclusivePendingTrack = track;
+  async _playNative(track) {
+    if (!this._renderer || !track) return;
+    const myToken = ++this._nativePlayToken;
+
+    const filePath = this._resolvePlayablePath(track);
+    if (!filePath) {
+      console.error('[player] No playable path for track:', track.id);
       return;
     }
-    this._exclusivePending = true;
-    try {
-      const filePath = track.path;
-      if (!filePath || track.source === 'subsonic') {
-        // ローカルファイル以外はフロントエンド再生にフォールバック
-        this._fallbackToShared();
-        this._emitPlayCommand('load', track, null, true);
-        this.emit('track_changed', JSON.stringify(track));
-        this.emit('liked_changed', this.isCurrentLiked);
-        this._emitQueueChanged();
-        return;
-      }
 
-      // 排他モードを初期化（初回のみ）
-      if (!this._bass._initialized) {
-        await this._bass.init(0, 0, 0);
+    // 前の再生を確実に停止（音声スレッド + ffmpeg + バッファ）
+    try {
+      if (this._renderer.isInitialized) {
+        this._renderer.stop();
       }
-      // ファイルパスを保存（seek 時に使用）
-      this._bass._currentFilePath = filePath;
+    } catch { /* ignore */ }
+
+    try {
+      // レンダラー未初期化なら初期化
+      if (!this._renderer.isInitialized) {
+        const shareMode = this._exclusive ? SHARE_EXCLUSIVE : SHARE_SHARED;
+        await this._renderer.init({
+          shareMode,
+          deviceIndex: this._getDeviceIndex(),
+        });
+        if (myToken !== this._nativePlayToken) return; // より新しい呼び出しが勝った
+      }
+      this._renderer._currentFilePath = filePath;
 
       // トラック変更通知
       this.emit('state_changed', 'loading');
@@ -284,58 +275,241 @@ class MusicPlayer extends EventEmitter {
       this.emit('liked_changed', this.isCurrentLiked);
       this._emitQueueChanged();
 
-      // WASAPI でファイルをデコード＆再生
-      const info = await this._bass.playFile(filePath);
+      // ネイティブレンダラーでファイルをデコード＆再生
+      const info = await this._renderer.playFile(filePath);
+      if (myToken !== this._nativePlayToken) return; // より新しい呼び出しが勝った
+
       this._fe_duration = info.durationMs;
       this.emit('duration_changed', this._fe_duration);
 
       // 再生開始
-      await this._bass.play();
+      await this._renderer.play();
+      if (myToken !== this._nativePlayToken) return; // より新しい呼び出しが勝った
       // 音量を同期
-      this._bass.setVolume(this._fe_volume / 100);
+      this._renderer.setVolume(this._fe_volume / 100);
+
+      // AutoMix / Gapless: 有効なら次曲をプリロード
+      if (this._automixEnabled || this._gaplessEnabled) {
+        this._preloadNextTrack();
+      }
     } catch (e) {
-      console.error('[player] WASAPI exclusive playback failed:', e);
-      // フォールバック: フロントエンド再生
-      this._fallbackToShared();
-      this._emitPlayCommand('load', track, null, true);
-      this.emit('track_changed', JSON.stringify(track));
-      this.emit('liked_changed', this.isCurrentLiked);
-      this._emitQueueChanged();
-    } finally {
-      this._exclusivePending = false;
-      // キューされたトラックがあれば再生
-      if (this._exclusivePendingTrack) {
-        const pendingTrack = this._exclusivePendingTrack;
-        this._exclusivePendingTrack = null;
-        this._playExclusive(pendingTrack);
+      if (myToken !== this._nativePlayToken) return; // もう無効
+      console.error('[player] Native playback failed:', e);
+      // 排他モードの場合は共有モードにフォールバックして再試行
+      if (this._exclusive) {
+        console.warn('[player] Falling back to shared mode');
+        this._fallbackToShared();
+        try {
+          await this._renderer.close();
+          if (myToken !== this._nativePlayToken) return;
+          await this._renderer.init({
+            shareMode: SHARE_SHARED,
+            deviceIndex: this._getDeviceIndex(),
+          });
+          if (myToken !== this._nativePlayToken) return;
+          this._renderer._currentFilePath = this._resolvePlayablePath(track);
+          const info = await this._renderer.playFile(this._renderer._currentFilePath);
+          if (myToken !== this._nativePlayToken) return;
+          this._fe_duration = info.durationMs;
+          this.emit('duration_changed', this._fe_duration);
+          await this._renderer.play();
+          if (myToken !== this._nativePlayToken) return;
+          this._renderer.setVolume(this._fe_volume / 100);
+
+          // AutoMix / Gapless: 有効なら次曲をプリロード
+          if (this._automixEnabled || this._gaplessEnabled) {
+            this._preloadNextTrack();
+          }
+        } catch (e2) {
+          if (myToken !== this._nativePlayToken) return;
+          console.error('[player] Shared mode also failed:', e2);
+        }
       }
     }
+  }
+
+  // ── AutoMix ───────────────────────────────────────────────────────────────
+
+  /** 次のトラックを取得（キューから、シャッフル/リピートを考慮） */
+  _getNextTrackForPreload() {
+    if (!this._queue.length || this._current_index < 0) return null;
+
+    // リピート1曲の場合、同じ曲
+    if (this._repeat === 'one') {
+      return this._queue[this._current_index];
+    }
+
+    // 次のインデックスを計算
+    const nextIdx = this._current_index + 1;
+    if (nextIdx < this._queue.length) {
+      return this._queue[nextIdx];
+    }
+
+    // リピート all なら最初に戻る
+    if (this._repeat === 'all' && this._queue.length > 1) {
+      return this._queue[0];
+    }
+
+    return null;
+  }
+
+  /** 次曲をプリロードする（非同期、エラーは無視） */
+  async _preloadNextTrack() {
+    if (!this._renderer) return;
+    if (!this._automixEnabled && !this._gaplessEnabled) return;
+    if (!this._renderer.isInitialized) return;
+    if (this._renderer._nextFilePath) return;
+
+    const nextTrack = this._getNextTrackForPreload();
+    if (!nextTrack) {
+      console.log('[player] preload: no next track for preload');
+      return;
+    }
+
+    const filePath = this._resolvePlayablePath(nextTrack);
+    if (!filePath) return;
+
+    if (this._tempo !== 1.0 || this._pitch !== 1.0 || this._rate !== 1.0) {
+      return;
+    }
+
+    const mode = this._gaplessEnabled ? 'Gapless' : 'AutoMix';
+    console.log(`[player] ${mode}: preloading next track:`, nextTrack.title || nextTrack.id);
+    try {
+      await this._renderer.preloadNext(filePath);
+      console.log(`[player] ${mode}: preload complete`);
+    } catch (e) {
+      console.warn('[player] preloadNext failed:', e.message);
+    }
+  }
+
+  /** クロスフェード完了時の処理 */
+  _onCrossfadeComplete() {
+    // 次のトラックに移動
+    if (this._repeat !== 'one') {
+      this._current_index += 1;
+      if (this._current_index >= this._queue.length) {
+        if (this._repeat === 'all') {
+          this._current_index = 0;
+        } else {
+          // キューの終端に達した
+          this._fe_state = 'stopped';
+          this.emit('state_changed', 'stopped');
+          return;
+        }
+      }
+    }
+
+    // 現在のトラックを更新して通知
+    const track = this._queue[this._current_index];
+    if (!track) return;
+
+    this._fe_position = 0;
+    this._fe_duration = this._renderer._durationMs;
+    this.emit('track_changed', JSON.stringify(track));
+    this.emit('liked_changed', this.isCurrentLiked);
+    this.emit('duration_changed', this._fe_duration);
+    this._emitQueueChanged();
+
+    // シャッフル履歴に追加
+    if (this._shuffle && this._current_index >= 0) {
+      if (!this._shuffle_history.length ||
+          this._shuffle_history[this._shuffle_history.length - 1] !== this._current_index) {
+        this._shuffle_history.push(this._current_index);
+      }
+    }
+
+    // さらに次の曲をプリロード
+    if (this._automixEnabled || this._gaplessEnabled) {
+      this._preloadNextTrack();
+    }
+  }
+
+  setAutomixEnabled(enabled) {
+    this._automixEnabled = !!enabled;
+    // AutoMix と Gapless は相互排他
+    if (this._automixEnabled && this._gaplessEnabled) {
+      this._gaplessEnabled = false;
+      if (this._settings) this._settings.set('gapless', false);
+      if (this._renderer) this._renderer.setGaplessEnabled(false);
+    }
+    if (this._renderer) {
+      this._renderer.setCrossfadeEnabled(this._automixEnabled);
+    }
+    if (this._settings) {
+      this._settings.set('automix', this._automixEnabled);
+    }
+    // 有効にした直後ならプリロードを試みる
+    if (this._automixEnabled && this._fe_state === 'playing') {
+      this._preloadNextTrack();
+    }
+  }
+
+  get automixEnabled() {
+    return this._automixEnabled;
+  }
+
+  setCrossfadeDuration(ms) {
+    this._crossfadeDurationMs = Math.max(500, Math.min(15000, parseInt(ms, 10) || 4000));
+    if (this._renderer) {
+      this._renderer.setCrossfadeDuration(this._crossfadeDurationMs);
+    }
+    if (this._settings) {
+      this._settings.set('crossfade_duration', this._crossfadeDurationMs);
+    }
+  }
+
+  get crossfadeDurationMs() {
+    return this._crossfadeDurationMs;
+  }
+
+  // ── Gapless ───────────────────────────────────────────────────────────────
+
+  setGaplessEnabled(enabled) {
+    this._gaplessEnabled = !!enabled;
+    // Gapless と AutoMix は相互排他
+    if (this._gaplessEnabled && this._automixEnabled) {
+      this._automixEnabled = false;
+      if (this._settings) this._settings.set('automix', false);
+      if (this._renderer) this._renderer.setCrossfadeEnabled(false);
+    }
+    if (this._renderer) {
+      this._renderer.setGaplessEnabled(this._gaplessEnabled);
+    }
+    if (this._settings) {
+      this._settings.set('gapless', this._gaplessEnabled);
+    }
+    // 有効にした直後ならプリロードを試みる
+    if (this._gaplessEnabled && this._fe_state === 'playing') {
+      this._preloadNextTrack();
+    }
+  }
+
+  get gaplessEnabled() {
+    return this._gaplessEnabled;
   }
 
   // ── Playback control ──────────────────────────────────────────────────────
 
   play() {
-    if (this._exclusive && this._bass) {
-      this._bass.play();
+    if (this._renderer) {
+      this._renderer.play();
       return;
     }
-    this._emitPlayCommand('play');
   }
 
   pause() {
-    if (this._exclusive && this._bass) {
-      this._bass.pause();
+    if (this._renderer) {
+      this._renderer.pause();
       return;
     }
-    this._emitPlayCommand('pause');
   }
 
   stop() {
-    if (this._exclusive && this._bass) {
-      this._bass.stop();
+    if (this._renderer) {
+      this._renderer.stop();
       return;
     }
-    this._emitPlayCommand('stop');
     this._fe_state = 'stopped';
     this._fe_position = 0;
   }
@@ -343,12 +517,9 @@ class MusicPlayer extends EventEmitter {
   nextTrack() {
     if (!this._queue.length) return;
     if (this._repeat === 'one') {
-      if (this._exclusive && this._bass) {
-        this._bass.seek(0);
-        this._bass.play();
-      } else {
-        this._emitPlayCommand('seek', null, 0);
-        this._emitPlayCommand('play');
+      if (this._renderer) {
+        this._renderer.seek(0);
+        this._renderer.play();
       }
       return;
     }
@@ -361,10 +532,8 @@ class MusicPlayer extends EventEmitter {
           nxt = 0;
         }
       } else {
-        if (this._exclusive && this._bass) {
-          this._bass.stop();
-        } else {
-          this._emitPlayCommand('stop');
+        if (this._renderer) {
+          this._renderer.stop();
         }
         this._fe_state = 'stopped';
         return;
@@ -377,10 +546,8 @@ class MusicPlayer extends EventEmitter {
     if (!this._queue.length) return;
     const curPos = this._fe_position;
     if (curPos > 3000) {
-      if (this._exclusive && this._bass) {
-        this._bass.seek(0);
-      } else {
-        this._emitPlayCommand('seek', null, 0);
+      if (this._renderer) {
+        this._renderer.seek(0);
       }
       return;
     }
@@ -390,11 +557,7 @@ class MusicPlayer extends EventEmitter {
       this._current_index = prevIdx;
       const track = this._queue[prevIdx];
       this._fe_position = 0;
-      if (this._exclusive && this._bass) {
-        this._playExclusive(track);
-      } else {
-        this._emitPlayCommand('load', track, null, true);
-      }
+      this._playNative(track);
       this.emit('track_changed', JSON.stringify(track));
       return;
     }
@@ -403,10 +566,8 @@ class MusicPlayer extends EventEmitter {
       if (this._repeat === 'all') {
         prv = this._queue.length - 1;
       } else {
-        if (this._exclusive && this._bass) {
-          this._bass.seek(0);
-        } else {
-          this._emitPlayCommand('seek', null, 0);
+        if (this._renderer) {
+          this._renderer.seek(0);
         }
         return;
       }
@@ -415,22 +576,70 @@ class MusicPlayer extends EventEmitter {
   }
 
   seek(positionMs) {
-    if (this._exclusive && this._bass) {
-      this._bass.seek(positionMs);
+    if (this._renderer) {
+      this._renderer.seek(positionMs);
       return;
     }
     this._fe_position = Math.max(0, parseInt(positionMs, 10) || 0);
-    this._emitPlayCommand('seek', null, parseInt(positionMs, 10));
   }
 
   setVolume(level) {
     level = Math.max(0, Math.min(100, level));
     this._fe_volume = level;
-    if (this._exclusive && this._bass) {
-      this._bass.setVolume(level / 100);
+    if (this._renderer) {
+      this._renderer.setVolume(level / 100);
     }
     this.emit('volume_changed', level);
   }
+
+  // ── SoundTouch パラメータ ──────────────────────────────────────────────────
+
+  setTempo(tempo) {
+    this._tempo = Math.max(0.25, Math.min(4.0, parseFloat(tempo) || 1.0));
+    if (this._renderer) {
+      this._renderer.setTempo(this._tempo);
+    }
+    // tempo/pitch/rate がすべて 1.0 でなければ AutoMix / Gapless 非対応
+    const stActive = (this._tempo !== 1.0 || this._pitch !== 1.0 || this._rate !== 1.0);
+    if (this._automixEnabled) {
+      if (this._renderer) this._renderer.setCrossfadeEnabled(!stActive);
+    }
+    if (this._gaplessEnabled) {
+      if (this._renderer) this._renderer.setGaplessEnabled(!stActive);
+    }
+  }
+
+  setPitch(pitch) {
+    this._pitch = Math.max(0.25, Math.min(4.0, parseFloat(pitch) || 1.0));
+    if (this._renderer) {
+      this._renderer.setPitch(this._pitch);
+    }
+    const stActive = (this._tempo !== 1.0 || this._pitch !== 1.0 || this._rate !== 1.0);
+    if (this._automixEnabled) {
+      if (this._renderer) this._renderer.setCrossfadeEnabled(!stActive);
+    }
+    if (this._gaplessEnabled) {
+      if (this._renderer) this._renderer.setGaplessEnabled(!stActive);
+    }
+  }
+
+  setRate(rate) {
+    this._rate = Math.max(0.25, Math.min(4.0, parseFloat(rate) || 1.0));
+    if (this._renderer) {
+      this._renderer.setRate(this._rate);
+    }
+    const stActive = (this._tempo !== 1.0 || this._pitch !== 1.0 || this._rate !== 1.0);
+    if (this._automixEnabled) {
+      if (this._renderer) this._renderer.setCrossfadeEnabled(!stActive);
+    }
+    if (this._gaplessEnabled) {
+      if (this._renderer) this._renderer.setGaplessEnabled(!stActive);
+    }
+  }
+
+  get tempo() { return this._renderer ? this._renderer.tempo : 1.0; }
+  get pitch() { return this._renderer ? this._renderer.pitch : 1.0; }
+  get rate() { return this._renderer ? this._renderer.rate : 1.0; }
 
   setShuffle(enabled) {
     if (this._shuffle === enabled) return;
@@ -452,22 +661,63 @@ class MusicPlayer extends EventEmitter {
   }
 
   getAudioDevices() {
-    if (this._bass) {
+    if (this._renderer) {
       try {
-        const { WasapiRenderer } = require('./wasapi');
-        const devices = WasapiRenderer.enumerateDevices();
+        const { NativeRenderer } = require('./wasapi');
+        const devices = NativeRenderer.enumerateDevices();
         const defaultId = devices.length > 0 ? devices[0].id : '';
         return JSON.stringify({ devices, default_id: defaultId });
       } catch (e) {
-        console.error('[player] Failed to enumerate WASAPI devices:', e);
+        console.error('[player] Failed to enumerate audio devices:', e);
       }
     }
     return JSON.stringify({ devices: [], default_id: '' });
   }
 
   setOutputDevice(deviceId) {
-    // 排他モードではデバイス切り替えは再初期化が必要
     this._settings.set('audio_output_device', deviceId || '');
+    // デバイス切り替えは再初期化が必要
+    if (this._renderer && this._renderer.isInitialized) {
+      this._reinitRenderer();
+    }
+  }
+
+  /**
+   * レンダラーを再初期化し、現在のトラックを再読み込みする
+   */
+  async _reinitRenderer() {
+    if (!this._renderer) return;
+
+    const currentTrack = this.currentTrack;
+    const savedPosition = this._fe_position;
+    const wasPlaying = this._fe_state === 'playing';
+
+    try {
+      await this._renderer.close();
+      const shareMode = this._exclusive ? SHARE_EXCLUSIVE : SHARE_SHARED;
+      await this._renderer.init({
+        shareMode,
+        deviceIndex: this._getDeviceIndex(),
+      });
+
+      if (currentTrack) {
+        const filePath = this._resolvePlayablePath(currentTrack);
+        this._renderer._currentFilePath = filePath;
+        const info = await this._renderer.playFile(filePath);
+        this._fe_duration = info.durationMs;
+        this.emit('duration_changed', this._fe_duration);
+
+        if (savedPosition > 0) {
+          this._renderer.seek(savedPosition);
+        }
+        if (wasPlaying) {
+          await this._renderer.play();
+          this._renderer.setVolume(this._fe_volume / 100);
+        }
+      }
+    } catch (e) {
+      console.error('[player] Renderer reinit failed:', e);
+    }
   }
 
   /**
@@ -475,8 +725,8 @@ class MusicPlayer extends EventEmitter {
    * 切換後、現在のトラックを新しいモードで再読み込みする。
    */
   async setExclusiveMode(enabled) {
-    if (!this._bass && enabled) {
-      console.warn('[player] WASAPI renderer not available');
+    if (!this._renderer && enabled) {
+      console.warn('[player] Native renderer not available');
       return false;
     }
     if (this._exclusive === enabled) return true;
@@ -486,62 +736,67 @@ class MusicPlayer extends EventEmitter {
     const savedPosition = this._fe_position;
     const wasPlaying = this._fe_state === 'playing' || this._fe_state === 'paused';
 
-    // 現在のモードで再生を停止
-    if (this._exclusive && this._bass) {
-      // 独占→共有：WASAPI を停止
-      this._bass.stop();
-    } else {
-      // 共有→独占：フロントエンドを停止
-      this._emitPlayCommand('stop');
+    // 再生を停止
+    if (this._renderer) {
+      this._renderer.stop();
     }
     this._fe_state = 'stopped';
     this._fe_position = 0;
 
     this._exclusive = enabled;
-    this._frontend_playback = !enabled;
 
     if (this._settings) {
       this._settings.set('wasapi_exclusive', enabled);
     }
 
-    if (enabled) {
-      // 独占モードへ切換：WASAPI 初期化
-      try {
-        if (!this._bass._initialized) {
-          await this._bass.init(0, 0, 0);
+    // レンダラーを再初期化
+    try {
+      if (this._renderer.isInitialized) {
+        await this._renderer.close();
+      }
+      const shareMode = enabled ? SHARE_EXCLUSIVE : SHARE_SHARED;
+      await this._renderer.init({
+        shareMode,
+        deviceIndex: this._getDeviceIndex(),
+      });
+      this._renderer.setVolume(this._fe_volume / 100);
+    } catch (e) {
+      console.error('[player] Failed to initialize renderer:', e);
+      if (enabled) {
+        // 排他モード失敗 → 共有モードにフォールバック
+        this._fallbackToShared();
+        try {
+          await this._renderer.init({
+            shareMode: SHARE_SHARED,
+            deviceIndex: this._getDeviceIndex(),
+          });
+        } catch (e2) {
+          console.error('[player] Shared mode fallback also failed:', e2);
         }
-        // 音量を同期
-        this._bass.setVolume(this._fe_volume / 100);
-      } catch (e) {
-        console.error('[player] Failed to initialize WASAPI exclusive mode:', e);
-        this._exclusive = false;
-        this._frontend_playback = true;
         return false;
       }
     }
 
     // 現在のトラックを新しいモードで再読み込み
     if (currentTrack) {
-      if (enabled) {
-        // 独占モードでトラックをロード
-        try {
-          await this._playExclusive(currentTrack);
-          // 位置を復元
-          if (savedPosition > 0) {
-            this._bass.seek(savedPosition);
-          }
-          if (!wasPlaying) {
-            this._bass.pause();
-          }
-        } catch (e) {
-          console.error('[player] Failed to reload track in exclusive mode:', e);
+      try {
+        const filePath = this._resolvePlayablePath(currentTrack);
+        this._renderer._currentFilePath = filePath;
+        const info = await this._renderer.playFile(filePath);
+        this._fe_duration = info.durationMs;
+        this.emit('duration_changed', this._fe_duration);
+
+        if (savedPosition > 0) {
+          this._renderer.seek(savedPosition);
         }
-      } else {
-        // 共有モードでトラックをロード
-        this._emitPlayCommand('load', currentTrack, savedPosition, wasPlaying);
-        this.emit('track_changed', JSON.stringify(currentTrack));
-        this.emit('liked_changed', this.isCurrentLiked);
-        this._emitQueueChanged();
+        if (wasPlaying) {
+          await this._renderer.play();
+          this._renderer.setVolume(this._fe_volume / 100);
+        } else {
+          this._fe_state = 'paused';
+        }
+      } catch (e) {
+        console.error('[player] Failed to reload track:', e);
       }
     }
 
@@ -726,7 +981,7 @@ class MusicPlayer extends EventEmitter {
   get shuffle() { return this._shuffle; }
   get repeat() { return this._repeat; }
   get isExclusive() { return this._exclusive; }
-  get frontendPlayback() { return this._frontend_playback; }
+  get frontendPlayback() { return false; }
 
   // ── State persistence ─────────────────────────────────────────────────────
 
@@ -749,15 +1004,27 @@ class MusicPlayer extends EventEmitter {
 
     this._fe_position = Math.max(0, parseInt(positionMs, 10) || 0);
     this._fe_state = autoPlay ? 'playing' : 'paused';
-    this._emitPlayCommand('load', track, Math.max(0, parseInt(positionMs, 10) || 0), autoPlay);
+
+    // ネイティブレンダラーで復元
+    this._playNative(track).then(() => {
+      if (this._renderer && this._renderer.isInitialized) {
+        if (this._fe_position > 0) {
+          this._renderer.seek(this._fe_position);
+        }
+        if (!autoPlay) {
+          this._renderer.pause();
+        }
+      }
+    });
+
     this.emit('track_changed', JSON.stringify(track));
     this.emit('liked_changed', this.isCurrentLiked);
     this._emitQueueChanged();
   }
 
   close() {
-    if (this._bass) {
-      try { this._bass.close(); } catch { /* ignore */ }
+    if (this._renderer) {
+      try { this._renderer.close(); } catch { /* ignore */ }
     }
   }
 }

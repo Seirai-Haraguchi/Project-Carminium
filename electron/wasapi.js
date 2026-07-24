@@ -1,20 +1,19 @@
 /**
- * Carminium — WASAPI Exclusive Mode Renderer (Native Windows COM)
+ * Carminium — ネイティブオーディオレンダラー (Zig + miniaudio + SoundTouch)
  *
- * 通过 koffi 直接调用 Windows WASAPI COM 接口实现独占模式音频输出，
- * 使用 ffmpeg 子进程解码音频文件为原始 PCM 数据。
+ * native/carminium_audio.zig が生成した carminium_audio.dll を koffi 経由で呼び出す。
+ * DLL 側は miniaudio (WASAPI 共有/排他モード) で直接出力し、SoundTouch で
+ * tempo/pitch/rate をリアルタイム処理し、ロックフリー SPSC リングバッファで
+ * PCM を受け取る。デコード（ffmpeg）は JS 側が担当。
  *
- * 架构:
- *   ffmpeg (decode) → PCM ring buffer → WASAPI (exclusive output)
+ * アーキテクチャ:
+ *   JS (ffmpeg decode, f32le PCM) → ca_push_pcm() → DLL 入力リングバッファ
+ *     → dataCallback: SoundTouch (tempo/pitch) → WASAPI 出力
  *
- * 依赖:
- *   - koffi (npm) — FFI 库，调用 ole32.dll / kernel32.dll
- *   - ffmpeg (内置 electron/bin/ffmpeg.exe，或系统 PATH)
- *
- * COM 接口调用原理:
- *   COM 对象的首字段是指向 vtable 的指针，
- *   vtable 是按声明顺序排列的函数指针数组。
- *   koffi 可以将 vtable 解码为带可调用字段的结构体。
+ * 依存:
+ *   - koffi (npm) — FFI ライブラリ
+ *   - carminium_audio.dll — Zig + miniaudio + SoundTouch でビルドした DLL
+ *   - ffmpeg (electron/bin/ffmpeg.exe またはシステム PATH)
  */
 'use strict';
 
@@ -24,205 +23,103 @@ const { EventEmitter } = require('events');
 const fs = require('fs');
 const path = require('path');
 
-// ── 常量 ──────────────────────────────────────────────────────────────────────
+// ── 共有モード定数 ──────────────────────────────────────────────────────────
 
-const COINIT_MULTITHREADED = 0x0;
-const CLSCTX_ALL = 0x17;
-const AUDCLNT_SHAREMODE_EXCLUSIVE = 1;
-const AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM = 0x80000000;
-const AUDCLNT_BUFFERFLAGS_SILENT = 0x2;
-const WAVE_FORMAT_PCM = 1;
-const WAVE_FORMAT_IEEE_FLOAT = 3;
-const eRender = 0;
-const eConsole = 0;
-const DEVICE_STATE_ACTIVE = 0x1;
+const SHARE_SHARED = 0;
+const SHARE_EXCLUSIVE = 1;
 
-// ── GUID 定义 ──────────────────────────────────────────────────────────────────
+// ── DLL ロード ─────────────────────────────────────────────────────────────────
 
-const GUID = koffi.pack('GUID', {
-  Data1: 'uint32',
-  Data2: 'uint16',
-  Data3: 'uint16',
-  Data4: koffi.array('uint8', 8),
-});
+let _lib = null;
+let _f = {};
 
-function _makeGuid(d1, d2, d3, b0, b1, b2, b3, b4, b5, b6, b7) {
-  const ptr = koffi.alloc(GUID, 1);
-  koffi.encode(ptr, GUID, {
-    Data1: d1, Data2: d2, Data3: d3,
-    Data4: [b0, b1, b2, b3, b4, b5, b6, b7],
-  });
-  return ptr;
-}
+function _loadDll() {
+  if (_lib) return true;
 
-// CLSID_MMDeviceEnumerator  {BCDE0395-E52F-467C-8E3D-C4579291692E}
-const CLSID_MMDeviceEnumerator = _makeGuid(
-  0xBCDE0395, 0xE52F, 0x467C, 0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E
-);
-// IID_IMMDeviceEnumerator   {A95664D2-9614-4F35-A746-DE8DB63617E6}
-const IID_IMMDeviceEnumerator = _makeGuid(
-  0xA95664D2, 0x9614, 0x4F35, 0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6
-);
-// IID_IAudioClient          {1CB9AD4C-DBFA-4C32-B178-C2F568A703B2}
-const IID_IAudioClient = _makeGuid(
-  0x1CB9AD4C, 0xDBFA, 0x4C32, 0xB1, 0x78, 0xC2, 0xF5, 0x68, 0xA7, 0x03, 0xB2
-);
-// IID_IAudioRenderClient    {F294ACFC-3146-4483-A7BF-ADD077C4EAC9}
-const IID_IAudioRenderClient = _makeGuid(
-  0xF294ACFC, 0x3146, 0x4483, 0xA7, 0xBF, 0xAD, 0xD0, 0x77, 0xC4, 0xEA, 0xC9
-);
-
-// ── WAVEFORMATEX ──────────────────────────────────────────────────────────────
-
-const WAVEFORMATEX = koffi.pack('WAVEFORMATEX', {
-  wFormatTag: 'uint16',
-  nChannels: 'uint16',
-  nSamplesPerSec: 'uint32',
-  nAvgBytesPerSec: 'uint32',
-  nBlockAlign: 'uint16',
-  wBitsPerSample: 'uint16',
-  cbSize: 'uint16',
-});
-
-function _makeWaveFormat(tag, channels, sampleRate, bitsPerSample) {
-  const ptr = koffi.alloc(WAVEFORMATEX, 1);
-  koffi.encode(ptr, WAVEFORMATEX, {
-    wFormatTag: tag,
-    nChannels: channels,
-    nSamplesPerSec: sampleRate,
-    nAvgBytesPerSec: sampleRate * channels * (bitsPerSample / 8),
-    nBlockAlign: channels * (bitsPerSample / 8),
-    wBitsPerSample: bitsPerSample,
-    cbSize: 0,
-  });
-  return ptr;
-}
-
-// ── COM vtable 函数类型 ─────────────────────────────────────────────────────
-
-// koffi 3.x: 用 koffi.proto() 定义函数类型，用 koffi.call(ptr, type, ...) 调用
-// COM vtable 是函数指针数组，通过读取原始指针 + koffi.call 调用
-
-function P(name, sig) { return koffi.proto(sig.replace('f(', name + '(')); }
-
-// 指针大小（64位系统 = 8字节）
-const _ptrSize = 8;
-
-/** 从 vtable 读取第 index 个函数指针 (返回 bigint 地址) */
-function _getVtblFnPtr(pInterface, index) {
-  const pVtbl = koffi.decode(pInterface, 'void *');
-  const offset = BigInt(pVtbl) + BigInt(_ptrSize * index);
-  return koffi.decode(offset, 'void *');
-}
-
-// ── IMMDeviceEnumerator 函数类型 (8 methods, indices 0-7) ──
-const FT_Enum_Enum = P('vt_Enum_Enum', 'int32 f(void *this, int32 df, uint32 mask, void **pp)');
-const FT_Enum_Def = P('vt_Enum_Def', 'int32 f(void *this, int32 df, int32 role, void **pp)');
-
-// ── IMMDevice 函数类型 (6 methods, indices 0-5) ──
-const FT_Dev_Activate = P('vt_Dev_Activate', 'int32 f(void *this, void *iid, uint32 ctx, void *params, void **pp)');
-const FT_Dev_GetId = P('vt_Dev_GetId', 'int32 f(void *this, void **ppstr)');
-
-// ── IMMDeviceCollection 函数类型 (5 methods, indices 0-4) ──
-const FT_DC_GetCount = P('vt_DC_GetCnt', 'int32 f(void *this, uint32 *pc)');
-const FT_DC_Item = P('vt_DC_Item', 'int32 f(void *this, uint32 n, void **pp)');
-
-// ── IAudioClient 函数类型 (15 methods, indices 0-14) ──
-const FT_AC_Init = P('vt_AC_Init', 'int32 f(void *this, int32 share, uint32 flags, uint64 bufDur, uint64 periodicity, void *pFormat, void *pGuid)');
-const FT_AC_GetBuf = P('vt_AC_GetBuf', 'int32 f(void *this, uint32 *pNum)');
-const FT_AC_GetPad = P('vt_AC_GetPad', 'int32 f(void *this, uint32 *pPad)');
-const FT_AC_IsFmt = P('vt_AC_IsFmt', 'int32 f(void *this, int32 share, void *pFormat, void **ppClosest)');
-const FT_AC_Start = P('vt_AC_Start', 'int32 f(void *this)');
-const FT_AC_Stop = P('vt_AC_Stop', 'int32 f(void *this)');
-const FT_AC_Reset = P('vt_AC_Reset', 'int32 f(void *this)');
-const FT_AC_SetEvt = P('vt_AC_SetEvt', 'int32 f(void *this, void *hEvt)');
-const FT_AC_GetSvc = P('vt_AC_GetSvc', 'int32 f(void *this, void *iid, void **pp)');
-const FT_AC_GetDevPer = P('vt_AC_GetDevPer', 'int32 f(void *this, uint64 *pDef, uint64 *pMin)');
-const FT_AC_GetMixFmt = P('vt_AC_GetMixFmt', 'int32 f(void *this, void **pp)');
-
-// ── IAudioRenderClient 函数类型 (5 methods, indices 0-4) ──
-const FT_RC_GetBuf = P('vt_RC_GetBuf', 'int32 f(void *this, uint32 numFrames, void **ppData)');
-const FT_RC_RelBuf = P('vt_RC_RelBuf', 'int32 f(void *this, uint32 numWritten, uint32 flags)');
-
-// ── 通用 COM vtable 索引 ──
-const VT_QI = 0;         // QueryInterface (所有 COM 接口的第一个方法)
-const VT_RELEASE = 2;
-
-// QueryInterface 函数类型（IUnknown 方法 0）
-const FT_QI = P('vt_QI', 'int32 f(void *this, void *iid, void **pp)');
-
-// ── DLL 加载 ──────────────────────────────────────────────────────────────────
-
-let _ole32 = null, _kernel32 = null, _msvcrt = null;
-let _CoInitializeEx, _CoCreateInstance, _CoUninitialize, _CoTaskMemFree;
-let _CreateEventW, _CloseHandle, _WaitForSingleObject;
-let _memcpy;
-
-try {
-  _ole32 = koffi.load('ole32.dll');
-  _CoInitializeEx = _ole32.func('int32 CoInitializeEx(void *pv, uint32 coInit)');
-  _CoCreateInstance = _ole32.func('int32 CoCreateInstance(void *clsid, void *pUnk, uint32 ctx, void *iid, void **ppv)');
-  _CoUninitialize = _ole32.func('void CoUninitialize()');
-  _CoTaskMemFree = _ole32.func('void CoTaskMemFree(void *pv)');
-} catch (e) { console.error('[wasapi] ole32.dll load failed:', e.message); }
-
-try {
-  _kernel32 = koffi.load('kernel32.dll');
-  _CreateEventW = _kernel32.func('void *CreateEventW(void *attr, int32 manual, int32 init, void *name)');
-  _CloseHandle = _kernel32.func('int32 CloseHandle(void *h)');
-  _WaitForSingleObject = _kernel32.func('uint32 WaitForSingleObject(void *h, uint32 ms)');
-} catch (e) { console.error('[wasapi] kernel32.dll load failed:', e.message); }
-
-try {
-  _msvcrt = koffi.load('msvcrt.dll');
-  _memcpy = _msvcrt.func('void *memcpy(void *dst, const void *src, uintptr_t n)');
-} catch (e) { console.error('[wasapi] msvcrt.dll load failed:', e.message); }
-
-// ── COM 辅助函数 ──────────────────────────────────────────────────────────────
-
-/** 释放 COM 接口（调用 vtable 中第 3 个方法 Release） */
-function _release(pInterface) {
-  if (!pInterface) return;
-  try {
-    const fnPtr = _getVtblFnPtr(pInterface, VT_RELEASE);
-    const ft = koffi.proto('uint32 vt_Rel_Inst(void *this)');
-    koffi.call(fnPtr, ft, pInterface);
-  } catch { /* ignore */ }
-}
-
-/** 检查 HRESULT */
-function _checkHr(hr, msg) {
-  if (hr !== 0) {
-    throw new Error(`${msg} failed: HRESULT 0x${(hr >>> 0).toString(16)}`);
+  const candidates = [
+    path.join(__dirname, 'bin', 'carminium_audio.dll'),
+    path.join(__dirname, '..', 'native', 'zig-out', 'bin', 'carminium_audio.dll'),
+  ];
+  let dllPath = null;
+  for (const c of candidates) {
+    if (fs.existsSync(c)) { dllPath = c; break; }
   }
+  if (!dllPath) {
+    console.error('[wasapi] carminium_audio.dll not found. Searched:', candidates);
+    return false;
+  }
+
+  try {
+    _lib = koffi.load(dllPath);
+  } catch (e) {
+    console.error('[wasapi] Failed to load carminium_audio.dll:', e.message);
+    return false;
+  }
+
+  // すべての関数を一括で宣言。1つでも失敗したら _lib をリセットして完全失敗扱いにする。
+  // これにより、部分ロード状態（一部関数が undefined）を防ぐ。
+  const decls = [
+    ['ca_init',                      'int32  ca_init(int32 share_mode, int32 device_index, uint32 sample_rate, uint16 channels)'],
+    ['ca_start',                     'int32  ca_start()'],
+    ['ca_stop',                      'int32  ca_stop()'],
+    ['ca_push_pcm',                  'int32  ca_push_pcm(uint8 *data, uint32 len)'],
+    ['ca_set_volume',                'void   ca_set_volume(float vol)'],
+    ['ca_set_tempo',                 'void   ca_set_tempo(float tempo)'],
+    ['ca_set_pitch',                 'void   ca_set_pitch(float pitch)'],
+    ['ca_set_rate',                  'void   ca_set_rate(float rate)'],
+    ['ca_get_consumed_frames',       'uint64 ca_get_consumed_frames()'],
+    ['ca_get_buffered_bytes',        'uint32 ca_get_buffered_bytes()'],
+    ['ca_clear_buffer',              'void   ca_clear_buffer()'],
+    ['ca_get_sample_rate',           'uint32 ca_get_sample_rate()'],
+    ['ca_get_channels',              'uint16 ca_get_channels()'],
+    ['ca_get_bits_per_sample',       'uint16 ca_get_bits_per_sample()'],
+    ['ca_get_share_mode',            'int32  ca_get_share_mode()'],
+    ['ca_is_playing',                'int32  ca_is_playing()'],
+    ['ca_close',                     'void   ca_close()'],
+    ['ca_enumerate_devices',         'char * ca_enumerate_devices()'],
+    ['ca_free_string',               'void   ca_free_string(void *str)'],
+    // AutoMix / クロスフェード
+    ['ca_push_next_pcm',             'int32  ca_push_next_pcm(uint8 *data, uint32 len)'],
+    ['ca_clear_next_buffer',         'void   ca_clear_next_buffer()'],
+    ['ca_get_next_buffered_bytes',   'uint32 ca_get_next_buffered_bytes()'],
+    ['ca_start_crossfade',           'int32  ca_start_crossfade(uint32 duration_ms)'],
+    ['ca_is_crossfading',            'int32  ca_is_crossfading()'],
+    ['ca_check_crossfade_completed', 'int32  ca_check_crossfade_completed()'],
+    // Gapless
+    ['ca_set_gapless_enabled',       'void   ca_set_gapless_enabled(int32 enabled)'],
+    ['ca_get_gapless_enabled',       'int32  ca_get_gapless_enabled()'],
+    ['ca_gapless_switch',            'int32  ca_gapless_switch()'],
+  ];
+
+  try {
+    for (const [name, sig] of decls) {
+      _f[name] = _lib.func(sig);
+    }
+  } catch (e) {
+    console.error('[wasapi] Failed to declare DLL function:', e.message);
+    _lib = null;
+    _f = {};
+    return false;
+  }
+
+  return true;
 }
 
-// ── ffmpeg 辅助 ───────────────────────────────────────────────────────────────
+// ── ffmpeg / ffprobe 探索 ─────────────────────────────────────────────────────
 
-let _ffmpegPath = null;
-let _ffprobePath = null;
+let _ffmpegPath = null, _ffprobePath = null;
 
 function _findFFmpeg() {
   if (_ffmpegPath !== null) return _ffmpegPath;
-  // 1. 内置 ffmpeg（electron/bin/ffmpeg.exe）
   const bundled = path.join(__dirname, 'bin', 'ffmpeg.exe');
-  if (fs.existsSync(bundled)) {
-    _ffmpegPath = bundled;
-    return _ffmpegPath;
-  }
-  // 2. 开发模式：项目根目录 bin/
+  if (fs.existsSync(bundled)) { _ffmpegPath = bundled; return _ffmpegPath; }
   const devBin = path.join(__dirname, '..', 'bin', 'ffmpeg.exe');
-  if (fs.existsSync(devBin)) {
-    _ffmpegPath = devBin;
-    return _ffmpegPath;
-  }
-  // 3. 系统 PATH
+  if (fs.existsSync(devBin)) { _ffmpegPath = devBin; return _ffmpegPath; }
   try {
     execSync('ffmpeg -version', { stdio: 'ignore', timeout: 5000 });
     _ffmpegPath = 'ffmpeg';
     return _ffmpegPath;
   } catch { /* not in PATH */ }
-  // 4. 常见安装路径
   const locations = [
     'C:\\ffmpeg\\bin\\ffmpeg.exe',
     'C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe',
@@ -230,10 +127,7 @@ function _findFFmpeg() {
     path.join(process.env.LOCALAPPDATA || '', 'ffmpeg', 'bin', 'ffmpeg.exe'),
   ];
   for (const loc of locations) {
-    if (fs.existsSync(loc)) {
-      _ffmpegPath = loc;
-      return _ffmpegPath;
-    }
+    if (fs.existsSync(loc)) { _ffmpegPath = loc; return _ffmpegPath; }
   }
   _ffmpegPath = false;
   return _ffmpegPath;
@@ -241,340 +135,261 @@ function _findFFmpeg() {
 
 function _findFFprobe() {
   if (_ffprobePath !== null) return _ffprobePath;
-  // 1. 内置 ffprobe（electron/bin/ffprobe.exe）
   const bundled = path.join(__dirname, 'bin', 'ffprobe.exe');
-  if (fs.existsSync(bundled)) {
-    _ffprobePath = bundled;
-    return _ffprobePath;
-  }
+  if (fs.existsSync(bundled)) { _ffprobePath = bundled; return _ffprobePath; }
   const devBin = path.join(__dirname, '..', 'bin', 'ffprobe.exe');
-  if (fs.existsSync(devBin)) {
-    _ffprobePath = devBin;
-    return _ffprobePath;
-  }
-  // 2. 系统 PATH
+  if (fs.existsSync(devBin)) { _ffprobePath = devBin; return _ffprobePath; }
   try {
     execSync('ffprobe -version', { stdio: 'ignore', timeout: 5000 });
     _ffprobePath = 'ffprobe';
     return _ffprobePath;
   } catch { /* not in PATH */ }
-  // 3. 同目录查找（跟随 ffmpeg）
   const ff = _findFFmpeg();
   if (ff && ff !== 'ffmpeg') {
-    const dir = path.dirname(ff);
-    const probePath = path.join(dir, 'ffprobe.exe');
-    if (fs.existsSync(probePath)) {
-      _ffprobePath = probePath;
-      return _ffprobePath;
-    }
+    const probePath = path.join(path.dirname(ff), 'ffprobe.exe');
+    if (fs.existsSync(probePath)) { _ffprobePath = probePath; return _ffprobePath; }
   }
   _ffprobePath = false;
   return _ffprobePath;
 }
 
-// ── WasapiRenderer 类 ─────────────────────────────────────────────────────────
+// ── NativeRenderer クラス ─────────────────────────────────────────────────────
 
-class WasapiRenderer extends EventEmitter {
+class NativeRenderer extends EventEmitter {
   constructor() {
     super();
     this._initialized = false;
-    this._comInitialized = false;
-    this._pEnum = null;       // IMMDeviceEnumerator
-    this._pDevice = null;     // IMMDevice
-    this._pAudioClient = null;// IAudioClient
-    this._pRenderClient = null;// IAudioRenderClient
-    this._hEvent = null;      // 事件句柄
-
-    this._sampleRate = 0;
-    this._channels = 0;
-    this._bitsPerSample = 0;
-    this._bytesPerFrame = 0;
-    this._bufferFrames = 0;
-    this._durationMs = 0;
-
     this._playing = false;
     this._paused = false;
     this._volume = 1.0;
 
-    // PCM 缓冲队列
-    this._pcmQueue = [];
-    this._pcmQueueBytes = 0;
+    this._sampleRate = 0;
+    this._channels = 0;
+    this._bytesPerFrame = 0;
+    this._durationMs = 0;
+    this._shareMode = SHARE_SHARED;
+
+    this._currentFilePath = null;
+
+    // PCM 受け渡し
     this._ffmpegProc = null;
     this._ffmpegFinished = false;
+    this._pendingChunks = [];
+    this._pendingBytes = 0;
+    this._drainTimer = null;
+    this._endCheckTimer = null;
 
-    // 位置追踪
-    this._framesConsumed = 0;
-    this._feedTimer = null;
+    // 位置追跡
+    this._seekOffsetMs = 0;
+    this._posTimer = null;
 
+    // SoundTouch パラメータ
+    this._tempo = 1.0;
+    this._pitch = 1.0;
+    this._rate = 1.0;
+
+    // AutoMix / クロスフェード
+    this._nextFfmpegProc = null;
+    this._nextFfmpegFinished = false;
+    this._nextPendingChunks = [];
+    this._nextPendingBytes = 0;
+    this._nextDrainTimer = null;
+    this._nextDurationMs = 0;
+    this._nextFilePath = null;
+    this._crossfadeDurationMs = 4000; // デフォルト 4 秒
+    this._crossfadeEnabled = false;
+    this._cfCheckTimer = null;
+
+    // Gapless
+    this._gaplessEnabled = false;
+
+    // コールバック（player.js が設定）
     this.onPositionTick = null;
     this.onEnded = null;
+    this.onCrossfadeComplete = null; // クロスフェード完了時コールバック
   }
 
-  // ── 设备枚举 ─────────────────────────────────────────────────────────────
+  // ── デバイス列挙 ──────────────────────────────────────────────────────────
 
   static enumerateDevices() {
-    if (!_ole32) return [];
-    let comInit = false;
+    if (!_loadDll()) return [];
     try {
-      _CoInitializeEx(null, COINIT_MULTITHREADED);
-      comInit = true;
-    } catch { /* already initialized */ }
-
-    try {
-      // 创建枚举器
-      const ppEnum = koffi.alloc('void *', 1);
-      let hr = _CoCreateInstance(CLSID_MMDeviceEnumerator, null, CLSCTX_ALL,
-        IID_IMMDeviceEnumerator, ppEnum);
-      if (hr !== 0) return [];
-
-      const pEnum = koffi.decode(ppEnum, 'void *');
-
-      // 枚举活跃渲染设备 (EnumAudioEndpoints = vtable index 3)
-      const ppCollection = koffi.alloc('void *', 1);
-      hr = koffi.call(_getVtblFnPtr(pEnum, 3), FT_Enum_Enum, pEnum, eRender, DEVICE_STATE_ACTIVE, ppCollection);
-      if (hr !== 0) { _release(pEnum); return []; }
-
-      const pCollection = koffi.decode(ppCollection, 'void *');
-
-      // 获取设备数量 (GetCount = vtable index 3)
-      const pCount = koffi.alloc('uint32', 1);
-      koffi.call(_getVtblFnPtr(pCollection, 3), FT_DC_GetCount, pCollection, pCount);
-      const count = koffi.decode(pCount, 'uint32');
-
-      const devices = [];
-      for (let i = 0; i < count; i++) {
-        const ppDevice = koffi.alloc('void *', 1);
-        hr = koffi.call(_getVtblFnPtr(pCollection, 4), FT_DC_Item, pCollection, i, ppDevice);
-        if (hr !== 0) continue;
-        const pDevice = koffi.decode(ppDevice, 'void *');
-
-        // 获取设备 ID (GetId = vtable index 5)
-        const ppId = koffi.alloc('void *', 1);
-        hr = koffi.call(_getVtblFnPtr(pDevice, 5), FT_Dev_GetId, pDevice, ppId);
-        let devId = `dev_${i}`;
-        let devName = `Audio Device ${i + 1}`;
-        if (hr === 0) {
-          const pIdStr = koffi.decode(ppId, 'void *');
-          try {
-            // 读取宽字符串
-            const idBuf = Buffer.from(koffi.decode(pIdStr, koffi.array('uint16', 256)));
-            devId = idBuf.toString('utf16le').split('\0')[0] || `dev_${i}`;
-          } catch { /* use fallback */ }
-          _CoTaskMemFree(pIdStr);
-        }
-
-        // 第一个设备为默认设备
-        if (i === 0) devName = `${devName} (Default)`;
-        devices.push({ id: devId, name: devName, index: i, type: 0, flags: 1 });
-
-        _release(pDevice);
-      }
-
-      _release(pCollection);
-      _release(pEnum);
+      const json = _f.ca_enumerate_devices();
+      if (!json) return [];
+      const parsed = JSON.parse(json);
+      const devices = (parsed.devices || []).map((d) => ({
+        id: String(d.index),
+        name: d.name,
+        index: d.index,
+      }));
       return devices;
     } catch (e) {
       console.error('[wasapi] enumerateDevices failed:', e);
       return [];
-    } finally {
-      if (comInit) { try { _CoUninitialize(); } catch { /* ignore */ } }
     }
   }
 
-  // ── 初始化 ───────────────────────────────────────────────────────────────
+  // ── 初期化 ────────────────────────────────────────────────────────────────
 
-  async init(sampleRate = 0, channels = 0, bitsPerSample = 0) {
-    if (!_ole32 || !_kernel32) throw new Error('WASAPI DLLs not loaded');
+  /**
+   * デバイスを初期化する。
+   * @param {object} opts
+   * @param {number} opts.shareMode - 0=共有, 1=排他 (デフォルト: 共有)
+   * @param {number} opts.deviceIndex - デバイスインデックス (-1=デフォルト)
+   * @param {number} opts.sampleRate - サンプルレート (0=デバイスネイティブ)
+   * @param {number} opts.channels - チャンネル数 (0=2)
+   */
+  async init(opts = {}) {
+    if (!_loadDll()) throw new Error('carminium_audio.dll not loaded');
     if (this._initialized) await this.close();
 
-    // COM 初始化
-    try {
-      _CoInitializeEx(null, COINIT_MULTITHREADED);
-      this._comInitialized = true;
-    } catch { /* already initialized on this thread */ }
+    const shareMode = opts.shareMode === SHARE_EXCLUSIVE ? SHARE_EXCLUSIVE : SHARE_SHARED;
+    const deviceIndex = opts.deviceIndex != null ? opts.deviceIndex : -1;
+    const sampleRate = opts.sampleRate || 0;
+    const channels = opts.channels || 2;
 
-    // 创建设备枚举器
-    const ppEnum = koffi.alloc('void *', 1);
-    let hr = _CoCreateInstance(CLSID_MMDeviceEnumerator, null, CLSCTX_ALL,
-      IID_IMMDeviceEnumerator, ppEnum);
-    _checkHr(hr, 'CoCreateInstance(MMDeviceEnumerator)');
-    this._pEnum = koffi.decode(ppEnum, 'void *');
-
-    // 获取默认渲染端点 (GetDefaultAudioEndpoint = vtable index 4)
-    const ppDevice = koffi.alloc('void *', 1);
-    hr = koffi.call(_getVtblFnPtr(this._pEnum, 4), FT_Enum_Def, this._pEnum, eRender, eConsole, ppDevice);
-    _checkHr(hr, 'GetDefaultAudioEndpoint');
-    this._pDevice = koffi.decode(ppDevice, 'void *');
-
-    // 激活 IAudioClient (Activate = vtable index 3)
-    const ppAudioClient = koffi.alloc('void *', 1);
-    hr = koffi.call(_getVtblFnPtr(this._pDevice, 3), FT_Dev_Activate, this._pDevice, IID_IAudioClient, CLSCTX_ALL, null, ppAudioClient);
-    _checkHr(hr, 'IMMDevice::Activate');
-    this._pAudioClient = koffi.decode(ppAudioClient, 'void *');
-
-    // 获取设备原生格式 (GetMixFormat = vtable index 8)
-    // GetMixFormat 返回设备支持的格式（共享模式下音频引擎使用的格式）
-    const ppMixFmt = koffi.alloc('void *', 1);
-    hr = koffi.call(_getVtblFnPtr(this._pAudioClient, 8), FT_AC_GetMixFmt, this._pAudioClient, ppMixFmt);
-    _checkHr(hr, 'IAudioClient::GetMixFormat');
-    const pMixFmtPtr = koffi.decode(ppMixFmt, 'void *');
-
-    // 解析 WAVEFORMATEX
-    const wfxData = koffi.decode(pMixFmtPtr, WAVEFORMATEX);
-    this._sampleRate = wfxData.nSamplesPerSec;
-    this._channels = wfxData.nChannels;
-    this._bitsPerSample = wfxData.wBitsPerSample;
-    this._bytesPerFrame = (this._channels * this._bitsPerSample) / 8;
-
-    console.log(`[wasapi] Device mix format: ${this._sampleRate}Hz, ${this._channels}ch, ${this._bitsPerSample}bit, tag=${wfxData.wFormatTag}`);
-
-    // 初始化 AudioClient
-    // 独占模式下 hnsBufferDuration 和 hnsPeriodicity 必须相同
-    // Initialize 失败后 IAudioClient 对象不可用，必须释放并重新激活
-
-    const _initDurations = [
-      [0, 0],             // 系统默认（最可靠）
-      [3000000, 3000000], // 300ms
-      [5000000, 5000000], // 500ms
-      [10000000, 10000000], // 1s
-    ];
-
-    let initOk = false;
-    let lastHr = 0;
-    for (const [bufDur, period] of _initDurations) {
-      // 每次重试前重新激活 IAudioClient（上一次 Initialize 失败后对象已失效）
-      if (this._pAudioClient) {
-        _release(this._pAudioClient);
-        this._pAudioClient = null;
+    const result = _f.ca_init(shareMode, deviceIndex, sampleRate, channels);
+    if (result !== 0) {
+      let msg;
+      switch (result) {
+        case -1: msg = 'already initialized'; break;
+        case -3: msg = 'miniaudio context init failed'; break;
+        case -4: msg = 'SoundTouch init failed'; break;
+        default:
+          if (shareMode === SHARE_EXCLUSIVE) {
+            msg = `miniaudio error ${result} (exclusive mode unavailable — ` +
+                  `device may be in use or exclusive mode disabled in Windows settings)`;
+          } else {
+            msg = `miniaudio error ${result}`;
+          }
       }
-      const ppAC = koffi.alloc('void *', 1);
-      hr = koffi.call(_getVtblFnPtr(this._pDevice, 3), FT_Dev_Activate,
-        this._pDevice, IID_IAudioClient, CLSCTX_ALL, null, ppAC);
-      _checkHr(hr, 'IMMDevice::Activate');
-      this._pAudioClient = koffi.decode(ppAC, 'void *');
-
-      // 重新获取 mix format（因为 IAudioClient 是新的）
-      const ppMix2 = koffi.alloc('void *', 1);
-      hr = koffi.call(_getVtblFnPtr(this._pAudioClient, 8), FT_AC_GetMixFmt, this._pAudioClient, ppMix2);
-      _checkHr(hr, 'IAudioClient::GetMixFormat (retry)');
-      const pMix2 = koffi.decode(ppMix2, 'void *');
-
-      if (bufDur === 0) {
-        // 让系统选择默认缓冲周期
-        hr = koffi.call(_getVtblFnPtr(this._pAudioClient, 3), FT_AC_Init,
-          this._pAudioClient, AUDCLNT_SHAREMODE_EXCLUSIVE, 0, 0, 0,
-          pMix2, null);
-      } else {
-        hr = koffi.call(_getVtblFnPtr(this._pAudioClient, 3), FT_AC_Init,
-          this._pAudioClient, AUDCLNT_SHAREMODE_EXCLUSIVE, 0, bufDur, period,
-          pMix2, null);
-      }
-      lastHr = hr;
-      if (hr === 0) { initOk = true; break; }
-      console.warn(`[wasapi] Initialize failed with bufDur=${bufDur}: HRESULT 0x${(hr >>> 0).toString(16)}`);
-      _CoTaskMemFree(pMix2);
-    }
-    if (!initOk) {
-      _checkHr(lastHr, 'IAudioClient::Initialize');
+      throw new Error(`ca_init failed: ${msg}`);
     }
 
-    // 获取缓冲区大小 (GetBufferSize = vtable index 4)
-    const pBufSize = koffi.alloc('uint32', 1);
-    hr = koffi.call(_getVtblFnPtr(this._pAudioClient, 4), FT_AC_GetBuf, this._pAudioClient, pBufSize);
-    _checkHr(hr, 'IAudioClient::GetBufferSize');
-    this._bufferFrames = koffi.decode(pBufSize, 'uint32');
+    this._shareMode      = _f.ca_get_share_mode();
+    this._sampleRate     = _f.ca_get_sample_rate();
+    this._channels       = _f.ca_get_channels();
+    this._bytesPerFrame  = (this._channels * 32) / 8;  // 常に f32
+    this._initialized    = true;
+    this._seekOffsetMs   = 0;
 
-    // 获取 IAudioRenderClient (GetService = vtable index 14)
-    // 注意：GetService 在某些情况下可能返回 E_NOINTERFACE，作为回退尝试 QueryInterface
-    const ppRenderClient = koffi.alloc('void *', 1);
-    hr = koffi.call(_getVtblFnPtr(this._pAudioClient, 14), FT_AC_GetSvc, this._pAudioClient, IID_IAudioRenderClient, ppRenderClient);
+    // 音量・SoundTouch パラメータを DLL 側に反映
+    _f.ca_set_volume(this._volume);
+    _f.ca_set_tempo(this._tempo);
+    _f.ca_set_pitch(this._pitch);
+    _f.ca_set_rate(this._rate);
+    _f.ca_set_gapless_enabled(this._gaplessEnabled ? 1 : 0);
 
-    // 如果 GetService 失败，尝试使用 QueryInterface (vtable index 0)
-    if (hr !== 0) {
-      console.warn(`[wasapi] GetService returned 0x${(hr >>> 0).toString(16)}, trying QueryInterface`);
-      // QueryInterface = vtable index 0
-      hr = koffi.call(_getVtblFnPtr(this._pAudioClient, 0), FT_QI, this._pAudioClient, IID_IAudioRenderClient, ppRenderClient);
-    }
+    const modeStr = this._shareMode === SHARE_EXCLUSIVE ? 'exclusive' : 'shared';
+    console.log(`[wasapi] Initialized ${modeStr} mode: ` +
+                `${this._sampleRate}Hz, ${this._channels}ch, f32`);
 
-    _checkHr(hr, 'IAudioClient::GetService(IAudioRenderClient)');
-    this._pRenderClient = koffi.decode(ppRenderClient, 'void *');
-
-    // 创建事件句柄（用于 WASAPI 通知）(SetEventHandle = vtable index 13)
-    this._hEvent = _CreateEventW(null, 0, 0, null);
-    if (this._hEvent) {
-      try {
-        koffi.call(_getVtblFnPtr(this._pAudioClient, 13), FT_AC_SetEvt, this._pAudioClient, this._hEvent);
-      } catch { /* event handle optional */ }
-    }
-
-    this._initialized = true;
     return {
       sampleRate: this._sampleRate,
       channels: this._channels,
-      bitsPerSample: this._bitsPerSample,
+      bitsPerSample: 32,
+      shareMode: this._shareMode,
     };
   }
 
-  // ── 文件播放 ──────────────────────────────────────────────────────────────
+  // ── ファイル再生 ──────────────────────────────────────────────────────────
 
   async playFile(filePath) {
-    if (!this._initialized) throw new Error('WASAPI not initialized');
+    if (!this._initialized) throw new Error('Renderer not initialized');
     if (!filePath) throw new Error('No file path');
 
     const ff = _findFFmpeg();
-    if (!ff) throw new Error('ffmpeg not found (required for audio decoding in exclusive mode)');
+    if (!ff) throw new Error('ffmpeg not found (required for audio decoding)');
 
-    // 保存当前文件路径（供 seek 使用）
     this._currentFilePath = filePath;
-
-    // 清理旧的 ffmpeg 进程
     this._killFFmpeg();
+    this._killNextFfmpeg();
+    this._stopDrainTimer();
+    this._stopNextDrainTimer();
+    this._stopEndCheck();
+    this._stopCrossfadeCheck();
+    this._pendingChunks = [];
+    this._pendingBytes = 0;
+    this._nextPendingChunks = [];
+    this._nextPendingBytes = 0;
+    this._nextFilePath = null;
+    this._nextDurationMs = 0;
+    this._seekOffsetMs = 0;
+    _f.ca_clear_buffer();
+    _f.ca_clear_next_buffer();
 
-    // 停止位置计时器
-    this._stopPositionTimer();
-
-    // 获取时长
     this._durationMs = await this._probeDuration(filePath);
 
-    // 确定 ffmpeg 输出格式
-    const fmtArg = this._bitsPerSample === 32 ? 'f32le' : 's16le';
+    this._spawnFFmpeg(filePath, 0);
 
-    // 启动 ffmpeg 解码
-    this._ffmpegFinished = false;
-    this._pcmQueue = [];
-    this._pcmQueueBytes = 0;
-    this._framesConsumed = 0;
+    // プリバッファ：ring buffer に一定量の PCM が溜まるまで待ってから再生開始
+    // これにより起動直後のアンダーラン（途切れ）を防ぐ。
+    // 目標：目標 500ms 分または最大 2 秒待ち。
+    const targetMs = 500;
+    const bytesPerMs = (this._sampleRate * this._channels * 4) / 1000;
+    const targetBytes = Math.min(targetMs * bytesPerMs, 2 * 1024 * 1024); // 最大 2MB
+    const maxWaitMs = 2000;
+    const startT = Date.now();
 
-    const args = [
-      '-i', filePath,
-      '-f', fmtArg,
-      '-ar', String(this._sampleRate),
-      '-ac', String(this._channels),
-      '-loglevel', 'quiet',
-      'pipe:1',
-    ];
-
-    this._ffmpegProc = spawn(ff, args, { windowsHide: true });
-
-    this._ffmpegProc.stdout.on('data', (chunk) => {
-      this._pcmQueue.push(chunk);
-      this._pcmQueueBytes += chunk.length;
-    });
-
-    this._ffmpegProc.stderr.on('data', () => { /* ignore stderr */ });
-
-    this._ffmpegProc.on('close', (code) => {
-      this._ffmpegFinished = true;
-      this._ffmpegProc = null;
-    });
-
-    this._ffmpegProc.on('error', (e) => {
-      console.error('[wasapi] ffmpeg error:', e);
-      this._ffmpegFinished = true;
-      this._ffmpegProc = null;
+    await new Promise((resolve) => {
+      const check = () => {
+        const buffered = _f.ca_get_buffered_bytes();
+        if (buffered >= targetBytes) {
+          resolve();
+          return;
+        }
+        if (Date.now() - startT > maxWaitMs) {
+          // タイムアウト：そのまま再生開始
+          resolve();
+          return;
+        }
+        if (this._ffmpegFinished && this._pendingBytes === 0) {
+          // ffmpeg が既に終了している（短いファイルなど）
+          resolve();
+          return;
+        }
+        setTimeout(check, 20);
+      };
+      check();
     });
 
     return { durationMs: this._durationMs };
+  }
+
+  _spawnFFmpeg(filePath, seekSec) {
+    const ff = _findFFmpeg();
+    if (!ff) return;
+
+    // PCM は常に f32le (SoundTouch 要件)
+    const args = [];
+    if (seekSec > 0) {
+      args.push('-ss', String(seekSec));
+    }
+    args.push(
+      '-i', filePath,
+      '-f', 'f32le',
+      '-ar', String(this._sampleRate),
+      '-ac', String(this._channels),
+      '-loglevel', 'quiet',
+      'pipe:1'
+    );
+
+    this._ffmpegFinished = false;
+    this._ffmpegProc = spawn(ff, args, { windowsHide: true });
+
+    this._ffmpegProc.stdout.on('data', (chunk) => this._onPcmData(chunk));
+    this._ffmpegProc.stderr.on('data', () => { /* ignore */ });
+
+    this._ffmpegProc.on('close', () => {
+      this._ffmpegFinished = true;
+      this._ffmpegProc = null;
+      this._checkEnded();
+    });
+    this._ffmpegProc.on('error', (e) => {
+      console.error('[wasapi] ffmpeg error:', e.message);
+      this._ffmpegFinished = true;
+      this._ffmpegProc = null;
+    });
   }
 
   async _probeDuration(filePath) {
@@ -592,289 +407,504 @@ class WasapiRenderer extends EventEmitter {
     }
   }
 
-  // ── 播放控制 ──────────────────────────────────────────────────────────────
+  // ── PCM データ受け渡し ──────────────────────────────────────────────────────
+
+  _onPcmData(chunk) {
+    if (this._pendingBytes === 0) {
+      const r = _f.ca_push_pcm(chunk, chunk.length);
+      if (r === 0) return;
+    }
+    this._pendingChunks.push(chunk);
+    this._pendingBytes += chunk.length;
+    this._startDrainTimer();
+  }
+
+  _startDrainTimer() {
+    if (this._drainTimer) return;
+    // 20ms 間隔でドレイン。5ms だと Node.js のイベントループが圧迫され UI が卡死する。
+    this._drainTimer = setInterval(() => this._drainPending(), 20);
+  }
+
+  _stopDrainTimer() {
+    if (this._drainTimer) {
+      clearInterval(this._drainTimer);
+      this._drainTimer = null;
+    }
+  }
+
+  _drainPending() {
+    while (this._pendingChunks.length > 0) {
+      const chunk = this._pendingChunks[0];
+      const r = _f.ca_push_pcm(chunk, chunk.length);
+      if (r === 0) {
+        this._pendingChunks.shift();
+        this._pendingBytes -= chunk.length;
+      } else if (r === -2) {
+        return;
+      } else {
+        this._pendingChunks.shift();
+        this._pendingBytes -= chunk.length;
+      }
+    }
+    this._stopDrainTimer();
+    this._checkEnded();
+  }
+
+  // ── 再生制御 ──────────────────────────────────────────────────────────────
 
   async play() {
     if (!this._initialized) throw new Error('Not initialized');
-    if (!this._pAudioClient) throw new Error('No audio client');
-
-    // Start = vtable index 10
-    if (this._paused) {
-      // 从暂停恢复
-      this._paused = false;
-      _checkHr(koffi.call(_getVtblFnPtr(this._pAudioClient, 10), FT_AC_Start, this._pAudioClient), 'IAudioClient::Start');
-      this._playing = true;
-      this._startFeedLoop();
-      this._startPositionTimer();
-      this.emit('state_changed', 'playing');
-      return;
-    }
-
-    // 从头开始播放
-    _checkHr(koffi.call(_getVtblFnPtr(this._pAudioClient, 10), FT_AC_Start, this._pAudioClient), 'IAudioClient::Start');
+    const r = _f.ca_start();
+    if (r !== 0) throw new Error(`ca_start failed: ${r}`);
     this._playing = true;
-    this._startFeedLoop();
+    this._paused = false;
     this._startPositionTimer();
+    if (this._pendingBytes > 0) this._startDrainTimer();
     this.emit('state_changed', 'playing');
   }
 
   async pause() {
     if (!this._playing) return;
-    // Stop = vtable index 11
-    try { koffi.call(_getVtblFnPtr(this._pAudioClient, 11), FT_AC_Stop, this._pAudioClient); } catch { /* ignore */ }
+    _f.ca_stop();
     this._playing = false;
     this._paused = true;
-    this._stopFeedLoop();
     this._stopPositionTimer();
     this.emit('state_changed', 'paused');
   }
 
   async stop() {
+    _f.ca_stop();
     this._playing = false;
     this._paused = false;
-    this._stopFeedLoop();
     this._stopPositionTimer();
+    this._stopDrainTimer();
+    this._stopEndCheck();
+    this._stopCrossfadeCheck();
     this._killFFmpeg();
-    this._pcmQueue = [];
-    this._pcmQueueBytes = 0;
-    this._framesConsumed = 0;
-
-    if (this._pAudioClient) {
-      try {
-        // Stop = vtable index 11, Reset = vtable index 12
-        koffi.call(_getVtblFnPtr(this._pAudioClient, 11), FT_AC_Stop, this._pAudioClient);
-        koffi.call(_getVtblFnPtr(this._pAudioClient, 12), FT_AC_Reset, this._pAudioClient);
-      } catch { /* ignore */ }
-    }
+    this._killNextFfmpeg();
+    this._pendingChunks = [];
+    this._pendingBytes = 0;
+    this._nextPendingChunks = [];
+    this._nextPendingBytes = 0;
+    this._nextFilePath = null;
+    this._seekOffsetMs = 0;
+    _f.ca_clear_buffer();
+    _f.ca_clear_next_buffer();
     this.emit('state_changed', 'stopped');
   }
 
   async seek(positionMs) {
     if (!this._initialized) return;
     const seekSec = Math.max(0, positionMs / 1000);
-
-    // 停止当前 feed loop
     const wasPlaying = this._playing;
-    this._stopFeedLoop();
 
-    // 重置 WASAPI 缓冲 (Stop = index 11, Reset = index 12)
-    if (this._pAudioClient) {
-      try {
-        koffi.call(_getVtblFnPtr(this._pAudioClient, 11), FT_AC_Stop, this._pAudioClient);
-        koffi.call(_getVtblFnPtr(this._pAudioClient, 12), FT_AC_Reset, this._pAudioClient);
-      } catch { /* ignore */ }
-    }
-
-    // 杀掉旧 ffmpeg
+    _f.ca_stop();
+    this._stopDrainTimer();
+    this._stopEndCheck();
     this._killFFmpeg();
-    this._pcmQueue = [];
-    this._pcmQueueBytes = 0;
+    this._pendingChunks = [];
+    this._pendingBytes = 0;
 
-    // 更新位置
-    this._framesConsumed = Math.round(seekSec * this._sampleRate);
+    _f.ca_clear_buffer();
+    this._seekOffsetMs = Math.round(seekSec * 1000);
 
-    // 重新启动 ffmpeg 从指定位置开始
     if (this._currentFilePath) {
-      const ff = _findFFmpeg();
-      if (ff) {
-        const fmtArg = this._bitsPerSample === 32 ? 'f32le' : 's16le';
-        const args = [
-          '-ss', String(seekSec),
-          '-i', this._currentFilePath,
-          '-f', fmtArg,
-          '-ar', String(this._sampleRate),
-          '-ac', String(this._channels),
-          '-loglevel', 'quiet',
-          'pipe:1',
-        ];
-        this._ffmpegFinished = false;
-        this._ffmpegProc = spawn(ff, args, { windowsHide: true });
-        this._ffmpegProc.stdout.on('data', (chunk) => {
-          this._pcmQueue.push(chunk);
-          this._pcmQueueBytes += chunk.length;
-        });
-        this._ffmpegProc.on('close', () => {
-          this._ffmpegFinished = true;
-          this._ffmpegProc = null;
-        });
-        this._ffmpegProc.on('error', () => {
-          this._ffmpegFinished = true;
-          this._ffmpegProc = null;
-        });
-      }
+      this._spawnFFmpeg(this._currentFilePath, seekSec);
     }
 
-    // 恢复播放 (Start = vtable index 10)
     if (wasPlaying) {
-      try {
-        koffi.call(_getVtblFnPtr(this._pAudioClient, 10), FT_AC_Start, this._pAudioClient);
-      } catch { /* ignore */ }
-      this._playing = true;
-      this._startFeedLoop();
-      this._startPositionTimer();
+      const r = _f.ca_start();
+      if (r === 0) {
+        this._playing = true;
+        this._startPositionTimer();
+        if (this._pendingBytes > 0) this._startDrainTimer();
+      }
+    } else {
+      this._paused = true;
     }
 
-    this.emit('position_changed', positionMs);
+    this.emit('position_changed', this._seekOffsetMs);
   }
 
   async setVolume(level) {
     this._volume = Math.max(0, Math.min(1, level));
-  }
-
-  // ── 位置信息 ──────────────────────────────────────────────────────────────
-
-  async getPosition() {
-    return Math.round(this._framesConsumed / this._sampleRate * 1000);
-  }
-
-  getDuration() {
-    return this._durationMs;
-  }
-
-  get isPlaying() {
-    return this._playing;
-  }
-
-  // ── 内部：Feed Loop ─────────────────────────────────────────────────────────
-
-  _startFeedLoop() {
-    this._stopFeedLoop();
-    // 10ms 间隔，足够及时地填充 WASAPI 缓冲
-    this._feedTimer = setInterval(() => this._feedData(), 10);
-  }
-
-  _stopFeedLoop() {
-    if (this._feedTimer) {
-      clearInterval(this._feedTimer);
-      this._feedTimer = null;
+    if (this._initialized) {
+      _f.ca_set_volume(this._volume);
     }
   }
 
-  _feedData() {
-    if (!this._playing || !this._pRenderClient || !this._pAudioClient) return;
+  // ── SoundTouch パラメータ ──────────────────────────────────────────────────
 
-    try {
-      // 获取当前缓冲区填充量 (GetCurrentPadding = vtable index 6)
-      const pPadding = koffi.alloc('uint32', 1);
-      const hr = koffi.call(_getVtblFnPtr(this._pAudioClient, 6), FT_AC_GetPad, this._pAudioClient, pPadding);
-      if (hr !== 0) return;
-      const padding = koffi.decode(pPadding, 'uint32');
-
-      const framesAvailable = this._bufferFrames - padding;
-      if (framesAvailable <= 0) {
-        // 检查是否播放结束
-        this._checkEnded();
-        return;
-      }
-
-      // 从队列读取 PCM 数据
-      const bytesNeeded = framesAvailable * this._bytesPerFrame;
-      const pcmData = this._readFromQueue(bytesNeeded);
-
-      if (pcmData.length === 0) {
-        // 没有数据可用
-        this._checkEnded();
-        return;
-      }
-
-      // 应用音量
-      if (this._volume < 1.0) {
-        this._applyVolume(pcmData);
-      }
-
-      // 实际写入的帧数
-      const framesToWrite = Math.floor(pcmData.length / this._bytesPerFrame);
-      if (framesToWrite === 0) {
-        this._checkEnded();
-        return;
-      }
-
-      // 获取 WASAPI 缓冲区 (GetBuffer = vtable index 3)
-      const ppData = koffi.alloc('void *', 1);
-      const hr2 = koffi.call(_getVtblFnPtr(this._pRenderClient, 3), FT_RC_GetBuf, this._pRenderClient, framesToWrite, ppData);
-      if (hr2 !== 0) return;
-
-      const pData = koffi.decode(ppData, 'void *');
-      if (!pData) return;
-
-      // 将 PCM 数据复制到 WASAPI 缓冲区
-      const bytesToCopy = framesToWrite * this._bytesPerFrame;
-      // 使用 koffi.encode 写入数据
-      const byteArrType = koffi.array('uint8', bytesToCopy);
-      koffi.encode(pData, byteArrType, pcmData.slice(0, bytesToCopy));
-
-      // 释放缓冲区 (ReleaseBuffer = vtable index 4)
-      koffi.call(_getVtblFnPtr(this._pRenderClient, 4), FT_RC_RelBuf, this._pRenderClient, framesToWrite, 0);
-
-      // 更新位置
-      this._framesConsumed += framesToWrite;
-    } catch (e) {
-      // 设备失效等错误
-      console.error('[wasapi] feed error:', e.message);
+  /**
+   * tempo 設定 (1.0 = 原速)。リアルタイム反映。
+   * tempo はピッチを変えずに再生速度を変更する。
+   */
+  setTempo(tempo) {
+    this._tempo = Math.max(0.25, Math.min(4.0, tempo));
+    if (this._initialized) {
+      _f.ca_set_tempo(this._tempo);
     }
   }
+
+  /**
+   * pitch 設定 (1.0 = 原調)。
+   * pitch は速度を変えずに音高を変更する。
+   */
+  setPitch(pitch) {
+    this._pitch = Math.max(0.25, Math.min(4.0, pitch));
+    if (this._initialized) {
+      _f.ca_set_pitch(this._pitch);
+    }
+  }
+
+  /**
+   * rate 設定 (1.0 = 原速原調)。
+   * rate はテープ風エフェクト（速度とピッチが連動）。
+   */
+  setRate(rate) {
+    this._rate = Math.max(0.25, Math.min(4.0, rate));
+    if (this._initialized) {
+      _f.ca_set_rate(this._rate);
+    }
+  }
+
+  get tempo() { return this._tempo; }
+  get pitch() { return this._pitch; }
+  get rate() { return this._rate; }
+
+  // ── AutoMix / クロスフェード ──────────────────────────────────────────────
+
+  setCrossfadeEnabled(enabled) {
+    this._crossfadeEnabled = !!enabled;
+    // AutoMix と Gapless は相互排他
+    if (this._crossfadeEnabled && this._gaplessEnabled) {
+      this._gaplessEnabled = false;
+      if (this._initialized) {
+        _f.ca_set_gapless_enabled(0);
+      }
+    }
+  }
+
+  get crossfadeEnabled() {
+    return this._crossfadeEnabled;
+  }
+
+  setCrossfadeDuration(ms) {
+    this._crossfadeDurationMs = Math.max(500, Math.min(15000, ms | 0));
+  }
+
+  get crossfadeDurationMs() {
+    return this._crossfadeDurationMs;
+  }
+
+  /**
+   * 次曲をプリロードする（AutoMix 用）。
+   * ffmpeg でデコードを開始し、DLL のプリロードバッファに PCM を供給する。
+   */
+  async preloadNext(filePath) {
+    if (!this._initialized) throw new Error('Renderer not initialized');
+    if (!filePath) throw new Error('No file path');
+
+    const ff = _findFFmpeg();
+    if (!ff) throw new Error('ffmpeg not found');
+
+    this._killNextFfmpeg();
+    this._stopNextDrainTimer();
+    this._nextPendingChunks = [];
+    this._nextPendingBytes = 0;
+    this._nextFilePath = filePath;
+    _f.ca_clear_next_buffer();
+
+    this._nextDurationMs = await this._probeDuration(filePath);
+
+    this._spawnNextFfmpeg(filePath);
+
+    // プリバッファ：次曲バッファに一定量溜まるまで待つ（オプション）
+    const targetBytes = Math.min(
+      (this._sampleRate * this._channels * 4) / 1000 * 500, // 500ms 分
+      2 * 1024 * 1024
+    );
+    const maxWaitMs = 2000;
+    const startT = Date.now();
+
+    await new Promise((resolve) => {
+      const check = () => {
+        const buffered = _f.ca_get_next_buffered_bytes();
+        if (buffered >= targetBytes) { resolve(); return; }
+        if (Date.now() - startT > maxWaitMs) { resolve(); return; }
+        if (this._nextFfmpegFinished && this._nextPendingBytes === 0) {
+          resolve(); return;
+        }
+        setTimeout(check, 20);
+      };
+      check();
+    });
+
+    // Gapless モード時は、切り替え完了検知を開始する
+    // （DLL 側で自動的にバッファ切り替えが行われるため、ポーリングで検知）
+    if (this._gaplessEnabled) {
+      this._startCrossfadeCheck();
+    }
+
+    return { durationMs: this._nextDurationMs };
+  }
+
+  _spawnNextFfmpeg(filePath) {
+    const ff = _findFFmpeg();
+    if (!ff) return;
+
+    const args = [
+      '-i', filePath,
+      '-f', 'f32le',
+      '-ar', String(this._sampleRate),
+      '-ac', String(this._channels),
+      '-loglevel', 'quiet',
+      'pipe:1'
+    ];
+
+    this._nextFfmpegFinished = false;
+    this._nextFfmpegProc = spawn(ff, args, { windowsHide: true });
+
+    this._nextFfmpegProc.stdout.on('data', (chunk) => this._onNextPcmData(chunk));
+    this._nextFfmpegProc.stderr.on('data', () => { /* ignore */ });
+
+    this._nextFfmpegProc.on('close', () => {
+      this._nextFfmpegFinished = true;
+      this._nextFfmpegProc = null;
+    });
+    this._nextFfmpegProc.on('error', (e) => {
+      console.error('[wasapi] next ffmpeg error:', e.message);
+      this._nextFfmpegFinished = true;
+      this._nextFfmpegProc = null;
+    });
+  }
+
+  _killNextFfmpeg() {
+    if (this._nextFfmpegProc) {
+      try { this._nextFfmpegProc.kill('SIGKILL'); } catch { /* ignore */ }
+      this._nextFfmpegProc = null;
+    }
+    this._nextFfmpegFinished = false;
+  }
+
+  _onNextPcmData(chunk) {
+    if (this._nextPendingBytes === 0) {
+      const r = _f.ca_push_next_pcm(chunk, chunk.length);
+      if (r === 0) return;
+    }
+    this._nextPendingChunks.push(chunk);
+    this._nextPendingBytes += chunk.length;
+    this._startNextDrainTimer();
+  }
+
+  _startNextDrainTimer() {
+    if (this._nextDrainTimer) return;
+    this._nextDrainTimer = setInterval(() => this._drainNextPending(), 20);
+  }
+
+  _stopNextDrainTimer() {
+    if (this._nextDrainTimer) {
+      clearInterval(this._nextDrainTimer);
+      this._nextDrainTimer = null;
+    }
+  }
+
+  _drainNextPending() {
+    while (this._nextPendingChunks.length > 0) {
+      const chunk = this._nextPendingChunks[0];
+      const r = _f.ca_push_next_pcm(chunk, chunk.length);
+      if (r === 0) {
+        this._nextPendingChunks.shift();
+        this._nextPendingBytes -= chunk.length;
+      } else if (r === -2) {
+        return;
+      } else {
+        this._nextPendingChunks.shift();
+        this._nextPendingBytes -= chunk.length;
+      }
+    }
+    this._stopNextDrainTimer();
+  }
+
+  /**
+   * クロスフェードを開始する。
+   * 呼び出し後、DLL 内部でクロスフェードが実行され、完了すると
+   * onCrossfadeComplete コールバックが呼ばれる。
+   */
+  startCrossfade(durationMs) {
+    if (!this._initialized) return -1;
+    const dur = durationMs != null ? durationMs : this._crossfadeDurationMs;
+    const r = _f.ca_start_crossfade(dur);
+    if (r !== 0) {
+      console.warn('[wasapi] ca_start_crossfade failed:', r);
+      return r;
+    }
+    this._startCrossfadeCheck();
+    return 0;
+  }
+
+  _startCrossfadeCheck() {
+    this._stopCrossfadeCheck();
+    this._cfCheckTimer = setInterval(() => {
+      const completed = _f.ca_check_crossfade_completed();
+      if (completed) {
+        this._stopCrossfadeCheck();
+        // クロスフェード完了: メインバッファが入れ替わっているので
+        // 次曲用の ffmpeg とバッファを後始末、新しいトラックの状態に更新
+        this._onCrossfadeComplete();
+      }
+    }, 20);
+  }
+
+  _stopCrossfadeCheck() {
+    if (this._cfCheckTimer) {
+      clearInterval(this._cfCheckTimer);
+      this._cfCheckTimer = null;
+    }
+  }
+
+  _onCrossfadeComplete() {
+    // 旧メイン（前曲）の ffmpeg 等を後始末
+    this._killFFmpeg();
+    this._stopDrainTimer();
+    this._pendingChunks = [];
+    this._pendingBytes = 0;
+
+    // 次曲だったものがメインに昇格
+    this._currentFilePath = this._nextFilePath;
+    this._durationMs = this._nextDurationMs;
+    this._seekOffsetMs = 0;
+    this._ffmpegProc = this._nextFfmpegProc;
+    this._ffmpegFinished = this._nextFfmpegFinished;
+    this._pendingChunks = this._nextPendingChunks;
+    this._pendingBytes = this._nextPendingBytes;
+    this._drainTimer = this._nextDrainTimer;
+
+    // 次曲関連をリセット
+    this._nextFfmpegProc = null;
+    this._nextFfmpegFinished = false;
+    this._nextPendingChunks = [];
+    this._nextPendingBytes = 0;
+    this._nextDrainTimer = null;
+    this._nextFilePath = null;
+    this._nextDurationMs = 0;
+
+    if (this._pendingBytes > 0) this._startDrainTimer();
+
+    // Gapless モードで自動切り替えされた場合も、完了イベントを発行
+    this.emit('crossfade_complete');
+    if (this.onCrossfadeComplete) this.onCrossfadeComplete();
+  }
+
+  /** 現在の残り時間（ミリ秒）を取得 */
+  getRemainingMs() {
+    const pos = this._currentPositionMs();
+    return Math.max(0, this._durationMs - pos);
+  }
+
+  /** 次曲がプリロードされているか */
+  hasNextPreloaded() {
+    return !!this._nextFilePath && _f.ca_get_next_buffered_bytes() > 0;
+  }
+
+  // ── Gapless ───────────────────────────────────────────────────────────────
+
+  setGaplessEnabled(enabled) {
+    this._gaplessEnabled = !!enabled;
+    if (this._initialized) {
+      _f.ca_set_gapless_enabled(this._gaplessEnabled ? 1 : 0);
+    }
+    // Gapless と AutoMix は相互排他
+    if (this._gaplessEnabled && this._crossfadeEnabled) {
+      this._crossfadeEnabled = false;
+      if (this._initialized) {
+        // クロスフェード中なら中止することはできないが、次回からは無効になる
+      }
+    }
+  }
+
+  get gaplessEnabled() {
+    return this._gaplessEnabled;
+  }
+
+  /**
+   * 手動で Gapless 切り替えを実行する
+   * 戻り値: 0 = 成功、-1 = 未初期化、-2 = 次バッファが空
+   */
+  gaplessSwitch() {
+    if (!this._initialized) return -1;
+    const r = _f.ca_gapless_switch();
+    if (r === 0) {
+      this._startCrossfadeCheck(); // 完了チェックを開始（フラグは共有）
+    }
+    return r;
+  }
+
+  // ── 終了検出 ──────────────────────────────────────────────────────────────
 
   _checkEnded() {
-    if (this._ffmpegFinished && this._pcmQueueBytes === 0 && this._playing) {
-      this._playing = false;
-      this._stopFeedLoop();
-      this._stopPositionTimer();
-      this.emit('state_changed', 'stopped');
-      if (this.onEnded) this.onEnded();
-    }
-  }
+    if (!this._playing) return;
 
-  _readFromQueue(bytesNeeded) {
-    if (this._pcmQueueBytes === 0) return Buffer.alloc(0);
-
-    const result = Buffer.alloc(bytesNeeded);
-    let offset = 0;
-
-    while (offset < bytesNeeded && this._pcmQueue.length > 0) {
-      const chunk = this._pcmQueue[0];
-      const remaining = bytesNeeded - offset;
-
-      if (chunk.length <= remaining) {
-        chunk.copy(result, offset);
-        offset += chunk.length;
-        this._pcmQueue.shift();
-        this._pcmQueueBytes -= chunk.length;
-      } else {
-        chunk.copy(result, offset, 0, remaining);
-        this._pcmQueue[0] = chunk.slice(remaining);
-        this._pcmQueueBytes -= remaining;
-        offset = bytesNeeded;
+    // AutoMix: バッファ残量がクロスフェード時間分を下回ったらフェード開始
+    // ffmpeg が動いていてもチェックする（曲の終盤でバッファ残量が減ってくるため）
+    if (this._crossfadeEnabled && this._nextFilePath &&
+        _f.ca_is_crossfading() === 0) {
+      const buffered = _f.ca_get_buffered_bytes();
+      const bytesPerMs = (this._sampleRate * this._channels * 4) / 1000;
+      const crossfadeBytes = this._crossfadeDurationMs * bytesPerMs;
+      if (buffered <= crossfadeBytes) {
+        console.log('[wasapi] AutoMix: starting crossfade, buffered:', buffered,
+          'bytes, threshold:', crossfadeBytes, 'bytes');
+        this.startCrossfade(this._crossfadeDurationMs);
+        return;
       }
     }
 
-    return result.slice(0, offset);
+    // 以下は通常の終了判定（ffmpeg 終了かつバッファ空）
+    if (!this._ffmpegFinished || this._pendingBytes > 0) return;
+
+    if (_f.ca_get_buffered_bytes() === 0) {
+      this._fireEnded();
+      return;
+    }
+    if (this._endCheckTimer) return;
+    this._endCheckTimer = setInterval(() => {
+      if (!this._playing) {
+        this._stopEndCheck();
+        return;
+      }
+      if (_f.ca_get_buffered_bytes() === 0) {
+        this._stopEndCheck();
+        this._fireEnded();
+      }
+    }, 20);
   }
 
-  _applyVolume(buf) {
-    if (this._bitsPerSample === 32) {
-      // 32-bit float
-      const view = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.length / 4));
-      for (let i = 0; i < view.length; i++) {
-        view[i] *= this._volume;
-      }
-    } else if (this._bitsPerSample === 16) {
-      // 16-bit signed
-      const view = new Int16Array(buf.buffer, buf.byteOffset, Math.floor(buf.length / 2));
-      for (let i = 0; i < view.length; i++) {
-        view[i] = Math.round(view[i] * this._volume);
-      }
+  _stopEndCheck() {
+    if (this._endCheckTimer) {
+      clearInterval(this._endCheckTimer);
+      this._endCheckTimer = null;
     }
   }
 
-  // ── 内部：位置计时器 ─────────────────────────────────────────────────────────
+  _fireEnded() {
+    this._playing = false;
+    this._stopPositionTimer();
+    _f.ca_stop();
+    this.emit('state_changed', 'stopped');
+    if (this.onEnded) this.onEnded();
+  }
+
+  // ── 位置情報 ──────────────────────────────────────────────────────────────
 
   _startPositionTimer() {
     this._stopPositionTimer();
     this._posTimer = setInterval(() => {
       if (!this._playing) return;
-      if (this.onPositionTick) {
-        this.onPositionTick(Math.round(this._framesConsumed / this._sampleRate * 1000));
-      }
+      const posMs = this._currentPositionMs();
+      if (this.onPositionTick) this.onPositionTick(posMs);
+      // AutoMix / 終了判定も定期的にチェック
+      this._checkEnded();
     }, 100);
   }
 
@@ -885,61 +915,71 @@ class WasapiRenderer extends EventEmitter {
     }
   }
 
-  // ── 内部：ffmpeg 管理 ────────────────────────────────────────────────────────
+  _currentPositionMs() {
+    if (!this._sampleRate) return this._seekOffsetMs;
+    const frames = Number(_f.ca_get_consumed_frames());
+    // tempo 適用時、消費フレーム数は入力側（原速）のフレーム数。
+    // 出力位置 = 入力消費フレーム / sample_rate で原速基準の位置が得られる。
+    return this._seekOffsetMs + Math.round(frames * 1000 / this._sampleRate);
+  }
+
+  async getPosition() {
+    return this._currentPositionMs();
+  }
+
+  getDuration() {
+    return this._durationMs;
+  }
+
+  get isPlaying() {
+    return this._playing;
+  }
+
+  get isExclusive() {
+    return this._shareMode === SHARE_EXCLUSIVE;
+  }
+
+  get shareMode() {
+    return this._shareMode;
+  }
+
+  get isInitialized() {
+    return this._initialized;
+  }
+
+  // ── ffmpeg 管理 ────────────────────────────────────────────────────────────
 
   _killFFmpeg() {
     if (this._ffmpegProc) {
-      try {
-        this._ffmpegProc.kill('SIGKILL');
-      } catch { /* ignore */ }
+      try { this._ffmpegProc.kill('SIGKILL'); } catch { /* ignore */ }
       this._ffmpegProc = null;
     }
     this._ffmpegFinished = false;
   }
 
-  // ── 清理 ─────────────────────────────────────────────────────────────────
+  // ── クリーンアップ ──────────────────────────────────────────────────────────
 
   async close() {
-    this._stopFeedLoop();
     this._stopPositionTimer();
+    this._stopDrainTimer();
+    this._stopEndCheck();
+    this._stopCrossfadeCheck();
     this._killFFmpeg();
-    this._pcmQueue = [];
-    this._pcmQueueBytes = 0;
+    this._killNextFfmpeg();
+    this._pendingChunks = [];
+    this._pendingBytes = 0;
+    this._nextPendingChunks = [];
+    this._nextPendingBytes = 0;
+    this._nextFilePath = null;
 
-    if (this._pRenderClient) {
-      _release(this._pRenderClient);
-      this._pRenderClient = null;
+    if (this._initialized) {
+      try { _f.ca_close(); } catch { /* ignore */ }
+      this._initialized = false;
     }
-    if (this._pAudioClient) {
-      try {
-        // Stop = vtable index 11
-        koffi.call(_getVtblFnPtr(this._pAudioClient, 11), FT_AC_Stop, this._pAudioClient);
-      } catch { /* ignore */ }
-      _release(this._pAudioClient);
-      this._pAudioClient = null;
-    }
-    if (this._pDevice) {
-      _release(this._pDevice);
-      this._pDevice = null;
-    }
-    if (this._pEnum) {
-      _release(this._pEnum);
-      this._pEnum = null;
-    }
-    if (this._hEvent) {
-      try { _CloseHandle(this._hEvent); } catch { /* ignore */ }
-      this._hEvent = null;
-    }
-
     this._playing = false;
     this._paused = false;
-    this._initialized = false;
-
-    if (this._comInitialized) {
-      try { _CoUninitialize(); } catch { /* ignore */ }
-      this._comInitialized = false;
-    }
+    this._seekOffsetMs = 0;
   }
 }
 
-module.exports = { WasapiRenderer };
+module.exports = { NativeRenderer, WasapiRenderer: NativeRenderer, SHARE_SHARED, SHARE_EXCLUSIVE };
