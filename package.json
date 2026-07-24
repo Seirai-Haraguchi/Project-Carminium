@@ -9,6 +9,7 @@
     "start": "node scripts/start-electron.js .",
     "dev": "node scripts/start-electron.js . --dev",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "build:native": "cd native && zig build copy -Doptimize=ReleaseFast",
     "build": "electron-builder --win",
     "build:dir": "electron-builder --win --dir"
   },

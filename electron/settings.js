@@ -115,6 +115,10 @@ class AppSettings {
     return { ...this._data };
   }
 
+  getAll() {
+    return this.all();
+  }
+
   // ── Paths ─────────────────────────────────────────────────────────────────
 
   get dataDir() {

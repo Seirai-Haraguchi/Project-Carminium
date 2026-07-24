@@ -40,7 +40,6 @@ class Bridge extends EventEmitter {
     player.on('repeat_changed', (mode) => this._emit('repeat_changed', mode));
     player.on('queue_changed', (queueJson) => this._emit('queue_changed', queueJson));
     player.on('liked_changed', (liked) => this._emit('liked_changed', liked));
-    player.on('play_command', (cmdJson) => this._emit('play_command', cmdJson));
     player.on('lyrics_changed', (trackId) => this._emit('lyrics_changed', trackId));
     player.on('automix_takeover', () => this._emit('automix_takeover'));
     // 独占モード回退時に player から settings_changed が発行される → 転送
@@ -205,28 +204,42 @@ class Bridge extends EventEmitter {
       this._settings.set('repeat', mode);
     });
 
-    // ── 音频设备（Electron 版本由前端 Web Audio API 处理）──
+    // ── 音频设备 ──
     ipcMain.handle('get_audio_devices', () => this._player.getAudioDevices());
     ipcMain.handle('set_output_device', (_e, deviceId) => {
       this._player.setOutputDevice(deviceId);
       this._settings.set('audio_output_device', deviceId);
     });
 
-    // ── 前端播放模式：状态报告与媒体 URL ──
-    ipcMain.handle('report_playback_state', (_e, state, positionMs) => {
-      this._player.reportPlaybackState(state, positionMs);
+    // ── SoundTouch: tempo / pitch / rate ──
+    ipcMain.handle('set_tempo', (_e, tempo) => {
+      this._player.setTempo(parseFloat(tempo));
     });
-    ipcMain.handle('report_duration', (_e, durationMs) => {
-      this._player.reportDuration(durationMs);
+    ipcMain.handle('set_pitch', (_e, pitch) => {
+      this._player.setPitch(parseFloat(pitch));
     });
-    ipcMain.handle('report_ended', () => this._player.reportEnded());
-    ipcMain.handle('report_volume', (_e, volume) => {
-      this._player.reportVolume(volume);
-      this._settings.set('volume', volume);
+    ipcMain.handle('set_rate', (_e, rate) => {
+      this._player.setRate(parseFloat(rate));
     });
-    ipcMain.handle('report_position', (_e, positionMs) => {
-      this._player.reportPosition(positionMs);
+    ipcMain.handle('get_tempo', () => this._player.tempo);
+    ipcMain.handle('get_pitch', () => this._player.pitch);
+    ipcMain.handle('get_rate', () => this._player.rate);
+
+    // ── AutoMix / クロスフェード ──
+    ipcMain.handle('set_automix', (_e, enabled) => {
+      this._player.setAutomixEnabled(!!enabled);
     });
+    ipcMain.handle('get_automix', () => this._player.automixEnabled);
+    ipcMain.handle('set_crossfade_duration', (_e, ms) => {
+      this._player.setCrossfadeDuration(parseInt(ms, 10));
+    });
+    ipcMain.handle('get_crossfade_duration', () => this._player.crossfadeDurationMs);
+
+    // ── Gapless ──
+    ipcMain.handle('set_gapless', (_e, enabled) => {
+      this._player.setGaplessEnabled(!!enabled);
+    });
+    ipcMain.handle('get_gapless', () => this._player.gaplessEnabled);
 
     // ── Cover/Media URL ──
     ipcMain.handle('get_cover_base_url', () => this._coverServer.baseUrl);
@@ -465,7 +478,9 @@ class Bridge extends EventEmitter {
         volume: this._player.volume,
         shuffle: this._player.shuffle,
         repeat: this._player.repeat,
-        frontend_playback: this._player.frontendPlayback,
+        tempo: this._player.tempo,
+        pitch: this._player.pitch,
+        rate: this._player.rate,
       });
     });
 

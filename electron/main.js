@@ -171,21 +171,21 @@ async function initializeApp() {
     const { Bridge } = require('./bridge');
     const { SmtcController } = require('./smtc');
 
-    // WASAPI 排他モードレンダラーを初期化（DLL が利用できない場合はスキップ）
-    let WasapiRenderer = null;
+    // ネイティブオーディオレンダラーを初期化（DLL が利用できない場合はスキップ）
+    let NativeRenderer = null;
     try {
-      ({ WasapiRenderer } = require('./wasapi'));
+      ({ NativeRenderer } = require('./wasapi'));
     } catch (e) {
-      console.warn('[main] WASAPI module not available:', e.message);
+      console.warn('[main] Native audio module not available:', e.message);
     }
 
     settings = new AppSettings();
     library = new MusicLibrary(settings);
 
     try {
-      wasapi = WasapiRenderer ? new WasapiRenderer() : null;
+      wasapi = NativeRenderer ? new NativeRenderer() : null;
     } catch (e) {
-      console.warn('[main] WASAPI renderer not available:', e.message);
+      console.warn('[main] Native renderer not available:', e.message);
       wasapi = null;
     }
 
@@ -199,16 +199,6 @@ async function initializeApp() {
     // 恢复音量
     const vol = settings.get('volume', 80);
     player.setVolume(parseInt(vol, 10) || 80);
-
-    // 恢复排他モード設定
-    const wasapiExclusive = settings.get('wasapi_exclusive', false);
-    if (wasapi && wasapiExclusive) {
-      try {
-        await player.setExclusiveMode(true);
-      } catch (e) {
-        console.warn('[main] Failed to restore WASAPI exclusive mode:', e.message);
-      }
-    }
 
     // 恢复播放状态
     restorePlaybackState();

@@ -242,9 +242,6 @@
                 if (checked) {
                   // 与无间隙播放互斥：开启 AutoMix 时强制关闭 gapless
                   App.utils.call('save_settings', JSON.stringify({ gapless: false }));
-                  if (App.audioPlayer && App.audioPlayer.setGaplessEnabled) {
-                    App.audioPlayer.setGaplessEnabled(false);
-                  }
                   var gaplessEl = document.querySelector('input[type="checkbox"][data-bind="gapless"]');
                   if (gaplessEl) gaplessEl.checked = false;
                 }
@@ -259,9 +256,6 @@
                 if (checked) {
                   // 与 AutoTransmit 互斥：开启 gapless 时强制关闭 automix
                   App.utils.call('save_settings', JSON.stringify({ automix: false }));
-                  if (App.audioPlayer && App.audioPlayer.setAutomixEnabled) {
-                    App.audioPlayer.setAutomixEnabled(false);
-                  }
                   var automixEl = document.querySelector('input[type="checkbox"][data-bind="automix"]');
                   if (automixEl) automixEl.checked = false;
                 }
@@ -812,14 +806,7 @@
     };
     trigger.addEventListener('click', trigger._deviceSelectClickHandler);
 
-    // 共享模式：使用 Web Audio API 的设备枚举（setSinkId）
-    // 独占模式：使用 WASAPI 后端的设备列表（set_output_device）
-    var isExclusive = _lastSettings && _lastSettings.wasapi_exclusive;
-    var canUseWebAudio = !isExclusive && App.audioPlayer
-      && App.audioPlayer.enumerateOutputDevices
-      && App.audioPlayer.isSinkIdSupported
-      && App.audioPlayer.isSinkIdSupported();
-
+    // 音频设备由原生 DLL (Zig + miniaudio) 枚举，统一走 get_audio_devices / set_output_device
     function _populateQtDevices() {
       App.utils.call('get_audio_devices').then(function (res) {
         var data = JSON.parse(res);
@@ -875,30 +862,7 @@
       }
     }
 
-    if (canUseWebAudio) {
-      // 共享模式：Web Audio API 设备
-      App.audioPlayer.enumerateOutputDevices().then(function (devices) {
-        var webDevices = devices.map(function (d) {
-          return { id: d.deviceId, label: d.label || '音频设备' };
-        });
-        _renderDeviceMenu(webDevices, currentValue, function (devId) {
-          App.audioPlayer.setSinkId(devId).catch(function (e) {
-            console.warn('[settings] setSinkId 失败:', e);
-          });
-          App.utils.call('save_settings', JSON.stringify({ [row.bind]: devId }));
-        });
-        // 初始化时也应用已保存的设备
-        if (currentValue) {
-          App.audioPlayer.setSinkId(currentValue).catch(function (e) {
-            console.warn('[settings] 恢复输出设备失败:', e);
-          });
-        }
-      }).catch(function () {
-        _populateQtDevices();
-      });
-    } else {
-      _populateQtDevices();
-    }
+    _populateQtDevices();
   }
 
   function _refreshSelectedItem(menu, value) {
