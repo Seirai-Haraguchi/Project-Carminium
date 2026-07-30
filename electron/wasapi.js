@@ -1,34 +1,39 @@
 /**
- * Carminium — ネイティブオーディオレンダラー (Zig + miniaudio + SoundTouch)
+ * Carminium — ネイティブオーディオレンダラー (Zig + miniaudio)
  *
  * native/carminium_audio.zig が生成した carminium_audio.dll を koffi 経由で呼び出す。
- * DLL 側は miniaudio (WASAPI 共有/排他モード) で直接出力し、SoundTouch で
- * tempo/pitch/rate をリアルタイム処理し、ロックフリー SPSC リングバッファで
- * PCM を受け取る。デコード（ffmpeg）は JS 側が担当。
+ * DLL 側は miniaudio (WASAPI 共有/排他モード) で直接出力。
  *
  * アーキテクチャ:
- *   JS (ffmpeg decode, f32le PCM) → ca_push_pcm() → DLL 入力リングバッファ
- *     → dataCallback: SoundTouch (tempo/pitch) → WASAPI 出力
+ *   FFmpeg (デコード) → IPC → Renderer (Web Audio API 合成)
+ *                                         ↓
+ *   Renderer (合成済み PCM) → IPC → ca_push_pcm() → DLL → WASAPI
  *
- * 依存:
- *   - koffi (npm) — FFI ライブラリ
- *   - carminium_audio.dll — Zig + miniaudio + SoundTouch でビルドした DLL
- *   - ffmpeg (electron/bin/ffmpeg.exe またはシステム PATH)
+ * このモジュールは FFmpeg のデコードと miniaudio への PCM 出力のみを担当する。
+ * Gapless/AutoMix/音量の合成はすべてレンダラー側の Web Audio API で行われる。
  */
 'use strict';
 
 const koffi = require('koffi');
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, execFile } = require('child_process');
 const { EventEmitter } = require('events');
 const fs = require('fs');
 const path = require('path');
 
-// ── 共有モード定数 ──────────────────────────────────────────────────────────
-
 const SHARE_SHARED = 0;
 const SHARE_EXCLUSIVE = 1;
 
-// ── DLL ロード ─────────────────────────────────────────────────────────────────
+// asar パッケージ内のパスを実際のファイルシステム上のパス（app.asar.unpacked）に変換する。
+// koffi.load() や child_process.spawn() は Electron のパッチ済み fs を経由しないため、
+// asar 内のパスをそのまま渡すと実ファイルが見つからず失敗する。
+function _resolveRealPath(p) {
+  if (!p) return p;
+  // 文字列として ".asar" を含む場合、app.asar.unpacked へ置換
+  if (p.includes('.asar')) {
+    return p.replace(/\.asar([\\/])/, '.asar.unpacked$1');
+  }
+  return p;
+}
 
 let _lib = null;
 let _f = {};
@@ -42,7 +47,7 @@ function _loadDll() {
   ];
   let dllPath = null;
   for (const c of candidates) {
-    if (fs.existsSync(c)) { dllPath = c; break; }
+    if (fs.existsSync(c)) { dllPath = _resolveRealPath(c); break; }
   }
   if (!dllPath) {
     console.error('[wasapi] carminium_audio.dll not found. Searched:', candidates);
@@ -56,17 +61,12 @@ function _loadDll() {
     return false;
   }
 
-  // すべての関数を一括で宣言。1つでも失敗したら _lib をリセットして完全失敗扱いにする。
-  // これにより、部分ロード状態（一部関数が undefined）を防ぐ。
   const decls = [
     ['ca_init',                      'int32  ca_init(int32 share_mode, int32 device_index, uint32 sample_rate, uint16 channels)'],
     ['ca_start',                     'int32  ca_start()'],
     ['ca_stop',                      'int32  ca_stop()'],
     ['ca_push_pcm',                  'int32  ca_push_pcm(uint8 *data, uint32 len)'],
     ['ca_set_volume',                'void   ca_set_volume(float vol)'],
-    ['ca_set_tempo',                 'void   ca_set_tempo(float tempo)'],
-    ['ca_set_pitch',                 'void   ca_set_pitch(float pitch)'],
-    ['ca_set_rate',                  'void   ca_set_rate(float rate)'],
     ['ca_get_consumed_frames',       'uint64 ca_get_consumed_frames()'],
     ['ca_get_buffered_bytes',        'uint32 ca_get_buffered_bytes()'],
     ['ca_clear_buffer',              'void   ca_clear_buffer()'],
@@ -78,17 +78,6 @@ function _loadDll() {
     ['ca_close',                     'void   ca_close()'],
     ['ca_enumerate_devices',         'char * ca_enumerate_devices()'],
     ['ca_free_string',               'void   ca_free_string(void *str)'],
-    // AutoMix / クロスフェード
-    ['ca_push_next_pcm',             'int32  ca_push_next_pcm(uint8 *data, uint32 len)'],
-    ['ca_clear_next_buffer',         'void   ca_clear_next_buffer()'],
-    ['ca_get_next_buffered_bytes',   'uint32 ca_get_next_buffered_bytes()'],
-    ['ca_start_crossfade',           'int32  ca_start_crossfade(uint32 duration_ms)'],
-    ['ca_is_crossfading',            'int32  ca_is_crossfading()'],
-    ['ca_check_crossfade_completed', 'int32  ca_check_crossfade_completed()'],
-    // Gapless
-    ['ca_set_gapless_enabled',       'void   ca_set_gapless_enabled(int32 enabled)'],
-    ['ca_get_gapless_enabled',       'int32  ca_get_gapless_enabled()'],
-    ['ca_gapless_switch',            'int32  ca_gapless_switch()'],
   ];
 
   try {
@@ -105,16 +94,14 @@ function _loadDll() {
   return true;
 }
 
-// ── ffmpeg / ffprobe 探索 ─────────────────────────────────────────────────────
-
 let _ffmpegPath = null, _ffprobePath = null;
 
 function _findFFmpeg() {
   if (_ffmpegPath !== null) return _ffmpegPath;
   const bundled = path.join(__dirname, 'bin', 'ffmpeg.exe');
-  if (fs.existsSync(bundled)) { _ffmpegPath = bundled; return _ffmpegPath; }
+  if (fs.existsSync(bundled)) { _ffmpegPath = _resolveRealPath(bundled); return _ffmpegPath; }
   const devBin = path.join(__dirname, '..', 'bin', 'ffmpeg.exe');
-  if (fs.existsSync(devBin)) { _ffmpegPath = devBin; return _ffmpegPath; }
+  if (fs.existsSync(devBin)) { _ffmpegPath = _resolveRealPath(devBin); return _ffmpegPath; }
   try {
     execSync('ffmpeg -version', { stdio: 'ignore', timeout: 5000 });
     _ffmpegPath = 'ffmpeg';
@@ -136,9 +123,9 @@ function _findFFmpeg() {
 function _findFFprobe() {
   if (_ffprobePath !== null) return _ffprobePath;
   const bundled = path.join(__dirname, 'bin', 'ffprobe.exe');
-  if (fs.existsSync(bundled)) { _ffprobePath = bundled; return _ffprobePath; }
+  if (fs.existsSync(bundled)) { _ffprobePath = _resolveRealPath(bundled); return _ffprobePath; }
   const devBin = path.join(__dirname, '..', 'bin', 'ffprobe.exe');
-  if (fs.existsSync(devBin)) { _ffprobePath = devBin; return _ffprobePath; }
+  if (fs.existsSync(devBin)) { _ffprobePath = _resolveRealPath(devBin); return _ffprobePath; }
   try {
     execSync('ffprobe -version', { stdio: 'ignore', timeout: 5000 });
     _ffprobePath = 'ffprobe';
@@ -152,8 +139,6 @@ function _findFFprobe() {
   _ffprobePath = false;
   return _ffprobePath;
 }
-
-// ── NativeRenderer クラス ─────────────────────────────────────────────────────
 
 class NativeRenderer extends EventEmitter {
   constructor() {
@@ -171,45 +156,36 @@ class NativeRenderer extends EventEmitter {
 
     this._currentFilePath = null;
 
-    // PCM 受け渡し
     this._ffmpegProc = null;
     this._ffmpegFinished = false;
-    this._pendingChunks = [];
-    this._pendingBytes = 0;
-    this._drainTimer = null;
-    this._endCheckTimer = null;
+    this._ffmpegDataStarted = false;
+    // サンプル境界に揃っていない残りバイト
+    this._pendingBuf = Buffer.alloc(0);
 
-    // 位置追跡
     this._seekOffsetMs = 0;
-    this._posTimer = null;
 
-    // SoundTouch パラメータ
-    this._tempo = 1.0;
-    this._pitch = 1.0;
-    this._rate = 1.0;
-
-    // AutoMix / クロスフェード
+    // 次曲 FFmpeg
     this._nextFfmpegProc = null;
     this._nextFfmpegFinished = false;
-    this._nextPendingChunks = [];
-    this._nextPendingBytes = 0;
-    this._nextDrainTimer = null;
+    this._nextPendingBuf = Buffer.alloc(0);
     this._nextDurationMs = 0;
     this._nextFilePath = null;
-    this._crossfadeDurationMs = 4000; // デフォルト 4 秒
-    this._crossfadeEnabled = false;
-    this._cfCheckTimer = null;
+    // crossfade/gapless 完成后，next ffmpeg 被提升为 main ffmpeg
+    // 此时其 PCM 数据和 close 事件应路由到 'main' channel
+    this._nextPromoted = false;
 
-    // Gapless
-    this._gaplessEnabled = false;
+    // Web Audio API 模式标志：当为 true 时，浏览器可解码的格式不启动 FFmpeg
+    this._webAudioEnabled = false;
+    // 当前曲目是否使用浏览器解码（无 FFmpeg 进程）
+    this._webAudioBrowserDecode = false;
 
-    // コールバック（player.js が設定）
-    this.onPositionTick = null;
-    this.onEnded = null;
-    this.onCrossfadeComplete = null; // クロスフェード完了時コールバック
+    // レンダラーに PCM を送るためのコールバック
+    // Bridge が設定する
+    this.sendPcmToRenderer = null;    // (channel: 'main'|'next', float32Array) => void
+    this.sendFfmpegState = null;      // (channel: 'main'|'next', finished: bool) => void
+
+    this._drainTimer = null;
   }
-
-  // ── デバイス列挙 ──────────────────────────────────────────────────────────
 
   static enumerateDevices() {
     if (!_loadDll()) return [];
@@ -229,16 +205,6 @@ class NativeRenderer extends EventEmitter {
     }
   }
 
-  // ── 初期化 ────────────────────────────────────────────────────────────────
-
-  /**
-   * デバイスを初期化する。
-   * @param {object} opts
-   * @param {number} opts.shareMode - 0=共有, 1=排他 (デフォルト: 共有)
-   * @param {number} opts.deviceIndex - デバイスインデックス (-1=デフォルト)
-   * @param {number} opts.sampleRate - サンプルレート (0=デバイスネイティブ)
-   * @param {number} opts.channels - チャンネル数 (0=2)
-   */
   async init(opts = {}) {
     if (!_loadDll()) throw new Error('carminium_audio.dll not loaded');
     if (this._initialized) await this.close();
@@ -250,35 +216,27 @@ class NativeRenderer extends EventEmitter {
 
     const result = _f.ca_init(shareMode, deviceIndex, sampleRate, channels);
     if (result !== 0) {
-      let msg;
-      switch (result) {
-        case -1: msg = 'already initialized'; break;
-        case -3: msg = 'miniaudio context init failed'; break;
-        case -4: msg = 'SoundTouch init failed'; break;
-        default:
-          if (shareMode === SHARE_EXCLUSIVE) {
-            msg = `miniaudio error ${result} (exclusive mode unavailable — ` +
-                  `device may be in use or exclusive mode disabled in Windows settings)`;
-          } else {
-            msg = `miniaudio error ${result}`;
-          }
+      // 独占模式失败 → 自动回退到共享模式
+      if (shareMode === SHARE_EXCLUSIVE) {
+        console.warn('[wasapi] Exclusive mode init failed (ca_init=' + result + '), falling back to shared');
+        const retry = _f.ca_init(SHARE_SHARED, deviceIndex, sampleRate, channels);
+        if (retry !== 0) {
+          throw new Error(`ca_init failed: miniaudio error ${retry}`);
+        }
+      } else {
+        throw new Error(`ca_init failed: miniaudio error ${result}`);
       }
-      throw new Error(`ca_init failed: ${msg}`);
     }
 
     this._shareMode      = _f.ca_get_share_mode();
     this._sampleRate     = _f.ca_get_sample_rate();
     this._channels       = _f.ca_get_channels();
-    this._bytesPerFrame  = (this._channels * 32) / 8;  // 常に f32
+    this._bytesPerFrame  = (this._channels * 32) / 8;
     this._initialized    = true;
     this._seekOffsetMs   = 0;
 
-    // 音量・SoundTouch パラメータを DLL 側に反映
-    _f.ca_set_volume(this._volume);
-    _f.ca_set_tempo(this._tempo);
-    _f.ca_set_pitch(this._pitch);
-    _f.ca_set_rate(this._rate);
-    _f.ca_set_gapless_enabled(this._gaplessEnabled ? 1 : 0);
+    // 音量は DLL 側では 1.0 固定（Web Audio API 側で制御）
+    _f.ca_set_volume(1.0);
 
     const modeStr = this._shareMode === SHARE_EXCLUSIVE ? 'exclusive' : 'shared';
     console.log(`[wasapi] Initialized ${modeStr} mode: ` +
@@ -292,7 +250,7 @@ class NativeRenderer extends EventEmitter {
     };
   }
 
-  // ── ファイル再生 ──────────────────────────────────────────────────────────
+  // ── FFmpeg デコード ──────────────────────────────────────────────────────
 
   async playFile(filePath) {
     if (!this._initialized) throw new Error('Renderer not initialized');
@@ -302,52 +260,32 @@ class NativeRenderer extends EventEmitter {
     if (!ff) throw new Error('ffmpeg not found (required for audio decoding)');
 
     this._currentFilePath = filePath;
+    this._webAudioBrowserDecode = false; // FFmpeg 解码路径
     this._killFFmpeg();
     this._killNextFfmpeg();
     this._stopDrainTimer();
-    this._stopNextDrainTimer();
-    this._stopEndCheck();
-    this._stopCrossfadeCheck();
-    this._pendingChunks = [];
-    this._pendingBytes = 0;
-    this._nextPendingChunks = [];
-    this._nextPendingBytes = 0;
+    this._pendingBuf = Buffer.alloc(0);
+    this._nextPendingBuf = Buffer.alloc(0);
     this._nextFilePath = null;
     this._nextDurationMs = 0;
     this._seekOffsetMs = 0;
     _f.ca_clear_buffer();
-    _f.ca_clear_next_buffer();
 
     this._durationMs = await this._probeDuration(filePath);
 
     this._spawnFFmpeg(filePath, 0);
 
-    // プリバッファ：ring buffer に一定量の PCM が溜まるまで待ってから再生開始
-    // これにより起動直後のアンダーラン（途切れ）を防ぐ。
-    // 目標：目標 500ms 分または最大 2 秒待ち。
-    const targetMs = 500;
-    const bytesPerMs = (this._sampleRate * this._channels * 4) / 1000;
-    const targetBytes = Math.min(targetMs * bytesPerMs, 2 * 1024 * 1024); // 最大 2MB
+    // FFmpeg が最初の PCM データを出力したら即座に戻る
+    // （PCM は _onPcmData でレンダラーに送られ、_pendingStreamingPcm にバッファされる）
+    // 以前は _ffmpegFinished か 2s タイムアウトを待っていたが、
+    // これにより余分な PCM がバッファに蓄積し再生遅延の原因になっていた
     const maxWaitMs = 2000;
     const startT = Date.now();
 
     await new Promise((resolve) => {
       const check = () => {
-        const buffered = _f.ca_get_buffered_bytes();
-        if (buffered >= targetBytes) {
-          resolve();
-          return;
-        }
-        if (Date.now() - startT > maxWaitMs) {
-          // タイムアウト：そのまま再生開始
-          resolve();
-          return;
-        }
-        if (this._ffmpegFinished && this._pendingBytes === 0) {
-          // ffmpeg が既に終了している（短いファイルなど）
-          resolve();
-          return;
-        }
+        if (this._ffmpegDataStarted || this._ffmpegFinished) { resolve(); return; }
+        if (Date.now() - startT > maxWaitMs) { resolve(); return; }
         setTimeout(check, 20);
       };
       check();
@@ -360,7 +298,6 @@ class NativeRenderer extends EventEmitter {
     const ff = _findFFmpeg();
     if (!ff) return;
 
-    // PCM は常に f32le (SoundTouch 要件)
     const args = [];
     if (seekSec > 0) {
       args.push('-ss', String(seekSec));
@@ -375,54 +312,123 @@ class NativeRenderer extends EventEmitter {
     );
 
     this._ffmpegFinished = false;
+    this._ffmpegDataStarted = false;
     this._ffmpegProc = spawn(ff, args, { windowsHide: true });
 
-    this._ffmpegProc.stdout.on('data', (chunk) => this._onPcmData(chunk));
+    this._ffmpegProc.stdout.on('data', (chunk) => this._onPcmData(chunk, 'main'));
     this._ffmpegProc.stderr.on('data', () => { /* ignore */ });
 
     this._ffmpegProc.on('close', () => {
       this._ffmpegFinished = true;
       this._ffmpegProc = null;
-      this._checkEnded();
+      if (this.sendFfmpegState) this.sendFfmpegState('main', true);
     });
     this._ffmpegProc.on('error', (e) => {
       console.error('[wasapi] ffmpeg error:', e.message);
       this._ffmpegFinished = true;
       this._ffmpegProc = null;
+      if (this.sendFfmpegState) this.sendFfmpegState('main', true);
     });
   }
 
   async _probeDuration(filePath) {
     const probe = _findFFprobe();
     if (!probe) return 0;
-    try {
-      const output = execSync(
-        `"${probe}" -v quiet -show_entries format=duration -of csv=p=0 "${filePath}"`,
-        { encoding: 'utf8', timeout: 10000, windowsHide: true }
-      ).trim();
-      const seconds = parseFloat(output);
-      return isNaN(seconds) ? 0 : Math.round(seconds * 1000);
-    } catch {
-      return 0;
+    return new Promise((resolve) => {
+      const args = [
+        '-v', 'quiet',
+        '-show_entries', 'format=duration',
+        '-of', 'csv=p=0',
+        filePath,
+      ];
+      const child = execFile(probe, args, { timeout: 10000 }, (err, stdout) => {
+        if (err) { resolve(0); return; }
+        const seconds = parseFloat(stdout.trim());
+        resolve(isNaN(seconds) ? 0 : Math.round(seconds * 1000));
+      });
+      // 进程级超时保底
+      setTimeout(() => { try { child.kill(); } catch {} }, 10500);
+    });
+  }
+
+  // ── PCM 受信 → レンダラーに転送 ──────────────────────────────────────────
+
+  _onPcmData(chunk, channel) {
+    // next track 被提升为 current 后，其 PCM 数据路由到 'main' channel
+    if (channel === 'next' && this._nextPromoted) {
+      channel = 'main';
+    }
+
+    // 标记 FFmpeg 已开始产出数据（用于 playFile() 提前返回）
+    if (channel === 'main' && !this._ffmpegDataStarted) {
+      this._ffmpegDataStarted = true;
+    }
+
+    let buf = chunk;
+    const pendingBuf = channel === 'main' ? this._pendingBuf : this._nextPendingBuf;
+
+    if (pendingBuf.length > 0) {
+      buf = Buffer.concat([pendingBuf, chunk]);
+    }
+
+    const sampleBytes = 4;
+    const alignedLen = Math.floor(buf.length / sampleBytes) * sampleBytes;
+    const remainder = buf.length - alignedLen;
+
+    // 残りを保存
+    if (channel === 'main') {
+      this._pendingBuf = remainder > 0 ? buf.slice(alignedLen) : Buffer.alloc(0);
+    } else {
+      this._nextPendingBuf = remainder > 0 ? buf.slice(alignedLen) : Buffer.alloc(0);
+    }
+
+    if (alignedLen === 0) return;
+
+    // Float32Array ビューを作成してレンダラーに送信
+    const floatArray = new Float32Array(buf.buffer, buf.byteOffset, alignedLen / 4);
+
+    if (this.sendPcmToRenderer) {
+      this.sendPcmToRenderer(channel, new Float32Array(floatArray));
     }
   }
 
-  // ── PCM データ受け渡し ──────────────────────────────────────────────────────
+  // ── レンダラーから合成済み PCM を受信 → DLL にプッシュ ───────────────
 
-  _onPcmData(chunk) {
-    if (this._pendingBytes === 0) {
-      const r = _f.ca_push_pcm(chunk, chunk.length);
-      if (r === 0) return;
+  pushProcessedPcm(float32ArrayOrBuffer) {
+    if (!this._initialized) return -1;
+
+    let buf;
+    if (Buffer.isBuffer(float32ArrayOrBuffer)) {
+      buf = float32ArrayOrBuffer;
+    } else if (float32ArrayOrBuffer instanceof Float32Array) {
+      buf = Buffer.from(float32ArrayOrBuffer.buffer, float32ArrayOrBuffer.byteOffset, float32ArrayOrBuffer.byteLength);
+    } else if (ArrayBuffer.isView(float32ArrayOrBuffer)) {
+      buf = Buffer.from(float32ArrayOrBuffer.buffer, float32ArrayOrBuffer.byteOffset, float32ArrayOrBuffer.byteLength);
+    } else {
+      return -1;
     }
-    this._pendingChunks.push(chunk);
-    this._pendingBytes += chunk.length;
-    this._startDrainTimer();
+
+    const result = _f.ca_push_pcm(buf, buf.length);
+    if (result !== 0) {
+      if (result === -2) {
+        this._pushOverflowCount = (this._pushOverflowCount || 0) + 1;
+        if (this._pushOverflowCount % 100 === 1) {
+          console.warn(`[wasapi] ca_push_pcm buffer full (overflow #${this._pushOverflowCount}), len=${buf.length}`);
+        }
+      } else {
+        console.error('[wasapi] ca_push_pcm failed:', result, 'len=', buf.length);
+      }
+    }
+    return result;
   }
+
+  // ── ドレインタイマー（DLL バッファの補充チェック）───────────────────────
 
   _startDrainTimer() {
     if (this._drainTimer) return;
-    // 20ms 間隔でドレイン。5ms だと Node.js のイベントループが圧迫され UI が卡死する。
-    this._drainTimer = setInterval(() => this._drainPending(), 20);
+    // ドレインタイマーは不要。レンダラー側の ScriptProcessorNode が
+    // 自動的にクロック駆動でデータを送ってくる。
+    // ただし、DLL バッファが枯渇しそうな場合はログを出す程度。
   }
 
   _stopDrainTimer() {
@@ -430,24 +436,6 @@ class NativeRenderer extends EventEmitter {
       clearInterval(this._drainTimer);
       this._drainTimer = null;
     }
-  }
-
-  _drainPending() {
-    while (this._pendingChunks.length > 0) {
-      const chunk = this._pendingChunks[0];
-      const r = _f.ca_push_pcm(chunk, chunk.length);
-      if (r === 0) {
-        this._pendingChunks.shift();
-        this._pendingBytes -= chunk.length;
-      } else if (r === -2) {
-        return;
-      } else {
-        this._pendingChunks.shift();
-        this._pendingBytes -= chunk.length;
-      }
-    }
-    this._stopDrainTimer();
-    this._checkEnded();
   }
 
   // ── 再生制御 ──────────────────────────────────────────────────────────────
@@ -458,8 +446,6 @@ class NativeRenderer extends EventEmitter {
     if (r !== 0) throw new Error(`ca_start failed: ${r}`);
     this._playing = true;
     this._paused = false;
-    this._startPositionTimer();
-    if (this._pendingBytes > 0) this._startDrainTimer();
     this.emit('state_changed', 'playing');
   }
 
@@ -468,7 +454,6 @@ class NativeRenderer extends EventEmitter {
     _f.ca_stop();
     this._playing = false;
     this._paused = true;
-    this._stopPositionTimer();
     this.emit('state_changed', 'paused');
   }
 
@@ -476,20 +461,12 @@ class NativeRenderer extends EventEmitter {
     _f.ca_stop();
     this._playing = false;
     this._paused = false;
-    this._stopPositionTimer();
     this._stopDrainTimer();
-    this._stopEndCheck();
-    this._stopCrossfadeCheck();
     this._killFFmpeg();
     this._killNextFfmpeg();
-    this._pendingChunks = [];
-    this._pendingBytes = 0;
-    this._nextPendingChunks = [];
-    this._nextPendingBytes = 0;
     this._nextFilePath = null;
     this._seekOffsetMs = 0;
     _f.ca_clear_buffer();
-    _f.ca_clear_next_buffer();
     this.emit('state_changed', 'stopped');
   }
 
@@ -499,16 +476,14 @@ class NativeRenderer extends EventEmitter {
     const wasPlaying = this._playing;
 
     _f.ca_stop();
-    this._stopDrainTimer();
-    this._stopEndCheck();
     this._killFFmpeg();
-    this._pendingChunks = [];
-    this._pendingBytes = 0;
-
+    this._pendingBuf = Buffer.alloc(0);
     _f.ca_clear_buffer();
     this._seekOffsetMs = Math.round(seekSec * 1000);
 
-    if (this._currentFilePath) {
+    // Web Audio 模式：浏览器可解码格式不启动 FFmpeg
+    // AudioEngine 会处理 seek，DLL 只需清除缓冲区
+    if (this._currentFilePath && !this._webAudioBrowserDecode) {
       this._spawnFFmpeg(this._currentFilePath, seekSec);
     }
 
@@ -516,415 +491,276 @@ class NativeRenderer extends EventEmitter {
       const r = _f.ca_start();
       if (r === 0) {
         this._playing = true;
-        this._startPositionTimer();
-        if (this._pendingBytes > 0) this._startDrainTimer();
       }
     } else {
       this._paused = true;
     }
-
-    this.emit('position_changed', this._seekOffsetMs);
   }
 
   async setVolume(level) {
+    // 音量は Web Audio API 側で制御。DLL は常に 1.0。
     this._volume = Math.max(0, Math.min(1, level));
-    if (this._initialized) {
-      _f.ca_set_volume(this._volume);
-    }
   }
 
-  // ── SoundTouch パラメータ ──────────────────────────────────────────────────
+  // ── Web Audio API モード ──────────────────────────────────────────────────
 
   /**
-   * tempo 設定 (1.0 = 原速)。リアルタイム反映。
-   * tempo はピッチを変えずに再生速度を変更する。
+   * Web Audio API 模式を有効/無効にする。
+   * 有効時、ブラウザでデコード可能な形式のファイルは FFmpeg を起動しない。
    */
-  setTempo(tempo) {
-    this._tempo = Math.max(0.25, Math.min(4.0, tempo));
-    if (this._initialized) {
-      _f.ca_set_tempo(this._tempo);
-    }
+  setWebAudioEnabled(enabled) {
+    this._webAudioEnabled = !!enabled;
+    console.log('[wasapi] Web Audio mode:', enabled ? 'enabled' : 'disabled');
   }
 
   /**
-   * pitch 設定 (1.0 = 原調)。
-   * pitch は速度を変えずに音高を変更する。
+   * ブラウザデコード用にファイルを設定（FFmpeg を起動しない）。
+   * Web Audio API 側で decodeAudioData を使用してデコードする。
+   *
+   * @param {string} filePath - 音频文件路径
+   * @returns {Promise<{durationMs: number}>}
    */
-  setPitch(pitch) {
-    this._pitch = Math.max(0.25, Math.min(4.0, pitch));
-    if (this._initialized) {
-      _f.ca_set_pitch(this._pitch);
-    }
-  }
-
-  /**
-   * rate 設定 (1.0 = 原速原調)。
-   * rate はテープ風エフェクト（速度とピッチが連動）。
-   */
-  setRate(rate) {
-    this._rate = Math.max(0.25, Math.min(4.0, rate));
-    if (this._initialized) {
-      _f.ca_set_rate(this._rate);
-    }
-  }
-
-  get tempo() { return this._tempo; }
-  get pitch() { return this._pitch; }
-  get rate() { return this._rate; }
-
-  // ── AutoMix / クロスフェード ──────────────────────────────────────────────
-
-  setCrossfadeEnabled(enabled) {
-    this._crossfadeEnabled = !!enabled;
-    // AutoMix と Gapless は相互排他
-    if (this._crossfadeEnabled && this._gaplessEnabled) {
-      this._gaplessEnabled = false;
-      if (this._initialized) {
-        _f.ca_set_gapless_enabled(0);
-      }
-    }
-  }
-
-  get crossfadeEnabled() {
-    return this._crossfadeEnabled;
-  }
-
-  setCrossfadeDuration(ms) {
-    this._crossfadeDurationMs = Math.max(500, Math.min(15000, ms | 0));
-  }
-
-  get crossfadeDurationMs() {
-    return this._crossfadeDurationMs;
-  }
-
-  /**
-   * 次曲をプリロードする（AutoMix 用）。
-   * ffmpeg でデコードを開始し、DLL のプリロードバッファに PCM を供給する。
-   */
-  async preloadNext(filePath) {
+  async setupForBrowserDecode(filePath) {
     if (!this._initialized) throw new Error('Renderer not initialized');
     if (!filePath) throw new Error('No file path');
+
+    this._currentFilePath = filePath;
+    this._killFFmpeg();
+    this._killNextFfmpeg();
+    this._stopDrainTimer();
+    this._pendingBuf = Buffer.alloc(0);
+    this._nextPendingBuf = Buffer.alloc(0);
+    this._nextFilePath = null;
+    this._nextDurationMs = 0;
+    this._seekOffsetMs = 0;
+    _f.ca_clear_buffer();
+
+    // ffprobe で長さを取得（失敗しても 0 を返すだけ）
+    this._durationMs = await this._probeDuration(filePath);
+
+    // FFmpeg は起動しない。Web Audio API 側でデコード＆再生。
+    this._webAudioBrowserDecode = true;
+    console.log('[wasapi] setupForBrowserDecode:', filePath, 'duration=', this._durationMs);
+    return { durationMs: this._durationMs };
+  }
+
+  // ── 次曲プリロード ──────────────────────────────────────────────────────
+
+  async preloadNext(filePath, seekMsOrOpts = 0) {
+    if (!this._initialized) throw new Error('Renderer not initialized');
+    if (!filePath) throw new Error('No file path');
+
+    // 支持调用方式：preloadNext(filePath, {skipFFmpeg})
+    let skipFFmpeg = false;
+    if (typeof seekMsOrOpts === 'object') {
+      skipFFmpeg = !!seekMsOrOpts.skipFFmpeg;
+    }
+
+    this._killNextFfmpeg();
+    this._nextPendingBuf = Buffer.alloc(0);
+    this._nextFilePath = filePath;
+
+    this._nextDurationMs = await this._probeDuration(filePath);
+
+    // Web Audio 模式：浏览器可解码的格式不启动 FFmpeg
+    if (skipFFmpeg) {
+      console.log('[wasapi] preloadNext (skipFFmpeg):', filePath);
+      return { durationMs: this._nextDurationMs };
+    }
 
     const ff = _findFFmpeg();
     if (!ff) throw new Error('ffmpeg not found');
 
-    this._killNextFfmpeg();
-    this._stopNextDrainTimer();
-    this._nextPendingChunks = [];
-    this._nextPendingBytes = 0;
-    this._nextFilePath = filePath;
-    _f.ca_clear_next_buffer();
+    this._spawnNextFfmpeg(filePath, 0);
 
-    this._nextDurationMs = await this._probeDuration(filePath);
-
-    this._spawnNextFfmpeg(filePath);
-
-    // プリバッファ：次曲バッファに一定量溜まるまで待つ（オプション）
-    const targetBytes = Math.min(
-      (this._sampleRate * this._channels * 4) / 1000 * 500, // 500ms 分
-      2 * 1024 * 1024
-    );
+    // 少し待ってデータが出始めたら返す
     const maxWaitMs = 2000;
     const startT = Date.now();
 
     await new Promise((resolve) => {
       const check = () => {
-        const buffered = _f.ca_get_next_buffered_bytes();
-        if (buffered >= targetBytes) { resolve(); return; }
+        if (this._nextFfmpegFinished) { resolve(); return; }
         if (Date.now() - startT > maxWaitMs) { resolve(); return; }
-        if (this._nextFfmpegFinished && this._nextPendingBytes === 0) {
-          resolve(); return;
-        }
         setTimeout(check, 20);
       };
       check();
     });
 
-    // Gapless モード時は、切り替え完了検知を開始する
-    // （DLL 側で自動的にバッファ切り替えが行われるため、ポーリングで検知）
-    if (this._gaplessEnabled) {
-      this._startCrossfadeCheck();
-    }
-
+    console.log('[wasapi] preloadNext complete:', filePath);
     return { durationMs: this._nextDurationMs };
   }
 
-  _spawnNextFfmpeg(filePath) {
+  /**
+   * Crossfade/Gapless 完成后，将 next track 提升为 current track。
+   *
+   * AudioEngine 的 _finishMix() 已把 nextRing 的剩余数据复制到 mainRing，
+   * 但 wasapi.js 侧的 next ffmpeg 进程仍在运行。如果不提升，后续 PCM 数据
+   * 仍会进入 'next' channel（被 AudioEngine 忽略），导致 mainRing 枯竭后静音死锁。
+   *
+   * 提升后：
+   * - next ffmpeg 进程变为 main ffmpeg 进程
+   * - 后续 PCM 数据通过 'main' channel 发送
+   * - close 事件通过 'main' channel 通知
+   * - 元数据（filePath, durationMs）更新为新曲目
+   */
+  promoteNextToCurrent() {
+    if (!this._nextFilePath && !this._nextPromoted) {
+      console.warn('[wasapi] promoteNextToCurrent: no next track to promote');
+      return;
+    }
+
+    // 杀死旧 main ffmpeg（通常已结束）
+    this._killFFmpeg();
+
+    // 把 next 的 pending 数据移到 main
+    this._pendingBuf = this._nextPendingBuf;
+    this._nextPendingBuf = Buffer.alloc(0);
+
+    // 把 next ffmpeg 进程变为 main
+    const proc = this._nextFfmpegProc;
+    this._ffmpegProc = proc;
+    this._ffmpegFinished = this._nextFfmpegFinished;
+    this._nextFfmpegProc = null;
+    this._nextFfmpegFinished = false;
+
+    // 更新元数据
+    this._currentFilePath = this._nextFilePath;
+    this._durationMs = this._nextDurationMs;
+    this._seekOffsetMs = 0;
+    this._nextFilePath = null;
+    this._nextDurationMs = 0;
+    this._nextPromoted = false;
+    // 提升后的浏览器解码标志：无 FFmpeg 进程意味着次曲是浏览器解码的
+    this._webAudioBrowserDecode = !proc;
+
+    // 关键：将提升后的进程的事件监听器从 'next' 语义切换为 'main' 语义。
+    // 旧实现依赖 _nextPromoted 标志做运行时路由，但该标志会在下次
+    // _killNextFfmpeg() 时被重置为 false，导致 PCM 数据误入 'next' 通道、
+    // mainRing 枯竭后静音死锁。直接重新绑定监听器彻底消除该隐患。
+    if (proc) {
+      proc.stdout.removeAllListeners('data');
+      proc.stdout.on('data', (chunk) => this._onPcmData(chunk, 'main'));
+
+      proc.removeAllListeners('close');
+      proc.on('close', () => {
+        this._ffmpegFinished = true;
+        this._ffmpegProc = null;
+        if (this.sendFfmpegState) this.sendFfmpegState('main', true);
+      });
+
+      proc.removeAllListeners('error');
+      proc.on('error', (e) => {
+        console.error('[wasapi] ffmpeg error (promoted):', e.message);
+        this._ffmpegFinished = true;
+        this._ffmpegProc = null;
+        if (this.sendFfmpegState) this.sendFfmpegState('main', true);
+      });
+    }
+
+    console.log('[wasapi] Promoted next to current:', this._currentFilePath,
+      'duration:', this._durationMs + 'ms',
+      'ffmpeg running:', !!this._ffmpegProc);
+  }
+
+  _spawnNextFfmpeg(filePath, seekSec = 0) {
     const ff = _findFFmpeg();
     if (!ff) return;
 
-    const args = [
+    const args = [];
+    if (seekSec > 0) {
+      args.push('-ss', String(seekSec));
+    }
+    args.push(
       '-i', filePath,
       '-f', 'f32le',
       '-ar', String(this._sampleRate),
       '-ac', String(this._channels),
       '-loglevel', 'quiet',
       'pipe:1'
-    ];
+    );
 
     this._nextFfmpegFinished = false;
     this._nextFfmpegProc = spawn(ff, args, { windowsHide: true });
 
-    this._nextFfmpegProc.stdout.on('data', (chunk) => this._onNextPcmData(chunk));
+    this._nextFfmpegProc.stdout.on('data', (chunk) => this._onPcmData(chunk, 'next'));
     this._nextFfmpegProc.stderr.on('data', () => { /* ignore */ });
 
     this._nextFfmpegProc.on('close', () => {
       this._nextFfmpegFinished = true;
       this._nextFfmpegProc = null;
+      if (this._nextPromoted) {
+        // 已提升为 current，通知 main channel
+        this._ffmpegFinished = true;
+        if (this.sendFfmpegState) this.sendFfmpegState('main', true);
+      } else {
+        if (this.sendFfmpegState) this.sendFfmpegState('next', true);
+      }
     });
     this._nextFfmpegProc.on('error', (e) => {
       console.error('[wasapi] next ffmpeg error:', e.message);
       this._nextFfmpegFinished = true;
       this._nextFfmpegProc = null;
+      if (this._nextPromoted) {
+        this._ffmpegFinished = true;
+        if (this.sendFfmpegState) this.sendFfmpegState('main', true);
+      } else {
+        if (this.sendFfmpegState) this.sendFfmpegState('next', true);
+      }
     });
   }
 
   _killNextFfmpeg() {
+    this._nextPromoted = false;
     if (this._nextFfmpegProc) {
+      try {
+        this._nextFfmpegProc.removeAllListeners('close');
+        this._nextFfmpegProc.removeAllListeners('error');
+        if (this._nextFfmpegProc.stdout) this._nextFfmpegProc.stdout.removeAllListeners('data');
+      } catch { /* ignore */ }
       try { this._nextFfmpegProc.kill('SIGKILL'); } catch { /* ignore */ }
       this._nextFfmpegProc = null;
     }
     this._nextFfmpegFinished = false;
-  }
-
-  _onNextPcmData(chunk) {
-    if (this._nextPendingBytes === 0) {
-      const r = _f.ca_push_next_pcm(chunk, chunk.length);
-      if (r === 0) return;
-    }
-    this._nextPendingChunks.push(chunk);
-    this._nextPendingBytes += chunk.length;
-    this._startNextDrainTimer();
-  }
-
-  _startNextDrainTimer() {
-    if (this._nextDrainTimer) return;
-    this._nextDrainTimer = setInterval(() => this._drainNextPending(), 20);
-  }
-
-  _stopNextDrainTimer() {
-    if (this._nextDrainTimer) {
-      clearInterval(this._nextDrainTimer);
-      this._nextDrainTimer = null;
-    }
-  }
-
-  _drainNextPending() {
-    while (this._nextPendingChunks.length > 0) {
-      const chunk = this._nextPendingChunks[0];
-      const r = _f.ca_push_next_pcm(chunk, chunk.length);
-      if (r === 0) {
-        this._nextPendingChunks.shift();
-        this._nextPendingBytes -= chunk.length;
-      } else if (r === -2) {
-        return;
-      } else {
-        this._nextPendingChunks.shift();
-        this._nextPendingBytes -= chunk.length;
-      }
-    }
-    this._stopNextDrainTimer();
+    this._nextPendingBuf = Buffer.alloc(0);
   }
 
   /**
-   * クロスフェードを開始する。
-   * 呼び出し後、DLL 内部でクロスフェードが実行され、完了すると
-   * onCrossfadeComplete コールバックが呼ばれる。
+   * 获取 DLL 环形缓冲区的延迟（毫秒）。
+   * 已推送到 DLL 但尚未被 WASAPI 消费的音频时长。
+   * 用于渲染进程修正位置追踪（歌词/进度条同步）。
    */
-  startCrossfade(durationMs) {
-    if (!this._initialized) return -1;
-    const dur = durationMs != null ? durationMs : this._crossfadeDurationMs;
-    const r = _f.ca_start_crossfade(dur);
-    if (r !== 0) {
-      console.warn('[wasapi] ca_start_crossfade failed:', r);
-      return r;
-    }
-    this._startCrossfadeCheck();
-    return 0;
-  }
-
-  _startCrossfadeCheck() {
-    this._stopCrossfadeCheck();
-    this._cfCheckTimer = setInterval(() => {
-      const completed = _f.ca_check_crossfade_completed();
-      if (completed) {
-        this._stopCrossfadeCheck();
-        // クロスフェード完了: メインバッファが入れ替わっているので
-        // 次曲用の ffmpeg とバッファを後始末、新しいトラックの状態に更新
-        this._onCrossfadeComplete();
-      }
-    }, 20);
-  }
-
-  _stopCrossfadeCheck() {
-    if (this._cfCheckTimer) {
-      clearInterval(this._cfCheckTimer);
-      this._cfCheckTimer = null;
+  getBufferLatencyMs() {
+    if (!this._initialized) return 0;
+    try {
+      const bytes = _f.ca_get_buffered_bytes();
+      if (bytes <= 0) return 0;
+      return Math.round(bytes * 1000 / (this._sampleRate * this._bytesPerFrame));
+    } catch {
+      return 0;
     }
   }
 
-  _onCrossfadeComplete() {
-    // 旧メイン（前曲）の ffmpeg 等を後始末
-    this._killFFmpeg();
-    this._stopDrainTimer();
-    this._pendingChunks = [];
-    this._pendingBytes = 0;
-
-    // 次曲だったものがメインに昇格
-    this._currentFilePath = this._nextFilePath;
-    this._durationMs = this._nextDurationMs;
-    this._seekOffsetMs = 0;
-    this._ffmpegProc = this._nextFfmpegProc;
-    this._ffmpegFinished = this._nextFfmpegFinished;
-    this._pendingChunks = this._nextPendingChunks;
-    this._pendingBytes = this._nextPendingBytes;
-    this._drainTimer = this._nextDrainTimer;
-
-    // 次曲関連をリセット
-    this._nextFfmpegProc = null;
-    this._nextFfmpegFinished = false;
-    this._nextPendingChunks = [];
-    this._nextPendingBytes = 0;
-    this._nextDrainTimer = null;
-    this._nextFilePath = null;
-    this._nextDurationMs = 0;
-
-    if (this._pendingBytes > 0) this._startDrainTimer();
-
-    // Gapless モードで自動切り替えされた場合も、完了イベントを発行
-    this.emit('crossfade_complete');
-    if (this.onCrossfadeComplete) this.onCrossfadeComplete();
-  }
-
-  /** 現在の残り時間（ミリ秒）を取得 */
   getRemainingMs() {
     const pos = this._currentPositionMs();
     return Math.max(0, this._durationMs - pos);
   }
 
-  /** 次曲がプリロードされているか */
   hasNextPreloaded() {
-    return !!this._nextFilePath && _f.ca_get_next_buffered_bytes() > 0;
+    return !!this._nextFilePath;
   }
 
-  // ── Gapless ───────────────────────────────────────────────────────────────
-
-  setGaplessEnabled(enabled) {
-    this._gaplessEnabled = !!enabled;
-    if (this._initialized) {
-      _f.ca_set_gapless_enabled(this._gaplessEnabled ? 1 : 0);
-    }
-    // Gapless と AutoMix は相互排他
-    if (this._gaplessEnabled && this._crossfadeEnabled) {
-      this._crossfadeEnabled = false;
-      if (this._initialized) {
-        // クロスフェード中なら中止することはできないが、次回からは無効になる
-      }
-    }
+  /** 次曲プリロードをキャンセルする（キュー変更時に使用） */
+  cancelPreloadNext() {
+    this._killNextFfmpeg();
+    this._nextFilePath = null;
+    this._nextDurationMs = 0;
   }
 
-  get gaplessEnabled() {
-    return this._gaplessEnabled;
-  }
-
-  /**
-   * 手動で Gapless 切り替えを実行する
-   * 戻り値: 0 = 成功、-1 = 未初期化、-2 = 次バッファが空
-   */
-  gaplessSwitch() {
-    if (!this._initialized) return -1;
-    const r = _f.ca_gapless_switch();
-    if (r === 0) {
-      this._startCrossfadeCheck(); // 完了チェックを開始（フラグは共有）
-    }
-    return r;
-  }
-
-  // ── 終了検出 ──────────────────────────────────────────────────────────────
-
-  _checkEnded() {
-    if (!this._playing) return;
-
-    // AutoMix: バッファ残量がクロスフェード時間分を下回ったらフェード開始
-    // ffmpeg が動いていてもチェックする（曲の終盤でバッファ残量が減ってくるため）
-    if (this._crossfadeEnabled && this._nextFilePath &&
-        _f.ca_is_crossfading() === 0) {
-      const buffered = _f.ca_get_buffered_bytes();
-      const bytesPerMs = (this._sampleRate * this._channels * 4) / 1000;
-      const crossfadeBytes = this._crossfadeDurationMs * bytesPerMs;
-      if (buffered <= crossfadeBytes) {
-        console.log('[wasapi] AutoMix: starting crossfade, buffered:', buffered,
-          'bytes, threshold:', crossfadeBytes, 'bytes');
-        this.startCrossfade(this._crossfadeDurationMs);
-        return;
-      }
-    }
-
-    // 以下は通常の終了判定（ffmpeg 終了かつバッファ空）
-    if (!this._ffmpegFinished || this._pendingBytes > 0) return;
-
-    if (_f.ca_get_buffered_bytes() === 0) {
-      this._fireEnded();
-      return;
-    }
-    if (this._endCheckTimer) return;
-    this._endCheckTimer = setInterval(() => {
-      if (!this._playing) {
-        this._stopEndCheck();
-        return;
-      }
-      if (_f.ca_get_buffered_bytes() === 0) {
-        this._stopEndCheck();
-        this._fireEnded();
-      }
-    }, 20);
-  }
-
-  _stopEndCheck() {
-    if (this._endCheckTimer) {
-      clearInterval(this._endCheckTimer);
-      this._endCheckTimer = null;
-    }
-  }
-
-  _fireEnded() {
-    this._playing = false;
-    this._stopPositionTimer();
-    _f.ca_stop();
-    this.emit('state_changed', 'stopped');
-    if (this.onEnded) this.onEnded();
-  }
-
-  // ── 位置情報 ──────────────────────────────────────────────────────────────
-
-  _startPositionTimer() {
-    this._stopPositionTimer();
-    this._posTimer = setInterval(() => {
-      if (!this._playing) return;
-      const posMs = this._currentPositionMs();
-      if (this.onPositionTick) this.onPositionTick(posMs);
-      // AutoMix / 終了判定も定期的にチェック
-      this._checkEnded();
-    }, 100);
-  }
-
-  _stopPositionTimer() {
-    if (this._posTimer) {
-      clearInterval(this._posTimer);
-      this._posTimer = null;
-    }
-  }
-
-  _currentPositionMs() {
-    if (!this._sampleRate) return this._seekOffsetMs;
-    const frames = Number(_f.ca_get_consumed_frames());
-    // tempo 適用時、消費フレーム数は入力側（原速）のフレーム数。
-    // 出力位置 = 入力消費フレーム / sample_rate で原速基準の位置が得られる。
-    return this._seekOffsetMs + Math.round(frames * 1000 / this._sampleRate);
-  }
+  // ── 状態アクセサ ──────────────────────────────────────────────────────────
 
   async getPosition() {
-    return this._currentPositionMs();
+    // 位置追跡はレンダラー側の AudioEngine で行う
+    return this._seekOffsetMs;
   }
 
   getDuration() {
@@ -947,29 +783,41 @@ class NativeRenderer extends EventEmitter {
     return this._initialized;
   }
 
-  // ── ffmpeg 管理 ────────────────────────────────────────────────────────────
+  // ── 互換性プロパティ（player.js からの参照用） ─────────────────────────
+
+  set setGaplessEnabled(_) { /* Web Audio API 側で管理 */ }
+  get gaplessEnabled() { return false; }
+  set setCrossfadeEnabled(_) { /* Web Audio API 側で管理 */ }
+  get crossfadeEnabled() { return false; }
+  setCrossfadeDuration() { /* Web Audio API 側で管理 */ }
+  get crossfadeDurationMs() { return 4000; }
+
+  setTempo() { /* SoundTouch は別途対応 */ }
+  setPitch() { /* SoundTouch は別途対応 */ }
+  setRate() { /* SoundTouch は別途対応 */ }
+  get tempo() { return 1.0; }
+  get pitch() { return 1.0; }
+  get rate() { return 1.0; }
 
   _killFFmpeg() {
     if (this._ffmpegProc) {
+      // 移除回调防止异步 close 事件覆盖后续 promoteNextToCurrent 的状态
+      try {
+        this._ffmpegProc.removeAllListeners('close');
+        this._ffmpegProc.removeAllListeners('error');
+        if (this._ffmpegProc.stdout) this._ffmpegProc.stdout.removeAllListeners('data');
+      } catch { /* ignore */ }
       try { this._ffmpegProc.kill('SIGKILL'); } catch { /* ignore */ }
       this._ffmpegProc = null;
     }
     this._ffmpegFinished = false;
+    this._pendingBuf = Buffer.alloc(0);
   }
 
-  // ── クリーンアップ ──────────────────────────────────────────────────────────
-
   async close() {
-    this._stopPositionTimer();
     this._stopDrainTimer();
-    this._stopEndCheck();
-    this._stopCrossfadeCheck();
     this._killFFmpeg();
     this._killNextFfmpeg();
-    this._pendingChunks = [];
-    this._pendingBytes = 0;
-    this._nextPendingChunks = [];
-    this._nextPendingBytes = 0;
     this._nextFilePath = null;
 
     if (this._initialized) {

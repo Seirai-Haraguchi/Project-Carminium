@@ -28,33 +28,33 @@
       '<div class="settings-view settings-view-enter-right about-page">' +
         '<div class="page-header">' +
           '<div class="page-header-left page-header-left--right">' +
-            '<button class="back-btn" id="about-back-btn" title="返回" aria-label="返回">' +
+            '<button class="back-btn" id="about-back-btn" data-i18n-title="common.back" data-i18n-aria-label="common.back" title="返回" aria-label="返回">' +
               '<span class="material-symbols-rounded">arrow_back</span>' +
             '</button>' +
-            '<h1 class="page-title">关于</h1>' +
+            '<h1 class="page-title" data-i18n="page.about.title">关于</h1>' +
           '</div>' +
         '</div>' +
 
         // ── 版本信息 ──
         '<div class="settings-group">' +
-          '<div class="settings-group-header">版本信息</div>' +
+          '<div class="settings-group-header" data-i18n="about.versionInfo">版本信息</div>' +
           '<div class="settings-row about-version-card" id="about-version-card">' +
             '<div class="about-version-left">' +
               '<img class="about-app-icon" src="logo.svg" alt="">' +
               '<p class="settings-row-label">Carminium</p>' +
             '</div>' +
             '<div class="about-version-right">' +
-              '<span class="settings-row-sub" id="about-version-text">加载中…</span>' +
+              '<span class="settings-row-sub" id="about-version-text" data-i18n="common.loading">加载中…</span>' +
               CHEVRON_SVG +
             '</div>' +
           '</div>' +
           '<div class="about-version-expander" id="about-version-expander">' +
             '<div class="about-version-expander-inner">' +
               '<p class="about-copyright">COPYRIGHT © 2025–2026 Seirai Haraguchi</p>' +
-              '<p class="about-license">本程序根据 GNU General Public License v3.0 获得许可</p>' +
+              '<p class="about-license" data-i18n="about.license">本程序根据 GNU General Public License v3.0 获得许可</p>' +
               '<div class="about-links">' +
                 '<a class="btn-filled" href="' + GITHUB_REPO + '" target="_blank" rel="noopener noreferrer">' +
-                  '<span>GitHub 仓库</span>' +
+                  '<span data-i18n="about.githubRepo">GitHub 仓库</span>' +
                   '<span class="material-symbols-rounded">open_in_new</span>' +
                 '</a>' +
               '</div>' +
@@ -64,13 +64,13 @@
 
         // ── 操作 ──
         '<div class="settings-group">' +
-          '<div class="settings-group-header">操作</div>' +
+          '<div class="settings-group-header" data-i18n="about.actions">操作</div>' +
           '<div class="settings-row about-action-row" id="about-release">' +
-            '<div><p class="settings-row-label">查看 Release</p></div>' +
+            '<div><p class="settings-row-label" data-i18n="about.viewRelease">查看 Release</p></div>' +
             CHEVRON_SVG +
           '</div>' +
           '<div class="settings-row about-action-row" id="about-feedback">' +
-            '<div><p class="settings-row-label">问题反馈</p></div>' +
+            '<div><p class="settings-row-label" data-i18n="about.feedback">问题反馈</p></div>' +
             CHEVRON_SVG +
           '</div>' +
         '</div>' +
@@ -78,6 +78,11 @@
 
     _bindEvents(container);
     _loadAppInfo();
+
+    // Apply i18n to dynamically created DOM
+    if (App.i18n && App.i18n.applyToDOM) {
+      App.i18n.applyToDOM(container);
+    }
   };
 
   // ── 事件绑定 ─────────────────────────────────────────────────────────────────
@@ -189,13 +194,13 @@
       '<div class="about-test-card">' +
         '<div class="about-test-header">' +
           '<span class="material-symbols-rounded about-test-icon">bug_report</span>' +
-          '<h3 class="about-test-title">测试模式已激活</h3>' +
+          '<h3 class="about-test-title" data-i18n="about.testModeActivated">测试模式已激活</h3>' +
         '</div>' +
-        '<p class="about-test-desc">5秒后自动关闭并返回正常页面</p>' +
+        '<p class="about-test-desc" data-i18n="about.testModeDesc">5秒后自动关闭并返回正常页面</p>' +
         '<div class="about-test-progress">' +
           '<div class="about-test-progress-bar"></div>' +
         '</div>' +
-        '<button class="about-test-close" id="about-test-close">立即关闭</button>' +
+        '<button class="about-test-close" id="about-test-close" data-i18n="about.testModeClose">立即关闭</button>' +
       '</div>';
 
     container.appendChild(overlay);

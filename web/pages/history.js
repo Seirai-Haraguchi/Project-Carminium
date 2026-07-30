@@ -17,21 +17,21 @@
       <div class="page-sticky-header">
         <div class="page-header">
           <div class="page-header-left">
-            <h1 class="page-title">播放历史</h1>
-            <p class="page-subtitle" id="history-count">加载中…</p>
+            <h1 class="page-title" data-i18n="history.title">播放历史</h1>
+            <p class="page-subtitle" id="history-count" data-i18n="common.loading">加载中…</p>
           </div>
           <div class="page-actions">
             <button class="btn-filled" id="btn-play-history">
-              <span class="material-symbols-rounded">play_arrow</span>全部播放
+              <span class="material-symbols-rounded">play_arrow</span><span data-i18n="music.playAll">全部播放</span>
             </button>
-            <button class="btn-outlined" id="btn-clear-history" title="清空历史">
-              <span class="material-symbols-rounded">delete_sweep</span>清空
+            <button class="btn-outlined" id="btn-clear-history" data-i18n-title="history.clear">
+              <span class="material-symbols-rounded">delete_sweep</span><span data-i18n="history.clear">清空</span>
             </button>
           </div>
         </div>
         <div class="search-bar">
           <span class="material-symbols-rounded">search</span>
-          <input type="text" id="history-search" placeholder="搜索历史曲目…" aria-label="搜索历史">
+          <input type="text" id="history-search" data-i18n-placeholder="history.searchPlaceholder" placeholder="搜索历史曲目…" data-i18n-aria-label="common.search" aria-label="搜索历史">
         </div>
       </div>
       <ul class="track-list az-list" id="history-list"></ul>
@@ -54,10 +54,10 @@
     document.getElementById('btn-clear-history').addEventListener('click', function () {
       if (allHistory.length === 0) return;
       App.utils.confirmDialog({
-        title: '清空播放历史',
-        body: '将清除全部播放历史记录，此操作不可撤销。是否继续？',
-        confirmText: '清空',
-        cancelText: '取消',
+        title: App.i18n.t('history.clearTitle'),
+        body: App.i18n.t('history.clearBody'),
+        confirmText: App.i18n.t('history.clear'),
+        cancelText: App.i18n.t('common.cancel'),
       }).then(function (ok) {
         if (ok) {
           App.utils.call('clear_play_history').then(function () {
@@ -93,15 +93,15 @@
     const countEl = document.getElementById('history-count');
     if (countEl) {
       countEl.textContent = list.length === 0
-        ? (filterStr ? '无结果' : '暂无播放历史')
-        : `${list.length} 首曲目`;
+        ? (filterStr ? App.i18n.t('common.noResults') : App.i18n.t('history.empty'))
+        : App.i18n.t('music.trackCount', { count: list.length });
     }
 
     if (list.length === 0) {
       ul.innerHTML = `
         <div class="empty-state">
           <span class="material-symbols-rounded empty-icon">history</span>
-          <h2 class="empty-title">${filterStr ? '无结果' : '暂无播放历史'}</h2>
+          <h2 class="empty-title">${filterStr ? App.i18n.t('common.noResults') : App.i18n.t('history.empty')}</h2>
         </div>
       `;
       return;

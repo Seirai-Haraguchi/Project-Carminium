@@ -257,9 +257,33 @@
         p.catch(function () { /* autoplay 被阻止，等待用户交互解锁 */ });
       }
       navigator.mediaSession.playbackState = 'playing';
+      // 恢复 playbackRate，让 SMTC 位置继续推进
+      if (_currentDurationMs > 0) {
+        try {
+          var durSec = _currentDurationMs / 1000;
+          var posSec = Math.min(_currentPositionMs, _currentDurationMs) / 1000;
+          if (durSec > 0 && posSec >= 0) {
+            navigator.mediaSession.setPositionState({
+              duration: durSec, position: posSec, playbackRate: 1.0,
+            });
+          }
+        } catch (e) { /* ignore */ }
+      }
     } else {
       audio.pause();
       navigator.mediaSession.playbackState = (state === 'none') ? 'none' : 'paused';
+      // 关键：playbackRate 设为 0，否则 Chromium 会按上次的 1.0 继续推进 SMTC 位置
+      if (_currentDurationMs > 0) {
+        try {
+          var durSec = _currentDurationMs / 1000;
+          var posSec = Math.min(_currentPositionMs, _currentDurationMs) / 1000;
+          if (durSec > 0 && posSec >= 0) {
+            navigator.mediaSession.setPositionState({
+              duration: durSec, position: posSec, playbackRate: 0,
+            });
+          }
+        } catch (e) { /* ignore */ }
+      }
     }
   }
 

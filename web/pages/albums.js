@@ -17,8 +17,8 @@
   const SORT_OPTIONS = [
     { key: 'az', label: 'A-Z', icon: 'sort_by_alpha' },
     { key: 'za', label: 'Z-A', icon: 'sort_by_alpha' },
-    { key: 'artist', label: '歌手', icon: 'person' },
-    { key: 'year', label: '发行年份', icon: 'calendar_today' },
+    { key: 'artist', labelKey: 'music.sortArtist', icon: 'person' },
+    { key: 'year', labelKey: 'music.sortYear', icon: 'calendar_today' },
   ];
 
   page.render = function (container, params) {
@@ -26,20 +26,20 @@
       <div class="page-sticky-header">
         <div class="page-header">
           <div class="page-header-left">
-            <h1 class="page-title">专辑</h1>
-            <p class="page-subtitle" id="album-count">加载中…</p>
+            <h1 class="page-title" data-i18n="albums.title">专辑</h1>
+            <p class="page-subtitle" id="album-count" data-i18n="common.loading">加载中…</p>
           </div>
           <div class="md-select" id="sort-select">
             <div class="md-select-trigger" tabindex="0" role="button" aria-haspopup="listbox" aria-expanded="false">
               <span class="material-symbols-rounded md-select-icon">${SORT_OPTIONS.find(o => o.key === sortMode).icon}</span>
-              <span class="md-select-label">${SORT_OPTIONS.find(o => o.key === sortMode).label}</span>
+              <span class="md-select-label">${App.i18n.t(SORT_OPTIONS.find(o => o.key === sortMode).labelKey || '') || SORT_OPTIONS.find(o => o.key === sortMode).label}</span>
               <span class="material-symbols-rounded md-select-arrow">arrow_drop_down</span>
             </div>
             <div class="md-select-menu" role="listbox">
               ${SORT_OPTIONS.map(opt => `
                 <div class="md-select-option ${opt.key === sortMode ? 'selected' : ''}" role="option" data-value="${opt.key}" aria-selected="${opt.key === sortMode}">
                   <span class="material-symbols-rounded md-select-option-icon">${opt.icon}</span>
-                  <span class="md-select-option-text">${opt.label}</span>
+                  <span class="md-select-option-text">${opt.labelKey ? App.i18n.t(opt.labelKey) : opt.label}</span>
                   ${opt.key === sortMode ? '<span class="material-symbols-rounded md-select-check">check</span>' : ''}
                 </div>
               `).join('')}
@@ -48,7 +48,7 @@
         </div>
         <div class="search-bar">
           <span class="material-symbols-rounded">search</span>
-          <input type="text" id="album-search" placeholder="搜索专辑或艺术家…" aria-label="搜索专辑">
+          <input type="text" id="album-search" data-i18n-placeholder="albums.searchPlaceholder" placeholder="搜索专辑或艺术家…" data-i18n-aria-label="common.search" aria-label="搜索专辑">
         </div>
       </div>
       <div class="album-grid az-grid" id="album-grid"></div>
@@ -114,7 +114,7 @@
           const opt = SORT_OPTIONS.find(o => o.key === sortMode);
           if (opt) {
             select.querySelector('.md-select-icon').textContent = opt.icon;
-            select.querySelector('.md-select-label').textContent = opt.label;
+            select.querySelector('.md-select-label').textContent = opt.labelKey ? App.i18n.t(opt.labelKey) : opt.label;
           }
           // 更新选项选中状态
           menu.querySelectorAll('.md-select-option').forEach(o => {
@@ -189,9 +189,9 @@
   function _getAlbumGroupKey(album) {
     switch (sortMode) {
       case 'artist':
-        return album.album_artist || album.artist || '未知艺术家';
+        return album.album_artist || album.artist || App.i18n.t('common.unknownArtist');
       case 'year':
-        return album.year ? String(album.year) : '未知年份';
+        return album.year ? String(album.year) : App.i18n.t('music.unknownYear');
       case 'za':
         // Z-A 排序时，按首字母分组但显示为 Z-A 顺序
         return App.utils.itemSortLetter(album, 'sort_key', 'album');
@@ -236,7 +236,7 @@
 
     const countEl = document.getElementById('album-count');
     if (countEl) {
-      countEl.textContent = filterStr ? `${list.length} / ${allAlbums.length} 张专辑` : `${allAlbums.length} 张专辑`;
+      countEl.textContent = filterStr ? App.i18n.t('albums.filteredCount', { shown: list.length, total: allAlbums.length }) : App.i18n.t('albums.count', { count: allAlbums.length });
     }
 
     if (list.length === 0) {
@@ -244,7 +244,7 @@
       grid.innerHTML = `
         <div class="empty-state">
           <span class="material-symbols-rounded empty-icon">album</span>
-          <h2 class="empty-title">无结果</h2>
+          <h2 class="empty-title" data-i18n="common.noResults">无结果</h2>
         </div>
       `;
       return;
@@ -270,7 +270,7 @@
         
         let coverHtml = '';
         if (album.cover_track_id) {
-          coverHtml = `<img src="${window.coverUrl(album.cover_track_id)}" alt="封面" loading="lazy">`;
+          coverHtml = `<img src="${window.coverUrl(album.cover_track_id)}" alt="" loading="lazy">`;
         } else {
           const bg = App.utils.hashColor(album.album);
           coverHtml = `
@@ -284,7 +284,7 @@
           <div class="album-cover">${coverHtml}</div>
           <div class="album-info">
             <p class="album-name">${App.utils.esc(album.album)}</p>
-            <p class="album-meta">${App.utils.esc(album.album_artist)} · ${album.year || '?'} · ${album.track_count} 首</p>
+            <p class="album-meta">${App.utils.esc(album.album_artist)} · ${album.year || '?'} · ${App.i18n.t('albums.trackCountShort', { count: album.track_count })}</p>
           </div>
         `;
 
@@ -301,7 +301,7 @@
     // 渲染专辑详情页
     container.innerHTML = `
       <div class="detail-header">
-        <button class="back-btn" id="btn-back" aria-label="返回专辑列表" title="返回专辑列表">
+        <button class="back-btn" id="btn-back" data-i18n-aria-label="albums.backToList" data-i18n-title="albums.backToList">
           <span class="material-symbols-rounded">arrow_back</span>
         </button>
         <div class="detail-cover" id="detail-cover">
@@ -313,12 +313,12 @@
         </div>
         <div class="detail-cover-gradient"></div>
         <div class="detail-meta">
-          <p class="detail-type">专辑</p>
+          <p class="detail-type" data-i18n="albums.title">专辑</p>
           <h1 class="detail-name">${App.utils.esc(album.album)}</h1>
-          <p class="detail-sub">${App.utils.esc(album.album_artist)} · ${album.year || '未知年份'} · ${album.track_count} 首</p>
+          <p class="detail-sub">${App.utils.esc(album.album_artist)} · ${album.year || App.i18n.t('music.unknownYear')} · ${App.i18n.t('albums.trackCountShort', { count: album.track_count })}</p>
           <div class="detail-actions">
             <button class="detail-play-btn" id="btn-play-album">
-              <span class="material-symbols-rounded">play_arrow</span>播放
+              <span class="material-symbols-rounded">play_arrow</span><span data-i18n="albums.play">播放</span>
             </button>
           </div>
         </div>

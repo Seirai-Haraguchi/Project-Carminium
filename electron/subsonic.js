@@ -54,78 +54,119 @@ function _decompressBody(body, encoding) {
   return body;
 }
 
-function _httpRequest(urlStr, timeout) {
-  return new Promise((resolve, reject) => {
-    const url = new URL(urlStr);
+async function _httpRequest(urlStr, timeout, maxRedirects = 5) {
+  let currentUrl = urlStr;
+  for (let redirect = 0; redirect <= maxRedirects; redirect++) {
+    const url = new URL(currentUrl);
     const lib = url.protocol === 'https:' ? https : http;
-    const req = lib.request(
-      {
-        hostname: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? 443 : 80),
-        path: url.pathname + url.search,
-        method: 'GET',
-        headers: {
-          Accept: 'application/json',
-          'Accept-Encoding': 'identity',
-          'User-Agent': `${CLIENT_NAME}/1.0`,
-          Connection: 'close',
+    const tlsOpts = url.protocol === 'https:' ? {
+      rejectUnauthorized: false,
+    } : {};
+    const result = await new Promise((resolve, reject) => {
+      const req = lib.request(
+        {
+          hostname: url.hostname,
+          port: url.port || (url.protocol === 'https:' ? 443 : 80),
+          path: url.pathname + url.search,
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+            'Accept-Encoding': 'identity',
+            'User-Agent': `${CLIENT_NAME}/1.0`,
+          },
+          ...tlsOpts,
         },
-      },
-      (resp) => {
-        const chunks = [];
-        resp.on('data', (chunk) => chunks.push(chunk));
-        resp.on('end', () => {
-          const body = Buffer.concat(chunks);
-          resolve({
-            body,
-            statusCode: resp.statusCode,
-            headers: resp.headers,
+        (resp) => {
+          const chunks = [];
+          resp.on('data', (chunk) => chunks.push(chunk));
+          resp.on('end', () => {
+            resolve({
+              body: Buffer.concat(chunks),
+              statusCode: resp.statusCode,
+              headers: resp.headers,
+            });
           });
-        });
-      }
-    );
-    req.on('error', reject);
-    req.setTimeout(Math.round(timeout * 1000), () => {
-      req.destroy(new Error('timeout'));
+        }
+      );
+      req.on('error', reject);
+      req.setTimeout(Math.round(timeout * 1000), () => {
+        req.destroy(new Error('timeout'));
+      });
+      req.end();
     });
-    req.end();
-  });
+    const { body, statusCode, headers } = result;
+    // Follow redirects (301, 302, 303, 307, 308)
+    if ([301, 302, 303, 307, 308].includes(statusCode) && headers.location) {
+      let newUrl = headers.location;
+      if (newUrl.startsWith('/')) {
+        newUrl = url.protocol + '//' + url.host + newUrl;
+      } else if (!newUrl.startsWith('http://') && !newUrl.startsWith('https://')) {
+        newUrl = new URL(newUrl, currentUrl).href;
+      }
+      console.warn('[subsonic] Redirecting', statusCode, 'to', newUrl.substring(0, 80));
+      currentUrl = newUrl;
+      continue;
+    }
+    return { body, statusCode, headers };
+  }
+  throw new Error('too many redirects');
 }
 
-async function _httpRequestBinary(urlStr, timeout) {
-  return new Promise((resolve, reject) => {
-    const url = new URL(urlStr);
+async function _httpRequestBinary(urlStr, timeout, maxRedirects = 5) {
+  let currentUrl = urlStr;
+  for (let redirect = 0; redirect <= maxRedirects; redirect++) {
+    const url = new URL(currentUrl);
     const lib = url.protocol === 'https:' ? https : http;
-    const req = lib.request(
-      {
-        hostname: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? 443 : 80),
-        path: url.pathname + url.search,
-        method: 'GET',
-        headers: {
-          'Accept-Encoding': 'identity',
-          'User-Agent': `${CLIENT_NAME}/1.0`,
-          Connection: 'close',
+    const tlsOpts = url.protocol === 'https:' ? {
+      rejectUnauthorized: false,
+    } : {};
+    const result = await new Promise((resolve, reject) => {
+      const req = lib.request(
+        {
+          hostname: url.hostname,
+          port: url.port || (url.protocol === 'https:' ? 443 : 80),
+          path: url.pathname + url.search,
+          method: 'GET',
+          headers: {
+            'Accept-Encoding': 'identity',
+            'User-Agent': `${CLIENT_NAME}/1.0`,
+          },
+          ...tlsOpts,
         },
-      },
-      (resp) => {
-        const chunks = [];
-        resp.on('data', (chunk) => chunks.push(chunk));
-        resp.on('end', () => {
-          resolve({
-            body: Buffer.concat(chunks),
-            statusCode: resp.statusCode,
-            headers: resp.headers,
+        (resp) => {
+          const chunks = [];
+          resp.on('data', (chunk) => chunks.push(chunk));
+          resp.on('end', () => {
+            resolve({
+              body: Buffer.concat(chunks),
+              statusCode: resp.statusCode,
+              headers: resp.headers,
+            });
           });
-        });
-      }
-    );
-    req.on('error', reject);
-    req.setTimeout(Math.round(timeout * 1000), () => {
-      req.destroy(new Error('timeout'));
+        }
+      );
+      req.on('error', reject);
+      req.setTimeout(Math.round(timeout * 1000), () => {
+        req.destroy(new Error('timeout'));
+      });
+      req.end();
     });
-    req.end();
-  });
+    const { body, statusCode, headers } = result;
+    // Follow redirects (301, 302, 303, 307, 308)
+    if ([301, 302, 303, 307, 308].includes(statusCode) && headers.location) {
+      let newUrl = headers.location;
+      if (newUrl.startsWith('/')) {
+        newUrl = url.protocol + '//' + url.host + newUrl;
+      } else if (!newUrl.startsWith('http://') && !newUrl.startsWith('https://')) {
+        newUrl = new URL(newUrl, currentUrl).href;
+      }
+      console.warn('[subsonic] Binary redirecting', statusCode, 'to', newUrl.substring(0, 80));
+      currentUrl = newUrl;
+      continue;
+    }
+    return { body, statusCode, headers };
+  }
+  throw new Error('too many redirects');
 }
 
 // ── SubsonicClient ───────────────────────────────────────────────────────────
@@ -153,24 +194,32 @@ class SubsonicClient {
     this._protocolMode = protocolMode === 'opensubsonic' ? 'opensubsonic' : 'subsonic';
     this._timeout = timeout;
     this._apiVersion = '1.16.1';
+    this._downgradedToHttp = false;
+    this._usePlainPassword = false;
   }
 
   _makeAuthParams() {
-    const salt = Array.from(crypto.randomBytes(6), (b) =>
-      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[b % 62]
-    ).join('');
-    const token = crypto
-      .createHash('md5')
-      .update(this._password + salt, 'utf-8')
-      .digest('hex');
-    return {
+    const params = {
       u: this._username,
-      t: token,
-      s: salt,
       v: this._apiVersion,
       c: CLIENT_NAME,
       f: this._protocolMode === 'opensubsonic' ? 'openSubsonic' : 'json',
     };
+    if (this._usePlainPassword) {
+      // 降级：使用明文密码（某些旧服务器不支持 token 认证）
+      params.p = this._password;
+    } else {
+      const salt = Array.from(crypto.randomBytes(6), (b) =>
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[b % 62]
+      ).join('');
+      const token = crypto
+        .createHash('md5')
+        .update(this._password + salt, 'utf-8')
+        .digest('hex');
+      params.t = token;
+      params.s = salt;
+    }
+    return params;
   }
 
   _buildUrl(endpoint, params = null) {
@@ -186,17 +235,47 @@ class SubsonicClient {
   }
 
   async _request(endpoint, params = null) {
-    const url = this._buildUrl(endpoint, params);
+    let url = this._buildUrl(endpoint, params);
+    // 如果之前已降级到 HTTP，直接使用 HTTP
+    if (this._downgradedToHttp && url.startsWith('https://')) {
+      url = 'http://' + url.slice(8);
+    }
     let lastError = null;
 
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const { body, statusCode, headers } = await _httpRequest(url, this._timeout);
         if (statusCode >= 400) {
-          throw new SubsonicError(statusCode, `HTTP ${statusCode}`);
+          // 尝试解析响应体中的 Subsonic 错误信息
+          let errBody = '';
+          try { errBody = body.toString('utf-8').slice(0, 500); } catch {}
+          console.error('[subsonic] HTTP', statusCode, 'for', endpoint, '- body:', errBody);
+          // 403/401 可能是认证方式不兼容，尝试降级到明文密码
+          if ((statusCode === 403 || statusCode === 401) && !this._usePlainPassword) {
+            this._usePlainPassword = true;
+            console.warn('[subsonic] Auth failed (' + statusCode + '), retrying with plain password');
+            url = this._buildUrl(endpoint, params);
+            if (this._downgradedToHttp && url.startsWith('https://')) {
+              url = 'http://' + url.slice(8);
+            }
+            attempt = -1;
+            continue;
+          }
+          // 尝试解析 JSON 错误
+          try {
+            const parsed = JSON.parse(body.toString('utf-8'));
+            const response = parsed['subsonic-response'] || parsed;
+            if (response.error) {
+              throw new SubsonicError(response.error.code, response.error.message || ERROR_CODES[response.error.code] || 'unknown error');
+            }
+          } catch (parseErr) {
+            if (parseErr instanceof SubsonicError) throw parseErr;
+          }
+          throw new SubsonicError(statusCode, `HTTP ${statusCode}: ${errBody.slice(0, 200)}`);
         }
         if (!body || body.length === 0) {
-          throw new SubsonicError(null, '空响应');
+          console.error('[subsonic] Empty response for', endpoint, '- status:', statusCode, 'headers:', JSON.stringify(headers), 'url:', url.substring(0, 100));
+          throw new SubsonicError(null, `空响应 (status=${statusCode}, content-type=${headers['content-type'] || 'none'})`);
         }
 
         let data = body;
@@ -232,6 +311,15 @@ class SubsonicClient {
       } catch (e) {
         if (e instanceof SubsonicError) throw e;
         lastError = e;
+        // 连接失败时（包括 TLS 揦手失败、连接被拒绝等），自动降级 HTTPS → HTTP
+        const isConnError = /TLS|socket|ECONNRESET|ECONNREFUSED|EPROTO|disconnected|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/i.test(e.message || '');
+        if (url.startsWith('https://') && isConnError && !this._downgradedToHttp) {
+          this._downgradedToHttp = true;
+          url = 'http://' + url.slice(8);
+          console.warn('[subsonic] HTTPS connection failed, falling back to HTTP:', e.message);
+          attempt = -1;
+          continue;
+        }
         if (attempt < 2) {
           await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
           continue;
@@ -336,18 +424,111 @@ class SubsonicClient {
       public: !!p.public,
       created: p.created,
       changed: p.changed,
+      cover_art_id: p.coverArt || null,
+      comment: p.comment || null,
     }));
   }
 
   async getPlaylist(playlistId) {
-    const resp = await this._request('getPlaylist', { id: playlistId });
+    let resp;
+    try {
+      resp = await this._request('getPlaylist', { id: playlistId });
+    } catch (e) {
+      // 空响应时，尝试不带 f=json 参数（某些服务器对此端点有 bug）
+      if (/空响应/.test(e.message || '')) {
+        console.warn('[subsonic] getPlaylist returned empty, retrying without f=json');
+        const url = this._buildUrl('getPlaylist', { id: playlistId });
+        let httpUrl = url;
+        if (this._downgradedToHttp && httpUrl.startsWith('https://')) {
+          httpUrl = 'http://' + httpUrl.slice(8);
+        }
+        // 去掉 f=json 参数，让服务器返回默认格式
+        httpUrl = httpUrl.replace(/&f=[^&]*/, '');
+        const { body, statusCode, headers } = await _httpRequest(httpUrl, this._timeout);
+        if (!body || body.length === 0) {
+          throw new SubsonicError(null, `getPlaylist 空响应 (status=${statusCode})`);
+        }
+        let data = body;
+        const contentEncoding = headers['content-encoding'];
+        if (contentEncoding) {
+          data = _decompressBody(data, contentEncoding);
+        }
+        const text = data.toString('utf-8').trim();
+        // 尝试 JSON 解析
+        try {
+          const parsed = JSON.parse(text);
+          resp = parsed['subsonic-response'] || parsed;
+        } catch {
+          // 如果是 XML，用正则提取基本字段
+          console.warn('[subsonic] getPlaylist returned XML, parsing manually');
+          const nameMatch = text.match(/<playlist[^>]*name="([^"]*)"/);
+          const entries = text.match(/<entry[^>]*>/g) || [];
+          resp = {
+            playlist: {
+              id: playlistId,
+              name: nameMatch ? nameMatch[1] : '未命名',
+              entry: entries.map(e => {
+                const get = (k) => { const m = e.match(new RegExp(`${k}="([^"]*)"`)); return m ? m[1] : null; };
+                return {
+                  id: get('id'),
+                  title: get('title'),
+                  artist: get('artist'),
+                  album: get('album'),
+                  duration: get('duration'),
+                  track: get('track'),
+                  discNumber: get('discNumber'),
+                  year: get('year'),
+                  coverArt: get('coverArt'),
+                  genre: get('genre'),
+                  size: get('size'),
+                  suffix: get('suffix'),
+                  bitRate: get('bitRate'),
+                  albumArtist: get('albumArtist'),
+                };
+              }),
+            },
+          };
+        }
+      } else {
+        throw e;
+      }
+    }
     const pl = resp.playlist || {};
     return {
       id: pl.id,
       name: pl.name || '未命名',
       song_count: parseInt(pl.songCount || '0', 10),
       duration: parseInt(pl.duration || '0', 10) * 1000,
+      cover_art_id: pl.coverArt || null,
+      changed: pl.changed || null,
+      owner: pl.owner || null,
       tracks: (pl.entry || []).map((s) => this._parseSong(s)),
+    };
+  }
+
+  /**
+   * 获取用户信息（包含 email，用于 Gravatar 头像）。
+   * Subsonic API: getUser
+   * @param {string} username - 用户名（不传则查当前用户）
+   * @returns {Promise<{username, email, adminRole, ...}>}
+   */
+  async getUser(username) {
+    const params = {};
+    if (username) params.username = username;
+    const resp = await this._request('getUser', params);
+    const user = resp.user || {};
+    return {
+      username: user.username || username || this._username,
+      email: user.email || null,
+      adminRole: !!user.adminRole,
+      settingsRole: !!user.settingsRole,
+      streamRole: !!user.streamRole,
+      downloadRole: !!user.downloadRole,
+      uploadRole: !!user.uploadRole,
+      playlistRole: !!user.playlistRole,
+      coverArtRole: !!user.coverArtRole,
+      commentRole: !!user.commentRole,
+      podcastRole: !!user.podcastRole,
     };
   }
 
@@ -376,13 +557,23 @@ class SubsonicClient {
   }
 
   async fetchCover(coverId, size = 300) {
-    const url = this._buildUrl('getCoverArt', { id: coverId, size: parseInt(size, 10) });
+    let url = this._buildUrl('getCoverArt', { id: coverId, size: parseInt(size, 10) });
+    if (this._downgradedToHttp && url.startsWith('https://')) {
+      url = 'http://' + url.slice(8);
+    }
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const { body, statusCode } = await _httpRequestBinary(url, this._timeout);
         if (statusCode >= 400) return null;
         return body;
       } catch (e) {
+        if (url.startsWith("https://") && /ECONNREFUSED|ECONNRESET|EPROTO|TLS|disconnected|ETIMEDOUT/i.test(e.message || "") && !this._downgradedToHttp) {
+          this._downgradedToHttp = true;
+          url = "http://" + url.slice(8);
+          console.warn("[subsonic] fetchCover: HTTPS failed, falling back to HTTP:", e.message);
+          attempt = -1;
+          continue;
+        }
         if (attempt < 2) {
           await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
           continue;
@@ -500,7 +691,10 @@ class SubsonicClient {
 
 async function proxyRequest(serverUrl, username, password, endpoint, params = null, protocolMode = 'subsonic', timeout = 30.0) {
   const client = new SubsonicClient(serverUrl, username, password, protocolMode, timeout);
-  const url = client._buildUrl(endpoint, params);
+  let url = client._buildUrl(endpoint, params);
+  if (client._downgradedToHttp && url.startsWith("https://")) {
+    url = "http://" + url.slice(8);
+  }
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const { body, statusCode, headers } = await _httpRequestBinary(url, timeout);
@@ -518,6 +712,13 @@ async function proxyRequest(serverUrl, username, password, endpoint, params = nu
       };
     } catch (e) {
       if (e instanceof SubsonicError) throw e;
+      if (url.startsWith("https://") && /ECONNREFUSED|ECONNRESET|EPROTO|TLS|disconnected|ETIMEDOUT/i.test(e.message || "") && !client._downgradedToHttp) {
+        client._downgradedToHttp = true;
+        url = "http://" + url.slice(8);
+        console.warn("[subsonic] proxyRequest: HTTPS failed, falling back to HTTP:", e.message);
+        attempt = -1;
+        continue;
+      }
       if (attempt < 2) {
         await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
         continue;

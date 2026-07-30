@@ -102,7 +102,7 @@
       if (playlists.length === 0) {
         var empty = document.createElement('div');
         empty.className = 'context-submenu-empty';
-        empty.textContent = '暂无歌单';
+        empty.textContent = App.i18n.t('cm.noPlaylists');
         frag.appendChild(empty);
       } else {
         playlists.forEach(function (pl) {
@@ -117,7 +117,7 @@
             App.utils.call('add_tracks_to_playlist', pl.id, JSON.stringify(ids)).then(function (res) {
               try {
                 var r = JSON.parse(res);
-                App.utils.toast((r.added || 0) + ' 首曲目已添加到「' + pl.name + '」');
+                App.utils.toast(App.i18n.t('playlist.tracksAdded', { count: r.added || 0, name: pl.name }));
               } catch (e) { /* ignore */ }
             });
             hide();
@@ -135,7 +135,7 @@
       createItem.className = 'context-submenu-item context-submenu-create';
       createItem.innerHTML =
         '<span class="material-symbols-rounded context-submenu-item-icon">add</span>' +
-        '<span class="context-submenu-item-name">新建歌单</span>';
+        '<span class="context-submenu-item-name">' + App.i18n.t('cm.newPlaylist') + '</span>';
       createItem.addEventListener('click', function () {
         hide();
         _promptCreatePlaylistAndAdd(tracks);
@@ -174,16 +174,16 @@
     var dlg = document.createElement('div');
     dlg.className = 'cmd-dialog';
     dlg.innerHTML =
-      '<div class="cmd-dialog-title">新建歌单</div>' +
+      '<div class="cmd-dialog-title">' + App.i18n.t('playlist.newTitle') + '</div>' +
       '<div class="cmd-dialog-body">' +
         '<div class="cmd-text-field">' +
           '<input type="text" id="cm-new-pl-input" class="cmd-text-field__input" placeholder=" " autocomplete="off">' +
-          '<label class="cmd-text-field__label">歌单名称</label>' +
+          '<label class="cmd-text-field__label">' + App.i18n.t('cm.playlistName') + '</label>' +
         '</div>' +
       '</div>' +
       '<div class="cmd-dialog-actions">' +
-        '<button class="cmd-dialog-btn cmd-dialog-btn--cancel">取消</button>' +
-        '<button class="cmd-dialog-btn cmd-dialog-btn--confirm">创建并添加</button>' +
+        '<button class="cmd-dialog-btn cmd-dialog-btn--cancel">' + App.i18n.t('common.cancel') + '</button>' +
+        '<button class="cmd-dialog-btn cmd-dialog-btn--confirm">' + App.i18n.t('cm.createAndAdd') + '</button>' +
       '</div>';
     overlay.appendChild(dlg);
     document.body.appendChild(overlay);
@@ -216,7 +216,7 @@
         return App.utils.call('add_tracks_to_playlist', pl.id, JSON.stringify(ids));
       }).then(function () {
         close();
-        App.utils.toast('已创建歌单「' + name + '」并添加 ' + ids.length + ' 首曲目');
+        App.utils.toast(App.i18n.t('playlist.createdAdded', { name: name, count: ids.length }));
       }).catch(function (err) {
         console.error('[context_menu] 创建歌单失败:', err);
         creating = false;
@@ -262,15 +262,15 @@
       coverHtml = `<div class="cm-cover-placeholder" style="background:${bg}">${App.utils.initial(track.album || track.title)}</div>`;
     }
 
-    const title = track.title || '未知曲目';
-    const artist = track.artist || '未知艺术家';
+    const title = track.title || App.i18n.t('common.unknownTrack');
+    const artist = track.artist || App.i18n.t('common.unknownArtist');
 
     var headerInfo;
     if (isMulti) {
       headerInfo =
         '<div class="context-menu-info">' +
-          '<div class="context-menu-title">已选中 ' + selectedTracks.length + ' 首曲目</div>' +
-          '<div class="context-menu-artist">' + App.utils.esc(title) + ' 等</div>' +
+          '<div class="context-menu-title">' + App.i18n.t('cm.selectedCount', { count: selectedTracks.length }) + '</div>' +
+          '<div class="context-menu-artist">' + App.utils.esc(title) + App.i18n.t('cm.andMore') + '</div>' +
         '</div>';
     } else {
       headerInfo =
@@ -283,7 +283,7 @@
     header.innerHTML = `
       ${coverHtml}
       ${headerInfo}
-      <button class="icon-btn" title="复制信息">
+      <button class="icon-btn" title="${App.i18n.t('cm.copyInfo')}">
         <span class="material-symbols-rounded" style="font-size:20px; color:var(--md-primary)">content_copy</span>
       </button>
     `;
@@ -291,7 +291,7 @@
     header.querySelector('.icon-btn').addEventListener('click', () => {
       if (isMulti) {
         var lines = selectedTracks.map(function (t) {
-          return (t.title || '未知') + ' - ' + (t.artist || '未知');
+          return (t.title || App.i18n.t('common.unknown')) + ' - ' + (t.artist || App.i18n.t('common.unknown'));
         });
         navigator.clipboard.writeText(lines.join('\n'));
       } else {
@@ -305,13 +305,13 @@
     list.className = 'context-menu-list';
 
     const items = [
-      { id: 'play', icon: 'play_arrow', text: isMulti ? '播放选中曲目' : '立即播放', color: 'var(--md-primary)' },
-      { id: 'play_next', icon: 'queue_play_next', text: isMulti ? '下一首播放（选中）' : '下一首播放' },
-      { id: 'add_queue', icon: 'playlist_play', text: isMulti ? '添加到队列（选中）' : '添加到播放队列' },
-      { id: 'add_to_playlist', icon: 'playlist_add', text: '添加到歌单', hasSubmenu: true },
-      { id: 'copy_path', icon: 'content_copy', text: isMulti ? '复制文件路径（选中）' : '复制文件路径' },
-      { id: 'explorer', icon: 'folder_open', text: '在资源管理器中显示' },
-      { id: 'info', icon: 'info', text: '文件属性', color: 'var(--md-tertiary)' }
+      { id: 'play', icon: 'play_arrow', text: isMulti ? App.i18n.t('cm.playSelected') : App.i18n.t('cm.play'), color: 'var(--md-primary)' },
+      { id: 'play_next', icon: 'queue_play_next', text: isMulti ? App.i18n.t('cm.playNextSelected') : App.i18n.t('cm.playNext') },
+      { id: 'add_queue', icon: 'playlist_play', text: isMulti ? App.i18n.t('cm.addToQueueSelected') : App.i18n.t('cm.addToQueue') },
+      { id: 'add_to_playlist', icon: 'playlist_add', text: App.i18n.t('cm.addToPlaylist'), hasSubmenu: true },
+      { id: 'copy_path', icon: 'content_copy', text: isMulti ? App.i18n.t('cm.copyPathSelected') : App.i18n.t('cm.copyPath') },
+      { id: 'explorer', icon: 'folder_open', text: App.i18n.t('cm.showInExplorer') },
+      { id: 'info', icon: 'info', text: App.i18n.t('cm.fileInfo'), color: 'var(--md-tertiary)' }
     ];
 
     items.forEach(item => {
@@ -377,19 +377,22 @@
           App.backend.show_in_explorer(track.path);
         } else if (item.id === 'info') {
           if (isMulti) {
-            var info = '【选中曲目信息】\n' +
-                       '数量: ' + selectedTracks.length + ' 首\n' +
-                       '总时长: ' + App.utils.formatDuration(selectedTracks.reduce(function (s, t) { return s + (t.duration_ms || 0); }, 0));
+            var info = App.i18n.t('cm.infoSelectedTitle') + '\n' +
+                       App.i18n.t('cm.infoCount', { count: selectedTracks.length }) + '\n' +
+                       App.i18n.t('cm.infoTotalDuration', { duration: App.utils.formatDuration(selectedTracks.reduce(function (s, t) { return s + (t.duration_ms || 0); }, 0)) });
             alert(info);
           } else {
-            const sizeMB = track.file_size ? (track.file_size / (1024 * 1024)).toFixed(2) + ' MB' : '未知';
-            const info = `【歌曲信息】\n` +
-                         `标题: ${track.title || '未知'}\n` +
-                         `艺术家: ${track.artist || '未知'}\n` +
-                         `专辑: ${track.album || '未知'}\n` +
-                         `比特率: ${track.bitrate ? Math.round(track.bitrate/1000) + ' kbps' : '未知'}\n` +
-                         `大小: ${sizeMB}\n` +
-                         `路径: ${track.path}`;
+            var _t = App.i18n.t;
+            var unknown = _t('common.unknown');
+            var sizeMB = track.file_size ? (track.file_size / (1024 * 1024)).toFixed(2) + ' MB' : unknown;
+            var bitrateStr = track.bitrate ? Math.round(track.bitrate/1000) + ' kbps' : unknown;
+            var info = _t('cm.infoTitle') + '\n' +
+                       _t('cm.infoFieldTitle', { value: track.title || unknown }) + '\n' +
+                       _t('cm.infoFieldArtist', { value: track.artist || unknown }) + '\n' +
+                       _t('cm.infoFieldAlbum', { value: track.album || unknown }) + '\n' +
+                       _t('cm.infoFieldBitrate', { value: bitrateStr }) + '\n' +
+                       _t('cm.infoFieldSize', { value: sizeMB }) + '\n' +
+                       _t('cm.infoFieldPath', { value: track.path });
             alert(info);
           }
         }
@@ -419,6 +422,7 @@
   }
 
   cm.init = init;
+  cm.hide = hide;
   document.addEventListener('DOMContentLoaded', init);
 
 })();

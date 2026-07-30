@@ -122,12 +122,22 @@ class MusicLibrary {
       try { this._db.exec(sql); } catch { /* already exists */ }
     };
     tryAlter('ALTER TABLE tracks ADD COLUMN lyrics TEXT');
+tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     for (const [col, def] of [['created_at', '0'], ['updated_at', '0']]) {
       tryAlter(`ALTER TABLE playlists ADD COLUMN ${col} REAL NOT NULL DEFAULT ${def}`);
     }
     for (const col of ['source', 'server_id', 'subsonic_id', 'cover_id', 'suffix']) {
       tryAlter(`ALTER TABLE tracks ADD COLUMN ${col} TEXT`);
     }
+
+    // ── 远程歌单支持：playlists 表添加 source / server_id / remote_id / remote_changed 列 ──
+    tryAlter("ALTER TABLE playlists ADD COLUMN source TEXT DEFAULT 'local'");
+    tryAlter('ALTER TABLE playlists ADD COLUMN server_id INTEGER');
+    tryAlter('ALTER TABLE playlists ADD COLUMN remote_id TEXT');
+    tryAlter('ALTER TABLE playlists ADD COLUMN remote_changed TEXT');
+    tryAlter('ALTER TABLE playlists ADD COLUMN cover_art_id TEXT');
+    tryAlter('ALTER TABLE playlists ADD COLUMN owner TEXT');
+    tryAlter('ALTER TABLE playlists ADD COLUMN owner_email TEXT');
 
     // 歌词回填
     const rows = this._db.prepare(
@@ -141,7 +151,7 @@ class MusicLibrary {
       }
     }
 
-    // 封面回填
+// 封面回填
     const coverRows = this._db.prepare(
       "SELECT id, path FROM tracks WHERE has_cover=0 AND source IS NULL"
     ).all();
@@ -285,8 +295,8 @@ class MusicLibrary {
           `INSERT OR REPLACE INTO tracks
            (id, path, folder_id, title, artist, album, album_artist,
             track_number, disc_number, year, duration_ms, file_size,
-            has_cover, lyrics, added_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+            has_cover, lyrics, genre, added_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
         ).run(
           tid, filePath, fid,
           meta.title || path.basename(filePath, path.extname(filePath)),
@@ -300,6 +310,7 @@ class MusicLibrary {
           stat.size,
           meta.has_cover ? 1 : 0,
           meta.lyrics || null,
+          meta.genre || null,
           now
         );
         inserted++;
@@ -331,7 +342,8 @@ class MusicLibrary {
         meta.duration_ms = Math.round(metadata.format.duration * 1000);
       }
       meta.has_cover = !!(common.picture && common.picture.length > 0);
-      meta.lyrics = this._extractLrcSync(filePath, metadata);
+      meta.genre = (common.genre && common.genre.length > 0) ? common.genre[0] : null;
+    meta.lyrics = this._extractLrcSync(filePath, metadata);
     } catch (e) {
       console.error(`[MusicLibrary] Failed to parse metadata: ${filePath}`, e.message || e);
     }
@@ -593,6 +605,25 @@ class MusicLibrary {
     this._db.prepare('UPDATE tracks SET lyrics=? WHERE id=?').run(lyrics, trackId);
   }
 
+  /**
+   * 从音频文件中提取内嵌歌词（USLT/©lyr 等标签或侧车 .lrc 文件）。
+   * @param {string} trackId
+   * @returns {Promise<string|null>}
+   */
+  async getEmbeddedLyrics(trackId) {
+    const track = this.getTrack(trackId);
+    if (!track || !track.path) return null;
+    if (track.source === 'subsonic') return null;
+    try {
+      const parseFile = await _ensureParseFile();
+      if (!parseFile) throw new Error('parseFile unavailable');
+      const metadata = await parseFile(track.path);
+      return this._extractLrcSync(track.path, metadata);
+    } catch {
+      return null;
+    }
+  }
+
   // ── Liked tracks ──────────────────────────────────────────────────────────
 
   getLikedTrackIds() {
@@ -660,12 +691,176 @@ class MusicLibrary {
     this._db.prepare('DELETE FROM play_history').run();
   }
 
+  // ── Genre backfill (async, called after init) ────────────────────────────
+
+  async backfillGenres() {
+    const rows = this._db.prepare(
+      "SELECT id, path FROM tracks WHERE genre IS NULL AND source IS NULL"
+    ).all();
+    if (rows.length === 0) return;
+    const parseFile = await _ensureParseFile();
+    if (!parseFile) return;
+    let updated = 0;
+    for (const row of rows) {
+      if (!fs.existsSync(row.path)) continue;
+      try {
+        const metadata = await parseFile(row.path);
+        const g = metadata.common.genre;
+        if (g && g.length > 0) {
+          this._db.prepare('UPDATE tracks SET genre=? WHERE id=?').run(g[0], row.id);
+          updated++;
+        }
+      } catch { /* ignore */ }
+    }
+    if (updated > 0) {
+      console.log(`[MusicLibrary] Backfilled genre for ${updated} tracks`);
+    }
+  }
+
+  // ── Play statistics ──────────────────────────────────────────────────────
+
+  getPlayStats() {
+    const db = this._db;
+
+    // 总播放次数
+    const totalPlays = db.prepare('SELECT COUNT(*) AS c FROM play_history').get().c;
+
+    // 唯一曲目数
+    const uniqueTracks = db.prepare('SELECT COUNT(DISTINCT track_id) AS c FROM play_history').get().c;
+
+    // 总播放时长（每次播放的曲目时长之和）
+    const totalDurationRow = db.prepare(
+      `SELECT COALESCE(SUM(t.duration_ms), 0) AS d
+       FROM play_history h JOIN tracks t ON t.id = h.track_id`
+    ).get();
+    const totalDurationMs = totalDurationRow ? totalDurationRow.d : 0;
+
+    // 最近 7 天每日播放数
+    const sevenDaysAgo = (Date.now() / 1000) - (7 * 24 * 3600);
+    const dailyRows = db.prepare(
+      `SELECT date(h.played_at, 'unixepoch', 'localtime') AS day, COUNT(*) AS c
+       FROM play_history h
+       WHERE h.played_at >= ?
+       GROUP BY day ORDER BY day ASC`
+    ).all(sevenDaysAgo);
+    const dailyActivity = dailyRows.map(r => ({ day: r.day, count: r.c }));
+
+    // Top 5 艺术家（按播放次数）
+    const topArtists = db.prepare(
+      `SELECT t.artist AS name, COUNT(*) AS play_count, COUNT(DISTINCT t.id) AS track_count
+       FROM play_history h JOIN tracks t ON t.id = h.track_id
+       WHERE t.artist IS NOT NULL AND t.artist != ''
+       GROUP BY t.artist ORDER BY play_count DESC LIMIT 5`
+    ).all();
+
+    // Top 5 专辑（按播放次数）
+    const topAlbums = db.prepare(
+      `SELECT t.album AS name, t.album_artist AS artist, COUNT(*) AS play_count, COUNT(DISTINCT t.id) AS track_count
+       FROM play_history h JOIN tracks t ON t.id = h.track_id
+       WHERE t.album IS NOT NULL AND t.album != ''
+       GROUP BY t.album ORDER BY play_count DESC LIMIT 5`
+    ).all();
+
+    // 最近播放时间
+    const lastPlayedRow = db.prepare(
+      'SELECT MAX(played_at) AS t FROM play_history'
+    ).get();
+    const lastPlayedAt = lastPlayedRow ? lastPlayedRow.t : 0;
+
+    return {
+      totalPlays,
+      uniqueTracks,
+      totalDurationMs,
+      dailyActivity,
+      topArtists,
+      topAlbums,
+      lastPlayedAt,
+    };
+  }
+
+  // ── Daily Mixes ───────────────────────────────────────────────────────────
+
+  getDailyMixes() {
+    const db = this._db;
+    const mixes = [];
+
+    // Top 3 艺术家
+    const topArtists = db.prepare(
+      `SELECT t.artist AS name, COUNT(*) AS play_count
+       FROM play_history h JOIN tracks t ON t.id = h.track_id
+       WHERE t.artist IS NOT NULL AND t.artist != ''
+       GROUP BY t.artist ORDER BY play_count DESC LIMIT 3`
+    ).all();
+
+    for (const a of topArtists) {
+      const tracks = db.prepare(
+        `SELECT * FROM tracks WHERE artist = ? ORDER BY album, disc_number, track_number LIMIT 50`
+      ).all(a.name);
+      if (tracks.length > 0) {
+        for (const t of tracks) t.artists = this._splitArtists(t.artist);
+        mixes.push({ type: 'artist', name: a.name, playCount: a.play_count, tracks });
+      }
+    }
+
+    // Top 2 流派
+    const topGenres = db.prepare(
+      `SELECT t.genre AS name, COUNT(*) AS play_count
+       FROM play_history h JOIN tracks t ON t.id = h.track_id
+       WHERE t.genre IS NOT NULL AND t.genre != ''
+       GROUP BY t.genre ORDER BY play_count DESC LIMIT 2`
+    ).all();
+
+    for (const g of topGenres) {
+      const tracks = db.prepare(
+        `SELECT * FROM tracks WHERE genre = ? ORDER BY artist, album, disc_number, track_number LIMIT 50`
+      ).all(g.name);
+      if (tracks.length > 0) {
+        for (const t of tracks) t.artists = this._splitArtists(t.artist);
+        mixes.push({ type: 'genre', name: g.name, playCount: g.play_count, tracks });
+      }
+    }
+
+    // Top 2 专辑
+    const topAlbums = db.prepare(
+      `SELECT t.album AS name, t.album_artist AS artist, COUNT(*) AS play_count
+       FROM play_history h JOIN tracks t ON t.id = h.track_id
+       WHERE t.album IS NOT NULL AND t.album != ''
+       GROUP BY t.album ORDER BY play_count DESC LIMIT 2`
+    ).all();
+
+    for (const al of topAlbums) {
+      const tracks = db.prepare(
+        `SELECT * FROM tracks WHERE album = ? ORDER BY disc_number, track_number LIMIT 50`
+      ).all(al.name);
+      if (tracks.length > 0) {
+        for (const t of tracks) t.artists = this._splitArtists(t.artist);
+        mixes.push({ type: 'album', name: al.name, subtitle: al.artist, playCount: al.play_count, tracks });
+      }
+    }
+
+    // 交错排列：artist, genre, album, artist, genre, album, artist
+    const byType = { artist: [], genre: [], album: [] };
+    for (const m of mixes) byType[m.type].push(m);
+    const result = [];
+    const maxLen = Math.max(byType.artist.length, byType.genre.length, byType.album.length);
+    for (let i = 0; i < maxLen; i++) {
+      if (byType.artist[i]) result.push(byType.artist[i]);
+      if (byType.genre[i]) result.push(byType.genre[i]);
+      if (byType.album[i]) result.push(byType.album[i]);
+    }
+
+    return result;
+  }
+
   // ── Playlists ─────────────────────────────────────────────────────────────
 
   getPlaylists() {
     return this._db.prepare(
       `SELECT p.id, p.name, p.created_at, p.updated_at,
-       (SELECT COUNT(*) FROM playlist_tracks pt WHERE pt.playlist_id=p.id) AS track_count
+       p.source, p.server_id, p.remote_id, p.remote_changed, p.cover_art_id,
+       p.owner, p.owner_email,
+       (SELECT COUNT(*) FROM playlist_tracks pt WHERE pt.playlist_id=p.id) AS track_count,
+       (SELECT s.name FROM subsonic_sources s WHERE s.id=p.server_id) AS server_name
        FROM playlists p ORDER BY p.updated_at DESC`
     ).all();
   }
@@ -762,6 +957,68 @@ class MusicLibrary {
 
   // ── Subsonic sources ─────────────────────────────────────────────────────
 
+  // Remote methods to be added
+
+  // Remote Playlists (Subsonic)
+
+  importRemotePlaylist(serverId, remoteId, name, remoteChanged, coverArtId, owner) {
+    const now = Date.now() / 1000;
+    const result = this._db.prepare(
+      "INSERT INTO playlists (name, created_at, updated_at, source, server_id, remote_id, remote_changed, cover_art_id, owner)" +
+      " VALUES (?, ?, ?, 'subsonic', ?, ?, ?, ?, ?)"
+    ).run(name, now, now, parseInt(serverId, 10), String(remoteId), remoteChanged || null, coverArtId || null, owner || null);
+    return {
+      id: result.lastInsertRowid, name, created_at: now, updated_at: now,
+      source: 'subsonic', server_id: parseInt(serverId, 10), remote_id: String(remoteId),
+      remote_changed: remoteChanged || null, cover_art_id: coverArtId || null,
+      owner: owner || null, track_count: 0,
+    };
+  }
+
+  findRemotePlaylist(serverId, remoteId) {
+    return this._db.prepare(
+      "SELECT * FROM playlists WHERE source='subsonic' AND server_id=? AND remote_id=?"
+    ).get(parseInt(serverId, 10), String(remoteId)) || null;
+  }
+
+  updateRemotePlaylist(playlistId, name, remoteChanged, coverArtId, owner) {
+    this._db.prepare(
+      'UPDATE playlists SET name=?, remote_changed=?, cover_art_id=?, owner=?, updated_at=? WHERE id=?'
+    ).run(name, remoteChanged || null, coverArtId || null, owner || null, Date.now() / 1000, parseInt(playlistId, 10));
+  }
+
+  updatePlaylistOwnerEmail(playlistId, email) {
+    this._db.prepare(
+      'UPDATE playlists SET owner_email=? WHERE id=?'
+    ).run(email || null, parseInt(playlistId, 10));
+  }
+
+  replacePlaylistTracks(playlistId, trackIds) {
+    const pid = parseInt(playlistId, 10);
+    if (!Array.isArray(trackIds)) return 0;
+    this._db.prepare('DELETE FROM playlist_tracks WHERE playlist_id=?').run(pid);
+    const now = Date.now() / 1000;
+    const stmt = this._db.prepare(
+      'INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?,?,?,?)'
+    );
+    for (let i = 0; i < trackIds.length; i++) {
+      stmt.run(pid, trackIds[i], i, now);
+    }
+    this._db.prepare('UPDATE playlists SET updated_at=? WHERE id=?').run(now, pid);
+    return trackIds.length;
+  }
+
+  removeRemotePlaylistsForServer(serverId) {
+    const sid = parseInt(serverId, 10);
+    this._db.prepare("DELETE FROM playlists WHERE source='subsonic' AND server_id=?").run(sid);
+  }
+
+  getPlaylistRemoteInfo(playlistId) {
+    return this._db.prepare(
+      'SELECT id, name, source, server_id, remote_id, remote_changed FROM playlists WHERE id=?'
+    ).get(parseInt(playlistId, 10)) || null;
+  }
+
   addSubsonicServer(name, serverUrl, username, password, protocolMode = 'subsonic') {
     const now = Date.now() / 1000;
     const result = this._db.prepare(
@@ -782,6 +1039,7 @@ class MusicLibrary {
 
   removeSubsonicServer(serverId) {
     const sid = parseInt(serverId, 10);
+    this.removeRemotePlaylistsForServer(sid);
     this._deleteTracksByCondition('server_id=?', sid);
     // 兜底：删除 server_id 为 NULL 但来源为 subsonic 且路径匹配的遗留曲目
     this._deleteTracksByCondition(
@@ -863,14 +1121,14 @@ class MusicLibrary {
         `INSERT OR REPLACE INTO tracks
          (id, path, folder_id, title, artist, album, album_artist,
           track_number, disc_number, year, duration_ms, file_size,
-          has_cover, lyrics, added_at,
+          has_cover, lyrics, genre, added_at,
           source, server_id, subsonic_id, cover_id, suffix)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       ).run(
         tid, syntheticPath, null,
         s.title, s.artist, s.album, s.album_artist,
         s.track_number, s.disc_number, s.year, s.duration_ms, s.size || 0,
-        s.cover_art_id ? 1 : 0, null, Date.now() / 1000,
+        s.cover_art_id ? 1 : 0, null, s.genre || null, Date.now() / 1000,
         'subsonic', serverIdInt, subId, s.cover_art_id, s.suffix
       );
       if (!existed) inserted++;

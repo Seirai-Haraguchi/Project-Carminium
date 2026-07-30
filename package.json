@@ -11,7 +11,8 @@
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "build:native": "cd native && zig build copy -Doptimize=ReleaseFast",
     "build": "electron-builder --win",
-    "build:dir": "electron-builder --win --dir"
+    "build:dir": "electron-builder --win --dir",
+    "build:portable": "electron-builder --win portable"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.6.0",
@@ -20,31 +21,40 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.1.2",
+    "gsap": "3.15.0",
     "koffi": "^3.1.2",
     "music-metadata": "^10.0.0",
-    "pinyin-pro": "^3.0.0"
+    "pinyin-pro": "^3.0.0",
+    "sharp": "^0.35.3"
   },
   "build": {
     "appId": "ProjectCarminium.Player",
     "productName": "Project Carminium",
+    "icon": "build/icon.png",
     "directories": {
       "output": "dist-electron"
     },
     "files": [
       "electron/**/*",
       "web/**/*",
+      "build/icon.png",
       "version.json",
       "package.json"
     ],
     "win": {
-      "target": "nsis"
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false
     },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Project Carminium"
+    "electronDist": "node_modules/electron/dist",
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.exe"
     },
     "asarUnpack": [
       "node_modules/better-sqlite3/**/*",

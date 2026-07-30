@@ -8,7 +8,7 @@
   window.App = App;
 
   App.state = {
-    currentPage: 'music',
+    currentPage: 'your_mix',
     currentTrack: null,
     playbackState: 'stopped', // playing, paused, stopped
     shuffle: false,
@@ -22,6 +22,7 @@
     allFolders: [],      // 全量文件夹缓存
     allSubsonicServers: [], // 全量 Subsonic 服务器缓存
     colorScheme: 'tonal_spot', // Material You 配色方案
+    monetSource: 'album_cover', // 莫奈取色来源: "album_cover" | "system_wallpaper"
     isExclusive: false,  // WASAPI 独占模式标志（由 settings_changed 同步）
   };
 
@@ -137,6 +138,7 @@
         App.backend.repeat_changed.connect(_onRepeatChanged);
         App.backend.queue_changed.connect(_onQueueChanged);
         App.backend.liked_changed.connect(_onLikedChanged);
+        App.backend.lyrics_changed.connect(_onLyricsChanged);
 
         // 歌单 / 历史 / 喜爱列表变化
         App.backend.playlists_changed.connect(function (json) {
@@ -152,6 +154,9 @@
         App.backend.history_changed.connect(function (json) {
           if (App.state.currentPage === 'history' && App.pages.history && App.pages.history.onHistoryChanged) {
             App.pages.history.onHistoryChanged(json);
+          }
+          if (App.state.currentPage === 'your_mix' && App.pages.your_mix && App.pages.your_mix.onHistoryChanged) {
+            App.pages.your_mix.onHistoryChanged(json);
           }
         });
         App.backend.liked_tracks_changed.connect(function (json) {
@@ -200,6 +205,7 @@
           // 刷新前端全量缓存，然后重渲染当前页
           App.refreshLibraryCache().then(function () {
             if (App.state.currentPage === 'music') App.pages.music.render(document.getElementById('page-container'));
+            if (App.state.currentPage === 'your_mix' && App.pages.your_mix) App.pages.your_mix.render(document.getElementById('page-container'));
             if (App.pages.folders.onFoldersUpdated) App.pages.folders.onFoldersUpdated(json);
           });
         });
@@ -222,10 +228,25 @@
             if (App.nowPlaying && App.nowPlaying.updateAudioMode) {
               App.nowPlaying.updateAudioMode(!!s.wasapi_exclusive);
             }
-            // 界面字体变更
-            if (s.ui_font !== undefined) {
-              _applyUiFont(s.ui_font || '');
-            }
+      // 界面字体变更
+      if (s.ui_font !== undefined) {
+        _applyUiFont(s.ui_font || '');
+      }
+      // 语言变更
+      if (s.language !== undefined && App.i18n && App.i18n.getLang() !== s.language) {
+        App.i18n.init(s.language);
+      }
+      // 莫奈取色来源变更
+      if (s.monet_source !== undefined) {
+        App.state.monetSource = s.monet_source;
+        // 切换到系统壁纸时立即获取系统强调色
+        if (s.monet_source === 'system_wallpaper') {
+          _refreshMonetFromSystem();
+        } else if (App.state.currentDominantRgb) {
+          // 切换到封面取色时，用当前缓存的主色重新应用
+          App.utils.applyDynamicTheme(App.state.currentDominantRgb, App.state.colorScheme);
+        }
+      }
             // AutoMix / gapless / BeatShake 依赖前端 Web Audio API，已随前端模式一并移除
           } catch (e) { /* ignore */ }
         });
@@ -244,14 +265,14 @@
         App.refreshLibraryCache().then(function () {
           return _fetchInitialState();
         }).then(function () {
-          navigate('music');
+          navigate('your_mix');
         }).catch(function (err) {
           console.error('[app] 初始化失败:', err);
-          _showFatalError('初始化失败：' + (err && err.message ? err.message : String(err)));
+          _showFatalError(App.i18n ? App.i18n.t('error.initFailed', { message: (err && err.message ? err.message : String(err)) }) : ('初始化失败：' + (err && err.message ? err.message : String(err))));
         });
       }).catch(function (err) {
         console.error('[app] get_cover_base_url 失败:', err);
-        _showFatalError('无法连接后端服务');
+        _showFatalError(App.i18n ? App.i18n.t('error.backendFailed') : '无法连接后端服务');
       });
     }, 15000);
   }
@@ -324,8 +345,19 @@
       // 加载配色方案
       App.state.colorScheme = settings.color_scheme || 'tonal_spot';
 
+      // 加载莫奈取色来源
+      App.state.monetSource = settings.monet_source || 'album_cover';
+      if (App.state.monetSource === 'system_wallpaper') {
+        _refreshMonetFromSystem();
+      }
+
       // 应用界面字体
       _applyUiFont(settings.ui_font || '');
+
+      // 初始化界面语言
+      if (App.i18n && settings.language) {
+        App.i18n.init(settings.language);
+      }
 
       // 同步独占模式标志到 App.state
       App.state.isExclusive = !!settings.wasapi_exclusive;
@@ -349,14 +381,78 @@
     });
   }
 
+  /**
+   * 从系统壁纸/强调色获取主色并应用动态主题。
+   * 通过 IPC 获取 Windows 系统强调色，回退到 MD3 基准蓝紫色调。
+   */
+  function _refreshMonetFromSystem() {
+    if (!window.__electronAPI || !window.__electronAPI.invoke) {
+      _applyMonetFallback();
+      return;
+    }
+    window.__electronAPI.invoke('get_system_accent_color').then(function (rgb) {
+      if (rgb && Array.isArray(rgb) && rgb.length === 3) {
+        App.state.currentDominantRgb = rgb;
+        App.utils.applyDynamicTheme(rgb, App.state.colorScheme);
+      } else {
+        _applyMonetFallback();
+      }
+    }).catch(function () {
+      _applyMonetFallback();
+    });
+  }
+
+  function _applyMonetFallback() {
+    var fallback = [103, 80, 164];  // #6750A4, MD3 baseline primary
+    App.state.currentDominantRgb = fallback;
+    App.utils.applyDynamicTheme(fallback, App.state.colorScheme);
+  }
+
   // ── 2. Signal Handlers ───────────────────────────────────────────────────
 
   function _onTrackChanged(trackJson) {
     const track = JSON.parse(trackJson);
     App.state.currentTrack = track;
+    // 清除旧曲的过渡点标记（新曲的标记在分析完成后由 _maybeComputePlan 设置）
+    App.nowPlaying.clearTransitionPoint();
+
+    // gapless 切换：延迟 updateTrack 到 requestAnimationFrame，
+    // 让事件循环先处理 OutputCaptureWorklet 积压的 PCM 消息。
+    // 否则 updateTrack 的同步 DOM 操作会阻塞主线程，
+    // 导致 WASAPI DLL 缓冲区欠载 → 顿卡。
+    if (_gaplessSwitchPending || _crossfadeSwitchPending) {
+      _gaplessSwitchPending = false;
+      _crossfadeSwitchPending = false;
+      _skipNextTrackGlitch = false; // gapless/crossfade 不需要 glitch 动画
+      requestAnimationFrame(function () {
+        App.nowPlaying.updateTrack(track);
+        // 列表高亮也延迟，减少同一帧的同步工作量
+        _updateListPlayState();
+      });
+      return;
+    }
+
     App.nowPlaying.updateTrack(track);
-    
-    // 通知各个列表页更新播放高亮
+
+    // 非 crossfade 切歌：触发文字崩坏过渡动画
+    // crossfade 已通过 onCrossfadeStart/Complete 处理过渡，跳过
+    if (_skipNextTrackGlitch) {
+      _skipNextTrackGlitch = false;
+    } else if (_audioEngine && _audioEngine._isPlaying) {
+      // 仅在已有曲目播放时触发（排除首次加载）
+      App.nowPlaying.setTrackInfoHidden(true);
+      setTimeout(function () {
+        App.nowPlaying.setTrackInfoHidden(false);
+      }, 800);
+    }
+
+    _updateListPlayState();
+  }
+
+  function _updateListPlayState() {
+    if (App.state.currentPage === 'your_mix' && App.pages.your_mix.updatePlayState) {
+      App.pages.your_mix.updatePlayState();
+    }
     if (App.state.currentPage === 'music' && App.pages.music.updatePlayState) {
       App.pages.music.updatePlayState();
     }
@@ -408,6 +504,24 @@
     App.nowPlaying.updateLiked(liked);
   }
 
+  // 歌词变更（手动指定 / 自动搜索 / 外部更新）
+  // 后端 apply_lyrics / apply_lyrics_temporary 均通过此事件通知前端，
+  // 携带 {trackId, lyrics} JSON。前端据此增量更新歌词显示，不触发 glitch 动画。
+  function _onLyricsChanged(json) {
+    var data;
+    try { data = JSON.parse(json); } catch (e) {
+      console.error('[app] lyrics_changed parse error:', e);
+      return;
+    }
+    if (!data || !data.trackId) return;
+    // 仅处理当前播放曲目的歌词变更
+    if (!App.state.currentTrack || App.state.currentTrack.id !== data.trackId) return;
+    App.state.currentTrack.lyrics = data.lyrics;
+    if (App.nowPlaying.updateLyrics) {
+      App.nowPlaying.updateLyrics(data.trackId, data.lyrics);
+    }
+  }
+
   // ── 3. 路由与导航 ────────────────────────────────────────────────────────
 
   function navigate(pageId, params) {
@@ -425,6 +539,7 @@
     if (newPage) newPage.classList.add('active');
 
     App.state.currentPage = pageId;
+    App.state.currentPageParams = params;
 
     // 触发动画；settings / about 使用内部平移动画，不再叠加 page-enter
     const useInternalTransition = pageId === 'settings' || pageId === 'about';
@@ -449,20 +564,39 @@
 
   App.navigate = navigate;
 
+  // ── 3.4 语言变更：重新渲染当前页面 ───────────────────────────────────────
+  if (App.i18n && App.i18n.onChange) {
+    App.i18n.onChange(function () {
+      // 重新渲染当前页面（各页面 render 内部会读取最新翻译）
+      var page = App.state.currentPage;
+      var container = document.getElementById('page-container');
+      if (page && App.pages[page] && App.pages[page].render && container) {
+        // 保存滚动位置，渲染后恢复
+        App.scrollMemory.save(page);
+        App.pages[page].render(container, App.state.currentPageParams || undefined);
+        App.scrollMemory.scheduleRestore(page);
+      }
+      // 通知正在播放面板刷新动态文本
+      if (App.nowPlaying && App.nowPlaying.onLanguageChanged) {
+        App.nowPlaying.onLanguageChanged();
+      }
+    });
+  }
+
   // ── 3.5 全局快捷键 ───────────────────────────────────────────────────────
 
   const SHORTCUT_ACTIONS = {
-    play_pause: { label: '播放 / 暂停', handler: () => {
+    play_pause: { label: () => App.i18n.t('shortcut.play_pause'), handler: () => {
       if (!App.backend) return;
       if (App.state.playbackState === 'playing') App.backend.pause();
       else App.backend.play();
     }},
-    next_track: { label: '下一首', handler: () => App.backend && App.backend.next_track && App.backend.next_track() },
-    prev_track: { label: '上一首', handler: () => App.backend && App.backend.prev_track && App.backend.prev_track() },
-    volume_up: { label: '音量加', handler: () => App.backend && App.backend.set_volume && _adjustVolume(5) },
-    volume_down: { label: '音量减', handler: () => App.backend && App.backend.set_volume && _adjustVolume(-5) },
-    toggle_like: { label: '喜欢 / 取消喜欢', handler: () => App.backend && App.backend.toggle_liked && App.backend.toggle_liked() },
-    toggle_mute: { label: '静音', handler: () => App.backend && App.backend.set_volume && _toggleMute() },
+    next_track: { label: () => App.i18n.t('shortcut.next_track'), handler: () => App.backend && App.backend.next_track && App.backend.next_track() },
+    prev_track: { label: () => App.i18n.t('shortcut.prev_track'), handler: () => App.backend && App.backend.prev_track && App.backend.prev_track() },
+    volume_up: { label: () => App.i18n.t('shortcut.volume_up'), handler: () => App.backend && App.backend.set_volume && _adjustVolume(5) },
+    volume_down: { label: () => App.i18n.t('shortcut.volume_down'), handler: () => App.backend && App.backend.set_volume && _adjustVolume(-5) },
+    toggle_like: { label: () => App.i18n.t('shortcut.toggle_like'), handler: () => App.backend && App.backend.toggle_liked && App.backend.toggle_liked() },
+    toggle_mute: { label: () => App.i18n.t('shortcut.toggle_mute'), handler: () => App.backend && App.backend.set_volume && _toggleMute() },
   };
 
   let _shortcutConfig = {};
@@ -638,6 +772,14 @@
     });
   }
 
+  // 标题栏设置按钮
+  const titleBarSettings = document.getElementById('title-bar-settings');
+  if (titleBarSettings) {
+    titleBarSettings.addEventListener('click', function () {
+      navigate('settings');
+    });
+  }
+
   // ── 4.5 歌单副菜单 ────────────────────────────────────────────────────────
 
   const playlistsNavBtn = document.getElementById('nav-playlists');
@@ -702,51 +844,61 @@
     playlistsListEl.innerHTML = '';
     const frag = document.createDocumentFragment();
     playlists.forEach(pl => {
+      const isRemote = pl.source === 'subsonic';
       const item = document.createElement('button');
       item.className = 'nav-submenu-item';
       item.type = 'button';
+      var iconHtml;
+      if (isRemote && pl.cover_art_id && pl.server_id && window.__coverBase) {
+        iconHtml = '<img class="nav-submenu-item-cover" src="' + window.__coverBase + '/subsonic/cover/' + pl.server_id + '/' + encodeURIComponent(pl.cover_art_id) + '" alt="" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'inline-flex\'"><span class="material-symbols-rounded nav-submenu-item-icon" style="display:none">cloud</span>';
+      } else {
+        iconHtml = '<span class="material-symbols-rounded nav-submenu-item-icon">' + (isRemote ? 'cloud' : 'playlist_play') + '</span>';
+      }
       item.innerHTML = `
-        <span class="material-symbols-rounded nav-submenu-item-icon">playlist_play</span>
+        ${iconHtml}
         <span class="nav-submenu-item-name">${App.utils.esc(pl.name)}</span>
+        ${isRemote ? '<span class="playlist-mini-badge">☁</span>' : ''}
         <span class="nav-submenu-item-count">${pl.track_count || 0}</span>
       `;
       item.addEventListener('click', function () {
         _closePlaylistsSubmenu();
-        navigate('playlists', { playlist_id: pl.id, playlist_name: pl.name });
+        navigate('playlists', { playlist_id: pl.id, playlist_name: pl.name, source: pl.source, server_id: pl.server_id, remote_id: pl.remote_id, server_name: pl.server_name, cover_art_id: pl.cover_art_id, owner: pl.owner, owner_email: pl.owner_email });
       });
-      // 拖拽放入歌单
-      item.addEventListener('dragover', function (e) {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'copy';
-        item.classList.add('drag-over');
-      });
-      item.addEventListener('dragleave', function () {
-        item.classList.remove('drag-over');
-      });
-      item.addEventListener('drop', function (e) {
-        e.preventDefault();
-        item.classList.remove('drag-over');
-        // 取消自动关闭定时器
-        if (App._dragCloseTimer) { clearTimeout(App._dragCloseTimer); App._dragCloseTimer = null; }
-        if (App._dragOpenedSubmenu) {
-          if (App.playlists && App.playlists.closeSubmenu) App.playlists.closeSubmenu();
-          App._dragOpenedSubmenu = false;
-        }
-        var raw = e.dataTransfer.getData('text/plain');
-        if (!raw) return;
-        try {
-          var ids = JSON.parse(raw);
-          if (!Array.isArray(ids) || ids.length === 0) return;
-          App.utils.call('add_tracks_to_playlist', pl.id, JSON.stringify(ids)).then(function (res) {
-            try {
-              var r = JSON.parse(res);
-              App.utils.toast((r.added || 0) + ' 首曲目已添加到「' + pl.name + '」');
-            } catch (e) { /* ignore */ }
-          });
-        } catch (err) {
-          console.warn('[playlists] drop parse error:', err);
-        }
-      });
+      // 拖拽放入歌单（仅本地歌单）
+      if (!isRemote) {
+        item.addEventListener('dragover', function (e) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+          item.classList.add('drag-over');
+        });
+        item.addEventListener('dragleave', function () {
+          item.classList.remove('drag-over');
+        });
+        item.addEventListener('drop', function (e) {
+          e.preventDefault();
+          item.classList.remove('drag-over');
+          // 取消自动关闭定时器
+          if (App._dragCloseTimer) { clearTimeout(App._dragCloseTimer); App._dragCloseTimer = null; }
+          if (App._dragOpenedSubmenu) {
+            if (App.playlists && App.playlists.closeSubmenu) App.playlists.closeSubmenu();
+            App._dragOpenedSubmenu = false;
+          }
+          var raw = e.dataTransfer.getData('text/plain');
+          if (!raw) return;
+          try {
+            var ids = JSON.parse(raw);
+            if (!Array.isArray(ids) || ids.length === 0) return;
+            App.utils.call('add_tracks_to_playlist', pl.id, JSON.stringify(ids)).then(function (res) {
+              try {
+                var r = JSON.parse(res);
+                App.utils.toast((r.added || 0) + ' 首曲目已添加到「' + pl.name + '」');
+              } catch (e) { /* ignore */ }
+            });
+          } catch (err) {
+            console.warn('[playlists] drop parse error:', err);
+          }
+        });
+      }
       frag.appendChild(item);
     });
     playlistsListEl.appendChild(frag);
@@ -780,6 +932,23 @@
       e.stopPropagation();
       _promptCreatePlaylist();
     });
+  if (playlistsSubmenu) {
+    const header = playlistsSubmenu.querySelector('.nav-submenu-header');
+    if (header && !header.querySelector('.nav-submenu-import')) {
+      const importBtn = document.createElement('button');
+      importBtn.className = 'nav-submenu-import';
+      importBtn.id = 'nav-playlist-import';
+      importBtn.innerHTML = '<span class="material-symbols-rounded">cloud_download</span>';
+      importBtn.title = '\u4ece Subsonic \u670d\u52a1\u5668\u5bfc\u5165\u6b4c\u5355';
+      importBtn.setAttribute('aria-label', '\u4ece Subsonic \u670d\u52a1\u5668\u5bfc\u5165\u6b4c\u5355');
+      importBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        _promptImportSubsonicPlaylists();
+      });
+      header.appendChild(importBtn);
+    }
+  }
+
   }
 
   function _promptCreatePlaylist() {
@@ -869,6 +1038,19 @@
   window.addEventListener('resize', function () {
     if (_isPlaylistsSubmenuOpen()) _positionPlaylistsSubmenu();
   });
+
+  // ── 4.7 窗口尺寸调整：拖拽期间禁用过渡，直接定格最终布局 ───────────────
+  // 主内容区（及整棵文档）在 resize 期间给 <body> 添加 .is-resizing，
+  // CSS 内全局禁用 transition（见 style.css），松手 120ms 后移除，
+  // 使窗口缩放时各区域直接切到最终尺寸，而非跟着过渡“追”窗口导致滞后/抖动。
+  let _resizingTimer = null;
+  window.addEventListener('resize', function () {
+    document.body.classList.add('is-resizing');
+    if (_resizingTimer) clearTimeout(_resizingTimer);
+    _resizingTimer = setTimeout(function () {
+      document.body.classList.remove('is-resizing');
+    }, 120);
+  });
   // Esc 关闭
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && _isPlaylistsSubmenuOpen()) {
@@ -876,7 +1058,608 @@
     }
   });
 
+  // ── 5. AudioEngine（Web Audio API）──────────────────────────────────────
+  // Web Audio API で音频解码・混音（Gapless / AutoMix / 音量）を行い、
+  // 合成済み PCM を OutputCaptureWorklet → DLL (WASAPI) に転送する。
+
+  var _audioEngine = null;
+  var _skipNextTrackGlitch = false;  // crossfade 已处理过渡动画时跳过 glitch
+  var _gaplessSwitchPending = false; // gapless 切换待处理：延迟 updateTrack 避免阻塞音频管线
+  var _crossfadeSwitchPending = false; // crossfade 切换待处理：延迟 updateTrack 避免阻塞音频管线
+
+  function _initAudioEngine() {
+    if (!window.AudioEngine) {
+      console.error('[app] AudioEngine class not found');
+      return;
+    }
+    if (!window.__electronAPI) {
+      console.warn('[app] __electronAPI not available, skip AudioEngine init');
+      return;
+    }
+
+    _audioEngine = new window.AudioEngine();
+
+    // ── AudioEngine → Main (IPC) ──
+    _audioEngine.onOutput = function (arrayBuffer) {
+      window.__electronAPI.sendAudioOutput(arrayBuffer);
+    };
+    _audioEngine.onEnded = function () {
+      window.__electronAPI.sendAudioEnded();
+    };
+    _audioEngine.onPositionTick = function (ms) {
+      window.__electronAPI.sendAudioPositionTick(ms);
+    };
+    _audioEngine.onCrossfadeStart = function () {
+      App.nowPlaying.showTransition(true);
+      App.nowPlaying.setTrackInfoHidden(true);
+    };
+    _audioEngine.onCrossfadeComplete = function (positionMs) {
+      _skipNextTrackGlitch = true;  // crossfade 已完成过渡动画，跳过后续 glitch
+      // 清除过渡标记（旧曲的过渡点已失效，新曲的标记由后续分析设置）
+      App.nowPlaying.clearTransitionPoint();
+      App.nowPlaying.setTrackInfoHidden(false);
+      // 延迟 updateTrack 到 requestAnimationFrame，让事件循环先处理音频管线，
+      // 避免同步 DOM 操作阻塞主线程导致 WASAPI 缓冲区欠载 → 顿卡。
+      _crossfadeSwitchPending = true;
+      window.__electronAPI.sendAudioCrossfadeComplete(positionMs);
+      // 安全超时：如果 track_changed 未到达，2 秒后清除标志
+      setTimeout(function () { _crossfadeSwitchPending = false; }, 2000);
+    };
+    _audioEngine.onStreamEnded = function () {
+      // FFmpeg 流式播放结束（WMA/APE 等格式）
+      window.__electronAPI.sendAudioEnded();
+    };
+    _audioEngine.onGaplessSwitch = function () {
+      // 无缝切换完成，通知 player.js 推进队列索引
+      // 跳过 glitch 动画（gapless 应无缝，不需要文字崩坏过渡）
+      // 标记 pending：_onTrackChanged 会延迟 updateTrack 到 rAF，
+      // 让事件循环先处理 OutputCaptureWorklet 的 PCM 消息，避免音频管线阻塞瞬断
+      _skipNextTrackGlitch = true;
+      _gaplessSwitchPending = true;
+      window.__electronAPI.sendAudioGaplessSwitch();
+      // 安全超时：如果 track_changed 未到达（队列末尾停止等场景），2 秒后清除标志
+      setTimeout(function () { _gaplessSwitchPending = false; }, 2000);
+    };
+
+    // ── Main → AudioEngine: 文件解码结果（IPC 监听） ──
+    // 注册 IPC 监听器，将主进程的文件解码结果转发到 AudioEngine
+    if (window.__electronAPI.onAudioFileDecoded) {
+      window.__electronAPI.onAudioFileDecoded(function (filePath, arrayBuffer) {
+        if (_audioEngine) _audioEngine.onFileLoaded(filePath, arrayBuffer);
+      });
+    }
+    if (window.__electronAPI.onAudioFileDecodeError) {
+      window.__electronAPI.onAudioFileDecodeError(function (filePath, error) {
+        if (_audioEngine) _audioEngine.onFileLoadError(filePath, error);
+      });
+    }
+
+    // ── Main → AudioEngine: DLL 缓冲延迟 (via reliable IPC channel) ──
+    window.__electronAPI.onAudioLatency(function (ms) {
+      if (_audioEngine) _audioEngine.setDllBufferLatency(ms);
+    });
+    // 保留旧全局函数作为后备
+    window.__setDllBufferLatency = function (ms) {
+      if (_audioEngine) _audioEngine.setDllBufferLatency(ms);
+    };
+
+    // ── Main → AudioEngine: audio_control (via executeJavaScript) ──
+    window.__handleAudioControl = function (json) {
+      try {
+        var cmd = typeof json === 'string' ? JSON.parse(json) : json;
+        switch (cmd.action) {
+          case 'init':
+            _audioEngine.init(cmd.sampleRate, cmd.channels).then(function (info) {
+              console.log('[app] AudioEngine initialized:', info);
+              // 同步音频效果设置到 AudioEngine
+              _syncAudioEffects();
+            }).catch(function (e) {
+              console.error('[app] AudioEngine init failed:', e);
+            });
+            break;
+          case 'play':
+            // Web Audio 引擎需要 filePath 来加载并解码文件
+            // cmd.paused: 模式切替中の一時停止トラック(未定義 = 通常再生)
+            _audioEngine.playCurrent(cmd.filePath, cmd.durationMs, cmd.seekOffsetMs, cmd.paused);
+            // 智能过渡：仅 AutoMix(crossfade) 模式需要分析，gapless 不需要
+            if (_audioEngine._crossfadeEnabled) {
+              _analyzeCurrentTrack(cmd.filePath, cmd.trackId, cmd.title, cmd.artist, cmd.durationMs);
+            }
+            break;
+          case 'play_streaming':
+            // FFmpeg 格式：设置流式 PCM 工作节点，等待 FFmpeg PCM 数据
+            _audioEngine.playStreaming(cmd.durationMs, cmd.seekOffsetMs, cmd.paused);
+            // 智能过渡：仅 AutoMix 模式需要分析
+            if (_audioEngine._crossfadeEnabled) {
+              _analyzeCurrentTrack(cmd.filePath, cmd.trackId, cmd.title, cmd.artist, cmd.durationMs);
+            }
+            break;
+          case 'stop':
+            _audioEngine.stop();
+            break;
+          case 'pause':
+            _audioEngine.pause();
+            break;
+          case 'resume':
+            _audioEngine.resume();
+            break;
+          case 'seek':
+            _audioEngine.seek(cmd.positionMs, cmd.durationMs);
+            break;
+          case 'set_volume':
+            _audioEngine.setVolume(cmd.level);
+            break;
+          case 'set_gapless':
+            _audioEngine.setGaplessEnabled(cmd.enabled);
+            break;
+          case 'set_crossfade':
+            _audioEngine.setCrossfadeEnabled(cmd.enabled);
+            // AutoMix 关闭时清除过渡点标记
+            if (!cmd.enabled) {
+              App.nowPlaying.clearTransitionPoint();
+            }
+            break;
+          case 'set_crossfade_duration':
+            _audioEngine.setCrossfadeDuration(cmd.ms);
+            break;
+          case 'set_next_info':
+            // 次曲信息：filePath + durationMs + forceStreaming
+            _audioEngine.setNextInfo(cmd.filePath, cmd.durationMs, cmd.forceStreaming);
+            // 智能过渡：仅 AutoMix 模式需要分析下一曲，gapless 不需要
+            if (_audioEngine._crossfadeEnabled) {
+              _analyzeNextTrack(cmd.filePath, cmd.trackId, cmd.title, cmd.artist, cmd.durationMs);
+            }
+            break;
+          case 'set_transition_plan':
+            // 智能过渡方案：主进程根据两曲分析结果计算后下发
+            _audioEngine.setTransitionPlan(cmd.plan);
+            break;
+          case 'clear_next':
+            _audioEngine.clearNextState();
+            break;
+        }
+      } catch (e) {
+        console.error('[app] audio_control error:', e);
+      }
+    };
+
+    // ── Main → AudioEngine: FFmpeg PCM 数据（流式播放 WMA/APE）──
+    window.__electronAPI.onAudioPcmMain(function (float32Array) {
+      _audioEngine.pushMainPcm(float32Array);
+    });
+    window.__electronAPI.onAudioPcmNext(function (float32Array) {
+      _audioEngine.pushNextPcm(float32Array);
+    });
+    window.__electronAPI.onAudioFfmpegState(function (channel, finished) {
+      if (channel === 'main') _audioEngine.setMainFfmpegFinished(finished);
+      else _audioEngine.setNextFfmpegFinished(finished);
+    });
+
+    console.log('[app] AudioEngine bridge connected');
+
+    // ── 补偿：同步当前 AutoMix/Gapless 状态 ──
+    var ea = window.__electronAPI;
+    if (ea && ea.invoke) {
+      ea.invoke('get_automix').then(function (enabled) {
+        _audioEngine.setCrossfadeEnabled(!!enabled);
+        console.log('[app] Synced automix (crossfade):', enabled);
+      }).catch(function (e) { console.warn('[app] get_automix failed:', e); });
+      ea.invoke('get_gapless').then(function (enabled) {
+        _audioEngine.setGaplessEnabled(!!enabled);
+        console.log('[app] Synced gapless:', enabled);
+      }).catch(function (e) { console.warn('[app] get_gapless failed:', e); });
+      ea.invoke('get_crossfade_duration').then(function (ms) {
+        _audioEngine.setCrossfadeDuration(parseInt(ms, 10) || 4000);
+        console.log('[app] Synced crossfade duration:', ms);
+      }).catch(function (e) { console.warn('[app] get_crossfade_duration failed:', e); });
+    }
+
+    // Expose for debugging
+    window.__audioEngine = _audioEngine;
+
+    // ── 同步音频效果设置（EQ / 低音补偿 / 压限器）到 AudioEngine ──
+    // AudioEngine init() 完成后调用，将保存的效果设置应用到效果链
+    function _syncAudioEffects() {
+      var ea2 = window.__electronAPI;
+      if (!ea2 || !ea2.invoke || !_audioEngine) return;
+      ea2.invoke('get_settings').then(function (res) {
+        var settings = JSON.parse(res);
+        _audioEngine.applyAudioSettings(settings);
+      }).catch(function (e) {
+        console.warn('[app] _syncAudioEffects failed:', e);
+      });
+    }
+
+    // 预缓存设置：在 AudioEngine init() 完成前就获取设置，
+    // 这样 init() 内部可以直接同步应用，无需等待 IPC
+    if (ea && ea.invoke) {
+      ea.invoke('get_settings').then(function (res) {
+        if (_audioEngine) _audioEngine._settingsCache = JSON.parse(res);
+      }).catch(function () {});
+    }
+
+    // 通知主进程：AudioEngine 已就绪（传递 true 表示 Web Audio 模式已启用）
+    if (ea && ea.invoke) {
+      ea.invoke('renderer_ready', true).catch(function (e) {
+        console.warn('[app] renderer_ready failed:', e);
+      });
+    }
+  }
+
+  // ── AutoMix 智能分析 ──
+  var _trackAnalyzer = null;
+  var _transitionPlanner = null;
+  var _currentTrackAnalysis = null;
+  var _nextTrackAnalysis = null;
+  var _currentAnalysisToken = 0;      // 当前曲分析代际令牌（防止过期结果覆盖）
+  var _nextAnalysisToken = 0;         // 下一曲分析代际令牌（独立追踪）
+  var _analysisPendingTimer = null;
+
+  function _initAutoMixAnalysis() {
+    if (!window.TrackAnalyzer || !window.TransitionPlanner) {
+      console.warn('[app] TrackAnalyzer or TransitionPlanner not loaded, AutoMix analysis disabled');
+      return;
+    }
+    _trackAnalyzer = new window.TrackAnalyzer(_audioEngine);
+    _transitionPlanner = new window.TransitionPlanner();
+    console.log('[app] AutoMix analysis initialized');
+  }
+
+  /**
+   * 触发当前曲分析。在 audio_control:play / play_streaming 时调用。
+   * 使用单调递增 token 防止过期异步结果覆盖新数据。
+   */
+  function _analyzeCurrentTrack(filePath, trackId, title, artist, durationMs) {
+    if (!_trackAnalyzer) return;
+    // Subsonic 流媒体不支持频谱分析，跳过
+    if (filePath && (filePath.indexOf('http://') === 0 || filePath.indexOf('https://') === 0)) {
+      _currentTrackAnalysis = null;
+      _maybeComputePlan();
+      return;
+    }
+    var token = ++_currentAnalysisToken;
+    _currentTrackAnalysis = null;
+
+    // 1. 先从主进程缓存获取
+    if (trackId && window.__electronAPI && window.__electronAPI.invoke) {
+      window.__electronAPI.invoke('get_track_analysis', trackId).then(function (cached) {
+        if (token !== _currentAnalysisToken) return; // 过期
+        if (cached) {
+          _currentTrackAnalysis = cached;
+          console.log('[app] Current track analysis loaded from cache:', title);
+          _maybeComputePlan();
+          return;
+        }
+        // 2. 缓存无 → 频谱分析 + osu! 数据
+        _performSpectrumAnalysis(filePath, trackId, title, artist, durationMs, token, true);
+      }).catch(function () {
+        if (token !== _currentAnalysisToken) return;
+        _performSpectrumAnalysis(filePath, trackId, title, artist, durationMs, token, true);
+      });
+    } else {
+      _performSpectrumAnalysis(filePath, trackId, title, artist, durationMs, token, true);
+    }
+  }
+
+  /**
+   * 触发下一曲分析。在 audio_control:set_next_info 时调用。
+   * 使用独立的 token 追踪，避免快速更换下一曲时旧结果覆盖新数据。
+   */
+  function _analyzeNextTrack(filePath, trackId, title, artist, durationMs) {
+    if (!_trackAnalyzer) return;
+    // Subsonic 流媒体不支持频谱分析，跳过
+    if (filePath && (filePath.indexOf('http://') === 0 || filePath.indexOf('https://') === 0)) {
+      _nextTrackAnalysis = null;
+      _maybeComputePlan();
+      return;
+    }
+    var token = ++_nextAnalysisToken;
+    _nextTrackAnalysis = null;
+
+    if (trackId && window.__electronAPI && window.__electronAPI.invoke) {
+      window.__electronAPI.invoke('get_track_analysis', trackId).then(function (cached) {
+        if (token !== _nextAnalysisToken) return; // 过期
+        if (cached) {
+          _nextTrackAnalysis = cached;
+          console.log('[app] Next track analysis loaded from cache:', title);
+          _maybeComputePlan();
+          return;
+        }
+        _performSpectrumAnalysis(filePath, trackId, title, artist, durationMs, token, false);
+      }).catch(function () {
+        if (token !== _nextAnalysisToken) return;
+        _performSpectrumAnalysis(filePath, trackId, title, artist, durationMs, token, false);
+      });
+    } else {
+      _performSpectrumAnalysis(filePath, trackId, title, artist, durationMs, token, false);
+    }
+  }
+
+  /**
+   * 执行频谱分析 + osu! 数据获取。
+   * 频谱分析在 renderer 进程进行，osu! 数据通过 IPC 从主进程获取。
+   * 两者并行执行，完成后合并结果。
+   */
+  function _performSpectrumAnalysis(filePath, trackId, title, artist, durationMs, token, isCurrent) {
+    // 频谱分析（异步，非阻塞）
+    var spectrumPromise = _trackAnalyzer.analyze(
+      { title: title, artist: artist, duration_ms: durationMs },
+      filePath
+    );
+
+    // osu! 数据获取（并行）
+    var osuPromise = Promise.resolve(null);
+    if (title && window.__electronAPI && window.__electronAPI.invoke) {
+      osuPromise = window.__electronAPI.invoke('search_osu_beatmap', title, artist, durationMs)
+        .catch(function () { return null; });
+    }
+
+    // 等待两者完成
+    Promise.all([spectrumPromise, osuPromise]).then(function (results) {
+      // 过期检查：使用对应的 token
+      var currentToken = isCurrent ? _currentAnalysisToken : _nextAnalysisToken;
+      if (token !== currentToken) return; // 过期
+
+      var spectrum = results[0];
+      var osu = results[1];
+
+      if (!spectrum && !osu) {
+        console.log('[app] Analysis failed for:', title, '(no spectrum or osu data)');
+        if (isCurrent) _currentTrackAnalysis = null;
+        else _nextTrackAnalysis = null;
+        _maybeComputePlan();
+        return;
+      }
+
+      // 合并频谱和 osu 数据
+      var analysis = spectrum || {
+        bpm: 0,
+        energy: null,
+        introEndMs: 0,
+        outroStartMs: 0,
+        climaxMs: 0,
+        durationMs: durationMs || 0,
+        analyzedAt: Date.now(),
+        source: 'osu',
+      };
+      if (osu) {
+        analysis.osu = osu;
+        // osu! BPM 优先
+        if (osu.bpm > 0) {
+          analysis.bpm = osu.bpm;
+        }
+      }
+      analysis.trackId = trackId;
+
+      // 再次检查 token（防止在合并期间被 invalidate）
+      currentToken = isCurrent ? _currentAnalysisToken : _nextAnalysisToken;
+      if (token !== currentToken) return;
+
+      if (isCurrent) {
+        _currentTrackAnalysis = analysis;
+      } else {
+        _nextTrackAnalysis = analysis;
+      }
+
+      console.log('[app] Analysis complete for', (isCurrent ? 'current' : 'next') + ':', title,
+        'BPM=' + analysis.bpm, 'source=' + analysis.source);
+
+      // 缓存到主进程（异步，不阻塞）
+      if (trackId && window.__electronAPI && window.__electronAPI.invoke) {
+        window.__electronAPI.invoke('save_track_analysis', trackId, analysis).catch(function () {});
+      }
+
+      _maybeComputePlan();
+    }).catch(function (e) {
+      console.error('[app] Analysis error:', e);
+      var currentToken = isCurrent ? _currentAnalysisToken : _nextAnalysisToken;
+      if (token !== currentToken) return;
+      if (isCurrent) _currentTrackAnalysis = null;
+      else _nextTrackAnalysis = null;
+      _maybeComputePlan();
+    });
+  }
+
+  /**
+   * 当分析数据就绪时，计算过渡方案。
+   * Subsonic 流媒体也参与过渡：频谱分析不可用时回退到固定时长方案。
+   */
+  function _maybeComputePlan() {
+    if (!_transitionPlanner || !_audioEngine) return;
+    if (!_audioEngine._crossfadeEnabled) return; // AutoMix 未启用时不计算
+
+    // 分析数据缺失时仍生成方案（fallback / partial）
+    // Subsonic（HTTP URL）的频谱分析不可用，TrackAnalyzer 返回 null，
+    // TransitionPlanner 会回退到 _fallbackPlan（固定时长交叉淡化）。
+    var plan = _transitionPlanner.plan(
+      _currentTrackAnalysis || null,
+      _nextTrackAnalysis || null,
+      { crossfadeDurationMs: _audioEngine._crossfadeDurationMs }
+    );
+
+    _audioEngine.setTransitionPlan(plan);
+
+    // 通知 UI 显示过渡点标记
+    var curDuration = _audioEngine._currentDurationMs ||
+      (_currentTrackAnalysis && _currentTrackAnalysis.durationMs) || 0;
+    if (plan.transitionStartMs >= 0 && curDuration > 0) {
+      App.nowPlaying.setTransitionPoint(plan.transitionStartMs, curDuration);
+    } else {
+      App.nowPlaying.clearTransitionPoint();
+    }
+
+    // 通知主进程
+    if (window.__electronAPI && window.__electronAPI.invoke) {
+      window.__electronAPI.invoke('set_transition_plan', plan).catch(function () {});
+    }
+  }
+
+  function _promptImportSubsonicPlaylists() {
+    _closePlaylistsSubmenu();
+    var servers = (App.state && App.state.allSubsonicServers) ? App.state.allSubsonicServers : [];
+    if (servers.length === 0) {
+      App.utils.toast('请先在「媒体库」中添加 Subsonic 服务器');
+      return;
+    }
+    var overlay = document.createElement('div');
+    overlay.className = 'cmd-dialog-overlay';
+    var dlg = document.createElement('div');
+    dlg.className = 'cmd-dialog subsonic-import-dialog';
+    dlg.style.maxWidth = '600px';
+    var serverOptions = servers.map(function(s) {
+      return '<option value="' + s.id + '">' + App.utils.esc(s.name) + ' (' + s.server_url + ')</option>';
+    }).join('');
+    dlg.innerHTML = ''
+      + '<div class="cmd-dialog-title">从 Subsonic 服务器导入歌单</div>'
+      + '<div class="cmd-dialog-body">'
+      + '  <div class="cmd-text-field">'
+      + '    <select id="ss-server-select" class="cmd-text-field__input" style="padding: 10px 12px;">' + serverOptions + '</select>'
+      + '    <label class="cmd-text-field__label">选择服务器</label>'
+      + '  </div>'
+      + '  <div id="ss-playlists-container" style="min-height: 200px; max-height: 400px; overflow-y: auto; margin-top: 16px;">'
+      + '    <div style="display: flex; align-items: center; justify-content: center; padding: 40px; color: var(--md-on-surface-variant);">'
+      + '      <span class="material-symbols-rounded" style="margin-right: 8px;">sync</span>'
+      + '      <span>请选择服务器以获取歌单列表</span>'
+      + '    </div>'
+      + '  </div>'
+      + '</div>'
+      + '<div class="cmd-dialog-actions">'
+      + '  <button class="cmd-dialog-btn cmd-dialog-btn--cancel">取消</button>'
+      + '  <button class="cmd-dialog-btn cmd-dialog-btn--confirm" id="btn-import-playlists" disabled>导入选中</button>'
+      + '</div>';
+    overlay.appendChild(dlg);
+    document.body.appendChild(overlay);
+    requestAnimationFrame(function() { overlay.classList.add('open'); });
+
+    var serverSelect = dlg.querySelector('#ss-server-select');
+    var playlistsContainer = dlg.querySelector('#ss-playlists-container');
+    var importBtn = dlg.querySelector('#btn-import-playlists');
+    var cancelBtn = dlg.querySelector('.cmd-dialog-btn--cancel');
+    var selectedPlaylists = {};
+
+    function close() {
+      overlay.classList.remove('open');
+      setTimeout(function() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 180);
+    }
+    cancelBtn.addEventListener('click', close);
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) close(); });
+
+    serverSelect.addEventListener('change', function() {
+      var serverId = parseInt(serverSelect.value);
+      playlistsContainer.innerHTML = ''
+        + '<div style="display: flex; align-items: center; justify-content: center; padding: 40px; color: var(--md-on-surface-variant);">'
+        + '  <span class="material-symbols-rounded" style="margin-right: 8px; animation: spin 1s linear infinite;">sync</span>'
+        + '  <span>获取歌单列表中…</span>'
+        + '</div>';
+      App.utils.call('fetch_subsonic_playlists', serverId).then(function(res) {
+        var data = JSON.parse(res);
+        if (data.error) {
+          playlistsContainer.innerHTML = ''
+            + '<div style="display: flex; align-items: center; justify-content: center; padding: 40px; color: var(--md-error);">'
+            + '  <span class="material-symbols-rounded" style="margin-right: 8px;">error</span>'
+            + '  <span>' + App.utils.esc(data.error) + '</span>'
+            + '</div>';
+          return;
+        }
+        var fetchedPlaylists = data.playlists || [];
+        selectedPlaylists = {};
+        importBtn.disabled = true;
+        if (fetchedPlaylists.length === 0) {
+          playlistsContainer.innerHTML = ''
+            + '<div style="display: flex; align-items: center; justify-content: center; padding: 40px; color: var(--md-on-surface-variant);">'
+            + '  <span class="material-symbols-rounded" style="margin-right: 8px;">playlist_play</span>'
+            + '  <span>该服务器没有歌单</span>'
+            + '</div>';
+          return;
+        }
+        playlistsContainer.innerHTML = '<div class="playlist-select-list" style="padding: 8px;"></div>';
+        var list = playlistsContainer.querySelector('.playlist-select-list');
+        fetchedPlaylists.forEach(function(pl) {
+          var label = document.createElement('label');
+          label.className = 'playlist-select-item';
+          label.style.cssText = 'display: flex; align-items: center; padding: 12px; cursor: pointer; border-radius: 8px; transition: background 120ms;';
+          var checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.style.cssText = 'margin-right: 12px; width: 18px; height: 18px;';
+          var info = document.createElement('div');
+          info.style.cssText = 'flex: 1; min-width: 0;';
+          info.innerHTML = ''
+            + '<div style="font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + App.utils.esc(pl.name) + '</div>'
+            + '<div style="font-size: 12px; color: var(--md-on-surface-variant); margin-top: 2px;">'
+            + (pl.song_count || 0) + ' 首曲目 · ' + (pl.owner || '未知') + ' · ' + (pl.public ? '公开' : '私有')
+            + '</div>';
+          label.appendChild(checkbox);
+          label.appendChild(info);
+          checkbox.addEventListener('change', function() {
+            if (checkbox.checked) {
+              selectedPlaylists[pl.id] = true;
+              label.style.background = 'var(--md-state-hover)';
+            } else {
+              delete selectedPlaylists[pl.id];
+              label.style.background = '';
+            }
+            var count = Object.keys(selectedPlaylists).length;
+            importBtn.disabled = count === 0;
+          });
+          label.addEventListener('mouseover', function() { if (!checkbox.checked) label.style.background = 'var(--md-state-hover)'; });
+          label.addEventListener('mouseout', function() { if (!checkbox.checked) label.style.background = ''; });
+          list.appendChild(label);
+        });
+      }).catch(function(err) {
+        playlistsContainer.innerHTML = ''
+          + '<div style="display: flex; align-items: center; justify-content: center; padding: 40px; color: var(--md-error);">'
+          + '  <span class="material-symbols-rounded" style="margin-right: 8px;">error</span>'
+          + '  <span>' + App.utils.esc(String(err)) + '</span>'
+          + '</div>';
+      });
+    });
+
+    importBtn.addEventListener('click', function() {
+      var serverId = parseInt(serverSelect.value);
+      var playlistIds = Object.keys(selectedPlaylists);
+      console.log('[import] selected playlist IDs:', playlistIds);
+      importBtn.disabled = true;
+      importBtn.textContent = '导入中…';
+      App.utils.call('import_subsonic_playlists', serverId, JSON.stringify(playlistIds)).then(function(res) {
+        var data = JSON.parse(res);
+        console.log('[import] result:', data);
+        if (data.error) {
+          App.utils.toast('导入失败：' + data.error);
+          importBtn.disabled = false;
+          importBtn.textContent = '导入选中';
+          return;
+        }
+        var errors = (data.results || []).filter(function(r) { return r.status === 'error'; });
+        if (errors.length > 0) {
+          App.utils.toast('导入完成：' + data.imported + ' 成功，' + data.skipped + ' 跳过，' + errors.length + ' 失败：' + errors[0].error);
+        } else {
+          App.utils.toast('导入完成：' + data.imported + ' 个歌单成功，' + data.skipped + ' 个跳过');
+        }
+        close();
+        if (App.playlists && App.playlists.refresh) App.playlists.refresh();
+      }).catch(function(err) {
+        App.utils.toast('导入失败：' + String(err));
+        importBtn.disabled = false;
+        importBtn.textContent = '导入选中';
+      });
+    });
+
+    if (!document.getElementById('spin-style')) {
+      var style = document.createElement('style');
+      style.id = 'spin-style';
+      style.textContent = '@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }';
+      document.head.appendChild(style);
+    }
+
+    // 对话框打开时自动加载第一个服务器的歌单列表
+    serverSelect.dispatchEvent(new Event('change'));
+  }
+
   // 启动
-  document.addEventListener('DOMContentLoaded', initBridge);
+  document.addEventListener('DOMContentLoaded', function () {
+    _initAudioEngine();
+    _initAutoMixAnalysis();
+    initBridge();
+  });
 
 })();

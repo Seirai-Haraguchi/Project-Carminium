@@ -89,23 +89,23 @@
   <div class="floating-root">
 
     <div class="floating-titlebar" id="floating-titlebar">
-      <span class="floating-titlebar-label pywebview-drag-region">正在播放</span>
-      <button class="icon-btn" id="btn-dock" title="还原到侧边栏">
+      <span class="floating-titlebar-label pywebview-drag-region" data-i18n="common.nowPlaying">正在播放</span>
+      <button class="icon-btn" id="btn-dock" data-i18n-title="floating.dock" title="还原到侧边栏">
         <span class="material-symbols-rounded">dock_to_right</span>
       </button>
-      <button class="icon-btn" id="btn-minimize" title="最小化">
+      <button class="icon-btn" id="btn-minimize" data-i18n-title="title.minimize" title="最小化">
         <span class="material-symbols-rounded">horizontal_rule</span>
       </button>
-      <button class="icon-btn close-btn" id="btn-close" title="关闭">
+      <button class="icon-btn close-btn" id="btn-close" data-i18n-title="title.close" title="关闭">
         <span class="material-symbols-rounded">close</span>
       </button>
     </div>
 
     <!-- Pivot タブ -->
     <div class="np-pivot" role="tablist">
-      <button class="np-pivot-tab active" data-tab="info" role="tab" aria-selected="true">音乐信息</button>
-      <button class="np-pivot-tab" data-tab="queue" role="tab" aria-selected="false">接下来播放</button>
-      <button class="np-pivot-tab" data-tab="lyrics" role="tab" aria-selected="false">歌词</button>
+      <button class="np-pivot-tab active" data-tab="info" role="tab" aria-selected="true" data-i18n="np.tab.info">音乐信息</button>
+      <button class="np-pivot-tab" data-tab="queue" role="tab" aria-selected="false" data-i18n="np.tab.queue">接下来播放</button>
+      <button class="np-pivot-tab" data-tab="lyrics" role="tab" aria-selected="false" data-i18n="np.tab.lyrics">歌词</button>
       <div class="np-pivot-indicator" id="np-pivot-indicator"></div>
     </div>
 
@@ -129,7 +129,7 @@
         <div class="np-cover-wrap">
           <div class="np-cover" id="np-cover">
             <span class="np-cover-placeholder material-symbols-rounded" id="np-cover-icon">music_note</span>
-            <img id="np-cover-img" src="" alt="专辑封面" style="display:none">
+            <img id="np-cover-img" src="" alt="" data-i18n-alt="floating.albumCover" style="display:none">
           </div>
         </div>
 
@@ -145,7 +145,7 @@
         <!-- 进度条 -->
         <div class="np-progress-wrap">
           <div class="np-progress-bar" id="np-progress-bar" role="slider"
-               aria-label="播放进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+               data-i18n-aria-label="np.progress" aria-label="播放进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
             <div class="np-progress-track">
               <div class="np-progress-fill" id="np-progress-fill"></div>
               <div class="np-progress-thumb" id="np-progress-thumb"></div>
@@ -171,7 +171,7 @@
           <div class="np-lyrics" id="np-lyrics">
             <div class="np-lyrics-placeholder">
               <span class="material-symbols-rounded">lyrics</span>
-              <p>暂无歌词</p>
+              <p data-i18n="np.noLyrics">暂无歌词</p>
             </div>
           </div>
         </div>
@@ -180,45 +180,46 @@
 
     <!-- 播放控制 - 主按钮 -->
     <div class="np-main-controls">
-      <button class="np-control-pill" id="btn-prev" aria-label="上一首" title="上一首">
+      <button class="np-control-pill" id="btn-prev" data-i18n-aria-label="np.prev" data-i18n-title="np.prev" aria-label="上一首" title="上一首">
         <span class="material-symbols-rounded">skip_previous</span>
       </button>
-      <button class="np-play-pill" id="btn-play-pause" aria-label="播放/暂停">
+      <button class="np-play-pill" id="btn-play-pause" data-i18n-aria-label="np.playPause" aria-label="播放/暂停">
         <span class="material-symbols-rounded" id="play-icon">play_arrow</span>
       </button>
-      <button class="np-control-pill" id="btn-next" aria-label="下一首" title="下一首">
+      <button class="np-control-pill" id="btn-next" data-i18n-aria-label="np.next" data-i18n-title="np.next" aria-label="下一首" title="下一首">
         <span class="material-symbols-rounded">skip_next</span>
       </button>
     </div>
 
     <!-- 播放控制 - 辅助按钮 -->
     <div class="np-secondary-controls">
-      <button class="icon-btn np-secondary-btn" id="btn-shuffle" aria-label="随机" title="随机播放">
+      <button class="icon-btn np-secondary-btn" id="btn-shuffle" data-i18n-aria-label="np.shuffle" data-i18n-title="np.shuffle" aria-label="随机" title="随机播放">
         <span class="material-symbols-rounded">shuffle</span>
       </button>
-      <button class="icon-btn np-secondary-btn" id="btn-repeat" aria-label="循环" title="循环播放">
+      <button class="icon-btn np-secondary-btn" id="btn-repeat" data-i18n-aria-label="np.repeat" data-i18n-title="np.repeat" aria-label="循环" title="循环播放">
         <span class="material-symbols-rounded">repeat</span>
       </button>
-      <button class="icon-btn np-secondary-btn" id="btn-like" aria-label="收藏" title="收藏">
+      <button class="icon-btn np-secondary-btn" id="btn-like" data-i18n-aria-label="np.like" data-i18n-title="np.like" aria-label="收藏" title="收藏">
         <span class="material-symbols-rounded">favorite</span>
       </button>
-      <button class="np-audio-mode-btn" id="btn-audio-mode" aria-label="切换音频模式" title="音频模式">
+      <button class="np-audio-mode-btn" id="btn-audio-mode" data-i18n-aria-label="np.audioMode" data-i18n-title="np.audioMode" aria-label="切换音频模式" title="音频模式">
         <span class="np-audio-mode-label" id="audio-mode-label">shrd</span>
       </button>
     </div>
 
     <!-- 音量 -->
     <div class="np-volume">
-      <button class="icon-btn volume-icon-btn" id="btn-mute" aria-label="静音" title="静音">
+      <button class="icon-btn volume-icon-btn" id="btn-mute" data-i18n-aria-label="np.mute" data-i18n-title="np.mute" aria-label="静音" title="静音">
         <span class="material-symbols-rounded" id="vol-icon">volume_up</span>
       </button>
       <input type="range" class="volume-slider" id="volume-slider"
-             min="0" max="100" value="80" aria-label="音量">
+             min="0" max="100" value="80" data-i18n-aria-label="np.volume" aria-label="音量">
       <span class="vol-label" id="vol-label">80</span>
     </div>
 
   </div>
 
+  <script src="i18n.js"></script>
   <script src="bridge.js"></script>
   <script src="pages/utils.js"></script>
   <script src="pages/floating.js"></script>

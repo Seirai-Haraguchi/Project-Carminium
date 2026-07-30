@@ -27,6 +27,7 @@
   var lyricsFontSize = 16;
   var circularCover = false;
   var waveProgress = true;
+  var lyricsCreditFilters = '';
 
   // ── DOM elements (サイドバーと同一 ID) ────────────────────────────────────
   var els = {
@@ -161,11 +162,11 @@
           '</div>' +
         '</div>' +
         '<div class="np-queue-info">' +
-          '<div class="np-queue-title">' + (track.title || '未知曲目') + '</div>' +
-          '<div class="np-queue-artist">' + (track.artist || '未知艺术家') + '</div>' +
+          '<div class="np-queue-title">' + (track.title || App.i18n.t('common.unknownTrack')) + '</div>' +
+          '<div class="np-queue-artist">' + (track.artist || App.i18n.t('common.unknownArtist')) + '</div>' +
         '</div>' +
         '<div class="np-queue-duration">' + fmtTime(track.duration_ms) + '</div>' +
-        '<button class="np-queue-remove" data-index="' + i + '" aria-label="移除">' +
+        '<button class="np-queue-remove" data-index="' + i + '" aria-label="' + App.i18n.t('np.removeFromQueue') + '">' +
           '<span class="material-symbols-rounded">close</span>' +
         '</button>';
 
@@ -194,7 +195,7 @@
     duration = track ? track.duration_ms : 0;
 
     if (!track) {
-      els.title.textContent = '未在播放';
+      els.title.textContent = App.i18n.t('common.notPlaying');
       els.artist.textContent = '—';
       els.album.textContent = '';
       els.coverImg.style.display = 'none';
@@ -209,7 +210,7 @@
       currentDominantRgb = null;
       // ミニ情報バーも更新
       if (els.miniInfo) {
-        els.miniTitle.textContent = '未在播放';
+        els.miniTitle.textContent = App.i18n.t('common.notPlaying');
         els.miniArtist.textContent = '—';
         els.miniCoverImg.style.display = 'none';
         els.miniCoverIcon.style.display = '';
@@ -217,8 +218,8 @@
       return;
     }
 
-    els.title.textContent = track.title || '未知曲目';
-    els.artist.textContent = track.artist || '未知艺术家';
+    els.title.textContent = track.title || App.i18n.t('common.unknownTrack');
+    els.artist.textContent = track.artist || App.i18n.t('common.unknownArtist');
     els.album.textContent = track.album || '';
 
     if (track.has_cover) {
@@ -253,8 +254,8 @@
 
     // ミニ情報バーのテキスト更新
     if (els.miniInfo) {
-      els.miniTitle.textContent = track.title || '未知曲目';
-      els.miniArtist.textContent = track.artist || '未知艺术家';
+      els.miniTitle.textContent = track.title || App.i18n.t('common.unknownTrack');
+      els.miniArtist.textContent = track.artist || App.i18n.t('common.unknownArtist');
     }
 
     // 歌词
@@ -267,13 +268,14 @@
 
     if (!els.lyrics) return;
     els.lyrics.innerHTML = '';
+    App.utils.cancelLyricsScroll(els.lyricsWrap);
     els.lyricsWrap.scrollTop = 0;
 
     if (!track || !track.lyrics) {
       els.lyrics.innerHTML =
         '<div class="np-lyrics-placeholder">' +
           '<span class="material-symbols-rounded">lyrics</span>' +
-          '<p>暂无歌词</p>' +
+          '<p>' + App.i18n.t('np.noLyrics') + '</p>' +
         '</div>';
       return;
     }
@@ -289,13 +291,17 @@
       els.lyrics.classList.remove('jp');
     }
 
+    var result = App.utils.processLyricsCredits(track.lyrics, lyricsCreditFilters);
+    var processedLyrics = result.lyrics;
+    var creditsText = result.credits;
+
     if (App.utils.isLRC(track.lyrics)) {
-      lyricsData = App.utils.parseLRC(track.lyrics);
+      lyricsData = App.utils.parseLRC(processedLyrics);
       if (lyricsData.length === 0) {
         els.lyrics.innerHTML =
           '<div class="np-lyrics-placeholder">' +
             '<span class="material-symbols-rounded">lyrics</span>' +
-            '<p>暂无歌词</p>' +
+            '<p>' + App.i18n.t('np.noLyrics') + '</p>' +
           '</div>';
         return;
       }
@@ -336,13 +342,18 @@
         frag.appendChild(div);
       }
       els.lyrics.appendChild(frag);
+
+      // 追加制作信息（独立样式）
+      if (creditsText) {
+        els.lyrics.appendChild(_buildCreditsElement(creditsText));
+      }
     } else {
-      var staticLines = App.utils.parseStaticLyrics(track.lyrics);
+      var staticLines = App.utils.parseStaticLyrics(processedLyrics);
       if (staticLines.length === 0) {
         els.lyrics.innerHTML =
           '<div class="np-lyrics-placeholder">' +
             '<span class="material-symbols-rounded">lyrics</span>' +
-            '<p>暂无歌词</p>' +
+            '<p>' + App.i18n.t('np.noLyrics') + '</p>' +
           '</div>';
         return;
       }
@@ -356,7 +367,19 @@
         frag.appendChild(div);
       }
       els.lyrics.appendChild(frag);
+
+      // 追加制作信息（独立样式）
+      if (creditsText) {
+        els.lyrics.appendChild(_buildCreditsElement(creditsText));
+      }
     }
+  }
+
+  function _buildCreditsElement(text) {
+    var el = document.createElement('div');
+    el.className = 'np-lyrics-credits';
+    el.textContent = text;
+    return el;
   }
 
   function _applyLineFont(el, isJpLine, baseFont, jpFont) {
@@ -393,6 +416,7 @@
 
     var lines = els.lyricsWrap.querySelectorAll('.np-lyrics-line');
     if (idx !== lastLyricsIdx) {
+      var prevLyricsIdx = lastLyricsIdx;
       lastLyricsIdx = idx;
       for (var j = 0; j < lines.length; j++) {
         lines[j].classList.remove('active', 'past');
@@ -403,10 +427,13 @@
       // 渐进模糊
       _applyProgressiveBlurToLines(idx);
 
+      // 行级联：各行按与激活行的距离陆续过渡，并带纵向错位回弹
+      App.utils.cascadeLyricLines(lines, idx, prevLyricsIdx);
+
       var activeLine = lines[idx];
       if (activeLine) {
         var target = activeLine.offsetTop - els.lyricsWrap.clientHeight * 0.22 + activeLine.clientHeight / 2;
-        els.lyricsWrap.scrollTo({ top: target, behavior: 'smooth' });
+        App.utils.animateLyricsScroll(els.lyricsWrap, target);
       }
     }
 
@@ -548,6 +575,7 @@
     lyricsFontSize = parseInt(settings.lyrics_font_size, 10) || 16;
     circularCover = !!settings.circular_cover;
     waveProgress = settings.wave_progress !== false;
+    lyricsCreditFilters = settings.lyrics_credit_filters || '';
     _applyLyricsLayout();
     _applyCircularCoverClass();
     _applyWaveProgressClass();
@@ -607,6 +635,10 @@
       applyLyricFontSettings(settings);
       applyUiFont(settings.ui_font || '');
       _updateAudioMode(!!settings.wasapi_exclusive);
+      // Initialize i18n
+      if (App.i18n) {
+        App.i18n.init(settings.language || 'zh-CN');
+      }
       if (val === 'system') {
         window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (e) {
           applyTheme('system');
@@ -774,6 +806,16 @@
     backend.liked_changed.connect(function (liked) {
       updateLiked(liked);
     });
+    // 歌词变更（手动指定 / 自动搜索 / 外部更新）
+    backend.lyrics_changed.connect(function (json) {
+      var data;
+      try { data = JSON.parse(json); } catch (e) { return; }
+      if (!data || !data.trackId) return;
+      if (currentTrack && currentTrack.id === data.trackId) {
+        currentTrack.lyrics = data.lyrics;
+        renderLyrics(currentTrack);
+      }
+    });
     backend.queue_changed.connect(function (qjson) {
       var qstate = JSON.parse(qjson);
       updateQueue(qstate.queue, qstate.current_index);
@@ -784,6 +826,10 @@
       applyTheme(settings.theme || 'system');
       applyUiFont(settings.ui_font || '');
       _updateAudioMode(!!settings.wasapi_exclusive);
+      // Update language on settings change (only if actually changed)
+      if (App.i18n && settings.language && App.i18n.getLang() !== settings.language) {
+        App.i18n.init(settings.language);
+      }
     });
 
     init();
@@ -791,14 +837,47 @@
 
   function _updateAudioMode(exclusive) {
     if (!els.btnAudioMode || !els.audioModeLabel) return;
+    var _t = App.i18n ? App.i18n.t : function(k) { return k; };
     if (exclusive) {
       els.btnAudioMode.classList.add('active');
       els.audioModeLabel.textContent = 'excl';
-      els.btnAudioMode.setAttribute('title', 'WASAPI 独占模式（点击切回共享）');
+      els.btnAudioMode.setAttribute('title', _t('np.exclusiveMode'));
     } else {
       els.btnAudioMode.classList.remove('active');
       els.audioModeLabel.textContent = 'shrd';
-      els.btnAudioMode.setAttribute('title', '共享模式（点击切换独占）');
+      els.btnAudioMode.setAttribute('title', _t('np.sharedMode'));
+    }
+  }
+
+  // ── Language change handler ────────────────────────────────────────────
+  function onLanguageChanged() {
+    // Update dynamic text elements
+    if (!currentTrack) {
+      els.title.textContent = App.i18n.t('common.notPlaying');
+      if (els.miniInfo) {
+        els.miniTitle.textContent = App.i18n.t('common.notPlaying');
+      }
+    } else {
+      els.title.textContent = currentTrack.title || App.i18n.t('common.unknownTrack');
+      els.artist.textContent = currentTrack.artist || App.i18n.t('common.unknownArtist');
+      if (els.miniInfo) {
+        els.miniTitle.textContent = currentTrack.title || App.i18n.t('common.unknownTrack');
+        els.miniArtist.textContent = currentTrack.artist || App.i18n.t('common.unknownArtist');
+      }
+    }
+    // Re-render lyrics placeholder if no lyrics
+    if (els.lyrics && (!currentTrack || !currentTrack.lyrics)) {
+      var placeholder = els.lyrics.querySelector('.np-lyrics-placeholder p');
+      if (placeholder) placeholder.textContent = App.i18n.t('np.noLyrics');
+    }
+    // Update audio mode title
+    _updateAudioMode(els.btnAudioMode && els.btnAudioMode.classList.contains('active'));
+    // Update queue remove button aria-labels
+    if (els.queueList) {
+      var removeBtns = els.queueList.querySelectorAll('.np-queue-remove');
+      removeBtns.forEach(function (btn) {
+        btn.setAttribute('aria-label', App.i18n.t('np.removeFromQueue'));
+      });
     }
   }
 
@@ -808,6 +887,13 @@
         window.__coverBase = url || '';
         onBridgeReady();
       });
+    });
+  }
+
+  // Register i18n language change listener
+  if (window.App && App.i18n && App.i18n.onChange) {
+    App.i18n.onChange(function () {
+      onLanguageChanged();
     });
   }
 })();

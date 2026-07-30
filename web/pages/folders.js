@@ -17,33 +17,33 @@ container.innerHTML = `
       <div class="page-sticky-header">
         <div class="page-header">
           <div class="page-header-left">
-            <h1 class="page-title">媒体库</h1>
-            <p class="page-subtitle" id="folder-count">添加本地音乐文件夹以构建您的媒体库。</p>
+            <h1 class="page-title" data-i18n="folders.title">媒体库</h1>
+            <p class="page-subtitle" id="folder-count" data-i18n="folders.hint">添加本地音乐文件夹以构建您的媒体库。</p>
           </div>
           <div class="page-actions">
             <button class="btn-filled" id="btn-add-folder">
-              <span class="material-symbols-rounded">create_new_folder</span>添加本地文件夹
+              <span class="material-symbols-rounded">create_new_folder</span><span data-i18n="folders.addLocal">添加本地文件夹</span>
             </button>
             <button class="btn-outlined" id="btn-add-subsonic">
-              <span class="material-symbols-rounded">cloud</span>添加流媒体库
+              <span class="material-symbols-rounded">cloud</span><span data-i18n="folders.addSubsonic">添加流媒体库</span>
             </button>
           </div>
         </div>
         <div class="search-bar">
           <span class="material-symbols-rounded">search</span>
-          <input type="text" id="folder-search" placeholder="搜索本地文件夹路径…" aria-label="搜索本地文件夹">
+          <input type="text" id="folder-search" data-i18n-placeholder="folders.searchPlaceholder" placeholder="搜索本地文件夹路径…" data-i18n-aria-label="common.search" aria-label="搜索本地文件夹">
         </div>
       </div>
       <div class="library-section-header">
         <h2 class="library-section-title">
-          <span class="material-symbols-rounded">folder</span>本地文件夹
+          <span class="material-symbols-rounded">folder</span><span data-i18n="folders.localFolders">本地文件夹</span>
         </h2>
         <p class="library-section-subtitle" id="local-folder-count"></p>
       </div>
       <div class="folder-list" id="folder-list"></div>
       <div class="library-section-header">
         <h2 class="library-section-title">
-          <span class="material-symbols-rounded">cloud</span>流媒体库
+          <span class="material-symbols-rounded">cloud</span><span data-i18n="folders.streamingLibraries">流媒体库</span>
         </h2>
         <p class="library-section-subtitle" id="streaming-count"></p>
       </div>
@@ -65,8 +65,8 @@ container.innerHTML = `
           document.getElementById('folder-list').innerHTML = `
             <div class="empty-state">
               <span class="material-symbols-rounded empty-icon" style="animation: pulse 2s infinite;">sync</span>
-              <h2 class="empty-title">扫描中</h2>
-              <p class="empty-sub">正在扫描 ${App.utils.esc(path)}</p>
+              <h2 class="empty-title" data-i18n="folders.scanning">扫描中</h2>
+              <p class="empty-sub">${App.i18n.t('folders.scanningPath')} ${App.utils.esc(path)}</p>
             </div>
           `;
           // add_folder 立即返回（扫描在后台线程执行），
@@ -104,20 +104,20 @@ container.innerHTML = `
     const localCountEl = document.getElementById('local-folder-count');
     if (countEl) {
       countEl.textContent = filterStr
-        ? `${list.length} / ${allFolders.length} 个本地文件夹`
-        : (allFolders.length === 0 ? '添加本地音乐文件夹以构建您的媒体库。' : `${allFolders.length} 个本地文件夹`);
+        ? App.i18n.t('folders.filteredCount', { shown: list.length, total: allFolders.length })
+        : (allFolders.length === 0 ? App.i18n.t('folders.hint') : App.i18n.t('folders.folderCount', { count: allFolders.length }));
     }
     if (localCountEl) {
       localCountEl.textContent = filterStr
-        ? `${list.length} / ${allFolders.length} 个`
-        : `${allFolders.length} 个本地文件夹`;
+        ? App.i18n.t('folders.filteredShort', { shown: list.length, total: allFolders.length })
+        : App.i18n.t('folders.localFolderCount', { count: allFolders.length });
     }
 
     if (list.length === 0) {
       listEl.innerHTML = `
         <div class="empty-state">
           <span class="material-symbols-rounded empty-icon">folder_open</span>
-          <h2 class="empty-title">${filterStr ? '无结果' : '未添加本地文件夹'}</h2>
+          <h2 class="empty-title">${filterStr ? App.i18n.t('common.noResults') : App.i18n.t('folders.empty')}</h2>
         </div>
       `;
       return;
@@ -136,13 +136,13 @@ container.innerHTML = `
         <span class="material-symbols-rounded folder-icon">folder</span>
         <div class="folder-info">
           <p class="folder-path" title="${App.utils.esc(folder.path)}">${App.utils.esc(folder.path)}</p>
-          <p class="folder-meta">${folder.track_count} 首曲目 · 上次扫描：${scanDate}</p>
+          <p class="folder-meta">${App.i18n.t('music.trackCount', { count: folder.track_count })} · ${App.i18n.t('folders.lastScan', { date: scanDate })}</p>
         </div>
         <div class="folder-actions">
-          <button class="icon-btn btn-rescan" aria-label="重新扫描" title="重新扫描">
+          <button class="icon-btn btn-rescan" data-i18n-aria-label="folders.rescan" data-i18n-title="folders.rescan">
             <span class="material-symbols-rounded">sync</span>
           </button>
-          <button class="icon-btn btn-remove" aria-label="移除" title="移除文件夹" style="color:var(--md-error)">
+          <button class="icon-btn btn-remove" data-i18n-aria-label="folders.remove" data-i18n-title="folders.removeFolder" style="color:var(--md-error)">
             <span class="material-symbols-rounded">delete</span>
           </button>
         </div>
@@ -162,7 +162,7 @@ container.innerHTML = `
       });
 
       row.querySelector('.btn-remove').addEventListener('click', function () {
-        if (confirm(`确定要从库中移除此文件夹吗？\n${folder.path}\n\n注意：这不会删除您硬盘上的物理文件。`)) {
+        if (confirm(App.i18n.t('folders.removeConfirm', { path: folder.path }))) {
           App.utils.call('remove_folder', folder.path).then(() => _loadFolders());
         }
       });
@@ -200,7 +200,7 @@ container.innerHTML = `
 
     const streamingCountEl = document.getElementById('streaming-count');
     if (streamingCountEl) {
-      streamingCountEl.textContent = `${servers.length} 个流媒体库`;
+      streamingCountEl.textContent = App.i18n.t('folders.streamingCount', { count: servers.length });
     }
 
     sectionEl.innerHTML = `
@@ -213,14 +213,14 @@ container.innerHTML = `
       const row = document.createElement('div');
       row.className = 'folder-row subsonic-server-row';
       row.setAttribute('data-server-id', srv.id);
-      const lastSync = srv.last_sync ? App.utils.formatDate(srv.last_sync) : '未同步';
+      const lastSync = srv.last_sync ? App.utils.formatDate(srv.last_sync) : App.i18n.t('folders.notSynced');
       const protocolLabel = srv.protocol_mode === 'opensubsonic' ? 'OpenSubsonic' : 'Subsonic';
       const pending = _pendingSync[srv.id];
       const isSyncing = !!pending;
       const metaHtml = isSyncing
         ? _formatSyncingMeta(pending.lastStats)
-        : `${App.utils.esc(srv.server_url)} · ${srv.track_count || 0} 首曲目`
-          + ` · ${protocolLabel} · 上次同步：${lastSync}`;
+        : `${App.utils.esc(srv.server_url)} · ${App.i18n.t('music.trackCount', { count: srv.track_count || 0 })}`
+          + ` · ${protocolLabel} · ${App.i18n.t('folders.lastSync', { date: lastSync })}`;
       row.innerHTML = `
         <span class="material-symbols-rounded folder-icon">cloud</span>
         <div class="folder-info">
@@ -228,13 +228,13 @@ container.innerHTML = `
           <p class="folder-meta">${metaHtml}</p>
         </div>
         <div class="folder-actions">
-          <button class="icon-btn btn-subsonic-sync" data-server-id="${srv.id}" aria-label="同步" title="同步"${isSyncing ? ' disabled' : ''}>
+          <button class="icon-btn btn-subsonic-sync" data-server-id="${srv.id}" data-i18n-aria-label="folders.sync" data-i18n-title="folders.sync"${isSyncing ? ' disabled' : ''}>
             <span class="material-symbols-rounded"${isSyncing ? ' style="animation:pulse 1s infinite"' : ''}>sync</span>
           </button>
-          <button class="icon-btn btn-subsonic-edit" data-server-id="${srv.id}" aria-label="编辑" title="编辑服务器信息">
+          <button class="icon-btn btn-subsonic-edit" data-server-id="${srv.id}" data-i18n-aria-label="folders.edit" data-i18n-title="folders.editServer">
             <span class="material-symbols-rounded">edit</span>
           </button>
-          <button class="icon-btn btn-subsonic-remove" data-server-id="${srv.id}" aria-label="移除" title="移除" style="color:var(--md-error)">
+          <button class="icon-btn btn-subsonic-remove" data-server-id="${srv.id}" data-i18n-aria-label="folders.remove" data-i18n-title="folders.remove" style="color:var(--md-error)">
             <span class="material-symbols-rounded">delete</span>
           </button>
         </div>
@@ -269,10 +269,10 @@ container.innerHTML = `
         const srv = servers.find(s => s.id === sid);
         const name = srv ? srv.name : '';
         App.utils.confirmDialog({
-          title: '移除 Subsonic 服务器',
-          body: `确定要移除服务器「${name}」吗？已同步的曲目索引与缓存的封面也会被删除。`,
-          confirmText: '移除',
-          cancelText: '取消',
+          title: App.i18n.t('folders.removeServerTitle'),
+          body: App.i18n.t('folders.removeServerBody', { name: name }),
+          confirmText: App.i18n.t('folders.remove'),
+          cancelText: App.i18n.t('common.cancel'),
         }).then(function (ok) {
           if (ok) App.utils.call('remove_subsonic_server', sid);
         });
@@ -283,11 +283,9 @@ container.innerHTML = `
   // 构造同步中状态的 meta 行 HTML
   function _formatSyncingMeta(lastStats) {
     if (!lastStats) {
-      return '<span style="color:var(--md-primary)">同步中…（后台运行，UI 可正常操作）</span>';
+      return '<span style="color:var(--md-primary)">' + App.i18n.t('folders.syncingBg') + '</span>';
     }
-    return '<span style="color:var(--md-primary)">同步中… 已索引 '
-      + (lastStats.tracks || 0) + ' 首 / '
-      + (lastStats.albums || 0) + ' 张专辑</span>';
+    return '<span style="color:var(--md-primary)">' + App.i18n.t('folders.syncingProgress', { tracks: lastStats.tracks || 0, albums: lastStats.albums || 0 }) + '</span>';
   }
 
   function _syncServer(serverId, btn) {
@@ -316,27 +314,26 @@ container.innerHTML = `
 
     if (data.ok) {
       var stats = data.stats || {};
-      var msg = '同步完成：' + (stats.artists || 0) + ' 艺术家 · '
-        + (stats.albums || 0) + ' 专辑 · ' + (stats.tracks || 0) + ' 曲目';
+      var msg = App.i18n.t('folders.syncComplete', { artists: stats.artists || 0, albums: stats.albums || 0, tracks: stats.tracks || 0 });
       console.log('[subsonic]', msg);
       if (stats.tracks === 0) {
         var warns = (stats.warnings || []).slice(0, 3).join('\n');
-        alert('同步完成但未获取到曲目。\n' + msg + (warns ? '\n\n诊断信息:\n' + warns : ''));
+        alert(App.i18n.t('folders.syncNoTracks') + '\n' + msg + (warns ? '\n\n' + App.i18n.t('folders.diagnostics') + ':\n' + warns : ''));
       } else {
         // 建议用户重启程序以避免潜在的缓存/状态不一致问题
         App.utils.confirmDialog({
-          title: '同步完成',
-          body: msg + '\n\n建议重启程序以确保所有更改生效，避免潜在的缓存不一致问题。',
-          confirmText: '重启程序',
-          cancelText: '稍后',
+          title: App.i18n.t('folders.syncCompleteTitle'),
+          body: msg + '\n\n' + App.i18n.t('folders.restartHint'),
+          confirmText: App.i18n.t('folders.restartApp'),
+          cancelText: App.i18n.t('folders.later'),
         }).then(function (ok) {
           if (ok) App.utils.call('restart_app');
         });
       }
     } else {
-      var err = data.error || '未知错误';
+      var err = data.error || App.i18n.t('folders.unknownError');
       var warns2 = (data.warnings || []).slice(0, 5).join('\n');
-      alert('同步失败：' + err + (warns2 ? '\n\n诊断信息:\n' + warns2 : ''));
+      alert(App.i18n.t('folders.syncFailed', { error: err }) + (warns2 ? '\n\n' + App.i18n.t('folders.diagnostics') + ':\n' + warns2 : ''));
     }
   };
 
@@ -372,9 +369,9 @@ container.innerHTML = `
 
   // 阶段文案映射
   var _PHASE_LABELS = {
-    'artists': '正在获取艺术家列表',
-    'albums': '正在获取专辑详情',
-    'tracks': '正在索引曲目',
+    'artists': App.i18n.t('folders.phaseArtists'),
+    'albums': App.i18n.t('folders.phaseAlbums'),
+    'tracks': App.i18n.t('folders.phaseTracks'),
   };
 
   function _showSyncOverlay(serverId, serverName) {
@@ -443,7 +440,7 @@ container.innerHTML = `
     function showDoneWithRestart(label) {
       actionsEl.innerHTML =
         '<button class="btn-outlined" id="so-done">' + label + '</button>' +
-        '<button class="btn-filled" id="so-restart">重启程序</button>';
+        '<button class="btn-filled" id="so-restart">' + App.i18n.t('folders.restartApp') + '</button>';
       overlay.querySelector('#so-done').addEventListener('click', close);
       overlay.querySelector('#so-restart').addEventListener('click', function () {
         App.utils.call('restart_app');
@@ -455,7 +452,7 @@ container.innerHTML = `
       onProgress: function (data) {
         if (finished) return;
         var phase = data.phase || 'tracks';
-        var label = _PHASE_LABELS[phase] || '正在同步';
+        var label = _PHASE_LABELS[phase] || App.i18n.t('folders.syncing');
         var done = data.done || 0;
         var total = data.total || 0;
 
@@ -471,29 +468,29 @@ container.innerHTML = `
         finished = true;
         if (data.ok) {
           var stats = data.stats || {};
-          titleEl.textContent = '同步完成';
+          titleEl.textContent = App.i18n.t('folders.syncCompleteTitle');
           var t = stats.tracks || 0;
           phaseTextEl.textContent = (t === 0)
-            ? '未获取到曲目，请检查服务器配置或内容。'
-            : '已索引 ' + t + ' 首曲目';
+            ? App.i18n.t('folders.syncNoTracksHint')
+            : App.i18n.t('folders.indexedTracks', { count: t });
           barFill.style.width = '100%';
           currentEl.style.display = 'none';
           // 建议用户重启程序以避免潜在的缓存/状态不一致问题
           var restartHint = document.createElement('p');
           restartHint.className = 'sync-restart-hint';
-          restartHint.textContent = '建议重启程序以确保所有更改生效。';
+          restartHint.textContent = App.i18n.t('folders.restartHintShort');
           actionsEl.parentNode.insertBefore(restartHint, actionsEl);
-          showDoneWithRestart('完成');
+          showDoneWithRestart(App.i18n.t('folders.done'));
         } else {
-          var err = data.error || '未知错误';
-          titleEl.textContent = '同步失败';
+          var err = data.error || App.i18n.t('folders.unknownError');
+          titleEl.textContent = App.i18n.t('folders.syncFailedTitle');
           bodyEl.style.display = 'none';
           var errBox = document.createElement('div');
           errBox.className = 'sync-overlay-error';
           var warns = (data.warnings || []).slice(0, 5).join('\n');
-          errBox.textContent = err + (warns ? '\n\n诊断信息:\n' + warns : '');
+          errBox.textContent = err + (warns ? '\n\n' + App.i18n.t('folders.diagnostics') + ':\n' + warns : '');
           actionsEl.parentNode.insertBefore(errBox, actionsEl);
-          showDoneButton('关闭');
+          showDoneButton(App.i18n.t('common.close'));
         }
       },
       close: close,
@@ -523,7 +520,7 @@ container.innerHTML = `
           _syncOverlay.onResult({
             ok: false,
             server_id: serverId,
-            error: data.error || '同步启动失败',
+            error: data.error || App.i18n.t('folders.syncStartFailed'),
           });
         }
         // data.ok=true：后台同步已启动，等待 progress/result 事件
@@ -533,7 +530,7 @@ container.innerHTML = `
         _syncOverlay.onResult({
           ok: false,
           server_id: serverId,
-          error: '同步请求失败：' + (err && err.message ? err.message : err),
+          error: App.i18n.t('folders.syncRequestFailed', { error: (err && err.message ? err.message : err) }),
         });
       }
     });
@@ -546,36 +543,36 @@ container.innerHTML = `
     const dlg = document.createElement('div');
     dlg.className = 'cmd-dialog subsonic-add-dialog';
     dlg.innerHTML = `
-      <div class="cmd-dialog-title">添加 Subsonic 服务器</div>
+      <div class="cmd-dialog-title">${App.i18n.t('folders.addServerTitle')}</div>
       <div class="cmd-dialog-body">
         <div class="cmd-text-field" style="margin-bottom:12px;">
           <input type="text" id="ss-name" class="cmd-text-field__input" placeholder=" " autocomplete="off">
-          <label class="cmd-text-field__label">名称</label>
+          <label class="cmd-text-field__label">${App.i18n.t('folders.serverName')}</label>
         </div>
         <div class="cmd-text-field" style="margin-bottom:12px;">
           <input type="text" id="ss-url" class="cmd-text-field__input" placeholder=" " autocomplete="off">
-          <label class="cmd-text-field__label">服务器地址</label>
+          <label class="cmd-text-field__label">${App.i18n.t('folders.serverUrl')}</label>
         </div>
         <div class="cmd-text-field" style="margin-bottom:12px;">
           <input type="text" id="ss-user" class="cmd-text-field__input" placeholder=" " autocomplete="off">
-          <label class="cmd-text-field__label">用户名</label>
+          <label class="cmd-text-field__label">${App.i18n.t('folders.username')}</label>
         </div>
         <div class="cmd-text-field" style="margin-bottom:12px;">
           <input type="password" id="ss-pass" class="cmd-text-field__input" placeholder=" " autocomplete="off">
-          <label class="cmd-text-field__label">密码</label>
+          <label class="cmd-text-field__label">${App.i18n.t('folders.password')}</label>
         </div>
         <div class="cmd-text-field">
           <select id="ss-protocol" class="cmd-text-field__input">
             <option value="subsonic">Subsonic 1.16</option>
             <option value="opensubsonic">OpenSubsonic</option>
           </select>
-          <label class="cmd-text-field__label">协议</label>
+          <label class="cmd-text-field__label">${App.i18n.t('folders.protocol')}</label>
         </div>
       </div>
       <div class="cmd-dialog-actions">
-        <button class="cmd-dialog-btn cmd-dialog-btn--cancel">取消</button>
-        <button class="cmd-dialog-btn" id="ss-btn-test">测试</button>
-        <button class="cmd-dialog-btn cmd-dialog-btn--confirm">添加</button>
+        <button class="cmd-dialog-btn cmd-dialog-btn--cancel">${App.i18n.t('common.cancel')}</button>
+        <button class="cmd-dialog-btn" id="ss-btn-test">${App.i18n.t('folders.test')}</button>
+        <button class="cmd-dialog-btn cmd-dialog-btn--confirm">${App.i18n.t('folders.add')}</button>
       </div>
     `;
     overlay.appendChild(dlg);
@@ -606,10 +603,10 @@ container.innerHTML = `
     }
 
     function validate(d) {
-      if (!d.name) { nameInput.focus(); return '请填写名称'; }
-      if (!d.url) { dlg.querySelector('#ss-url').focus(); return '请填写服务器地址'; }
-      if (!d.user) { dlg.querySelector('#ss-user').focus(); return '请填写用户名'; }
-      if (!d.pass) { dlg.querySelector('#ss-pass').focus(); return '请填写密码'; }
+      if (!d.name) { nameInput.focus(); return App.i18n.t('folders.errName'); }
+      if (!d.url) { dlg.querySelector('#ss-url').focus(); return App.i18n.t('folders.errUrl'); }
+      if (!d.user) { dlg.querySelector('#ss-user').focus(); return App.i18n.t('folders.errUser'); }
+      if (!d.pass) { dlg.querySelector('#ss-pass').focus(); return App.i18n.t('folders.errPass'); }
       return null;
     }
 
@@ -629,13 +626,13 @@ container.innerHTML = `
           // 显示全屏同步遮罩，展示进度与结果
           _startSyncWithOverlay(srvId, d.name);
         } else {
-          alert('添加失败，请检查网络或服务器配置');
+          alert(App.i18n.t('folders.addFailed'));
         }
       }).catch(function (err) {
         console.error('[subsonic] 添加服务器失败:', err);
         adding = false;
         confirmBtn.disabled = false;
-        alert('添加失败，请检查网络或服务器配置');
+        alert(App.i18n.t('folders.addFailed'));
       });
     }
 
@@ -646,7 +643,7 @@ container.innerHTML = `
       if (err) { alert(err); return; }
       const testBtn = dlg.querySelector('#ss-btn-test');
       const origText = testBtn.textContent;
-      testBtn.textContent = '测试中…';
+      testBtn.textContent = App.i18n.t('folders.testing');
       testBtn.disabled = true;
       // 先添加，再测试，再根据结果决定是否保留
       App.utils.call('add_subsonic_server', d.name, d.url, d.user, d.pass, d.protocol).then(function (res) {
@@ -655,7 +652,7 @@ container.innerHTML = `
         if (!srvId) {
           testBtn.textContent = origText;
           testBtn.disabled = false;
-          alert('添加失败');
+          alert(App.i18n.t('folders.addFailedShort'));
           return;
         }
         App.utils.call('test_subsonic_server', srvId).then(function (testRes) {
@@ -666,12 +663,12 @@ container.innerHTML = `
           if (data && data.ok) {
             const ver = data.version || '';
             const osFlag = data.openSubsonic ? ' (OpenSubsonic)' : '';
-            alert('连接成功\n服务器版本：' + ver + osFlag);
+            alert(App.i18n.t('folders.connectSuccess', { version: ver, osFlag: osFlag }));
             close();
             App.utils.call('sync_subsonic_server', srvId);
           } else {
-            const errMsg = (data && data.error) ? data.error : '未知错误';
-            alert('连接失败：' + errMsg + '\n\n服务器配置已保留，您可以稍后修复后再同步。');
+            const errMsg = (data && data.error) ? data.error : App.i18n.t('folders.unknownError');
+            alert(App.i18n.t('folders.connectFailed', { error: errMsg }));
             close();
             _renderSubsonicServers();
           }
@@ -680,7 +677,7 @@ container.innerHTML = `
         console.error('[subsonic] 测试服务器失败:', err);
         testBtn.textContent = origText;
         testBtn.disabled = false;
-        alert('测试失败，请检查网络连接');
+        alert(App.i18n.t('folders.testFailed'));
       });
     }
 
@@ -705,36 +702,36 @@ container.innerHTML = `
     const dlg = document.createElement('div');
     dlg.className = 'cmd-dialog subsonic-add-dialog';
     dlg.innerHTML = `
-      <div class="cmd-dialog-title">编辑 Subsonic 服务器</div>
+      <div class="cmd-dialog-title">${App.i18n.t('folders.editServerTitle')}</div>
       <div class="cmd-dialog-body">
         <div class="cmd-text-field" style="margin-bottom:12px;">
           <input type="text" id="ss-name" class="cmd-text-field__input" placeholder=" " autocomplete="off" value="${App.utils.esc(srv.name)}">
-          <label class="cmd-text-field__label">名称</label>
+          <label class="cmd-text-field__label">${App.i18n.t('folders.serverName')}</label>
         </div>
         <div class="cmd-text-field" style="margin-bottom:12px;">
           <input type="text" id="ss-url" class="cmd-text-field__input" placeholder=" " autocomplete="off" value="${App.utils.esc(srv.server_url)}">
-          <label class="cmd-text-field__label">服务器地址</label>
+          <label class="cmd-text-field__label">${App.i18n.t('folders.serverUrl')}</label>
         </div>
         <div class="cmd-text-field" style="margin-bottom:12px;">
           <input type="text" id="ss-user" class="cmd-text-field__input" placeholder=" " autocomplete="off" value="${App.utils.esc(srv.username)}">
-          <label class="cmd-text-field__label">用户名</label>
+          <label class="cmd-text-field__label">${App.i18n.t('folders.username')}</label>
         </div>
         <div class="cmd-text-field" style="margin-bottom:12px;">
           <input type="password" id="ss-pass" class="cmd-text-field__input" placeholder=" " autocomplete="off">
-          <label class="cmd-text-field__label">密码（留空保持不变）</label>
+          <label class="cmd-text-field__label">${App.i18n.t('folders.passwordOptional')}</label>
         </div>
         <div class="cmd-text-field">
           <select id="ss-protocol" class="cmd-text-field__input">
             <option value="subsonic"${srv.protocol_mode !== 'opensubsonic' ? ' selected' : ''}>Subsonic 1.16</option>
             <option value="opensubsonic"${srv.protocol_mode === 'opensubsonic' ? ' selected' : ''}>OpenSubsonic</option>
           </select>
-          <label class="cmd-text-field__label">协议</label>
+          <label class="cmd-text-field__label">${App.i18n.t('folders.protocol')}</label>
         </div>
       </div>
       <div class="cmd-dialog-actions">
-        <button class="cmd-dialog-btn cmd-dialog-btn--cancel">取消</button>
-        <button class="cmd-dialog-btn" id="ss-btn-test">测试</button>
-        <button class="cmd-dialog-btn cmd-dialog-btn--confirm">保存</button>
+        <button class="cmd-dialog-btn cmd-dialog-btn--cancel">${App.i18n.t('common.cancel')}</button>
+        <button class="cmd-dialog-btn" id="ss-btn-test">${App.i18n.t('folders.test')}</button>
+        <button class="cmd-dialog-btn cmd-dialog-btn--confirm">${App.i18n.t('common.confirm')}</button>
       </div>
     `;
     overlay.appendChild(dlg);
@@ -765,9 +762,9 @@ container.innerHTML = `
     }
 
     function validate(d) {
-      if (!d.name) { nameInput.focus(); return '请填写名称'; }
-      if (!d.url) { dlg.querySelector('#ss-url').focus(); return '请填写服务器地址'; }
-      if (!d.user) { dlg.querySelector('#ss-user').focus(); return '请填写用户名'; }
+      if (!d.name) { nameInput.focus(); return App.i18n.t('folders.errName'); }
+      if (!d.url) { dlg.querySelector('#ss-url').focus(); return App.i18n.t('folders.errUrl'); }
+      if (!d.user) { dlg.querySelector('#ss-user').focus(); return App.i18n.t('folders.errUser'); }
       return null;
     }
 
@@ -787,7 +784,7 @@ container.innerHTML = `
         console.error('[subsonic] 更新服务器失败:', err);
         saving = false;
         confirmBtn.disabled = false;
-        alert('保存失败，请检查输入');
+        alert(App.i18n.t('folders.saveFailed'));
       });
     }
 
@@ -798,7 +795,7 @@ container.innerHTML = `
       if (err) { alert(err); return; }
       const testBtn = dlg.querySelector('#ss-btn-test');
       const origText = testBtn.textContent;
-      testBtn.textContent = '测试中…';
+      testBtn.textContent = App.i18n.t('folders.testing');
       testBtn.disabled = true;
       // 先保存配置（含可能的密码修改），再测试连接
       App.utils.call('update_subsonic_server', srv.id, d.name, d.url, d.user, d.pass, d.protocol).then(function () {
@@ -814,15 +811,15 @@ container.innerHTML = `
           alert('连接成功\n服务器版本：' + ver + osFlag);
           close();
         } else {
-          const errMsg = (data && data.error) ? data.error : '未知错误';
-          alert('连接失败：' + errMsg + '\n\n配置已保存，您可以稍后修复后再同步。');
+          const errMsg = (data && data.error) ? data.error : App.i18n.t('folders.unknownError');
+            alert(App.i18n.t('folders.connectFailedSaved', { error: errMsg }));
           close();
         }
       }).catch(function (err) {
         console.error('[subsonic] 测试服务器失败:', err);
         testBtn.textContent = origText;
         testBtn.disabled = false;
-        alert('测试失败，请检查网络连接');
+        alert(App.i18n.t('folders.testFailed'));
       });
     }
 
