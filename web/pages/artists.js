@@ -17,8 +17,8 @@
   const SORT_OPTIONS = [
     { key: 'az', label: 'A-Z', icon: 'sort_by_alpha' },
     { key: 'za', label: 'Z-A', icon: 'sort_by_alpha' },
-    { key: 'albums', label: '专辑', icon: 'album' },
-    { key: 'tracks', label: '曲目', icon: 'music_note' },
+    { key: 'albums', labelKey: 'artists.sortAlbums', icon: 'album' },
+    { key: 'tracks', labelKey: 'artists.sortTracks', icon: 'music_note' },
   ];
 
   page.render = function (container, params) {
@@ -26,20 +26,20 @@
       <div class="page-sticky-header">
         <div class="page-header">
           <div class="page-header-left">
-            <h1 class="page-title">艺术家</h1>
-            <p class="page-subtitle" id="artist-count">加载中…</p>
+            <h1 class="page-title" data-i18n="artists.title">艺术家</h1>
+            <p class="page-subtitle" id="artist-count" data-i18n="common.loading">加载中…</p>
           </div>
           <div class="md-select" id="sort-select">
             <div class="md-select-trigger" tabindex="0" role="button" aria-haspopup="listbox" aria-expanded="false">
               <span class="material-symbols-rounded md-select-icon">${SORT_OPTIONS.find(o => o.key === sortMode).icon}</span>
-              <span class="md-select-label">${SORT_OPTIONS.find(o => o.key === sortMode).label}</span>
+              <span class="md-select-label">${App.i18n.t(SORT_OPTIONS.find(o => o.key === sortMode).labelKey || '') || SORT_OPTIONS.find(o => o.key === sortMode).label}</span>
               <span class="material-symbols-rounded md-select-arrow">arrow_drop_down</span>
             </div>
             <div class="md-select-menu" role="listbox">
               ${SORT_OPTIONS.map(opt => `
                 <div class="md-select-option ${opt.key === sortMode ? 'selected' : ''}" role="option" data-value="${opt.key}" aria-selected="${opt.key === sortMode}">
                   <span class="material-symbols-rounded md-select-option-icon">${opt.icon}</span>
-                  <span class="md-select-option-text">${opt.label}</span>
+                  <span class="md-select-option-text">${opt.labelKey ? App.i18n.t(opt.labelKey) : opt.label}</span>
                   ${opt.key === sortMode ? '<span class="material-symbols-rounded md-select-check">check</span>' : ''}
                 </div>
               `).join('')}
@@ -48,7 +48,7 @@
         </div>
         <div class="search-bar">
           <span class="material-symbols-rounded">search</span>
-          <input type="text" id="artist-search" placeholder="搜索艺术家…" aria-label="搜索艺术家">
+          <input type="text" id="artist-search" data-i18n-placeholder="artists.searchPlaceholder" placeholder="搜索艺术家…" data-i18n-aria-label="artists.searchPlaceholder" aria-label="搜索艺术家">
         </div>
       </div>
       <div class="artist-list az-list" id="artist-list"></div>
@@ -112,7 +112,7 @@
           const opt = SORT_OPTIONS.find(o => o.key === sortMode);
           if (opt) {
             select.querySelector('.md-select-icon').textContent = opt.icon;
-            select.querySelector('.md-select-label').textContent = opt.label;
+            select.querySelector('.md-select-label').textContent = opt.labelKey ? App.i18n.t(opt.labelKey) : opt.label;
           }
           // 更新选项选中状态
           menu.querySelectorAll('.md-select-option').forEach(o => {
@@ -243,14 +243,14 @@
 
     const countEl = document.getElementById('artist-count');
     if (countEl) {
-      countEl.textContent = filterStr ? `${list.length} / ${allArtists.length} 位艺术家` : `${allArtists.length} 位艺术家`;
+      countEl.textContent = filterStr ? App.i18n.t('artists.filteredCount', { shown: list.length, total: allArtists.length }) : App.i18n.t('artists.count', { count: allArtists.length });
     }
 
     if (list.length === 0) {
       listEl.innerHTML = `
         <div class="empty-state">
           <span class="material-symbols-rounded empty-icon">person</span>
-          <h2 class="empty-title">无结果</h2>
+          <h2 class="empty-title" data-i18n="common.noResults">无结果</h2>
         </div>
       `;
       return;
@@ -275,7 +275,7 @@
         
         let avatarHtml = '';
         if (artist.cover_track_id) {
-          avatarHtml = `<img src="${window.coverUrl(artist.cover_track_id)}" alt="头像" loading="lazy">`;
+          avatarHtml = `<img src="${window.coverUrl(artist.cover_track_id)}" alt="" loading="lazy">`;
         } else {
           avatarHtml = App.utils.initial(artist.name);
         }
@@ -286,7 +286,7 @@
           <div class="artist-avatar" style="${!artist.cover_track_id ? 'background:'+bg+';color:#fff;' : ''}">${avatarHtml}</div>
           <div class="artist-info">
             <p class="artist-name">${App.utils.esc(artist.name)}</p>
-            <p class="artist-meta">${artist.album_count} 张专辑 · ${artist.track_count} 首曲目</p>
+            <p class="artist-meta">${App.i18n.t('artists.albumCount', { count: artist.album_count })} · ${App.i18n.t('music.trackCount', { count: artist.track_count })}</p>
           </div>
           <span class="material-symbols-rounded artist-chevron">chevron_right</span>
         `;
@@ -306,7 +306,7 @@
     App.scrollMemory.save('artists');
     container.innerHTML = `
       <div class="detail-header">
-        <button class="back-btn" id="btn-back" aria-label="返回艺术家列表" title="返回艺术家列表">
+        <button class="back-btn" id="btn-back" data-i18n-aria-label="artists.backToList" data-i18n-title="artists.backToList">
           <span class="material-symbols-rounded">arrow_back</span>
         </button>
         <div class="detail-cover" id="detail-cover">
@@ -318,12 +318,12 @@
         </div>
         <div class="detail-cover-gradient"></div>
         <div class="detail-meta">
-          <p class="detail-type">艺术家</p>
+          <p class="detail-type" data-i18n="artists.title">艺术家</p>
           <h1 class="detail-name">${App.utils.esc(artist.name)}</h1>
-          <p class="detail-sub">${artist.album_count} 张专辑 · ${artist.track_count} 首曲目</p>
+          <p class="detail-sub">${App.i18n.t('artists.albumCount', { count: artist.album_count })} · ${App.i18n.t('music.trackCount', { count: artist.track_count })}</p>
           <div class="detail-actions">
             <button class="detail-play-btn" id="btn-play-artist">
-              <span class="material-symbols-rounded">play_arrow</span>播放全部
+              <span class="material-symbols-rounded">play_arrow</span><span data-i18n="artists.playAll">播放全部</span>
             </button>
           </div>
         </div>
@@ -351,7 +351,7 @@
     // 从前端 allTracks 缓存过滤艺术家曲目
     const allTracks = (App.state && App.state.allTracks) ? App.state.allTracks : [];
     const tracks = allTracks.filter(function (t) {
-      var names = t.artists || [t.artist || '未知艺术家'];
+      var names = t.artists || [t.artist || App.i18n.t('common.unknownArtist')];
       return names.indexOf(artist.name) >= 0;
     }).sort(function (a, b) {
       const aa = (a.album || '').toLowerCase(), ab = (b.album || '').toLowerCase();
@@ -416,7 +416,7 @@
     var albumMap = {};
     var albumOrder = [];
     for (var i = 0; i < tracks.length; i++) {
-      var al = tracks[i].album || '未知专辑';
+      var al = tracks[i].album || App.i18n.t('common.unknownAlbum');
       if (!albumMap[al]) { albumMap[al] = []; albumOrder.push(al); }
       albumMap[al].push(tracks[i]);
     }
@@ -453,7 +453,7 @@
 
     if (_allArtistAlbums.length === 0) {
       scrollEl.innerHTML =
-        '<div class="artist-album-empty">暂无曲目</div>';
+        '<div class="artist-album-empty">' + App.i18n.t('artists.noTracks') + '</div>';
       return;
     }
 
@@ -475,7 +475,7 @@
       }
 
       // 复用 .album-card 结构：封面 + 专辑名 + 年份（去掉歌手）
-      var yearText = album.year ? album.year + ' · ' + album.track_count + ' 首' : album.track_count + ' 首';
+      var yearText = album.year ? album.year + ' · ' + App.i18n.t('albums.trackCountShort', { count: album.track_count }) : App.i18n.t('albums.trackCountShort', { count: album.track_count });
       row.innerHTML =
         '<div class="artist-album-side">' +
           '<div class="album-card artist-album-card-flat">' +

@@ -26,10 +26,30 @@ const AUDIO_MIME_OVERRIDES = {
   '.aif': 'audio/aiff',
 };
 
+const VIDEO_MIME_OVERRIDES = {
+  '.mp4':  'video/mp4',
+  '.m4v':  'video/mp4',
+  '.webm': 'video/webm',
+  '.mkv':  'video/x-matroska',
+  '.mov':  'video/quicktime',
+  '.avi':  'video/x-msvideo',
+  '.flv':  'video/x-flv',
+  '.wmv':  'video/x-ms-wmv',
+  '.mpg':  'video/mpeg',
+  '.mpeg': 'video/mpeg',
+  '.ts':   'video/mp2t',
+};
+
 function audioMime(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (AUDIO_MIME_OVERRIDES[ext]) return AUDIO_MIME_OVERRIDES[ext];
   return 'application/octet-stream';
+}
+
+function videoMime(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (VIDEO_MIME_OVERRIDES[ext]) return VIDEO_MIME_OVERRIDES[ext];
+  return 'video/mp4'; // fallback
 }
 
 class CoverHTTPServer {
@@ -40,9 +60,13 @@ class CoverHTTPServer {
   }
 
   start() {
-    this._server = http.createServer((req, res) => this._handle(req, res));
-    this._server.listen(0, '127.0.0.1', () => {
-      this._port = this._server.address().port;
+    return new Promise((resolve, reject) => {
+      this._server = http.createServer((req, res) => this._handle(req, res));
+      this._server.listen(0, '127.0.0.1', () => {
+        this._port = this._server.address().port;
+        resolve();
+      });
+      this._server.once('error', reject);
     });
   }
 
@@ -73,6 +97,9 @@ class CoverHTTPServer {
       } else if (pathname.startsWith('/media/')) {
         const trackId = decodeURIComponent(pathname.slice('/media/'.length));
         this._handleMedia(req, res, trackId, method);
+      } else if (pathname.startsWith('/video/')) {
+        const encodedPath = pathname.slice('/video/'.length);
+        this._handleVideo(req, res, encodedPath, method);
       } else if (pathname.startsWith('/subsonic/cover/')) {
         const raw = decodeURIComponent(pathname.slice('/subsonic/cover/'.length));
         this._handleSubsonicCover(req, res, raw, method);
@@ -312,6 +339,87 @@ class CoverHTTPServer {
     sendChunk();
   }
 
+  // ── Video（支持 Range 请求）────────────────────────────────────────────
+
+  /**
+   * 将 base64url 编码的文件路径解码为原始路径。
+   * @param {string} encoded - base64url 编码的路径
+   * @returns {string|null} 解码后的文件路径，失败返回 null
+   */
+  _decodeVideoPath(encoded) {
+    try {
+      // base64url → base64
+      let b64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+      // 补齐 padding
+      while (b64.length % 4) b64 += '=';
+      return Buffer.from(b64, 'base64').toString('utf-8');
+    } catch {
+      return null;
+    }
+  }
+
+  _handleVideo(req, res, encodedPath, method) {
+    const filePath = this._decodeVideoPath(encodedPath);
+    if (!filePath || !fs.existsSync(filePath)) {
+      this._sendError(res, 404);
+      return;
+    }
+
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    const mime = videoMime(filePath);
+
+    if (method === 'HEAD') {
+      this._sendHeaders(res, 200, {
+        'Content-Type': mime,
+        'Content-Length': fileSize,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Access-Control-Allow-Origin': '*',
+      });
+      return;
+    }
+
+    // 解析 Range 头（与 /media/ 端点逻辑一致）
+    const rangeHeader = req.headers['range'];
+    if (rangeHeader && rangeHeader.startsWith('bytes=')) {
+      try {
+        const rangeSpec = rangeHeader.slice(6);
+        const dashIdx = rangeSpec.indexOf('-');
+        const startStr = rangeSpec.slice(0, dashIdx);
+        const endStr = rangeSpec.slice(dashIdx + 1);
+        let start = startStr ? parseInt(startStr, 10) : 0;
+        let end = endStr ? parseInt(endStr, 10) : fileSize - 1;
+        end = Math.min(end, fileSize - 1);
+        if (start > end || start >= fileSize) {
+          this._sendError(res, 416, 'Requested Range Not Satisfiable');
+          return;
+        }
+        const length = end - start + 1;
+        this._sendHeaders(res, 206, {
+          'Content-Type': mime,
+          'Content-Length': length,
+          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Access-Control-Allow-Origin': '*',
+        });
+        this._sendFileRange(res, filePath, start, length);
+      } catch {
+        this._sendError(res, 400, 'Bad Range Request');
+      }
+    } else {
+      this._sendHeaders(res, 200, {
+        'Content-Type': mime,
+        'Content-Length': fileSize,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Access-Control-Allow-Origin': '*',
+      });
+      this._sendFileRange(res, filePath, 0, fileSize);
+    }
+  }
+
   // ── Subsonic 流式代理（封面 / 流式）────────────────────────────────────
 
   _parseSubsonicPath(raw) {
@@ -430,7 +538,6 @@ class CoverHTTPServer {
 
       const headers = {
         'Content-Type': contentType,
-        'Accept-Ranges': 'bytes',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Access-Control-Allow-Origin': '*',
       };
@@ -504,7 +611,6 @@ class CoverHTTPServer {
 
       const headers = {
         'Content-Type': contentType,
-        'Accept-Ranges': 'bytes',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Access-Control-Allow-Origin': '*',
       };

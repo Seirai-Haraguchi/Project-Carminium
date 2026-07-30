@@ -4,8 +4,11 @@
  */
 'use strict';
 
+// 全局禁用 TLS 证书验证（Subsonic 服务器常使用自签名证书）
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 const electron = require('electron');
-const { app, BrowserWindow, shell, dialog } = electron;
+const { app, BrowserWindow, nativeImage, shell, dialog } = electron;
 const path = require('path');
 const fs = require('fs');
 
@@ -18,6 +21,18 @@ process.on('uncaughtException', (err) => {
 // ── Windows AppUserModelID（SMTC / 任务栏标识）─────────────────────────────
 if (app && process.platform === 'win32') {
   app.setAppUserModelId('ProjectCarminium.Player');
+  // 在 Windows 注册表中注册 AUMID 的图标和显示名称
+  // 这样任务栏和 SMTC 控制面板就能正确显示应用图标
+  try {
+    const { execSync } = require('child_process');
+    const iconPath = path.join(__dirname, '..', 'build', 'icon.png');
+    const iconUri = 'file:///' + iconPath.replace(/\\/g, '/');
+    const regKey = 'HKCU\\Software\\Classes\\AppUserModelId\\ProjectCarminium.Player';
+    execSync(`reg ADD "${regKey}" /v DisplayName /t REG_SZ /d "Project Carminium" /f`, { stdio: 'ignore' });
+    execSync(`reg ADD "${regKey}" /v IconUri /t REG_SZ /d "${iconUri}" /f`, { stdio: 'ignore' });
+  } catch (e) {
+    console.warn('[main] Failed to register AUMID icon:', e.message);
+  }
 }
 
 // ── 单实例锁 ───────────────────────────────────────────────────────────────
@@ -53,12 +68,22 @@ function _getMainWindow() {
 // ── 创建主窗口 ─────────────────────────────────────────────────────────────
 
 function createMainWindow() {
+  // 加载应用图标
+  const iconPath = path.join(__dirname, '..', 'build', 'icon.png');
+  let appIcon = null;
+  try {
+    if (fs.existsSync(iconPath)) {
+      appIcon = nativeImage.createFromPath(iconPath);
+    }
+  } catch { /* fallback: no icon */ }
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 820,
     minWidth: 380,
     minHeight: 680,
     title: 'Project Carminium',
+    icon: appIcon,
     show: false,
     autoHideMenuBar: true,
     frame: false,
@@ -103,6 +128,17 @@ function createMainWindow() {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
+  });
+
+  // F12 切换 DevTools
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'F12' && input.type === 'keyDown') {
+      if (mainWindow.webContents.isDevToolsOpened()) {
+        mainWindow.webContents.closeDevTools();
+      } else {
+        mainWindow.webContents.openDevTools({ mode: 'detach' });
+      }
+    }
   });
 
   // 窗口关闭时清理
@@ -157,7 +193,10 @@ function restorePlaybackState() {
 function savePlaybackState() {
   if (!player) return;
   const state = player.getPersistentState();
-  settings.set('playback_state', state);
+  // 只有当前有曲目时才覆盖保存，避免快速关闭时丢失上次的状态
+  if (state && state.track_id) {
+    settings.set('playback_state', state);
+  }
 }
 
 // ── 应用初始化 ─────────────────────────────────────────────────────────────
@@ -182,6 +221,9 @@ async function initializeApp() {
     settings = new AppSettings();
     library = new MusicLibrary(settings);
 
+    // 非阻塞回填 genre（异步执行，不阻止启动）
+    library.backfillGenres().catch(e => console.warn('[main] genre backfill failed:', e.message));
+
     try {
       wasapi = NativeRenderer ? new NativeRenderer() : null;
     } catch (e) {
@@ -191,7 +233,7 @@ async function initializeApp() {
 
     player = new MusicPlayer(settings, library, wasapi);
     coverServer = new CoverHTTPServer(library);
-    coverServer.start();
+    await coverServer.start();
 
     // 注入媒体服务 URL 到播放器
     player.setMediaBaseUrl(coverServer.baseUrl);
@@ -199,9 +241,6 @@ async function initializeApp() {
     // 恢复音量
     const vol = settings.get('volume', 80);
     player.setVolume(parseInt(vol, 10) || 80);
-
-    // 恢复播放状态
-    restorePlaybackState();
 
     // ── 创建 Bridge ──────────────────────────────────────────────────────────
     bridge = new Bridge(library, player, settings, coverServer, wasapi);
@@ -215,6 +254,12 @@ async function initializeApp() {
     createMainWindow();
     bridge.setMainWindow(mainWindow);
     smtc.setMainWindow(mainWindow);
+
+    // 恢复播放状态 — 延迟到渲染进程 AudioEngine 就绪后执行，
+    // 避免 audio_control (init/play) 事件在窗口加载前丢失导致无声
+    bridge.once('renderer-ready', () => {
+      restorePlaybackState();
+    });
   } catch (err) {
     console.error('[main] 初始化失败:', err);
     try { dialog.showErrorBox('Carminium 启动失败', String(err && err.stack || err)); } catch { /* ignore */ }
@@ -229,6 +274,9 @@ function shutdown() {
     if (player) player.stop();
   } catch { /* ignore */ }
   savePlaybackState();
+  try {
+    if (bridge) bridge.close();
+  } catch { /* ignore */ }
   try {
     if (coverServer) coverServer.stop();
   } catch { /* ignore */ }

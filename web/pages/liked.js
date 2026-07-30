@@ -17,18 +17,18 @@
       <div class="page-sticky-header">
         <div class="page-header">
           <div class="page-header-left">
-            <h1 class="page-title">喜爱的音乐</h1>
-            <p class="page-subtitle" id="liked-count">加载中…</p>
+            <h1 class="page-title" data-i18n="liked.title">喜爱的音乐</h1>
+            <p class="page-subtitle" id="liked-count" data-i18n="common.loading">加载中…</p>
           </div>
           <div class="page-actions">
             <button class="btn-filled" id="btn-play-liked">
-              <span class="material-symbols-rounded">play_arrow</span>全部播放
+              <span class="material-symbols-rounded">play_arrow</span><span data-i18n="music.playAll">全部播放</span>
             </button>
           </div>
         </div>
         <div class="search-bar">
           <span class="material-symbols-rounded">search</span>
-          <input type="text" id="liked-search" placeholder="搜索喜爱的曲目…" aria-label="搜索喜爱">
+          <input type="text" id="liked-search" data-i18n-placeholder="liked.searchPlaceholder" placeholder="搜索喜爱的曲目…" data-i18n-aria-label="common.search" aria-label="搜索喜爱">
         </div>
       </div>
       <ul class="track-list az-list" id="liked-list"></ul>
@@ -73,15 +73,15 @@
     const countEl = document.getElementById('liked-count');
     if (countEl) {
       countEl.textContent = list.length === 0
-        ? (filterStr ? '无结果' : '暂未收藏任何曲目')
-        : `${list.length} 首曲目`;
+        ? (filterStr ? App.i18n.t('common.noResults') : App.i18n.t('liked.empty'))
+        : App.i18n.t('music.trackCount', { count: list.length });
     }
 
     if (list.length === 0) {
       ul.innerHTML = `
         <div class="empty-state">
           <span class="material-symbols-rounded empty-icon">favorite_border</span>
-          <h2 class="empty-title">${filterStr ? '无结果' : '暂未收藏任何曲目'}</h2>
+          <h2 class="empty-title">${filterStr ? App.i18n.t('common.noResults') : App.i18n.t('liked.empty')}</h2>
         </div>
       `;
       return;

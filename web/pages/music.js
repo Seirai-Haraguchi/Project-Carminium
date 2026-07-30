@@ -18,9 +18,9 @@
   const SORT_OPTIONS = [
     { key: 'az', label: 'A-Z', icon: 'sort_by_alpha' },
     { key: 'za', label: 'Z-A', icon: 'sort_by_alpha' },
-    { key: 'artist', label: '歌手', icon: 'person' },
-    { key: 'album', label: '专辑', icon: 'album' },
-    { key: 'year', label: '发行年份', icon: 'calendar_today' },
+    { key: 'artist', labelKey: 'music.sortArtist', icon: 'person' },
+    { key: 'album', labelKey: 'music.sortAlbum', icon: 'album' },
+    { key: 'year', labelKey: 'music.sortYear', icon: 'calendar_today' },
   ];
 
   // 从 App.state.allTracks 读取缓存（启动时已拉取，library_updated 时刷新）
@@ -33,34 +33,34 @@
       <div class="page-sticky-header">
         <div class="page-header">
           <div class="page-header-left">
-            <h1 class="page-title">所有音乐</h1>
-            <p class="page-subtitle" id="music-count">加载中…</p>
+            <h1 class="page-title" data-i18n="music.title">所有音乐</h1>
+            <p class="page-subtitle" id="music-count" data-i18n="common.loading">加载中…</p>
           </div>
           <div class="page-header-right">
             <div class="md-select" id="sort-select">
               <div class="md-select-trigger" tabindex="0" role="button" aria-haspopup="listbox" aria-expanded="false">
                 <span class="material-symbols-rounded md-select-icon">${SORT_OPTIONS.find(o => o.key === sortMode).icon}</span>
-                <span class="md-select-label">${SORT_OPTIONS.find(o => o.key === sortMode).label}</span>
+                <span class="md-select-label">${App.i18n.t(SORT_OPTIONS.find(o => o.key === sortMode).labelKey || '') || SORT_OPTIONS.find(o => o.key === sortMode).label}</span>
                 <span class="material-symbols-rounded md-select-arrow">arrow_drop_down</span>
               </div>
               <div class="md-select-menu" role="listbox">
                 ${SORT_OPTIONS.map(opt => `
                   <div class="md-select-option ${opt.key === sortMode ? 'selected' : ''}" role="option" data-value="${opt.key}" aria-selected="${opt.key === sortMode}">
                     <span class="material-symbols-rounded md-select-option-icon">${opt.icon}</span>
-                    <span class="md-select-option-text">${opt.label}</span>
+                    <span class="md-select-option-text">${opt.labelKey ? App.i18n.t(opt.labelKey) : opt.label}</span>
                     ${opt.key === sortMode ? '<span class="material-symbols-rounded md-select-check">check</span>' : ''}
                   </div>
                 `).join('')}
               </div>
             </div>
             <button class="btn-filled" id="btn-play-all">
-              <span class="material-symbols-rounded">play_arrow</span>全部播放
+              <span class="material-symbols-rounded">play_arrow</span><span data-i18n="music.playAll">全部播放</span>
             </button>
           </div>
         </div>
         <div class="search-bar">
           <span class="material-symbols-rounded">search</span>
-          <input type="text" id="music-search" placeholder="搜索本地歌曲、艺术家或专辑…" aria-label="搜索">
+          <input type="text" id="music-search" data-i18n-placeholder="music.searchPlaceholder" placeholder="搜索本地歌曲、艺术家或专辑…" data-i18n-aria-label="common.search" aria-label="搜索">
         </div>
       </div>
       <ul class="track-list az-list" id="music-list"></ul>
@@ -85,7 +85,7 @@
 
     // 从前端缓存读取（启动时已拉取，library_updated 时刷新）
     _loadFromCache();
-    document.getElementById('music-count').textContent = `${allTracks.length} 首曲目`;
+    document.getElementById('music-count').textContent = App.i18n.t('music.trackCount', { count: allTracks.length });
     _renderList();
   };
 
@@ -219,9 +219,9 @@
 
   function _getGroupKey(track) {
     switch (sortMode) {
-      case 'artist': return track.artist || '未知艺术家';
-      case 'album': return track.album || '未知专辑';
-      case 'year': return track.year ? String(track.year) : '未知年份';
+      case 'artist': return track.artist || App.i18n.t('common.unknownArtist');
+      case 'album': return track.album || App.i18n.t('common.unknownAlbum');
+      case 'year': return track.year ? String(track.year) : App.i18n.t('music.unknownYear');
       default: return App.utils.itemSortLetter(track, 'sort_key', 'title');
     }
   }
@@ -260,7 +260,7 @@
       ul.innerHTML = `
         <div class="empty-state">
           <span class="material-symbols-rounded empty-icon">music_off</span>
-          <h2 class="empty-title">无结果</h2>
+          <h2 class="empty-title" data-i18n="common.noResults">无结果</h2>
         </div>
       `;
       return;

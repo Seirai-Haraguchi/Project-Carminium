@@ -1,7 +1,7 @@
 /**
- * Carminium — 设置页（Pivot 选项卡布局）
+ * Carminium — 设置页（单页连续布局）
  *
- * 顶部标题 + 水平选项卡栏，点击选项卡切换内容区。
+ * 所有分类自上而下依次排列，标题区不切换，滚动浏览全部设置项。
  * 分类：
  *   1. 外观与视觉    — 主题、配色、歌词与文字
  *   2. 音频和库      — 输出设备、歌手分隔等
@@ -16,129 +16,174 @@
   const page = {};
   window.App.pages.settings = page;
 
-  let _currentSectionId = 'appearance';
   let _lastSettings = null;
 
   // ── 分类定义 ─────────────────────────────────────────────────────────────
   // 每个分类对应一个设置入口；rows 是该分类下的设置项。
   // type: 'select' | 'toggle' | 'text' | 'device_select'
   // bind: settings.json 里的字段名
-  const SECTIONS = [
+  // 使用函数以便在渲染时实时解析 i18n 翻译
+  function _t(key) { return window.App && App.i18n ? App.i18n.t(key) : key; }
+
+  function _buildSections() {
+    return [
     {
       id: 'appearance',
-      title: '外观与视觉',
-      sub: '主题、播放界面、歌词与文字',
+      titleKey: 'settings.section.appearance',
       icon: 'palette',
       groups: [
         {
-          title: '全局',
+          titleKey: 'settings.group.global',
           rows: [
             {
               type: 'select',
               bind: 'theme',
-              label: '深色模式',
-              sub: '跟随系统或强制指定应用主题',
+              label: _t('settings.theme.label'),
+              sub: _t('settings.theme.sub'),
               options: [
-                { value: 'system', label: '跟随系统' },
-                { value: 'light', label: '浅色模式' },
-                { value: 'dark', label: '深色模式' },
+                { value: 'system', label: _t('settings.theme.system') },
+                { value: 'light', label: _t('settings.theme.light') },
+                { value: 'dark', label: _t('settings.theme.dark') },
               ],
               onApply: function (val) { _applyTheme(val); },
             },
             {
               type: 'select',
               bind: 'color_scheme',
-              label: '配色方案',
-              sub: '从封面提取主色时的调色板生成策略',
+              label: _t('settings.colorScheme.label'),
+              sub: _t('settings.colorScheme.sub'),
               options: [
-                { value: 'tonal_spot', label: '调性点染' },
-                { value: 'fidelity', label: '本色求真' },
-                { value: 'monochrome', label: '水墨 monochrome' },
-                { value: 'neutral', label: '中和淡雅' },
-                { value: 'vibrant', label: '鲜明生动' },
-                { value: 'expressive', label: '恣意挥洒' },
-                { value: 'content', label: '内容取色' },
-                { value: 'rainbow', label: '虹彩纷呈' },
-                { value: 'fruit_salad', label: '果色缤纷' },
+                { value: 'tonal_spot', label: _t('settings.colorScheme.tonal_spot') },
+                { value: 'fidelity', label: _t('settings.colorScheme.fidelity') },
+                { value: 'monochrome', label: _t('settings.colorScheme.monochrome') },
+                { value: 'neutral', label: _t('settings.colorScheme.neutral') },
+                { value: 'vibrant', label: _t('settings.colorScheme.vibrant') },
+                { value: 'expressive', label: _t('settings.colorScheme.expressive') },
+                { value: 'content', label: _t('settings.colorScheme.content') },
+                { value: 'rainbow', label: _t('settings.colorScheme.rainbow') },
+                { value: 'fruit_salad', label: _t('settings.colorScheme.fruit_salad') },
               ],
               onApply: function (val) { _applyColorScheme(val); },
             },
             {
+              type: 'select',
+              bind: 'monet_source',
+              label: _t('settings.monetSource.label'),
+              sub: _t('settings.monetSource.sub'),
+              options: [
+                { value: 'album_cover', label: _t('settings.monetSource.album_cover') },
+                { value: 'system_wallpaper', label: _t('settings.monetSource.system_wallpaper') },
+              ],
+              onApply: function (val) { _applyMonetSource(val); },
+            },
+            {
+              type: 'select',
+              bind: 'language',
+              label: _t('settings.language.label'),
+              sub: _t('settings.language.sub'),
+              options: [
+                { value: 'zh-CN', label: '简体中文' },
+                { value: 'zh-TW', label: '繁體中文' },
+                { value: 'ja', label: '日本語' },
+                { value: 'en', label: 'English' },
+                { value: 'ru', label: 'Русский' },
+              ],
+              onApply: function (val) { _applyLanguage(val); },
+            },
+            {
               type: 'text',
               bind: 'ui_font',
-              label: '界面字体',
-              sub: '自定义应用界面字体族，逗号分隔的 fallback 顺序，留空使用默认',
+              label: _t('settings.uiFont.label'),
+              sub: _t('settings.uiFont.sub'),
               placeholder: 'Google Sans Flex, Noto Sans SC, sans-serif',
               onApply: function (val) { _applyUiFont(val); },
             },
           ],
         },
         {
-          title: '播放',
+          titleKey: 'settings.group.playback',
           rows: [
             {
               type: 'toggle',
               bind: 'circular_cover',
-              label: '圆形专辑图',
-              sub: '播放界面中的专辑图以圆形显示',
+              label: _t('settings.circularCover.label'),
+              sub: _t('settings.circularCover.sub'),
               onChange: function (checked) { _applyCircularCover(checked); },
             },
             {
               type: 'toggle',
               bind: 'wave_progress',
-              label: '波浪进度条',
-              sub: '开启时进度条以波浪形态流动，关闭则为平面进度条（其实波浪进度条感觉看着挺像某个碱性乳白色液体里面的某个成分的说）',
+              label: _t('settings.waveProgress.label'),
+              sub: _t('settings.waveProgress.sub'),
               onChange: function (checked) { _applyWaveProgress(checked); },
+            },
+            {
+              type: 'toggle',
+              bind: 'video_background',
+              label: _t('settings.videoBackground.label'),
+              sub: _t('settings.videoBackground.sub'),
+              onChange: function (checked) { _applyVideoBackground(checked); },
             },
           ],
         },
         {
-          title: '歌词',
+          titleKey: 'settings.group.lyrics',
           rows: [
             {
               type: 'text',
               bind: 'lyrics_font',
-              label: '标准歌词字体',
-              sub: '逗号分隔的 fallback 顺序，例如 \'Google Sans Flex, Noto Sans SC, sans-serif\'',
+              label: _t('settings.lyricsFont.label'),
+              sub: _t('settings.lyricsFont.sub'),
               placeholder: 'Google Sans Flex, Noto Sans SC, sans-serif',
+              onApply: function (val) { _applyLyricsFont(val); },
             },
             {
               type: 'text',
               bind: 'lyrics_jp_font',
-              label: '日文歌词字体',
-              sub: '检测到假名时启用，例如 \'Yu Gothic UI, Hiragino Kaku Gothic ProN, Meiryo, sans-serif\'',
+              label: _t('settings.lyricsJpFont.label'),
+              sub: _t('settings.lyricsJpFont.sub'),
               placeholder: 'Yu Gothic UI, Hiragino Kaku Gothic ProN, Meiryo, sans-serif',
+              onApply: function (val) { _applyLyricsJpFont(val); },
             },
             {
               type: 'toggle',
               bind: 'lyrics_jp_use_distinct',
-              label: '日文歌词独立字体',
-              sub: '检测到日文歌词时切换到独立字体（关闭则始终使用标准字体）',
+              label: _t('settings.lyricsJpDistinct.label'),
+              sub: _t('settings.lyricsJpDistinct.sub'),
+              onChange: function (checked) { _applyLyricsJpDistinct(checked); },
             },
             {
               type: 'toggle',
               bind: 'lyrics_progressive_blur',
-              label: '歌词渐进模糊',
-              sub: '离当前播放行越远的歌词越模糊，当前行完全清晰',
+              label: _t('settings.lyricsBlur.label'),
+              sub: _t('settings.lyricsBlur.sub'),
               onChange: function (checked) { _applyProgressiveBlur(checked); },
             },
             {
               type: 'toggle',
               bind: 'lyrics_center',
-              label: '歌词居中排版',
-              sub: '歌词文字居中显示，关闭则左对齐',
+              label: _t('settings.lyricsCenter.label'),
+              sub: _t('settings.lyricsCenter.sub'),
               onChange: function (checked) { _applyLyricsCenter(checked); },
             },
             {
               type: 'slider',
               bind: 'lyrics_font_size',
-              label: '歌词字体大小',
-              sub: '调整歌词文字大小',
+              label: _t('settings.lyricsFontSize.label'),
+              sub: _t('settings.lyricsFontSize.sub'),
               min: 12,
               max: 28,
               step: 1,
               unit: 'px',
               onChange: function (val) { _applyLyricsFontSize(val); },
+            },
+            {
+              type: 'text',
+              bind: 'lyrics_credit_filters',
+              label: _t('settings.lyricsCreditFilters.label'),
+              sub: _t('settings.lyricsCreditFilters.sub'),
+              placeholder: '作词,作曲,编曲,制作人,混音,母带,录音',
+              onApply: function (val) { _applyLyricsCreditFilters(val); },
             },
           ],
         },
@@ -146,18 +191,17 @@
     },
     {
       id: 'audio_library',
-      title: '音频和库',
-      sub: '输出设备、歌手分隔与元数据',
+      titleKey: 'settings.section.audio',
       icon: 'headphones',
       groups: [
         {
-          title: '音频',
+          titleKey: 'settings.group.audio',
           rows: [
             {
               type: 'toggle',
               bind: 'wasapi_exclusive',
-              label: 'WASAPI 独占模式',
-              sub: '绕过 Windows 音频引擎直接占用设备播放，更低延迟、位完美输出。即时切换，无需重启',
+              label: _t('settings.wasapiExclusive.label'),
+              sub: _t('settings.wasapiExclusive.sub'),
               hotToggle: 'wasapi_exclusive',
               onChange: function (actualOn) { _applyWasapiExclusive(actualOn); },
             },
@@ -166,43 +210,99 @@
               bind: 'wasapi_exclusive_notice',
               showWhen: 'wasapi_exclusive',
               icon: 'priority_high',
-              title: '独占模式下不可用的功能',
+              title: _t('settings.wasapiNotice.title'),
               items: [
-                '播放中切换输出设备（需先关闭独占模式再切换）',
-                '音频处理 API 选择（独占模式绕过 Windows 音频引擎，此选项不生效）',
-                'Windows 音量合成器对本应用单独音量的控制（音量仍可在应用内调节）',
-                '其他应用同时发声（设备被本进程独占）',
+                _t('settings.wasapiNotice.item1'),
+                _t('settings.wasapiNotice.item2'),
+                _t('settings.wasapiNotice.item3'),
+                _t('settings.wasapiNotice.item4'),
               ],
             },
             {
               type: 'select',
               bind: 'audio_api',
-              label: '音频处理 API',
-              sub: '更改后需要重启应用生效',
+              label: _t('settings.audioApi.label'),
+              sub: _t('settings.audioApi.sub'),
               options: [
                 { value: 'wasapi', label: 'WASAPI' },
                 { value: 'directsound', label: 'DirectSound' },
                 { value: 'waveout', label: 'WaveOut' },
               ],
-              onApply: function (val) { _promptRestart('音频处理 API', '切换音频处理 API 需要重启应用才能生效，是否立即重启？'); },
+              onApply: function (val) { _promptRestart(_t('settings.restartTitle'), _t('settings.restartBody')); },
             },
             {
               type: 'device_select',
               bind: 'audio_output_device',
-              label: '输出设备',
-              sub: '选择当前使用的音频播放设备',
-              placeholder: '系统默认设备',
+              label: _t('settings.outputDevice.label'),
+              sub: _t('settings.outputDevice.sub'),
+              placeholder: _t('settings.outputDevice.default'),
+            },
+            {
+              type: 'toggle',
+              bind: 'eq_enabled',
+              label: _t('settings.eq.label'),
+              sub: _t('settings.eq.sub'),
+              onChange: function (checked) {
+                var ae = window.__audioEngine;
+                if (ae) ae.setEqEnabled(checked);
+              },
+            },
+            {
+              type: 'eq',
+              bind: 'eq_bands',
+              label: _t('settings.eqBands.label'),
+              sub: _t('settings.eqBands.sub'),
+            },
+            {
+              type: 'toggle',
+              bind: 'dynamic_bass',
+              label: _t('settings.dynamicBass.label'),
+              sub: _t('settings.dynamicBass.sub'),
+              onChange: function (checked) {
+                var ae = window.__audioEngine;
+                if (ae) ae.setDynamicBass(checked);
+              },
+            },
+            {
+              type: 'toggle',
+              bind: 'compressor_enabled',
+              label: _t('settings.compressor.label'),
+              sub: _t('settings.compressor.sub'),
+              onChange: function (checked) {
+                var ae = window.__audioEngine;
+                if (ae) ae.setCompressorEnabled(checked);
+              },
+            },
+            {
+              type: 'toggle',
+              bind: 'vocal_enhance',
+              label: _t('settings.vocalEnhance.label'),
+              sub: _t('settings.vocalEnhance.sub'),
+              onChange: function (checked) {
+                var ae = window.__audioEngine;
+                if (ae) ae.setVocalEnhance(checked);
+              },
+            },
+            {
+              type: 'toggle',
+              bind: 'guitar_friendly',
+              label: _t('settings.guitarFriendly.label'),
+              sub: _t('settings.guitarFriendly.sub'),
+              onChange: function (checked) {
+                var ae = window.__audioEngine;
+                if (ae) ae.setGuitarFriendly(checked);
+              },
             },
           ],
         },
         {
-          title: '音乐库',
+          titleKey: 'settings.group.library',
           rows: [
             {
               type: 'text',
               bind: 'artist_separators',
-              label: '歌手分隔符',
-              sub: '每个字符均为一个分隔符；同时自动识别 feat. / ft. / vs. / with',
+              label: _t('settings.artistSeparators.label'),
+              sub: _t('settings.artistSeparators.sub'),
               placeholder: ';',
               onApply: function () { App.refreshLibraryCache(); },
             },
@@ -212,36 +312,35 @@
     },
     {
       id: 'automation_controls',
-      title: '自动化与控制',
-      sub: '启动行为、快捷键与媒体键',
+      titleKey: 'settings.section.automation',
       icon: 'tune',
       groups: [
         {
-          title: '自动化',
+          titleKey: 'settings.group.automation',
           rows: [
             {
               type: 'toggle',
               bind: 'shuffle',
-              label: '默认随机播放',
-              sub: '启动应用时默认开启随机模式',
+              label: _t('settings.shuffle.label'),
+              sub: _t('settings.shuffle.sub'),
               onChange: function (checked) { App.backend.set_shuffle(checked); },
             },
             {
               type: 'toggle',
               bind: 'resume_playback',
-              label: '记忆播放状态',
-              sub: '下次启动时恢复当前的播放队列和进度',
+              label: _t('settings.resumePlayback.label'),
+              sub: _t('settings.resumePlayback.sub'),
               disabled: true,
             },
             {
               type: 'toggle',
               bind: 'automix',
-              label: 'AutoTransmit 智能混音',
-              sub: '在上一首末尾（最后一行歌词）交叉淡化过渡到下一首。仅在共享模式下可用',
+              label: _t('settings.automix.label'),
+              sub: _t('settings.automix.sub'),
               onChange: function (checked) {
+                App.utils.call('set_automix', checked);
                 if (checked) {
-                  // 与无间隙播放互斥：开启 AutoMix 时强制关闭 gapless
-                  App.utils.call('save_settings', JSON.stringify({ gapless: false }));
+                  App.utils.call('set_gapless', false);
                   var gaplessEl = document.querySelector('input[type="checkbox"][data-bind="gapless"]');
                   if (gaplessEl) gaplessEl.checked = false;
                 }
@@ -250,12 +349,12 @@
             {
               type: 'toggle',
               bind: 'gapless',
-              label: '无间隙播放',
-              sub: '在上一首末尾预加载下一曲，自然结束时立即切换，避免切换间的加载停顿。与 AutoTransmit 互斥',
+              label: _t('settings.gapless.label'),
+              sub: _t('settings.gapless.sub'),
               onChange: function (checked) {
+                App.utils.call('set_gapless', checked);
                 if (checked) {
-                  // 与 AutoTransmit 互斥：开启 gapless 时强制关闭 automix
-                  App.utils.call('save_settings', JSON.stringify({ automix: false }));
+                  App.utils.call('set_automix', false);
                   var automixEl = document.querySelector('input[type="checkbox"][data-bind="automix"]');
                   if (automixEl) automixEl.checked = false;
                 }
@@ -264,150 +363,170 @@
           ],
         },
         {
-          title: '控制中心',
+          titleKey: 'settings.group.controlCenter',
           rows: [
             {
               type: 'toggle',
               bind: 'smtc_lyrics',
-              label: '控制中心歌词',
-              sub: '在 Windows 媒体控制中心（SMTC）的歌名位置显示当前歌词行，歌手位置显示「歌名 - 歌手」',
+              label: _t('settings.smtcLyrics.label'),
+              sub: _t('settings.smtcLyrics.sub'),
             },
           ],
         },
         {
-          title: '快捷键',
+          titleKey: 'settings.group.shortcuts',
           rows: [
-            { type: 'shortcut', bind: 'shortcuts', action: 'play_pause', label: '播放 / 暂停', sub: '切换当前播放状态' },
-            { type: 'shortcut', bind: 'shortcuts', action: 'next_track', label: '下一首', sub: '跳到队列中的下一首' },
-            { type: 'shortcut', bind: 'shortcuts', action: 'prev_track', label: '上一首', sub: '跳到队列中的上一首' },
-            { type: 'shortcut', bind: 'shortcuts', action: 'volume_up', label: '音量加', sub: '每次增加 5%' },
-            { type: 'shortcut', bind: 'shortcuts', action: 'volume_down', label: '音量减', sub: '每次减少 5%' },
-            { type: 'shortcut', bind: 'shortcuts', action: 'toggle_like', label: '喜欢 / 取消喜欢', sub: '为当前曲目标记喜欢' },
-            { type: 'shortcut', bind: 'shortcuts', action: 'toggle_mute', label: '静音', sub: '切换静音状态' },
+            { type: 'shortcut', bind: 'shortcuts', action: 'play_pause', label: _t('shortcut.play_pause'), sub: _t('shortcut.play_pause.sub') },
+            { type: 'shortcut', bind: 'shortcuts', action: 'next_track', label: _t('shortcut.next_track'), sub: _t('shortcut.next_track.sub') },
+            { type: 'shortcut', bind: 'shortcuts', action: 'prev_track', label: _t('shortcut.prev_track'), sub: _t('shortcut.prev_track.sub') },
+            { type: 'shortcut', bind: 'shortcuts', action: 'volume_up', label: _t('shortcut.volume_up'), sub: _t('shortcut.volume_up.sub') },
+            { type: 'shortcut', bind: 'shortcuts', action: 'volume_down', label: _t('shortcut.volume_down'), sub: _t('shortcut.volume_down.sub') },
+            { type: 'shortcut', bind: 'shortcuts', action: 'toggle_like', label: _t('shortcut.toggle_like'), sub: _t('shortcut.toggle_like.sub') },
+            { type: 'shortcut', bind: 'shortcuts', action: 'toggle_mute', label: _t('shortcut.toggle_mute'), sub: _t('shortcut.toggle_mute.sub') },
+          ],
+        },
+        {
+          titleKey: 'settings.group.gamepad',
+          rows: [
+            {
+              type: 'select',
+              bind: 'gamepad_button_layout',
+              label: _t('settings.gamepadLayout.label'),
+              sub: _t('settings.gamepadLayout.sub'),
+              options: [
+                { value: 'eastern', label: _t('settings.gamepadLayout.eastern') },
+                { value: 'western', label: _t('settings.gamepadLayout.western') },
+              ],
+              onApply: function (val) {
+                if (App.gamepad && App.gamepad.setButtonLayout) {
+                  App.gamepad.setButtonLayout(val);
+                }
+              },
+            },
           ],
         },
       ],
     },
     {
       id: 'experimental',
-      title: '实验性',
-      sub: '窗口随鼓点震动等效果',
+      titleKey: 'settings.section.experimental',
       icon: 'science',
       rows: [
         {
           type: 'toggle',
           bind: 'window_beat_shake',
-          label: '窗口随鼓点震动',
-          sub: '播放时根据音乐能量 onset 轻微震动主窗口',
+          label: _t('settings.windowBeatShake.label'),
+          sub: _t('settings.windowBeatShake.sub'),
         },
       ],
     },
     {
       id: 'about',
-      title: '关于',
-      sub: '应用信息与版本',
+      titleKey: 'settings.section.about',
       icon: 'info',
       isPage: true,
     },
   ];
+  }
 
   // ── 渲染 ─────────────────────────────────────────────────────────────────
   page.render = function (container) {
     page.container = container;
-    _renderPivot();
+    _renderSinglePage();
   };
 
-  // ── Pivot 选项卡布局 ─────────────────────────────────────────────────────
-  function _renderPivot() {
+  // ── 单页连续布局 ─────────────────────────────────────────────────────────
+  // 所有分类自上而下依次渲染，不做选项卡切换。
+  function _renderSinglePage() {
     var container = page.container;
     container.innerHTML = '' +
-      '<div class="settings-pivot">' +
+      '<div class="settings-single">' +
         '<div class="page-sticky-header">' +
           '<div class="page-header">' +
             '<div class="page-header-left">' +
-              '<h1 class="page-title">设置</h1>' +
+              '<h1 class="page-title" data-i18n="page.settings.title">' + _t('page.settings.title') + '</h1>' +
             '</div>' +
           '</div>' +
-          '<div class="settings-tabs" id="settings-tabs" role="tablist">' +
-            _renderTabs() +
-          '</div>' +
         '</div>' +
-        '<section class="settings-pane" id="settings-pane"></section>' +
+        '<div class="settings-sections" id="settings-sections">' +
+          _renderAllSections() +
+        '</div>' +
       '</div>';
 
-    _bindTabs();
-    _showSection(_currentSectionId);
+    _bindAllSections();
   }
 
-  function _renderTabs() {
-    return SECTIONS.map(function (section) {
-      var active = section.id === _currentSectionId ? ' active' : '';
-      return '' +
-        '<button class="settings-tab' + active + '" data-section="' + section.id + '" role="tab" type="button">' +
-          '<span class="material-symbols-rounded settings-tab-icon">' + (section.icon || 'settings') + '</span>' +
-          '<span class="settings-tab-label">' + section.title + '</span>' +
-        '</button>';
+  function _renderAllSections() {
+    var sections = _buildSections();
+    return sections.map(function (section) {
+      return section.isPage ? _renderPageSection(section) : _renderSection(section);
     }).join('');
   }
 
-  function _bindTabs() {
-    var container = page.container;
-    container.querySelectorAll('.settings-tab').forEach(function (tab) {
-      tab.addEventListener('click', function () {
-        var sectionId = this.dataset.section;
-        var section = SECTIONS.find(function (s) { return s.id === sectionId; });
-        if (!section) return;
-
-        if (section.isPage) {
-          if (App.navigate) App.navigate(sectionId);
-          return;
-        }
-
-        _showSection(sectionId);
-      });
-    });
+  function _renderSectionHeader(section) {
+    return '' +
+      '<div class="settings-section-header" data-section="' + section.id + '">' +
+        '<h2 class="settings-section-title" data-i18n="' + section.titleKey + '">' + _t(section.titleKey) + '</h2>' +
+      '</div>';
   }
 
-  // ── 内容区：显示指定分类的内容 ───────────────────────────────────────────
-  function _showSection(sectionId) {
-    var section = SECTIONS.find(function (s) { return s.id === sectionId; });
-    if (!section) return;
-    _currentSectionId = sectionId;
-
-    // 更新选项卡激活态
-    var tabs = page.container.querySelectorAll('.settings-tab');
-    tabs.forEach(function (tab) {
-      tab.classList.toggle('active', tab.dataset.section === sectionId);
-    });
-
-    // 滚动激活的选项卡到可视区域
-    var activeTab = page.container.querySelector('.settings-tab.active');
-    if (activeTab) {
-      activeTab.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
-    }
-
-    var paneEl = page.container.querySelector('#settings-pane');
-    if (!paneEl) return;
-
+  function _renderSection(section) {
     var bodyHtml = section.groups
       ? section.groups.map(_renderGroup).join('')
       : (section.rows && section.rows.length
           ? section.rows.map(_renderRow).join('')
           : _renderEmptyHint());
 
-    paneEl.innerHTML =
-      '<div class="settings-group" data-section="' + section.id + '">' +
-        bodyHtml +
+    return '' +
+      '<section class="settings-section" data-section="' + section.id + '">' +
+        _renderSectionHeader(section) +
+        '<div class="settings-section-body">' + bodyHtml + '</div>' +
+      '</section>';
+  }
+
+  function _renderPageSection(section) {
+    var bodyHtml = '' +
+      '<div class="settings-row settings-row-link" data-navigate="' + section.id + '">' +
+        '<div>' +
+          '<p class="settings-row-label" data-i18n="settings.about.label">' + _t('settings.about.label') + '</p>' +
+          '<p class="settings-row-sub" data-i18n="settings.about.sub">' + _t('settings.about.sub') + '</p>' +
+        '</div>' +
+        '<span class="material-symbols-rounded settings-row-link-arrow">chevron_right</span>' +
       '</div>';
 
+    return '' +
+      '<section class="settings-section" data-section="' + section.id + '">' +
+        _renderSectionHeader(section) +
+        '<div class="settings-section-body">' + bodyHtml + '</div>' +
+      '</section>';
+  }
+
+  // ── 事件绑定：一次性绑定所有分类 ───────────────────────────────────────
+  function _bindAllSections() {
+    // 先用缓存设置绑定，再用最新设置重新绑定
     if (_lastSettings) {
-      _bindSectionRows(section, _lastSettings);
+      _buildSections().forEach(function (section) {
+        if (section.isPage) return;
+        _bindSectionRows(section, _lastSettings);
+      });
     }
 
+    // 关于页导航行
+    page.container.querySelectorAll('.settings-row-link[data-navigate]').forEach(function (row) {
+      row.addEventListener('click', function () {
+        var target = this.dataset.navigate;
+        if (App.navigate) App.navigate(target);
+      });
+    });
+
+    // 加载最新设置后重新绑定所有分类
     App.utils.call('get_settings').then(function (res) {
       var settings = JSON.parse(res);
       _lastSettings = settings;
-      _bindSectionRows(section, settings);
+      _buildSections().forEach(function (section) {
+        if (section.isPage) return;
+        _bindSectionRows(section, settings);
+      });
     });
   }
 
@@ -415,7 +534,7 @@
   function _renderGroup(group) {
     const rowsHtml = group.rows.map(_renderRow).join('');
     return `
-      <div class="settings-group-header">${group.title}</div>
+      <div class="settings-group-header" data-i18n="${group.titleKey}">${_t(group.titleKey)}</div>
       ${rowsHtml}
     `;
   }
@@ -423,7 +542,7 @@
   function _renderEmptyHint() {
     return `
       <div class="settings-row settings-row-empty">
-        <p class="settings-row-sub">暂无可配置项</p>
+        <p class="settings-row-sub">` + _t('settings.about.emptyHint') + `</p>
       </div>
     `;
   }
@@ -493,7 +612,7 @@
       `;
     }
     if (row.type === 'device_select') {
-      const defaultLabel = App.utils.esc(row.placeholder || '请选择');
+      const defaultLabel = App.utils.esc(row.placeholder || _t('settings.outputDevice.default'));
       return `
         <div class="settings-row" data-bind="${row.bind}">
           <div>
@@ -517,8 +636,8 @@
             <p class="settings-row-label">${row.label}</p>
             <p class="settings-row-sub">${row.sub || ''}</p>
           </div>
-          <button class="settings-shortcut-value" type="button" data-action="${row.action}" data-default="未设置">
-            <span class="settings-shortcut-keys">未设置</span>
+      <button class="settings-shortcut-value" type="button" data-action="${row.action}" data-default="${_t('shortcut.notSet')}">
+        <span class="settings-shortcut-keys">${_t('shortcut.notSet')}</span>
             <span class="material-symbols-rounded settings-shortcut-edit">edit</span>
           </button>
         </div>
@@ -535,6 +654,26 @@
             <input type="range" class="settings-slider" data-bind="${row.bind}"
                    min="${row.min}" max="${row.max}" step="${row.step || 1}">
             <span class="settings-slider-value" data-bind="${row.bind}">${row.min}</span>
+          </div>
+        </div>
+      `;
+    }
+    if (row.type === 'eq') {
+      var eqFreqLabels = ['25', '40', '63', '100', '160', '250', '400', '630', '1k', '1.6k', '2.5k', '4k', '6.3k', '10k', '16k', '20k'];
+      var slidersHtml = eqFreqLabels.map(function (label, i) {
+        return `
+          <div class="settings-eq-band">
+            <div class="settings-eq-slider-wrap">
+              <input type="range" class="settings-eq-slider" data-band="${i}" min="-12" max="12" step="1">
+            </div>
+            <span class="settings-eq-band-label">${label}</span>
+          </div>
+        `;
+      }).join('');
+      return `
+        <div class="settings-eq-fullwidth" data-bind="${row.bind}">
+          <div class="settings-eq-bands">
+            ${slidersHtml}
           </div>
         </div>
       `;
@@ -606,6 +745,8 @@
         _bindShortcutRow(row, settings[row.bind] || {});
       } else if (row.type === 'slider') {
         _bindSliderRow(row, settings[row.bind]);
+      } else if (row.type === 'eq') {
+        _bindEqRow(row, settings[row.bind] || []);
       }
     });
 
@@ -652,8 +793,8 @@
     App.utils.confirmDialog({
       title: title,
       body: body,
-      confirmText: '重启应用',
-      cancelText: '稍后',
+      confirmText: _t('settings.restartConfirm'),
+      cancelText: _t('settings.restartCancel'),
     }).then(function (ok) {
       if (ok && App.backend && App.backend.restart_app) {
         App.backend.restart_app();
@@ -662,7 +803,7 @@
   }
 
   function _displayShortcut(keysSpan, combo) {
-    keysSpan.textContent = combo || keysSpan.parentElement.dataset.default || '未设置';
+    keysSpan.textContent = combo || keysSpan.parentElement.dataset.default || _t('shortcut.notSet');
     keysSpan.parentElement.classList.toggle('settings-shortcut-empty', !combo);
   }
 
@@ -685,7 +826,7 @@
   function _startRecordingShortcut(btn, keysSpan, row) {
     const originalText = keysSpan.textContent;
     btn.classList.add('settings-shortcut-recording');
-    keysSpan.textContent = '按快捷键…';
+    keysSpan.textContent = _t('shortcut.pressKeys');
 
     function onKeyDown(e) {
       e.preventDefault();
@@ -693,7 +834,7 @@
 
       if (e.key === 'Escape') {
         finishRecording();
-        _displayShortcut(keysSpan, originalText === '未设置' ? '' : originalText);
+        _displayShortcut(keysSpan, originalText === _t('shortcut.notSet') ? '' : originalText);
         return;
       }
       if (e.key === 'Backspace' || e.key === 'Delete') {
@@ -708,7 +849,7 @@
       const MOD_KEY_NAMES = ['Control', 'Alt', 'Shift', 'Meta'];
       if (MOD_KEY_NAMES.includes(e.key)) {
         const preview = App.shortcuts.formatKeyCombo(e);
-        keysSpan.textContent = preview ? preview + '…' : '按快捷键…';
+        keysSpan.textContent = preview ? preview + '…' : _t('shortcut.pressKeys');
         return;
       }
 
@@ -722,7 +863,7 @@
 
     function onBlur() {
       finishRecording();
-      _displayShortcut(keysSpan, originalText === '未设置' ? '' : originalText);
+      _displayShortcut(keysSpan, originalText === _t('shortcut.notSet') ? '' : originalText);
     }
 
     function finishRecording() {
@@ -758,7 +899,7 @@
     const trigger = dropdown.querySelector('.md-dropdown-trigger');
     const valueEl = dropdown.querySelector('.md-dropdown-value');
     const menu = dropdown.querySelector('.md-dropdown-menu');
-    const defaultLabel = valueEl.dataset.default || '系统默认设备';
+    const defaultLabel = valueEl.dataset.default || _t('settings.outputDevice.default');
 
     function updateDisplay(value, label) {
       valueEl.textContent = label || defaultLabel;
@@ -954,6 +1095,50 @@
     slider.addEventListener('change', slider._sliderChangeHandler);
   }
 
+  function _bindEqRow(row, bands) {
+    var sliders = document.querySelectorAll('.settings-eq-slider');
+    if (!sliders.length) return;
+    
+    sliders.forEach(function (slider) {
+      var bandIdx = parseInt(slider.dataset.band, 10);
+      var bandVal = Array.isArray(bands) && bandIdx < bands.length ? bands[bandIdx] : 0;
+      slider.value = bandVal;
+      _updateEqSliderUI(slider, bandVal);
+      // 将初始频段值应用到 AudioEngine
+      var ae0 = window.__audioEngine;
+      if (ae0) ae0.setEqBand(bandIdx, bandVal);
+
+      slider.removeEventListener('input', slider._eqInputHandler);
+      slider.removeEventListener('change', slider._eqChangeHandler);
+
+      slider._eqInputHandler = function () {
+        var v = parseInt(this.value, 10);
+        _updateEqSliderUI(this, v);
+        // 实时调用 AudioEngine（每次拖动时查找，避免初始化时机问题）
+        var ae = window.__audioEngine;
+        if (ae) ae.setEqBand(bandIdx, v);
+      };
+      slider._eqChangeHandler = function () {
+        // 保存所有频段值
+        var allSliders = document.querySelectorAll('.settings-eq-slider');
+        var newBands = [];
+        allSliders.forEach(function (s) {
+          newBands.push(parseInt(s.value, 10));
+        });
+        App.utils.call('save_settings', JSON.stringify({ eq_bands: newBands }));
+      };
+      slider.addEventListener('input', slider._eqInputHandler);
+      slider.addEventListener('change', slider._eqChangeHandler);
+    });
+  }
+
+  function _updateEqSliderUI(slider, val) {
+    var min = parseFloat(slider.min) || -12;
+    var max = parseFloat(slider.max) || 12;
+    var pct = ((val - min) / (max - min)) * 100;
+    slider.style.setProperty('--slider-val', pct + '%');
+  }
+
   function _updateSliderUI(slider, valueLabel, val, row) {
     var unit = row.unit || '';
     if (valueLabel) valueLabel.textContent = val + unit;
@@ -996,6 +1181,13 @@
     }
   }
 
+  // ── 视频背景 ─────────────────────────────────────────────────────
+  function _applyVideoBackground(enabled) {
+    if (window.App && App.nowPlaying && App.nowPlaying.refreshVideoBackground) {
+      App.nowPlaying.refreshVideoBackground(enabled);
+    }
+  }
+
   // ── 波浪进度条 ─────────────────────────────────────────────────────
   function _applyWaveProgress(enabled) {
     if (window.App && App.nowPlaying && App.nowPlaying.refreshWaveProgress) {
@@ -1013,6 +1205,40 @@
     }
   }
 
+  // ── 歌词自定义字体（立即应用）─────────────────────────────────────
+  function _applyLyricsFont(val) {
+    if (window.App && App.nowPlaying && App.nowPlaying.refreshLyricsFont) {
+      App.nowPlaying.refreshLyricsFont(val, undefined);
+    }
+  }
+
+  function _applyLyricsJpFont(val) {
+    if (window.App && App.nowPlaying && App.nowPlaying.refreshLyricsFont) {
+      App.nowPlaying.refreshLyricsFont(undefined, val);
+    }
+  }
+
+  function _applyLyricsJpDistinct(enabled) {
+    if (window.App && App.nowPlaying && App.nowPlaying.refreshLyricsJpDistinct) {
+      App.nowPlaying.refreshLyricsJpDistinct(enabled);
+    }
+  }
+
+  function _applyLyricsCreditFilters(val) {
+    if (window.App && App.nowPlaying && App.nowPlaying.refreshLyricsCreditFilters) {
+      App.nowPlaying.refreshLyricsCreditFilters(val);
+    }
+  }
+
+  // ── 界面语言 ─────────────────────────────────────────────────────
+  function _applyLanguage(val) {
+    if (window.App && App.i18n) {
+      App.i18n.init(val || 'zh-CN');
+    } else {
+      document.documentElement.setAttribute('lang', val || 'zh-CN');
+    }
+  }
+
   // ── 配色方案 ────────────────────────────────────────────────────
   function _applyColorScheme(val) {
     if (!window.App) return;
@@ -1021,6 +1247,41 @@
     if (App.state.currentDominantRgb) {
       App.utils.applyDynamicTheme(App.state.currentDominantRgb, App.state.colorScheme);
     }
+  }
+
+  // ── 莫奈取色来源 ────────────────────────────────────────────────
+  function _applyMonetSource(val) {
+    if (!window.App) return;
+    App.state.monetSource = val || 'album_cover';
+    // 切换后立即刷新主题（settings_changed 也会触发，但这里提供即时反馈）
+    if (val === 'system_wallpaper') {
+      _refreshMonetFromSystem();
+    } else if (App.state.currentDominantRgb) {
+      App.utils.applyDynamicTheme(App.state.currentDominantRgb, App.state.colorScheme);
+    }
+  }
+
+  function _refreshMonetFromSystem() {
+    if (!window.App || !window.__electronAPI || !window.__electronAPI.invoke) {
+      _monetFallback();
+      return;
+    }
+    window.__electronAPI.invoke('get_system_accent_color').then(function (rgb) {
+      if (rgb && Array.isArray(rgb) && rgb.length === 3) {
+        App.state.currentDominantRgb = rgb;
+        App.utils.applyDynamicTheme(rgb, App.state.colorScheme);
+      } else {
+        _monetFallback();
+      }
+    }).catch(function () {
+      _monetFallback();
+    });
+  }
+
+  function _monetFallback() {
+    var fallback = [103, 80, 164];
+    App.state.currentDominantRgb = fallback;
+    App.utils.applyDynamicTheme(fallback, App.state.colorScheme);
   }
 
   // ── Material 下拉选择行绑定（select 类型）──────────────────────────

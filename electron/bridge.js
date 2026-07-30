@@ -7,9 +7,23 @@
 'use strict';
 
 const { EventEmitter } = require('events');
-const { ipcMain, dialog, app, shell, BrowserWindow } = require('electron');
+const { ipcMain, dialog, app, shell, BrowserWindow, net } = require('electron');
 const fs = require('fs');
 const path = require('path');
+
+// ── 智能过渡分析模块 ──────────────────────────────────────────────────────────
+let AnalysisCache = null;
+let OsuBeatmapProvider = null;
+try {
+  ({ AnalysisCache } = require('./analysis_cache'));
+} catch (e) {
+  console.warn('[bridge] AnalysisCache module not available:', e.message);
+}
+try {
+  ({ OsuBeatmapProvider } = require('./osu_beatmap_provider'));
+} catch (e) {
+  console.warn('[bridge] OsuBeatmapProvider module not available:', e.message);
+}
 
 // 后台同步状态：记录正在同步的 server_id，防止重复触发
 const _syncingServers = new Set();
@@ -30,6 +44,17 @@ class Bridge extends EventEmitter {
     this._floatingWindow = null;
     this._floatingClosedCallback = null;
 
+    // ── 智能过渡分析：缓存 + osu! 谱面提供器 ──
+    this._analysisCache = AnalysisCache ? new AnalysisCache() : null;
+    this._osuProvider = OsuBeatmapProvider ? new OsuBeatmapProvider() : null;
+    this._currentTransitionPlan = null;
+    if (this._analysisCache) {
+      console.log('[bridge] AnalysisCache initialized');
+    }
+    if (this._osuProvider) {
+      console.log('[bridge] OsuBeatmapProvider initialized');
+    }
+
     // ── 转发 player 信号 → Renderer 事件 ──
     player.on('track_changed', (trackJson) => this._onTrackChanged(trackJson));
     player.on('state_changed', (state) => this._emit('playback_state_changed', state));
@@ -47,10 +72,60 @@ class Bridge extends EventEmitter {
       this.emit('settings_changed', settingsJson);
       this._emit('settings_changed', settingsJson);
     });
+
+    // ── Audio PCM 中継: wasapi → Renderer ──
+    const renderer = player._renderer;
+    if (renderer) {
+      renderer.sendPcmToRenderer = (channel, float32Array) => {
+        this._sendAudioPcm(channel, float32Array);
+      };
+      renderer.sendFfmpegState = (channel, finished) => {
+        this._sendFfmpegState(channel, finished);
+      };
+    }
+
+    // ── AudioEngine 制御イベント: Player → Renderer ──
+    // 用 executeJavaScript 直接调用渲染进程的全局函数，最可靠
+    player.on('audio_control', (json) => {
+      // json 已经是 JSON 字符串，直接嵌入 JS 即可
+      const js = 'if (window.__handleAudioControl) { window.__handleAudioControl(' + json + '); }';
+      if (this._mainWindow && !this._mainWindow.isDestroyed()) {
+        this._mainWindow.webContents.executeJavaScript(js).catch(() => {});
+      }
+      if (this._floatingWindow && !this._floatingWindow.isDestroyed()) {
+        this._floatingWindow.webContents.executeJavaScript(js).catch(() => {});
+      }
+    });
   }
 
   setMainWindow(win) {
     this._mainWindow = win;
+  }
+
+  // ── Audio PCM 中継メソッド ────────────────────────────────────────────
+
+  _sendAudioPcm(channel, float32Array) {
+    // Float32Array を ArrayBuffer として送信（IPC で structured clone される）
+    const ab = float32Array.buffer.slice(
+      float32Array.byteOffset,
+      float32Array.byteOffset + float32Array.byteLength
+    );
+    const ipcChannel = channel === 'main' ? 'audio_pcm_main' : 'audio_pcm_next';
+    if (this._mainWindow && !this._mainWindow.isDestroyed()) {
+      this._mainWindow.webContents.send(ipcChannel, ab);
+    }
+    if (this._floatingWindow && !this._floatingWindow.isDestroyed()) {
+      this._floatingWindow.webContents.send(ipcChannel, ab);
+    }
+  }
+
+  _sendFfmpegState(channel, finished) {
+    if (this._mainWindow && !this._mainWindow.isDestroyed()) {
+      this._mainWindow.webContents.send('audio_ffmpeg_state', channel, finished);
+    }
+    if (this._floatingWindow && !this._floatingWindow.isDestroyed()) {
+      this._floatingWindow.webContents.send('audio_ffmpeg_state', channel, finished);
+    }
   }
 
   _emit(event, payload) {
@@ -117,6 +192,84 @@ class Bridge extends EventEmitter {
   // ── 注册 IPC handlers ────────────────────────────────────────────────────
 
   registerIpcHandlers() {
+    // ── Audio Output: Renderer (AudioEngine) → Main (miniaudio) ──
+    ipcMain.on('audio_output', (_e, arrayBuffer) => {
+      const renderer = this._player._renderer;
+      if (renderer && renderer.isInitialized) {
+        const result = renderer.pushProcessedPcm(new Float32Array(arrayBuffer));
+        if (result !== 0 && result !== -2) {
+          console.error('[bridge] audio_output push failed:', result);
+        }
+        // 查询 DLL 环形缓冲延迟，发送到渲染进程用于位置修正
+        const latencyMs = renderer.getBufferLatencyMs();
+        // 使用 webContents.send（可靠）代替 executeJavaScript（异步且可能丢失）
+        if (this._mainWindow && !this._mainWindow.isDestroyed()) {
+          this._mainWindow.webContents.send('audio_latency', latencyMs);
+        }
+        if (this._floatingWindow && !this._floatingWindow.isDestroyed()) {
+          this._floatingWindow.webContents.send('audio_latency', latencyMs);
+        }
+      }
+    });
+
+    // ── AudioEngine events (Renderer → Main) ──
+    ipcMain.on('audio_ended', () => {
+      this._player._handleAudioEnded();
+    });
+    ipcMain.on('audio_position_tick', (_e, ms) => {
+      this._player._handleAudioPositionTick(ms);
+    });
+    ipcMain.on('audio_crossfade_complete', (_e, positionMs) => {
+      this._player._handleAudioCrossfadeComplete(positionMs);
+    });
+    ipcMain.on('audio_gapless_switch', () => {
+      this._player._handleGaplessSwitch();
+    });
+
+    // ── Web Audio API: 文件解码 IPC ──
+    // 渲染进程请求读取音频文件，主进程读取后以 ArrayBuffer 形式返回
+    // 支持本地文件路径和 HTTP URL（Subsonic 流媒体）
+    ipcMain.on('decode_audio_file', async (_e, filePath) => {
+      if (!filePath) return;
+
+      const sendOk = (ab) => {
+        if (this._mainWindow && !this._mainWindow.isDestroyed()) {
+          this._mainWindow.webContents.send('audio_file_decoded', filePath, ab);
+        }
+      };
+      const sendErr = (msg) => {
+        console.error('[bridge] decode_audio_file error:', filePath, msg);
+        if (this._mainWindow && !this._mainWindow.isDestroyed()) {
+          this._mainWindow.webContents.send('audio_file_decode_error', filePath, msg);
+        }
+      };
+
+      try {
+        if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+          // Subsonic 等流媒体：通过 HTTP 获取
+          const resp = await net.fetch(filePath);
+          if (!resp.ok) {
+            sendErr(`HTTP ${resp.status}: ${resp.statusText}`);
+            return;
+          }
+          const buf = await resp.arrayBuffer();
+          sendOk(buf);
+        } else {
+          // 本地文件
+          fs.readFile(filePath, (err, data) => {
+            if (err) {
+              sendErr(err.message);
+              return;
+            }
+            const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+            sendOk(ab);
+          });
+        }
+      } catch (e) {
+        sendErr(e.message);
+      }
+    });
+
     // ── Library ──
     ipcMain.handle('get_library', () => _dump(this._lib.getAllTracks()));
     ipcMain.handle('get_albums', () => _dump(this._lib.getAlbums()));
@@ -235,15 +388,111 @@ class Bridge extends EventEmitter {
     });
     ipcMain.handle('get_crossfade_duration', () => this._player.crossfadeDurationMs);
 
+    // ── 莫奈取色：系统强调色 ──
+    ipcMain.handle('get_system_accent_color', () => _getSystemAccentColor());
+
     // ── Gapless ──
     ipcMain.handle('set_gapless', (_e, enabled) => {
       this._player.setGaplessEnabled(!!enabled);
     });
     ipcMain.handle('get_gapless', () => this._player.gaplessEnabled);
 
+    // ── 智能过渡：分析缓存 + osu! 谱面 ──
+
+    /**
+     * 获取缓存的音轨分析结果。
+     * @param {string} trackId - 音轨 ID
+     * @returns {object|null} 分析结果，或 null（未缓存）
+     */
+    ipcMain.handle('get_track_analysis', (_e, trackId) => {
+      if (!this._analysisCache || !trackId) return null;
+      try {
+        return this._analysisCache.get(trackId);
+      } catch (e) {
+        console.warn('[bridge] get_track_analysis error:', e.message);
+        return null;
+      }
+    });
+
+    /**
+     * 保存音轨分析结果到磁盘缓存。
+     * @param {string} trackId - 音轨 ID
+     * @param {object} analysis - 分析结果
+     */
+    ipcMain.handle('save_track_analysis', (_e, trackId, analysis) => {
+      if (!this._analysisCache || !trackId || !analysis) return;
+      try {
+        this._analysisCache.set(trackId, analysis);
+      } catch (e) {
+        console.warn('[bridge] save_track_analysis error:', e.message);
+      }
+    });
+
+    /**
+     * 搜索 osu! 谱面数据（通过 sayobot API）。
+     * @param {string} title - 歌曲标题
+     * @param {string} artist - 艺术家
+     * @param {number} durationMs - 音频时长（ms），用于匹配
+     * @returns {object|null} { bpm, beatLengthMs, kiaiSections, source, beatmapId, beatmapSetId }
+     */
+    ipcMain.handle('search_osu_beatmap', async (_e, title, artist, durationMs) => {
+      if (!this._osuProvider || !title) return null;
+      try {
+        return await this._osuProvider.search(title, artist, durationMs);
+      } catch (e) {
+        console.warn('[bridge] search_osu_beatmap error:', e.message);
+        return null;
+      }
+    });
+
+    /**
+     * 接收渲染进程计算的过渡方案。
+     * 主进程存储方案用于可能的 FFmpeg seek 调整和日志记录。
+     * @param {object} plan - TransitionPlanner 生成的过渡方案
+     */
+    ipcMain.handle('set_transition_plan', (_e, plan) => {
+      this._currentTransitionPlan = plan || null;
+      if (plan) {
+        console.log('[bridge] Transition plan received: start=' + plan.transitionStartMs +
+          'ms, duration=' + plan.crossfadeDurationMs + 'ms, confidence=' + plan.confidence);
+      }
+      return true;
+    });
+
     // ── Cover/Media URL ──
     ipcMain.handle('get_cover_base_url', () => this._coverServer.baseUrl);
     ipcMain.handle('get_media_base_url', () => this._coverServer.mediaBaseUrl);
+
+    // ── Video Background: 查找同名视频文件 ──
+    /**
+     * 查找与指定音轨同名的视频文件（MV / 短视频背景）。
+     * 在音轨所在目录下搜索同名但不同扩展名的视频文件。
+     * @param {string} trackId - 音轨 ID
+     * @returns {{path: string, url: string}|null} 视频文件路径和可访问的 HTTP URL，未找到返回 null
+     */
+    ipcMain.handle('find_video_for_track', (_e, trackId) => {
+      const track = this._lib.getTrack(trackId);
+      if (!track || track.source === 'subsonic') return null;
+      const trackPath = track.path;
+      if (!trackPath) return null;
+
+      const dir = path.dirname(trackPath);
+      const baseName = path.basename(trackPath, path.extname(trackPath));
+
+      const VIDEO_EXTS = ['.mp4', '.m4v', '.webm', '.mkv', '.mov', '.avi', '.flv', '.wmv', '.mpg', '.mpeg', '.ts'];
+
+      for (const vext of VIDEO_EXTS) {
+        const videoPath = path.join(dir, baseName + vext);
+        if (fs.existsSync(videoPath)) {
+          // base64url 编码路径，用于 /video/ 端点
+          const b64 = Buffer.from(videoPath, 'utf-8').toString('base64')
+            .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+          const url = this._coverServer.baseUrl + '/video/' + b64;
+          return { path: videoPath, url: url };
+        }
+      }
+      return null;
+    });
 
     // ── 歌词搜索 ──
     ipcMain.handle('search_netease_lyrics', async (_e, query) => {
@@ -253,6 +502,15 @@ class Bridge extends EventEmitter {
     ipcMain.handle('fetch_netease_lyrics', async (_e, songId) => {
       const { fetchLyrics } = require('./lyrics');
       return fetchLyrics(songId);
+    });
+    // 多平台统一歌词搜索
+    ipcMain.handle('search_lyrics', async (_e, query, source) => {
+      const { searchLyrics } = require('./lyrics');
+      return searchLyrics(query, source);
+    });
+    ipcMain.handle('fetch_lyrics', async (_e, songId, source) => {
+      const { fetchLyricsById } = require('./lyrics');
+      return fetchLyricsById(songId, source);
     });
 
     // ── Queue ──
@@ -311,6 +569,12 @@ class Bridge extends EventEmitter {
     ipcMain.handle('clear_play_history', () => {
       this._lib.clearPlayHistory();
       this._emitHistoryChanged();
+    });
+    ipcMain.handle('get_play_stats', () => {
+      return _dump(this._lib.getPlayStats());
+    });
+    ipcMain.handle('get_daily_mixes', () => {
+      return _dump(this._lib.getDailyMixes());
     });
 
     // ── Playlists ──
@@ -453,19 +717,117 @@ class Bridge extends EventEmitter {
       return _dump({ lyrics: null, error: '服务器未返回歌词' });
     });
 
+    // ── Remote Playlists (Subsonic) ───────────────────────────────
+    ipcMain.handle('fetch_subsonic_playlists', async (_e, serverId) => {
+      const { SubsonicClient } = require('./subsonic');
+      const cfg = this._lib.getSubsonicServer(parseInt(serverId, 10));
+      if (!cfg) return _dump({ error: '服务器不存在' });
+      const client = new SubsonicClient(cfg.server_url, cfg.username, cfg.password, cfg.protocol_mode || 'subsonic', 30.0);
+      try {
+        const playlists = await client.getPlaylists();
+        return _dump({ playlists, error: null });
+      } catch (e) {
+        return _dump({ error: e.message || String(e) });
+      }
+    });
+
+    ipcMain.handle('import_subsonic_playlists', async (_e, serverId, playlistIdsJson) => {
+      const { SubsonicClient } = require('./subsonic');
+      const { subsonicTrackId } = require('./library');
+      const cfg = this._lib.getSubsonicServer(parseInt(serverId, 10));
+      if (!cfg) return _dump({ error: '服务器不存在' });
+      const playlistIds = JSON.parse(playlistIdsJson || '[]');
+      const client = new SubsonicClient(cfg.server_url, cfg.username, cfg.password, cfg.protocol_mode || 'subsonic', 60.0);
+      const results = [];
+      let imported = 0;
+      let skipped = 0;
+      for (const remoteId of playlistIds) {
+        try {
+          const existing = this._lib.findRemotePlaylist(serverId, remoteId);
+          if (existing) {
+            skipped++;
+            results.push({ remoteId, status: 'skipped', error: '已导入' });
+            continue;
+          }
+          const remotePlaylist = await client.getPlaylist(remoteId);
+          const playlist = this._lib.importRemotePlaylist(serverId, remoteId, remotePlaylist.name, remotePlaylist.changed, remotePlaylist.cover_art_id, remotePlaylist.owner);
+          // 先将远程曲目写入本地数据库，否则 playlist_tracks 的 INSERT OR IGNORE 会静默跳过
+          this._lib.upsertSubsonicTracksBatch(serverId, remotePlaylist.tracks);
+          const trackIds = remotePlaylist.tracks.map((track) => subsonicTrackId(serverId, track.id));
+          this._lib.replacePlaylistTracks(playlist.id, trackIds);
+          // 异步获取 owner 的 email（用于 Gravatar 头像），失败不阻塞导入
+          if (remotePlaylist.owner) {
+            client.getUser(remotePlaylist.owner).then((user) => {
+              if (user.email) {
+                this._lib.updatePlaylistOwnerEmail(playlist.id, user.email);
+                this._emitPlaylistsChanged();
+              }
+            }).catch((e) => {
+              console.warn('[import_subsonic_playlists] getUser failed for', remotePlaylist.owner, ':', e.message);
+            });
+          }
+          imported++;
+          results.push({ remoteId, status: 'ok', playlist });
+        } catch (e) {
+          console.error('[import_subsonic_playlists] Failed for', remoteId, ':', e);
+          results.push({ remoteId, status: 'error', error: String(e.message || e) });
+        }
+      }
+      this._emitPlaylistsChanged();
+      return _dump({ imported, skipped, results });
+    });
+
+    ipcMain.handle('sync_remote_playlist', async (_e, playlistId) => {
+      const { SubsonicClient } = require('./subsonic');
+      const { subsonicTrackId } = require('./library');
+      const info = this._lib.getPlaylistRemoteInfo(playlistId);
+      if (!info || info.source !== 'subsonic' || !info.server_id || !info.remote_id) {
+        return _dump({ error: '不是远程歌单或信息缺失' });
+      }
+      const cfg = this._lib.getSubsonicServer(info.server_id);
+      if (!cfg) return _dump({ error: '服务器不存在' });
+      const client = new SubsonicClient(cfg.server_url, cfg.username, cfg.password, cfg.protocol_mode || 'subsonic', 60.0);
+      try {
+        const remotePlaylist = await client.getPlaylist(info.remote_id);
+        this._lib.updateRemotePlaylist(playlistId, remotePlaylist.name, remotePlaylist.changed, remotePlaylist.cover_art_id, remotePlaylist.owner);
+        // 先将远程曲目写入本地数据库
+        this._lib.upsertSubsonicTracksBatch(info.server_id, remotePlaylist.tracks);
+        const trackIds = remotePlaylist.tracks.map((track) => subsonicTrackId(info.server_id, track.id));
+        const added = this._lib.replacePlaylistTracks(playlistId, trackIds);
+        // 同步时也刷新 owner email
+        if (remotePlaylist.owner) {
+          client.getUser(remotePlaylist.owner).then((user) => {
+            if (user.email) {
+              this._lib.updatePlaylistOwnerEmail(playlistId, user.email);
+              this._emitPlaylistsChanged();
+            }
+          }).catch(() => { /* 非关键，静默忽略 */ });
+        }
+        this._emitPlaylistsChanged();
+        return _dump({ ok: true, trackCount: added, name: remotePlaylist.name });
+      } catch (e) {
+        return _dump({ ok: false, error: String(e) });
+      }
+    });
+
     // ── Lyrics ──
     ipcMain.handle('apply_lyrics', (_e, trackId, lyrics) => {
       this._lib.updateLyrics(trackId, lyrics);
-      const updatedTrack = this._player.updateTrackLyrics(trackId, lyrics);
-      if (updatedTrack) {
-        this._emit('track_changed', _dump(updatedTrack));
-      }
+      this._player.updateTrackLyrics(trackId, lyrics);
+      // lyrics_changed event is emitted by updateTrackLyrics — no need to
+      // emit track_changed here (would trigger glitch animation + play history)
       return _dump({ success: true });
     });
 
     ipcMain.handle('apply_lyrics_temporary', (_e, trackId, lyrics) => {
       this._player.updateTrackLyrics(trackId, lyrics);
       return _dump({ success: true });
+    });
+
+    // 从音频文件中提取内嵌歌词
+    ipcMain.handle('get_embedded_lyrics', async (_e, trackId) => {
+      const lyrics = await this._lib.getEmbeddedLyrics(trackId);
+      return lyrics || '';
     });
 
     // ── Player state ──
@@ -482,6 +844,17 @@ class Bridge extends EventEmitter {
         pitch: this._player.pitch,
         rate: this._player.rate,
       });
+    });
+
+    // ── Renderer 就绪信号 ──
+    // AudioEngine 初始化完成后渲染进程调用此 handler，
+    // 主进程据此延迟恢复播放状态，避免 audio_control 事件在窗口就绪前丢失。
+    ipcMain.handle('renderer_ready', (_e, webAudioEnabled) => {
+      if (webAudioEnabled) {
+        this._player.setWebAudioEnabled(true);
+      }
+      this.emit('renderer-ready');
+      return true;
     });
 
     ipcMain.handle('get_queue', () => {
@@ -742,7 +1115,57 @@ class Bridge extends EventEmitter {
 
   close() {
     this._closeFloatingWindow();
+    // 刷新分析缓存到磁盘（确保退出时不丢失）
+    if (this._analysisCache) {
+      try { this._analysisCache.flush(); } catch (e) {
+        console.warn('[bridge] AnalysisCache flush failed:', e.message);
+      }
+    }
   }
+}
+
+// ── 系统强调色读取 ──
+// 从 Windows 注册表读取 DWM 个性色，用于莫奈取色「系统壁纸」来源。
+function _getSystemAccentColor() {
+  try {
+    const { execSync } = require('child_process');
+    // Windows DWM accent color: HKCU\SOFTWARE\Microsoft\Windows\DWM
+    // AccentColor 为 ARGB DWORD，格式: 0xAARRGGBB
+    const output = execSync(
+      'reg query "HKCU\\SOFTWARE\\Microsoft\\Windows\\DWM" /v AccentColor 2>nul',
+      { encoding: 'utf8', timeout: 3000 }
+    );
+    const match = output.match(/AccentColor\s+REG_DWORD\s+0x([0-9a-fA-F]{8})/);
+    if (match) {
+      const argb = parseInt(match[1], 16);
+      const r = (argb >> 16) & 0xff;
+      const g = (argb >> 8) & 0xff;
+      const b = argb & 0xff;
+      // 忽略透明度过低的颜色（未设置个性色时 A=0）
+      const a = (argb >> 24) & 0xff;
+      if (a > 0 && (r > 0 || g > 0 || b > 0)) {
+        return [r, g, b];
+      }
+    }
+    // 回退：ColorPrevalence 关闭时，读取 Start/Taskbar accent
+    const output2 = execSync(
+      'reg query "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent" /v AccentColorMenu 2>nul',
+      { encoding: 'utf8', timeout: 3000 }
+    );
+    const match2 = output2.match(/AccentColorMenu\s+REG_DWORD\s+0x([0-9a-fA-F]{8})/);
+    if (match2) {
+      const argb = parseInt(match2[1], 16);
+      const r = (argb >> 16) & 0xff;
+      const g = (argb >> 8) & 0xff;
+      const b = argb & 0xff;
+      if (r > 0 || g > 0 || b > 0) {
+        return [r, g, b];
+      }
+    }
+  } catch (e) {
+    console.warn('[bridge] Failed to read system accent color:', e.message);
+  }
+  return null;
 }
 
 module.exports = { Bridge };

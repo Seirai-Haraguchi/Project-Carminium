@@ -53,6 +53,122 @@ contextBridge.exposeInMainWorld('__electronAPI', {
     return () => ipcRenderer.removeListener('beat_shake', handler);
   },
 
+  // ── Audio PCM IPC（Web Audio API ↔ Main） ──────────────────────────────
+
+  /**
+   * 监听来自主进程的主音轨 PCM 数据。
+   * @param {function(Float32Array)} callback
+   * @returns {function} 取消监听函数
+   */
+  onAudioPcmMain: (callback) => {
+    const handler = (_e, data) => callback(new Float32Array(data));
+    ipcRenderer.on('audio_pcm_main', handler);
+    return () => ipcRenderer.removeListener('audio_pcm_main', handler);
+  },
+
+  /**
+   * 监听来自主进程的次音轨 PCM 数据。
+   * @param {function(Float32Array)} callback
+   * @returns {function} 取消监听函数
+   */
+  onAudioPcmNext: (callback) => {
+    const handler = (_e, data) => callback(new Float32Array(data));
+    ipcRenderer.on('audio_pcm_next', handler);
+    return () => ipcRenderer.removeListener('audio_pcm_next', handler);
+  },
+
+  /**
+   * 监听来自主进程的 FFmpeg 状态变化（main/next 完了通知）。
+   * @param {function(channel: string, finished: boolean)} callback
+   * @returns {function} 取消监听函数
+   */
+  onAudioFfmpegState: (callback) => {
+    const handler = (_e, channel, finished) => callback(channel, finished);
+    ipcRenderer.on('audio_ffmpeg_state', handler);
+    return () => ipcRenderer.removeListener('audio_ffmpeg_state', handler);
+  },
+
+  /**
+   * 监听来自主进程的 audio_control 消息（直接 IPC，不经过 bridge event）。
+   * @param {function(json: string)} callback
+   * @returns {function} 取消监听函数
+   */
+  onAudioControl: (callback) => {
+    const handler = (_e, json) => callback(json);
+    ipcRenderer.on('audio_control', handler);
+    return () => ipcRenderer.removeListener('audio_control', handler);
+  },
+
+  /**
+   * 监听来自主进程的 DLL 缓冲延迟值（ms），用于播放位置补偿。
+   * @param {function(latencyMs: number)} callback
+   * @returns {function} 取消监听函数
+   */
+  onAudioLatency: (callback) => {
+    const handler = (_e, latencyMs) => callback(latencyMs);
+    ipcRenderer.on('audio_latency', handler);
+    return () => ipcRenderer.removeListener('audio_latency', handler);
+  },
+
+  /**
+   * 将 AudioEngine 合成的 PCM 数据发送到主进程。
+   * @param {ArrayBuffer} arrayBuffer - interleaved f32 PCM
+   */
+  sendAudioOutput: (arrayBuffer) => ipcRenderer.send('audio_output', arrayBuffer),
+
+  /**
+   * 通知主进程：当前曲目播放完毕。
+   */
+  sendAudioEnded: () => ipcRenderer.send('audio_ended'),
+
+  /**
+   * 通知主进程：播放位置更新。
+   * @param {number} ms - 当前位置（毫秒）
+   */
+  sendAudioPositionTick: (ms) => ipcRenderer.send('audio_position_tick', ms),
+
+  /**
+   * 通知主进程：AutoMix / Gapless 过渡完成。
+   * @param {number} positionMs - 过渡完成后的播放位置（ms）
+   */
+  sendAudioCrossfadeComplete: (positionMs) => ipcRenderer.send('audio_crossfade_complete', positionMs),
+
+  /**
+   * 通知主进程：无缝切换完成（Web Audio API 模式）。
+   * player.js 据此推进队列索引，无需 promoteNextToCurrent。
+   */
+  sendAudioGaplessSwitch: () => ipcRenderer.send('audio_gapless_switch'),
+
+  // ── Web Audio API: 文件解码 IPC ──────────────────────────────────────────
+
+  /**
+   * 请求主进程读取音频文件并返回 ArrayBuffer，供渲染进程 decodeAudioData 使用。
+   * @param {string} filePath - 音频文件路径
+   */
+  requestDecodeAudioFile: (filePath) => ipcRenderer.send('decode_audio_file', filePath),
+
+  /**
+   * 监听来自主进程的已解码音频文件数据。
+   * @param {function(filePath: string, arrayBuffer: ArrayBuffer)} callback
+   * @returns {function} 取消监听函数
+   */
+  onAudioFileDecoded: (callback) => {
+    const handler = (_e, filePath, arrayBuffer) => callback(filePath, arrayBuffer);
+    ipcRenderer.on('audio_file_decoded', handler);
+    return () => ipcRenderer.removeListener('audio_file_decoded', handler);
+  },
+
+  /**
+   * 监听来自主进程的音频文件解码错误。
+   * @param {function(filePath: string, error: string)} callback
+   * @returns {function} 取消监听函数
+   */
+  onAudioFileDecodeError: (callback) => {
+    const handler = (_e, filePath, error) => callback(filePath, error);
+    ipcRenderer.on('audio_file_decode_error', handler);
+    return () => ipcRenderer.removeListener('audio_file_decode_error', handler);
+  },
+
   /**
    * 判断是否运行在 Electron 环境中。
    */

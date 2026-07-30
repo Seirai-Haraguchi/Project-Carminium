@@ -18,7 +18,7 @@
   <!-- ── 自绘标题栏 ──────────────────────────────────────── -->
   <div class="title-bar" id="title-bar">
     <div class="title-bar-left">
-      <button class="title-bar-btn title-bar-back" id="title-bar-back" title="返回" aria-label="返回">
+      <button class="title-bar-btn title-bar-back" id="title-bar-back" data-i18n-title="common.back" data-i18n-aria-label="common.back">
         <span class="title-bar-glyph" id="title-bar-back-icon"></span>
       </button>
       <div class="title-bar-logo" id="title-bar-logo"></div>
@@ -28,14 +28,18 @@
       </div>
       <span class="title-bar-codename" id="title-bar-codename"></span>
     </div>
+    <div class="title-bar-center" id="title-bar-gamepad-hints" style="display:none;"></div>
     <div class="title-bar-right">
-      <button class="title-bar-btn title-bar-min" id="title-bar-min" title="最小化" aria-label="最小化">
+      <button class="title-bar-btn title-bar-settings" id="title-bar-settings" data-i18n-title="nav.settings" data-i18n-aria-label="nav.settings">
+        <span class="material-symbols-rounded">settings</span>
+      </button>
+      <button class="title-bar-btn title-bar-min" id="title-bar-min" data-i18n-title="title.minimize" data-i18n-aria-label="title.minimize">
         <span class="title-bar-glyph" id="title-bar-min-icon"></span>
       </button>
-      <button class="title-bar-btn title-bar-max" id="title-bar-max" title="最大化/还原" aria-label="最大化或还原">
+      <button class="title-bar-btn title-bar-max" id="title-bar-max" data-i18n-title="title.maximize" data-i18n-aria-label="title.maximize">
         <span class="title-bar-glyph" id="title-bar-max-icon"></span>
       </button>
-      <button class="title-bar-btn title-bar-close" id="title-bar-close" title="关闭" aria-label="关闭">
+      <button class="title-bar-btn title-bar-close" id="title-bar-close" data-i18n-title="title.close" data-i18n-aria-label="title.close">
         <span class="title-bar-glyph" id="title-bar-close-icon"></span>
       </button>
     </div>
@@ -47,71 +51,68 @@
     <nav class="nav-drawer" id="nav-drawer" aria-label="主导航">
 
       <div class="nav-section nav-main">
-        <button class="nav-item" data-page="music" id="nav-music" aria-label="音乐">
+        <button class="nav-item" data-page="your_mix" id="nav-your-mix" data-i18n-aria-label="nav.yourMix">
+          <span class="nav-indicator">
+            <span class="material-symbols-rounded">auto_awesome</span>
+          </span>
+          <span class="nav-label" data-i18n="nav.yourMix">Your Mix</span>
+        </button>
+        <button class="nav-item" data-page="music" id="nav-music" data-i18n-aria-label="nav.music">
           <span class="nav-indicator">
             <span class="material-symbols-rounded">music_note</span>
           </span>
-          <span class="nav-label">音乐</span>
+          <span class="nav-label" data-i18n="nav.music">音乐</span>
         </button>
-        <button class="nav-item" data-page="albums" id="nav-albums" aria-label="专辑">
+        <button class="nav-item" data-page="albums" id="nav-albums" data-i18n-aria-label="nav.albums">
           <span class="nav-indicator">
             <span class="material-symbols-rounded">album</span>
           </span>
-          <span class="nav-label">专辑</span>
+          <span class="nav-label" data-i18n="nav.albums">专辑</span>
         </button>
-        <button class="nav-item" data-page="artists" id="nav-artists" aria-label="艺术家">
+        <button class="nav-item" data-page="artists" id="nav-artists" data-i18n-aria-label="nav.artists">
           <span class="nav-indicator">
             <span class="material-symbols-rounded">person</span>
           </span>
-          <span class="nav-label">艺术家</span>
+          <span class="nav-label" data-i18n="nav.artists">艺术家</span>
         </button>
-        <button class="nav-item" data-page="folders" id="nav-folders" aria-label="文件夹">
+        <button class="nav-item" data-page="folders" id="nav-folders" data-i18n-aria-label="nav.folders">
           <span class="nav-indicator">
             <span class="material-symbols-rounded">folder_open</span>
           </span>
-          <span class="nav-label">文件夹</span>
+          <span class="nav-label" data-i18n="nav.folders">文件夹</span>
         </button>
-        <button class="nav-item nav-item-desktop-only" data-page="history" id="nav-history" aria-label="播放历史">
+        <button class="nav-item nav-item-desktop-only" data-page="history" id="nav-history" data-i18n-aria-label="nav.history">
           <span class="nav-indicator">
             <span class="material-symbols-rounded">history</span>
           </span>
-          <span class="nav-label">历史</span>
+          <span class="nav-label" data-i18n="nav.history">历史</span>
         </button>
-        <button class="nav-item nav-item-desktop-only" data-page="liked" id="nav-liked" aria-label="喜爱的音乐">
+        <button class="nav-item nav-item-desktop-only" data-page="liked" id="nav-liked" data-i18n-aria-label="nav.liked">
           <span class="nav-indicator">
             <span class="material-symbols-rounded">favorite</span>
           </span>
-          <span class="nav-label">喜爱</span>
+          <span class="nav-label" data-i18n="nav.liked">喜爱</span>
         </button>
-        <button class="nav-item nav-item-desktop-only nav-has-submenu" id="nav-playlists" aria-label="歌单" aria-haspopup="menu" aria-expanded="false">
+        <button class="nav-item nav-item-desktop-only nav-has-submenu" id="nav-playlists" data-i18n-aria-label="nav.playlists" aria-haspopup="menu" aria-expanded="false">
           <span class="nav-indicator">
             <span class="material-symbols-rounded">queue_music</span>
           </span>
-          <span class="nav-label">歌单</span>
+          <span class="nav-label" data-i18n="nav.playlists">歌单</span>
         </button>
       </div>
-
-      <div class="nav-section nav-bottom">
-        <button class="nav-item" data-page="settings" id="nav-settings" aria-label="设置">
-          <span class="nav-indicator">
-            <span class="material-symbols-rounded">settings</span>
-          </span>
-          <span class="nav-label">设置</span>
-        </button>
-        </div>
 
     </nav>
 
     <!-- ── 中部内容区 ─────────────────────────────────────── -->
     <main class="content-pane" id="content-pane" role="main">
-      <button class="mobile-settings-fab" id="mobile-settings-fab" title="设置" aria-label="设置">
+      <button class="mobile-settings-fab" id="mobile-settings-fab" data-i18n-title="nav.settings" data-i18n-aria-label="nav.settings">
         <span class="material-symbols-rounded">settings</span>
       </button>
       <div class="page-container" id="page-container">
         <!-- 启动时加载动画 -->
         <div class="splash" id="splash">
           <span class="material-symbols-rounded splash-icon">music_note</span>
-          <p class="splash-text">正在连接…</p>
+          <p class="splash-text" data-i18n="splash.connecting">正在连接…</p>
         </div>
       </div>
     </main>
@@ -146,25 +147,27 @@
       <!-- Split button（上部） -->
       <div class="np-top-bar">
         <!-- 折りたたみボタン（左側） -->
-        <button class="np-collapse-btn" id="btn-collapse" title="收折播放界面">
+        <button class="np-collapse-btn" id="btn-collapse" data-i18n-title="np.collapse">
           <span class="material-symbols-rounded">expand_more</span>
         </button>
+        <!-- 手柄提示（全窗口视图时显示） -->
+        <div class="np-gamepad-hints" id="np-gamepad-hints" style="display:none;"></div>
         <div class="split-button" id="np-split-btn">
-          <button class="split-btn-main" id="btn-fullscreen" title="全屏播放界面">
+          <button class="split-btn-main" id="btn-fullscreen" data-i18n-title="np.fullView">
             <span class="material-symbols-rounded">fullscreen</span>
-            <span class="split-btn-text">全窗口视图</span>
+            <span class="split-btn-text" data-i18n="np.fullView">全窗口视图</span>
           </button>
-          <button class="split-btn-dropdown" id="btn-more-dropdown" title="更多">
+          <button class="split-btn-dropdown" id="btn-more-dropdown" data-i18n-title="np.more">
             <span class="material-symbols-rounded">arrow_drop_down</span>
           </button>
           <div class="split-dropdown-menu" id="split-dropdown-menu" style="display:none;">
             <div class="split-dropdown-item" id="btn-theater">
               <span class="material-symbols-rounded">crop_free</span>
-              <span>全屏视图</span>
+              <span data-i18n="np.fullScreen">全屏视图</span>
             </div>
             <div class="split-dropdown-item" id="btn-floating">
               <span class="material-symbols-rounded">picture_in_picture</span>
-              <span>浮动窗口</span>
+              <span data-i18n="np.floating">浮动窗口</span>
             </div>
           </div>
         </div>
@@ -172,9 +175,9 @@
 
       <!-- Pivot タブ -->
       <div class="np-pivot" role="tablist">
-        <button class="np-pivot-tab active" data-tab="info" role="tab" aria-selected="true">音乐信息</button>
-        <button class="np-pivot-tab" data-tab="queue" role="tab" aria-selected="false">接下来播放</button>
-        <button class="np-pivot-tab" data-tab="lyrics" role="tab" aria-selected="false">歌词</button>
+        <button class="np-pivot-tab active" data-tab="info" role="tab" aria-selected="true" data-i18n="np.tab.info">音乐信息</button>
+        <button class="np-pivot-tab" data-tab="queue" role="tab" aria-selected="false" data-i18n="np.tab.queue">接下来播放</button>
+        <button class="np-pivot-tab" data-tab="lyrics" role="tab" aria-selected="false" data-i18n="np.tab.lyrics">歌词</button>
         <div class="np-pivot-indicator" id="np-pivot-indicator"></div>
       </div>
 
@@ -214,15 +217,15 @@
           <!-- 进度条 -->
           <div class="np-progress-wrap">
             <div class="np-progress-bar" id="np-progress-bar" role="slider"
-                 aria-label="播放进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                 data-i18n-aria-label="np.progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
               <div class="np-progress-track">
                 <div class="np-progress-fill" id="np-progress-fill"></div>
                 <div class="np-progress-thumb" id="np-progress-thumb"></div>
-                <div class="np-transition-marker" id="np-transition-marker">过渡</div>
               </div>
             </div>
             <div class="np-time-row">
               <span id="np-time-cur">0:00</span>
+              <span class="np-transition-label" id="np-transition-label" data-i18n="np.transition">过渡</span>
               <span id="np-time-dur">0:00</span>
             </div>
           </div>
@@ -241,11 +244,11 @@
             <div class="np-lyrics" id="np-lyrics">
               <div class="np-lyrics-placeholder">
                 <span class="material-symbols-rounded">lyrics</span>
-                <p>暂无歌词</p>
+                <p data-i18n="np.noLyrics">暂无歌词</p>
               </div>
             </div>
           </div>
-          <!-- 歌词来源标记（左下角） -->
+          <!-- 歌词来源标记 + 词源选择器（左下角） -->
           <div class="np-lyrics-source" id="np-lyrics-source">
             <span class="np-lyrics-source-icon">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
@@ -254,26 +257,126 @@
               </svg>
             </span>
             <span class="np-lyrics-source-label" id="np-lyrics-source-label">Embedded</span>
+            <span class="np-lyrics-source-arrow material-symbols-rounded">expand_more</span>
+            <!-- 词源选择下拉菜单 -->
+            <div class="np-lyrics-source-dropdown" id="np-lyrics-source-dropdown">
+              <button class="np-lyrics-source-option" data-source="embedded">
+                <span class="material-symbols-rounded">audio_file</span>
+                <span data-i18n="np.lyricsSourceEmbedded">EMBEDDED</span>
+              </button>
+              <button class="np-lyrics-source-option" data-source="amll">
+                <span class="material-symbols-rounded">library_music</span>
+                <span data-i18n="np.lyricsSourceAmll">AMLLDB</span>
+              </button>
+              <button class="np-lyrics-source-option" data-source="ncm">
+                <span class="material-symbols-rounded">cloud</span>
+                <span data-i18n="np.lyricsSourceNcm">网易云音乐</span>
+              </button>
+              <button class="np-lyrics-source-option" data-source="qqmusic">
+                <span class="material-symbols-rounded">cloud</span>
+                <span data-i18n="np.lyricsSourceQq">QQ音乐</span>
+              </button>
+              <button class="np-lyrics-source-option" data-source="lrclib">
+                <span class="material-symbols-rounded">cloud</span>
+                <span data-i18n="np.lyricsSourceLrclib">lrclib</span>
+              </button>
+            </div>
           </div>
           <!-- 歌词功能区（右下角） -->
           <div class="np-lyrics-toolbar" id="np-lyrics-toolbar">
-            <button class="np-lyrics-tool-btn" id="np-lyrics-search-btn" title="搜索歌词" aria-label="搜索歌词">
+            <button class="np-lyrics-tool-btn" id="np-lyrics-search-btn" data-i18n-title="np.searchLyrics" data-i18n-aria-label="np.searchLyrics">
               <span class="material-symbols-rounded">search</span>
             </button>
-            <button class="np-lyrics-tool-btn active" id="np-lyrics-trans-btn" title="显示/隐藏翻译" aria-label="翻译">
+            <button class="np-lyrics-tool-btn active" id="np-lyrics-trans-btn" data-i18n-title="np.toggleTranslation" data-i18n-aria-label="np.toggleTranslation">
               <span class="material-symbols-rounded">translate</span>
             </button>
-            <button class="np-lyrics-tool-btn active" id="np-lyrics-romaji-btn" title="显示/隐藏罗马音" aria-label="罗马音">
+            <button class="np-lyrics-tool-btn active" id="np-lyrics-romaji-btn" data-i18n-title="np.toggleRomaji" data-i18n-aria-label="np.toggleRomaji">
               <span class="material-symbols-rounded">abc</span>
             </button>
+            <button class="np-lyrics-tool-btn" id="np-lyrics-settings-btn" data-i18n-title="np.lyricsSettings" data-i18n-aria-label="np.lyricsSettings">
+              <span class="material-symbols-rounded">tune</span>
+            </button>
+          </div>
+          <!-- 歌词设置弹出面板 -->
+          <div class="np-lyrics-settings-popup" id="np-lyrics-settings-popup" style="display:none">
+            <div class="np-lyrics-settings-header">
+              <span class="np-lyrics-settings-title" data-i18n="np.lyricsSettings">歌词设置</span>
+              <button class="np-lyrics-settings-close" id="np-lyrics-settings-close" data-i18n-aria-label="common.close">
+                <span class="material-symbols-rounded">close</span>
+              </button>
+            </div>
+            <div class="np-lyrics-settings-body">
+              <!-- 时间偏移 -->
+              <div class="np-lyrics-setting-row">
+                <div class="np-lyrics-setting-label">
+                  <span class="material-symbols-rounded np-lyrics-setting-icon">schedule</span>
+                  <span data-i18n="np.lyricsOffset">时间偏移</span>
+                </div>
+                <div class="np-lyrics-setting-control">
+                  <button class="np-lyrics-setting-step-btn" id="np-lyrics-offset-dec" title="-200ms">
+                    <span class="material-symbols-rounded">remove</span>
+                  </button>
+                  <span class="np-lyrics-setting-value" id="np-lyrics-offset-value">0ms</span>
+                  <button class="np-lyrics-setting-step-btn" id="np-lyrics-offset-inc" title="+200ms">
+                    <span class="material-symbols-rounded">add</span>
+                  </button>
+                </div>
+              </div>
+              <!-- 字体大小 -->
+              <div class="np-lyrics-setting-row">
+                <div class="np-lyrics-setting-label">
+                  <span class="material-symbols-rounded np-lyrics-setting-icon">format_size</span>
+                  <span data-i18n="np.lyricsFontSize">字体大小</span>
+                </div>
+                <div class="np-lyrics-setting-control">
+                  <input type="range" class="np-lyrics-setting-slider" id="np-lyrics-font-size-slider" min="12" max="28" step="1" value="16">
+                  <span class="np-lyrics-setting-value" id="np-lyrics-font-size-value">16px</span>
+                </div>
+              </div>
+              <!-- 分隔线 -->
+              <div class="np-lyrics-setting-divider"></div>
+              <!-- 渐进模糊 -->
+              <div class="np-lyrics-setting-row np-lyrics-setting-toggle-row">
+                <div class="np-lyrics-setting-label">
+                  <span class="material-symbols-rounded np-lyrics-setting-icon">blur_on</span>
+                  <span data-i18n="np.lyricsProgressiveBlur">渐进模糊</span>
+                </div>
+                <label class="np-lyrics-setting-switch">
+                  <input type="checkbox" id="np-lyrics-blur-toggle">
+                  <span class="np-lyrics-setting-switch-slider"></span>
+                </label>
+              </div>
+              <!-- 居中排版 -->
+              <div class="np-lyrics-setting-row np-lyrics-setting-toggle-row">
+                <div class="np-lyrics-setting-label">
+                  <span class="material-symbols-rounded np-lyrics-setting-icon">format_align_center</span>
+                  <span data-i18n="np.lyricsCenter">居中排版</span>
+                </div>
+                <label class="np-lyrics-setting-switch">
+                  <input type="checkbox" id="np-lyrics-center-toggle">
+                  <span class="np-lyrics-setting-switch-slider"></span>
+                </label>
+              </div>
+              <!-- 日文独立字体 -->
+              <div class="np-lyrics-setting-row np-lyrics-setting-toggle-row">
+                <div class="np-lyrics-setting-label">
+                  <span class="material-symbols-rounded np-lyrics-setting-icon">language</span>
+                  <span data-i18n="np.lyricsJpFont">日文独立字体</span>
+                </div>
+                <label class="np-lyrics-setting-switch">
+                  <input type="checkbox" id="np-lyrics-jp-font-toggle">
+                  <span class="np-lyrics-setting-switch-slider"></span>
+                </label>
+              </div>
+            </div>
           </div>
           <!-- 歌词搜索面板 -->
           <div class="np-lyrics-search-overlay" id="np-lyrics-search-overlay" style="display:none">
             <div class="np-lyrics-search-panel">
               <div class="np-lyrics-search-header">
                 <span class="material-symbols-rounded np-lyrics-search-icon">search</span>
-                <input type="text" id="np-lyrics-search-input" placeholder="搜索歌曲、歌手…" autocomplete="off">
-                <button class="np-lyrics-search-close" id="np-lyrics-search-close" aria-label="关闭">
+                <input type="text" id="np-lyrics-search-input" data-i18n-placeholder="np.searchPlaceholder" placeholder="搜索歌曲、歌手…" autocomplete="off">
+                <button class="np-lyrics-search-close" id="np-lyrics-search-close" data-i18n-aria-label="common.close">
                   <span class="material-symbols-rounded">close</span>
                 </button>
               </div>
@@ -285,40 +388,40 @@
 
       <!-- 播放控制 - 主按钮 -->
       <div class="np-main-controls">
-        <button class="np-control-pill" id="btn-prev" aria-label="上一首" title="上一首">
+        <button class="np-control-pill" id="btn-prev" data-i18n-aria-label="np.prev" data-i18n-title="np.prev">
           <span class="material-symbols-rounded">skip_previous</span>
         </button>
-        <button class="np-play-pill" id="btn-play-pause" aria-label="播放/暂停">
+        <button class="np-play-pill" id="btn-play-pause" data-i18n-aria-label="np.playPause">
           <span class="material-symbols-rounded" id="play-icon">play_arrow</span>
         </button>
-        <button class="np-control-pill" id="btn-next" aria-label="下一首" title="下一首">
+        <button class="np-control-pill" id="btn-next" data-i18n-aria-label="np.next" data-i18n-title="np.next">
           <span class="material-symbols-rounded">skip_next</span>
         </button>
       </div>
 
       <!-- 播放控制 - 辅助按钮 -->
       <div class="np-secondary-controls">
-        <button class="icon-btn np-secondary-btn" id="btn-shuffle" aria-label="随机" title="随机播放">
+        <button class="icon-btn np-secondary-btn" id="btn-shuffle" data-i18n-aria-label="np.shuffle" data-i18n-title="np.shuffle">
           <span class="material-symbols-rounded">shuffle</span>
         </button>
-        <button class="icon-btn np-secondary-btn" id="btn-repeat" aria-label="循环" title="循环播放">
+        <button class="icon-btn np-secondary-btn" id="btn-repeat" data-i18n-aria-label="np.repeat" data-i18n-title="np.repeat">
           <span class="material-symbols-rounded">repeat</span>
         </button>
-        <button class="icon-btn np-secondary-btn" id="btn-like" aria-label="收藏" title="收藏">
+        <button class="icon-btn np-secondary-btn" id="btn-like" data-i18n-aria-label="np.like" data-i18n-title="np.like">
           <span class="material-symbols-rounded">favorite</span>
         </button>
-        <button class="np-audio-mode-btn" id="btn-audio-mode" aria-label="切换音频模式" title="音频模式">
+        <button class="np-audio-mode-btn" id="btn-audio-mode" data-i18n-aria-label="np.audioMode" data-i18n-title="np.audioMode">
           <span class="np-audio-mode-label" id="audio-mode-label">shrd</span>
         </button>
       </div>
 
       <!-- 音量 -->
       <div class="np-volume">
-        <button class="icon-btn volume-icon-btn" id="btn-mute" aria-label="静音" title="静音">
+        <button class="icon-btn volume-icon-btn" id="btn-mute" data-i18n-aria-label="np.mute" data-i18n-title="np.mute">
           <span class="material-symbols-rounded" id="vol-icon">volume_up</span>
         </button>
         <input type="range" class="volume-slider" id="volume-slider"
-               min="0" max="100" value="80" aria-label="音量">
+               min="0" max="100" value="80" data-i18n-aria-label="np.volume">
         <span class="vol-label" id="vol-label">80</span>
       </div>
 
@@ -326,25 +429,41 @@
 
     <!-- ── 底部播放栏 (Mini Player) ─────────────────────── -->
     <div class="mini-player" id="mini-player">
-      <div class="mini-player-cover">
-        <span class="material-symbols-rounded mini-player-cover-icon" id="mini-cover-icon">music_note</span>
-        <img id="mini-cover-img" src="" alt="" style="display:none">
+      <div class="mini-player-left">
+        <div class="mini-player-cover">
+          <span class="material-symbols-rounded mini-player-cover-icon" id="mini-cover-icon">music_note</span>
+          <img id="mini-cover-img" src="" alt="" style="display:none">
+        </div>
+        <div class="mini-player-info">
+          <div class="mini-player-title" id="mini-title">未在播放</div>
+          <div class="mini-player-artist" id="mini-artist">—</div>
+        </div>
+        <button class="mini-btn mini-btn-like" id="mini-btn-like" data-i18n-title="np.like" data-i18n-aria-label="np.like">
+          <span class="material-symbols-rounded">favorite</span>
+        </button>
       </div>
-      <div class="mini-player-info">
-        <div class="mini-player-title" id="mini-title">未在播放</div>
-        <div class="mini-player-artist" id="mini-artist">—</div>
+      <div class="mini-player-progress-inline" id="mini-player-progress-inline">
+        <span class="mini-time" id="mini-time-cur">0:00</span>
+        <div class="np-progress-bar mini-progress-bar" id="mini-progress-bar" role="slider"
+             data-i18n-aria-label="np.progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="np-progress-track">
+            <div class="np-progress-fill" id="mini-progress-track-fill"></div>
+            <div class="np-progress-thumb" id="mini-progress-thumb"></div>
+          </div>
+        </div>
+        <span class="mini-time" id="mini-time-dur">0:00</span>
       </div>
       <div class="mini-player-controls">
-        <button class="mini-btn" id="mini-btn-prev" title="上一首">
+        <button class="mini-btn" id="mini-btn-prev" data-i18n-title="np.prev">
           <span class="material-symbols-rounded">skip_previous</span>
         </button>
-        <button class="mini-btn-play" id="mini-btn-play" title="播放/暂停">
+        <button class="mini-btn-play" id="mini-btn-play" data-i18n-title="np.playPause">
           <span class="material-symbols-rounded" id="mini-play-icon">play_arrow</span>
         </button>
-        <button class="mini-btn" id="mini-btn-next" title="下一首">
+        <button class="mini-btn" id="mini-btn-next" data-i18n-title="np.next">
           <span class="material-symbols-rounded">skip_next</span>
         </button>
-        <button class="mini-btn-expand" id="mini-btn-expand" title="展开播放界面">
+        <button class="mini-btn-expand" id="mini-btn-expand" data-i18n-title="np.miniExpand">
           <span class="material-symbols-rounded">expand_less</span>
         </button>
       </div>
@@ -355,8 +474,8 @@
   <!-- 歌单副菜单（飞出式） -->
   <div class="nav-submenu" id="nav-playlists-submenu" role="menu" aria-label="歌单列表" hidden>
     <div class="nav-submenu-header">
-      <span class="nav-submenu-title">歌单</span>
-      <button class="nav-submenu-add" id="nav-playlist-add" title="新建歌单" aria-label="新建歌单">
+      <span class="nav-submenu-title" data-i18n="nav.playlists">歌单</span>
+      <button class="nav-submenu-add" id="nav-playlist-add" data-i18n-title="cm.newPlaylist" data-i18n-aria-label="cm.newPlaylist">
         <span class="material-symbols-rounded">add</span>
       </button>
     </div>
@@ -369,10 +488,14 @@
   <!-- Custom title bar logic -->
   <script src="titlebar.js"></script>
 
+  <!-- i18n internationalization -->
+  <script src="i18n.js"></script>
+
   <!-- Page modules (loaded before app.js) -->
   <script src="pages/utils.js"></script>
   <script src="pages/context_menu.js"></script>
   <script src="pages/now_playing.js"></script>
+  <script src="pages/your_mix.js"></script>
   <script src="pages/music.js"></script>
   <script src="pages/albums.js"></script>
   <script src="pages/artists.js"></script>
@@ -382,6 +505,21 @@
   <script src="pages/playlists.js"></script>
   <script src="pages/settings.js"></script>
   <script src="pages/about.js"></script>
+
+  <!-- Web Audio API engine -->
+  <script src="format_detector.js"></script>
+  <script src="audio_buffer_cache.js"></script>
+  <script src="audio_engine.js"></script>
+
+  <!-- AutoMix 智能过渡分析 -->
+  <script src="track_analyzer.js"></script>
+  <script src="transition_planner.js"></script>
+
+  <!-- Video Background (Canvas) -->
+  <script src="video_background.js"></script>
+
+  <!-- Gamepad controller support -->
+  <script src="gamepad.js"></script>
 
   <!-- Main app (last) -->
   <script src="app.js"></script>

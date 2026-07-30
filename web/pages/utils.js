@@ -193,6 +193,15 @@
         '--md-surface-container-high', '--md-surface-container-highest',
         '--md-outline-variant',
         '--bg-tint-1', '--bg-tint-2', '--bg-tint-3',
+        // 视频背景暗色变体
+        '--md-primary-vd', '--md-on-primary-vd', '--md-primary-container-vd', '--md-on-primary-container-vd',
+        '--md-secondary-vd', '--md-on-secondary-vd', '--md-secondary-container-vd', '--md-on-secondary-container-vd',
+        '--md-tertiary-vd', '--md-on-tertiary-vd', '--md-tertiary-container-vd', '--md-on-tertiary-container-vd',
+        '--md-background-vd', '--md-surface-vd', '--md-surface-dim-vd', '--md-surface-bright-vd',
+        '--md-surface-container-lowest-vd', '--md-surface-container-low-vd', '--md-surface-container-vd',
+        '--md-surface-container-high-vd', '--md-surface-container-highest-vd',
+        '--md-outline-variant-vd',
+        '--bg-tint-1-vd', '--bg-tint-2-vd', '--bg-tint-3-vd',
       ];
       for (var pi = 0; pi < props.length; pi++) root.style.removeProperty(props[pi]);
       return;
@@ -253,6 +262,41 @@
     root.style.setProperty('--bg-tint-1', 'hsla(' + h1 + ', ' + Math.min(sat + 8, 100) + '%, ' + (isDark ? 28 : 92) + '%, 0.5)');
     root.style.setProperty('--bg-tint-2', 'hsla(' + h2 + ', ' + Math.min(sat2 + 10, 100) + '%, ' + (isDark ? 22 : 92) + '%, 0.35)');
     root.style.setProperty('--bg-tint-3', 'hsla(' + h3 + ', ' + Math.min(sat3 + 10, 100) + '%, ' + (isDark ? 18 : 94) + '%, 0.25)');
+
+    // ── 视频背景暗色变体（始终暗色模式，用于全窗口视图视频背景可读性）──
+    // 色相/饱和度与主配色一致，亮度固定为暗色模式值
+    var vdBgSat = sc.bgSat.d;
+
+    root.style.setProperty('--md-primary-vd', 'hsl(' + h1 + ', ' + sat + '%, 80%)');
+    root.style.setProperty('--md-on-primary-vd', 'hsl(' + h1 + ', ' + sat + '%, 20%)');
+    root.style.setProperty('--md-primary-container-vd', 'hsl(' + h1 + ', ' + sat + '%, 20%)');
+    root.style.setProperty('--md-on-primary-container-vd', 'hsl(' + h1 + ', ' + sat + '%, 92%)');
+
+    root.style.setProperty('--md-secondary-vd', 'hsl(' + h2 + ', ' + sat2 + '%, 75%)');
+    root.style.setProperty('--md-on-secondary-vd', 'hsl(' + h2 + ', ' + sat2 + '%, 18%)');
+    root.style.setProperty('--md-secondary-container-vd', 'hsl(' + h2 + ', ' + sat2 + '%, 22%)');
+    root.style.setProperty('--md-on-secondary-container-vd', 'hsl(' + h2 + ', ' + sat2 + '%, 90%)');
+
+    root.style.setProperty('--md-tertiary-vd', 'hsl(' + h3 + ', ' + sat3 + '%, 78%)');
+    root.style.setProperty('--md-on-tertiary-vd', 'hsl(' + h3 + ', ' + sat3 + '%, 20%)');
+    root.style.setProperty('--md-tertiary-container-vd', 'hsl(' + h3 + ', ' + sat3 + '%, 24%)');
+    root.style.setProperty('--md-on-tertiary-container-vd', 'hsl(' + h3 + ', ' + sat3 + '%, 86%)');
+
+    root.style.setProperty('--md-background-vd', 'hsl(' + h1 + ', ' + vdBgSat + '%, 6%)');
+    root.style.setProperty('--md-surface-vd', 'hsl(' + h1 + ', ' + vdBgSat + '%, 6%)');
+    root.style.setProperty('--md-surface-dim-vd', 'hsl(' + h1 + ', ' + Math.max(0, vdBgSat - 2) + '%, 6%)');
+    root.style.setProperty('--md-surface-bright-vd', 'hsl(' + h1 + ', ' + vdBgSat + '%, 24%)');
+    root.style.setProperty('--md-surface-container-lowest-vd', 'hsl(' + h1 + ', ' + Math.max(0, vdBgSat - 4) + '%, 4%)');
+    root.style.setProperty('--md-surface-container-low-vd', 'hsl(' + h1 + ', ' + Math.max(0, vdBgSat - 2) + '%, 10%)');
+    root.style.setProperty('--md-surface-container-vd', 'hsl(' + h1 + ', ' + vdBgSat + '%, 12%)');
+    root.style.setProperty('--md-surface-container-high-vd', 'hsl(' + h1 + ', ' + (vdBgSat + 2) + '%, 17%)');
+    root.style.setProperty('--md-surface-container-highest-vd', 'hsl(' + h1 + ', ' + (vdBgSat + 4) + '%, 22%)');
+
+    root.style.setProperty('--md-outline-variant-vd', 'hsl(' + h1 + ', ' + Math.max(0, vdBgSat - 2) + '%, 22%)');
+
+    root.style.setProperty('--bg-tint-1-vd', 'hsla(' + h1 + ', ' + Math.min(sat + 8, 100) + '%, 28%, 0.5)');
+    root.style.setProperty('--bg-tint-2-vd', 'hsla(' + h2 + ', ' + Math.min(sat2 + 10, 100) + '%, 22%, 0.35)');
+    root.style.setProperty('--bg-tint-3-vd', 'hsla(' + h3 + ', ' + Math.min(sat3 + 10, 100) + '%, 18%, 0.25)');
   };
 
   // ── A-Z 分组工具 ───────────────────────────────────────────────────────────
@@ -737,6 +781,126 @@
     return lines.length > 0 ? lines : [];
   };
 
+  // ── Lyrics credit extractor ────────────────────────────────────
+
+  /**
+   * 从歌词开头提取制作信息（作词/作曲/制作人等），返回处理后的歌词和提取的 credits。
+   *
+   * @param {string} lyricsText  原始歌词文本（LRC 或纯文本）
+   * @param {string} filterWordsStr  逗号分隔的筛选词，如 "作词,作曲,制作人"
+   * @returns {{ lyrics: string, credits: string }} 处理后的歌词文本 + credits 文本（无 credits 时为空串）
+   */
+  utils.processLyricsCredits = function (lyricsText, filterWordsStr) {
+    var empty = { lyrics: lyricsText || '', credits: '' };
+    if (!lyricsText) return empty;
+
+    // 如果未传入筛选词，使用内置默认值
+    if (!filterWordsStr) {
+      filterWordsStr = '作词,作曲,编曲,和声,对唱,配唱制作人,钢琴,吉他,鼓,贝斯,制作人,制作,混音,混音师,混音室,母带,录音,录音师,录音室,监制,策划,发行,词曲,填词,谱曲,OP,ED,SP';
+    }
+
+    // 解析筛选词，按长度降序排列（避免"制作"匹配到"制作人"的情况）
+    var words = filterWordsStr
+      .split(/[,，]/)
+      .map(function (w) { return w.trim(); })
+      .filter(function (w) { return w.length > 0; })
+      .sort(function (a, b) { return b.length - a.length; });
+
+    if (words.length === 0) return empty;
+
+    // 转义正则特殊字符
+    var escaped = words.map(function (w) {
+      return w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    });
+    // 匹配 "关键词:值" 或 "关键词：值"，允许关键词前后有空白
+    var creditRegex = new RegExp('^(' + escaped.join('|') + ')\\s*[：:]', 'g');
+
+    var lines = lyricsText.split('\n');
+    var creditNames = [];
+    var normalLines = [];
+    var creditPhase = true;
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var trimmed = line.trim();
+
+      // 空行
+      if (!trimmed) {
+        if (!creditPhase) normalLines.push(line);
+        continue;
+      }
+
+      // 提取时间戳（仅用于判断是否是 LRC 行，不用于 credits 时间戳）
+      var timeMatch = trimmed.match(/\[(\d{2}):(\d{2})[\.:](\d{2,3})\]/);
+      var textContent = trimmed;
+      if (timeMatch) {
+        textContent = trimmed.substring(timeMatch.index + timeMatch[0].length).trim();
+      }
+
+      // LRC 元数据行（如 [ti:...]、[ar:...]）— 不结束 creditPhase
+      if (!timeMatch && /^\[[a-zA-Z]+:/.test(trimmed)) {
+        if (!creditPhase) normalLines.push(line);
+        continue;
+      }
+
+      // 纯时间戳行（无文本内容）
+      if (!textContent) {
+        if (!creditPhase) normalLines.push(line);
+        continue;
+      }
+
+      // 检查是否包含 credit 关键词
+      creditRegex.lastIndex = 0;
+      var matches = [];
+      var cm;
+      while ((cm = creditRegex.exec(textContent)) !== null) {
+        matches.push({ index: cm.index, end: cm.index + cm[0].length });
+      }
+
+      if (matches.length > 0 && creditPhase) {
+        // 提取每个关键词后面的值
+        for (var j = 0; j < matches.length; j++) {
+          var valStart = matches[j].end;
+          var valEnd = (j + 1 < matches.length) ? matches[j + 1].index : textContent.length;
+          var value = textContent.substring(valStart, valEnd).trim();
+          // 去除尾部分隔符
+          value = value.replace(/[、,，\/\s]+$/, '');
+          if (value) {
+            var nameList = value
+              .split(/[、,，\/]/)
+              .map(function (n) { return n.trim(); })
+              .filter(function (n) { return n.length > 0; });
+            creditNames = creditNames.concat(nameList);
+          }
+        }
+        // 跳过此行（不加入 normalLines）
+        continue;
+      }
+
+      // 非 credit 行 → 退出 creditPhase
+      creditPhase = false;
+      normalLines.push(line);
+    }
+
+    // 没有提取到任何 credit → 原样返回
+    if (creditNames.length === 0) return empty;
+
+    // 去重（保持顺序）
+    var seen = {};
+    var uniqueNames = [];
+    for (var k = 0; k < creditNames.length; k++) {
+      if (!seen[creditNames[k]]) {
+        seen[creditNames[k]] = true;
+        uniqueNames.push(creditNames[k]);
+      }
+    }
+
+    return {
+      lyrics: normalLines.join('\n'),
+      credits: '制作：' + uniqueNames.join('、'),
+    };
+  };
+
   // ── LRC parser ───────────────────────────────────────────────
 
   /**
@@ -1068,6 +1232,80 @@
       confirmText: '切回',
       cancelText: '取消',
     });
+  };
+
+  // ── 歌词滚动动画 ──────────────────────────────────────────────────────────
+  // 目标：快速、自然、行与行之间陆续跟进的"拉行"感。
+  // - animateLyricsScroll：rAF 自定义缓动滚动，轻度过冲产生弹性，
+  //   时长随距离缩放，比原生 behavior:'smooth' 更快、起步更利落。
+  // - cascadeLyricLines：按与激活行的距离设置递增 transition-delay，
+  //   让各行状态变化（透明度/颜色/模糊）以激活行为中心向外波纹式扩散，
+  //   形成"一行跟着一行"的级联感。纯 CSS 延迟，无 reflow / 无位移硬切。
+
+  var _lyricsScrollRafs = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
+
+  /**
+   * 弹性滚动歌词容器到目标位置（替代原生 behavior:'smooth'）
+   * @param {HTMLElement} wrapEl  滚动容器
+   * @param {number} targetTop    目标 scrollTop
+   */
+  utils.animateLyricsScroll = function (wrapEl, targetTop) {
+    if (!wrapEl) return;
+    utils.cancelLyricsScroll(wrapEl);
+
+    var start = wrapEl.scrollTop;
+    var dist = targetTop - start;
+    if (Math.abs(dist) < 2) { wrapEl.scrollTop = targetTop; return; }
+
+    var absDist = Math.abs(dist);
+    // 短距离约 300ms，长距离封顶 480ms
+    var dur = Math.min(300 + absDist * 0.18, 480);
+    // 轻度过冲：easeOutBack，c1 越大回弹越明显；大距离收敛避免大幅弹跳
+    var c1 = absDist > 300 ? 1.0 : 1.25;
+    var c3 = c1 + 1;
+    var t0 = performance.now();
+
+    var frame = function (now) {
+      var t = Math.min((now - t0) / dur, 1);
+      var e = 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+      wrapEl.scrollTop = start + dist * e;
+      if (t < 1) {
+        var raf = requestAnimationFrame(frame);
+        if (_lyricsScrollRafs) _lyricsScrollRafs.set(wrapEl, raf);
+      } else if (_lyricsScrollRafs) {
+        _lyricsScrollRafs.delete(wrapEl);
+      }
+    };
+    var first = requestAnimationFrame(frame);
+    if (_lyricsScrollRafs) _lyricsScrollRafs.set(wrapEl, first);
+  };
+
+  /** 取消进行中的歌词弹性滚动（切歌/重渲染时调用） */
+  utils.cancelLyricsScroll = function (wrapEl) {
+    if (!wrapEl || !_lyricsScrollRafs) return;
+    var prev = _lyricsScrollRafs.get(wrapEl);
+    if (prev) cancelAnimationFrame(prev);
+    _lyricsScrollRafs.delete(wrapEl);
+  };
+
+  /**
+   * 歌词行级联：以激活行为中心，按行距设置递增 transition-delay，
+   * 让各行状态（透明度/颜色/模糊/字重）变化以波纹式向外扩散，
+   * 形成"一行跟着一行往下走"的级联拖尾感。纯 CSS 延迟，无 reflow。
+   * @param {NodeList|Array} lines  .np-lyrics-line 列表
+   * @param {number} activeIdx      当前激活行索引
+   * @param {number} prevIdx        上一激活行索引（保留参数兼容，当前未使用）
+   */
+  utils.cascadeLyricLines = function (lines, activeIdx, prevIdx) {
+    if (!lines || !lines.length) return;
+    var i, line, d;
+    for (i = 0; i < lines.length; i++) {
+      line = lines[i];
+      if (line.classList.contains('np-lyrics-static')) continue;
+      d = Math.abs(i - activeIdx);
+      // 近处行几乎立刻过渡，远处行递增延迟，封顶 120ms 保持紧凑
+      line.style.transitionDelay = Math.min(d * 16, 120) + 'ms';
+    }
   };
 
   // ── Toast 轻提示 ──────────────────────────────────────────────────────────
