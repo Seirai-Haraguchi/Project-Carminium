@@ -1458,9 +1458,9 @@
       // 总延迟补偿 = DLL 缓冲延迟 + OutputCaptureWorklet 累积延迟 + Web Audio 输出延迟
       var totalLatency = this._dllBufferLatencyMs;
 
-      // OutputCaptureWorklet 累积延迟：8820 frames / 44100Hz ≈ 200ms
-      // （worklet 累积 200ms 后才通过 IPC 发送，这 200ms 的音频还没到达 DLL）
-      totalLatency += 200;
+      // OutputCaptureWorklet 累积延迟：4410 frames / 44100Hz ≈ 100ms
+      // （worklet 累积 100ms 后才通过 IPC 发送，这 100ms 的音频还没到达 DLL）
+      totalLatency += 100;
 
       // Web Audio 输出延迟（如果 API 支持）
       if (this._ctx && this._ctx.outputLatency) {
@@ -1774,7 +1774,14 @@
       new Float32Array(ab).set(float32Array);
 
       if (!this._currentStreamingNode) {
-        this._pendingStreamingPcm.push(ab);
+        // 内存保护：限制待处理 PCM 缓冲区大小，防止 FFmpeg 产出快于 worklet 创建时无限增长
+        if (this._pendingStreamingPcm.length < 200) {
+          this._pendingStreamingPcm.push(ab);
+        } else {
+          // 超限：丢弃最旧的数据，保留最新的
+          this._pendingStreamingPcm.shift();
+          this._pendingStreamingPcm.push(ab);
+        }
         return;
       }
       // clear 後の初回 PCM 到着時に baseline を送信
@@ -1816,7 +1823,13 @@
 
       if (!this._nextStreamingNode) {
         // Node 尚未创建，缓冲数据
-        this._pendingNextStreamingPcm.push(ab);
+        // 内存保护：限制待处理 PCM 缓冲区大小
+        if (this._pendingNextStreamingPcm.length < 200) {
+          this._pendingNextStreamingPcm.push(ab);
+        } else {
+          this._pendingNextStreamingPcm.shift();
+          this._pendingNextStreamingPcm.push(ab);
+        }
 
         // 如果正在等待 next streaming PCM 来启动延迟 crossfade
         if (this._pendingBufferToStreamingCrossfade) {

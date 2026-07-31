@@ -227,11 +227,22 @@ class SubsonicClient {
     if (params) {
       for (const [k, v] of Object.entries(params)) {
         if (v === null || v === undefined) continue;
-        allParams[k] = typeof v === 'boolean' ? (v ? 'true' : 'false') : String(v);
+        if (Array.isArray(v)) {
+          allParams[k] = v.map(String);
+        } else {
+          allParams[k] = typeof v === 'boolean' ? (v ? 'true' : 'false') : String(v);
+        }
       }
     }
-    const qs = new URLSearchParams(allParams).toString();
-    return `${this._base}/${endpoint}.view?${qs}`;
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(allParams)) {
+      if (Array.isArray(v)) {
+        for (const item of v) qs.append(k, item);
+      } else {
+        qs.append(k, v);
+      }
+    }
+    return `${this._base}/${endpoint}.view?${qs.toString()}`;
   }
 
   async _request(endpoint, params = null) {
@@ -546,6 +557,45 @@ class SubsonicClient {
     if (albumId) params.albumId = albumId;
     if (artistId) params.artistId = artistId;
     return this._request('unstar', params);
+  }
+
+  /**
+   * 创建远程歌单。
+   * Subsonic API: createPlaylist
+   * @param {string} name - 歌单名
+   * @param {string[]} [songIds] - 初始曲目 Subsonic ID 列表
+   * @returns {Promise<object>}
+   */
+  async createPlaylist(name, songIds = []) {
+    const params = { name };
+    if (songIds.length > 0) params.songId = songIds;
+    return this._request('createPlaylist', params);
+  }
+
+  /**
+   * 更新远程歌单（添加/移除曲目、改名等）。
+   * Subsonic API: updatePlaylist
+   * @param {string} playlistId - 远程歌单 ID
+   * @param {object} opts
+   * @param {string} [opts.name] - 新名称
+   * @param {string} [opts.comment] - 备注
+   * @param {boolean} [opts.public] - 是否公开
+   * @param {string[]} [opts.songIdsToAdd] - 要添加的 Subsonic 曲目 ID
+   * @param {number[]} [opts.songIndexesToRemove] - 要移除的曲目索引
+   * @returns {Promise<object>}
+   */
+  async updatePlaylist(playlistId, opts = {}) {
+    const params = { playlistId };
+    if (opts.name) params.name = opts.name;
+    if (opts.comment !== undefined) params.comment = opts.comment;
+    if (opts.public !== undefined) params.public = !!opts.public;
+    if (opts.songIdsToAdd && opts.songIdsToAdd.length > 0) {
+      params.songIdToAdd = opts.songIdsToAdd;
+    }
+    if (opts.songIndexesToRemove && opts.songIndexesToRemove.length > 0) {
+      params.songIndexToRemove = opts.songIndexesToRemove;
+    }
+    return this._request('updatePlaylist', params);
   }
 
   coverArtUrl(coverId, size = 300) {

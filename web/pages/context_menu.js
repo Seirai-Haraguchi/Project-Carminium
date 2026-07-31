@@ -108,16 +108,26 @@
         playlists.forEach(function (pl) {
           var item = document.createElement('div');
           item.className = 'context-submenu-item';
+          var isRemote = pl.source === 'subsonic';
+          var badge = isRemote ? ' <span class="material-symbols-rounded" style="font-size:13px;opacity:0.6;vertical-align:middle;">cloud</span>' : '';
           item.innerHTML =
-            '<span class="material-symbols-rounded context-submenu-item-icon">playlist_play</span>' +
-            '<span class="context-submenu-item-name">' + App.utils.esc(pl.name) + '</span>' +
+            '<span class="material-symbols-rounded context-submenu-item-icon">' + (isRemote ? 'cloud' : 'playlist_play') + '</span>' +
+            '<span class="context-submenu-item-name">' + App.utils.esc(pl.name) + badge + '</span>' +
             '<span class="context-submenu-item-count">' + (pl.track_count || 0) + '</span>';
           item.addEventListener('click', function () {
             var ids = tracks.map(function (t) { return t.id; });
-            App.utils.call('add_tracks_to_playlist', pl.id, JSON.stringify(ids)).then(function (res) {
+            var method = isRemote ? 'add_tracks_to_remote_playlist' : 'add_tracks_to_playlist';
+            App.utils.call(method, pl.id, JSON.stringify(ids)).then(function (res) {
               try {
                 var r = JSON.parse(res);
-                App.utils.toast(App.i18n.t('playlist.tracksAdded', { count: r.added || 0, name: pl.name }));
+                if (r.error) {
+                  App.utils.toast(r.error);
+                } else {
+                  App.utils.toast(App.i18n.t('playlist.tracksAdded', { count: r.added || 0, name: pl.name }));
+                  if (r.skipped > 0) {
+                    App.utils.toast(r.skipped + ' 首曲目不属于该服务器，已跳过');
+                  }
+                }
               } catch (e) { /* ignore */ }
             });
             hide();

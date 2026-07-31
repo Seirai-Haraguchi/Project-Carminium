@@ -10,7 +10,7 @@
 (function () {
   'use strict';
 
-  const DEFAULT_MAX_BYTES = 500 * 1024 * 1024; // 500MB
+  const DEFAULT_MAX_BYTES = 150 * 1024 * 1024; // 150MB（从 500MB 收紧）
 
   class AudioBufferCache {
     /**
@@ -90,6 +90,17 @@
     clear() {
       this._map.clear();
       this._currentBytes = 0;
+    }
+
+    /**
+     * 将缓存缩减到指定字节数以下。
+     * 按LRU顺序淘汰最旧条目，直到 currentBytes <= targetBytes。
+     * @param {number} targetBytes - 目标字节数
+     */
+    shrinkTo(targetBytes) {
+      while (this._currentBytes > targetBytes && this._map.size > 0) {
+        this._evictOldest();
+      }
     }
 
     /**

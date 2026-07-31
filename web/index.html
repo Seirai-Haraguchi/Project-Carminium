@@ -15,41 +15,40 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- ── 自绘标题栏 ──────────────────────────────────────── -->
-  <div class="title-bar" id="title-bar">
-    <div class="title-bar-left">
-      <button class="title-bar-btn title-bar-back" id="title-bar-back" data-i18n-title="common.back" data-i18n-aria-label="common.back">
-        <span class="title-bar-glyph" id="title-bar-back-icon"></span>
-      </button>
-      <div class="title-bar-logo" id="title-bar-logo"></div>
-      <div class="title-bar-title-wrap">
-        <span class="title-bar-title">Project Carminium</span>
-        <span class="title-bar-version" id="title-bar-version"></span>
-      </div>
-      <span class="title-bar-codename" id="title-bar-codename"></span>
-    </div>
-    <div class="title-bar-center" id="title-bar-gamepad-hints" style="display:none;"></div>
-    <div class="title-bar-right">
-      <button class="title-bar-btn title-bar-settings" id="title-bar-settings" data-i18n-title="nav.settings" data-i18n-aria-label="nav.settings">
-        <span class="material-symbols-rounded">settings</span>
-      </button>
-      <button class="title-bar-btn title-bar-min" id="title-bar-min" data-i18n-title="title.minimize" data-i18n-aria-label="title.minimize">
-        <span class="title-bar-glyph" id="title-bar-min-icon"></span>
-      </button>
-      <button class="title-bar-btn title-bar-max" id="title-bar-max" data-i18n-title="title.maximize" data-i18n-aria-label="title.maximize">
-        <span class="title-bar-glyph" id="title-bar-max-icon"></span>
-      </button>
-      <button class="title-bar-btn title-bar-close" id="title-bar-close" data-i18n-title="title.close" data-i18n-aria-label="title.close">
-        <span class="title-bar-glyph" id="title-bar-close-icon"></span>
-      </button>
-    </div>
-  </div>
+  <div class="app-root" id="app-root">
 
-  <div class="app-shell">
+    <!-- ── 自绘标题栏（横跨整个顶部） ──────────────────────── -->
+    <div class="title-bar" id="title-bar">
+      <div class="title-bar-left">
+        <button class="title-bar-btn title-bar-back" id="title-bar-back" data-i18n-title="common.back" data-i18n-aria-label="common.back">
+          <span class="title-bar-glyph" id="title-bar-back-icon"></span>
+        </button>
+        <div class="title-bar-logo" id="title-bar-logo"></div>
+        <div class="title-bar-title-wrap">
+          <span class="title-bar-title">Project Carminium</span>
+          <span class="title-bar-version" id="title-bar-version"></span>
+        </div>
+        <span class="title-bar-codename" id="title-bar-codename"></span>
+      </div>
+      <div class="title-bar-center" id="title-bar-gamepad-hints" style="display:none;"></div>
+      <div class="title-bar-right">
+        <button class="title-bar-btn title-bar-settings" id="title-bar-settings" data-i18n-title="nav.settings" data-i18n-aria-label="nav.settings">
+          <span class="material-symbols-rounded">settings</span>
+        </button>
+        <button class="title-bar-btn title-bar-min" id="title-bar-min" data-i18n-title="title.minimize" data-i18n-aria-label="title.minimize">
+          <span class="title-bar-glyph" id="title-bar-min-icon"></span>
+        </button>
+        <button class="title-bar-btn title-bar-max" id="title-bar-max" data-i18n-title="title.maximize" data-i18n-aria-label="title.maximize">
+          <span class="title-bar-glyph" id="title-bar-max-icon"></span>
+        </button>
+        <button class="title-bar-btn title-bar-close" id="title-bar-close" data-i18n-title="title.close" data-i18n-aria-label="title.close">
+          <span class="title-bar-glyph" id="title-bar-close-icon"></span>
+        </button>
+      </div>
+    </div>
 
     <!-- ── 左侧导航 ──────────────────────────────────────── -->
     <nav class="nav-drawer" id="nav-drawer" aria-label="主导航">
-
       <div class="nav-section nav-main">
         <button class="nav-item" data-page="your_mix" id="nav-your-mix" data-i18n-aria-label="nav.yourMix">
           <span class="nav-indicator">
@@ -103,11 +102,12 @@
 
     </nav>
 
+    <div class="app-main" id="app-main">
+
+      <div class="app-shell" id="app-shell">
+
     <!-- ── 中部内容区 ─────────────────────────────────────── -->
     <main class="content-pane" id="content-pane" role="main">
-      <button class="mobile-settings-fab" id="mobile-settings-fab" data-i18n-title="nav.settings" data-i18n-aria-label="nav.settings">
-        <span class="material-symbols-rounded">settings</span>
-      </button>
       <div class="page-container" id="page-container">
         <!-- 启动时加载动画 -->
         <div class="splash" id="splash">
@@ -471,6 +471,10 @@
 
   </div><!-- .app-shell -->
 
+  </div><!-- .app-main -->
+
+  </div><!-- .app-root -->
+
   <!-- 歌单副菜单（飞出式） -->
   <div class="nav-submenu" id="nav-playlists-submenu" role="menu" aria-label="歌单列表" hidden>
     <div class="nav-submenu-header">
@@ -509,6 +513,7 @@
   <!-- Web Audio API engine -->
   <script src="format_detector.js"></script>
   <script src="audio_buffer_cache.js"></script>
+  <script src="cover_cache.js"></script>
   <script src="audio_engine.js"></script>
 
   <!-- AutoMix 智能过渡分析 -->
@@ -520,6 +525,9 @@
 
   <!-- Gamepad controller support -->
   <script src="gamepad.js"></script>
+
+  <!-- Memory manager (before app.js) -->
+  <script src="memory_manager.js"></script>
 
   <!-- Main app (last) -->
   <script src="app.js"></script>

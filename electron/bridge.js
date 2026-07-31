@@ -55,8 +55,27 @@ class Bridge extends EventEmitter {
       console.log('[bridge] OsuBeatmapProvider initialized');
     }
 
+    // ── 接入主进程内存管理器 ──
+    // 注册定时清理回调：每 60s 检查 AnalysisCache 是否需要 flush
+    try {
+      const { getInstance: getMemoryManager } = require('./memory_manager');
+      const memMgr = getMemoryManager();
+      memMgr.onCleanup(() => {
+        // AnalysisCache 内部有 debounce 保存，这里只检查是否需要 flush
+        if (this._analysisCache && this._analysisCache._dirty) {
+          try { this._analysisCache.flush(); } catch (e) {
+            console.warn('[bridge] AnalysisCache flush during cleanup failed:', e.message);
+          }
+        }
+      });
+    } catch (e) {
+      console.warn('[bridge] Memory manager integration failed:', e.message);
+    }
+
     // ── 转发 player 信号 → Renderer 事件 ──
-    player.on('track_changed', (trackJson) => this._onTrackChanged(trackJson));
+    player.on('track_changed', (trackJson) => {
+      this._onTrackChanged(trackJson);
+    });
     player.on('state_changed', (state) => this._emit('playback_state_changed', state));
     player.on('position_changed', (pos) => this._emit('position_changed', pos));
     player.on('duration_changed', (dur) => this._emit('duration_changed', dur));
@@ -610,6 +629,40 @@ class Bridge extends EventEmitter {
       return _dump(this._lib.getPlaylistTracks(parseInt(playlistId, 10)));
     });
 
+    // ── 添加曲目到远程歌单（同步到 Subsonic 服务器）──
+    ipcMain.handle('add_tracks_to_remote_playlist', async (_e, playlistId, trackIdsJson) => {
+      const trackIds = JSON.parse(trackIdsJson || '[]');
+      if (trackIds.length === 0) return _dump({ error: '没有曲目' });
+
+      const info = this._lib.getPlaylistRemoteInfo(playlistId);
+      if (!info || info.source !== 'subsonic' || !info.server_id || !info.remote_id) {
+        return _dump({ error: '不是远程歌单或信息缺失' });
+      }
+
+      const cfg = this._lib.getSubsonicServer(info.server_id);
+      if (!cfg) return _dump({ error: '服务器不存在' });
+
+      // 将本地 track ID 映射为 Subsonic 服务器端 ID
+      const { subsonicIds, skipped } = this._lib.getSubsonicTrackIds(trackIds, info.server_id);
+      if (subsonicIds.length === 0) {
+        return _dump({ error: '所选曲目均不属于该 Subsonic 服务器，无法添加到远程歌单', skipped: trackIds.length });
+      }
+
+      const { SubsonicClient } = require('./subsonic');
+      const client = new SubsonicClient(cfg.server_url, cfg.username, cfg.password, cfg.protocol_mode || 'subsonic', 30.0);
+
+      try {
+        // 推送到远程服务器
+        await client.updatePlaylist(info.remote_id, { songIdsToAdd: subsonicIds });
+        // 同时更新本地数据库
+        const added = this._lib.addTracksToPlaylist(parseInt(playlistId, 10), trackIds);
+        this._emitPlaylistsChanged();
+        return _dump({ added, skipped: skipped.length, total: trackIds.length });
+      } catch (e) {
+        return _dump({ error: String(e.message || e) });
+      }
+    });
+
     // ── Subsonic ──
     ipcMain.handle('get_subsonic_servers', () => _dump(this._lib.getSubsonicServers()));
 
@@ -660,6 +713,26 @@ class Bridge extends EventEmitter {
 
     ipcMain.handle('sync_subsonic_server', (_e, serverId) => {
       return this._syncSubsonicServer(parseInt(serverId, 10));
+    });
+
+    // ── Cover colors ──
+    ipcMain.handle('store_cover_colors', (_e, trackId, colorsJson) => {
+      try {
+        this._lib.storeCoverColors(trackId, colorsJson);
+        return _dump({ ok: true });
+      } catch (e) {
+        return _dump({ error: String(e) });
+      }
+    });
+
+    ipcMain.handle('get_cover_colors', (_e, trackIdsJson) => {
+      try {
+        const trackIds = JSON.parse(trackIdsJson || '[]');
+        const result = this._lib.getBatchCoverColors(trackIds);
+        return _dump(result);
+      } catch (e) {
+        return _dump({});
+      }
     });
 
     ipcMain.handle('subsonic_browse', async (_e, serverId, endpoint, paramsJson) => {
@@ -1112,6 +1185,8 @@ class Bridge extends EventEmitter {
       this._floatingWindow.close();
     }
   }
+
+  // ── 电台 ICY 元数据管理 ──────────────────────────────────────────────────
 
   close() {
     this._closeFloatingWindow();

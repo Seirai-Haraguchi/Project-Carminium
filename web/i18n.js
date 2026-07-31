@@ -301,6 +301,7 @@
       'settings.section.audio': '音频和库',
       'settings.section.automation': '自动化与控制',
       'settings.section.experimental': '实验性',
+      'settings.section.system': '系统与内存',
       'settings.section.about': '关于',
 
       // 设置页 — 分组标题
@@ -342,6 +343,13 @@
       // 设置页 — 语言
       'settings.language.label': '语言',
       'settings.language.sub': '应用界面显示语言',
+
+      // 设置页 — 手柄
+      'settings.group.gamepad': '手柄',
+      'settings.gamepadLayout.label': '确认按钮',
+      'settings.gamepadLayout.sub': '选择确认和取消的按钮分配（仅 PlayStation 手柄）',
+      'settings.gamepadLayout.eastern': '○ 确认 / ✖ 取消',
+      'settings.gamepadLayout.western': '✖ 确认 / ○ 取消',
 
       // 设置页 — 字体
       'settings.uiFont.label': '界面字体',
@@ -471,6 +479,8 @@
       'gamepad.prevTrack': '上一首',
       'gamepad.nextTrack': '下一首',
       'gamepad.touchpad': '全窗口',
+      'gamepad.contextMenu': '菜单',
+      'gamepad.cursor': '光标',
     },
 
     'zh-TW': {
@@ -718,6 +728,7 @@
       'settings.section.audio': '音訊和庫',
       'settings.section.automation': '自動化與控制',
       'settings.section.experimental': '實驗性',
+      'settings.section.system': '系統與記憶體',
       'settings.section.about': '關於',
 
       'settings.group.global': '全域',
@@ -877,6 +888,8 @@
       'gamepad.prevTrack': '上一首',
       'gamepad.nextTrack': '下一首',
       'gamepad.touchpad': '全窗口',
+      'gamepad.contextMenu': '選單',
+      'gamepad.cursor': '游標',
     },
 
     'ja': {
@@ -1124,6 +1137,7 @@
       'settings.section.audio': 'オーディオとライブラリ',
       'settings.section.automation': '自動化とコントロール',
       'settings.section.experimental': '実験的',
+      'settings.section.system': 'システムとメモリ',
       'settings.section.about': 'について',
 
       'settings.group.global': 'グローバル',
@@ -1282,6 +1296,8 @@
       'gamepad.prevTrack': '前の曲',
       'gamepad.nextTrack': '次の曲',
       'gamepad.touchpad': '全画面',
+      'gamepad.contextMenu': 'メニュー',
+      'gamepad.cursor': 'カーソル',
     },
 
     'en': {
@@ -1529,6 +1545,7 @@
       'settings.section.audio': 'Audio & Library',
       'settings.section.automation': 'Automation & Controls',
       'settings.section.experimental': 'Experimental',
+      'settings.section.system': 'System & Memory',
       'settings.section.about': 'About',
 
       'settings.group.global': 'Global',
@@ -1687,6 +1704,8 @@
       'gamepad.prevTrack': 'Prev',
       'gamepad.nextTrack': 'Next',
       'gamepad.touchpad': 'Fullscreen',
+      'gamepad.contextMenu': 'Menu',
+      'gamepad.cursor': 'Cursor',
     },
 
     'ru': {
@@ -1934,6 +1953,7 @@
       'settings.section.audio': 'Аудио и библиотека',
       'settings.section.automation': 'Автоматизация и управление',
       'settings.section.experimental': 'Экспериментальные',
+      'settings.section.system': 'Система и память',
       'settings.section.about': 'О программе',
 
       'settings.group.global': 'Общие',
@@ -2092,10 +2112,12 @@
       'gamepad.prevTrack': 'Пред.',
       'gamepad.nextTrack': 'След.',
       'gamepad.touchpad': 'Полный экран',
+      'gamepad.contextMenu': 'Меню',
+      'gamepad.cursor': 'Курсор',
     },
-  };
+};
 
-  // ── 核心方法 ───────────────────────────────────────────────────────────
+// ── 核心方法 ───────────────────────────────────────────────────────────
 
   /**
    * 翻译键 → 当前语言文本。

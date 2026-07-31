@@ -113,6 +113,8 @@ class MusicLibrary {
     this._db.exec(CREATE_SQL);
     this._migrateSchema();
     this._closed = false;
+    this._dedupCache = null;       // { dupIds: Set<string>, localMap: Map<string, object> }
+    this._dedupLocalPathCache = null; // Map<dedupKey, localTrackPath>
   }
 
   // ── Schema migration ─────────────────────────────────────────────────────
@@ -319,6 +321,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
     }
     this._db.prepare('UPDATE folders SET last_scan=? WHERE id=?').run(now, fid);
+    this._invalidateDedupCache();
   }
 
   // ── Metadata ──────────────────────────────────────────────────────────────
@@ -481,9 +484,216 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
   // ── Library queries ───────────────────────────────────────────────────────
 
+  // ── 库去重：当 Subsonic 和本地同时存在相同歌曲时，优先保留本地版本 ────────
+
+  /**
+   * Unicode 兼容性归一化（NFKC）：统一全角/半角、兼容性字符。
+   * @param {string} s
+   * @returns {string}
+   */
+  _nfkc(s) {
+    try {
+      return s.normalize('NFKC');
+    } catch {
+      return s;
+    }
+  }
+
+  /**
+   * 规范化标题：Unicode 归一化、小写、去括号内容、去 feat./ft. 等后缀、去首尾空格。
+   * @param {string} title
+   * @returns {string}
+   */
+  _normalizeTitle(title) {
+    if (!title) return '';
+    let s = this._nfkc(title).toLowerCase().trim();
+    // 去除括号及括号内内容：(xxx) [xxx] {xxx} （含全角括号）
+    s = s.replace(/\s*[([（【].*?[)\]）】]\s*/g, ' ');
+    // 去除 feat./ft./vs./with 及之后内容
+    for (const pat of FEAT_PATTERNS) {
+      const idx = s.indexOf(pat);
+      if (idx > 0) s = s.slice(0, idx);
+    }
+    return s.replace(/\s+/g, ' ').trim();
+  }
+
+  /**
+   * 把艺术家串分割成多个规范化后的艺术家名（用于逐一对齐匹配）。
+   * 处理：NFKC 归一化、多艺术家分隔符分割、排序名反转、去冠词。
+   * 与展示用的 _splitArtists 不同：此处返回小写、去冠词的规范化形式以构建去重 key。
+   * @param {string} artist
+   * @returns {string[]}
+   */
+  _splitArtistsForMatch(artist) {
+    if (!artist) return [];
+    const seps = ['&', ' feat.', ' ft.', ' vs.', ' with', ',', '、', '/', ';'];
+    let parts = [this._nfkc(artist).toLowerCase().trim()];
+    for (const sep of seps) {
+      const next = [];
+      for (const p of parts) {
+        if (p.includes(sep)) {
+          for (const sub of p.split(sep)) next.push(sub);
+        } else {
+          next.push(p);
+        }
+      }
+      parts = next;
+    }
+    const result = [];
+    const seen = new Set();
+    for (let p of parts) {
+      p = p.trim();
+      if (!p) continue;
+      // 排序名反转（针对单个艺术家部分）："beatles, the" → "the beatles"
+      const ci = p.lastIndexOf(',');
+      if (ci > 0) {
+        const before = p.slice(0, ci).trim();
+        const after = p.slice(ci + 1).trim();
+        if (before && after && !before.includes(',') && !after.includes(',')) {
+          p = (after + ' ' + before).trim();
+        }
+      }
+      // 去前导冠词
+      const na = p.replace(/^(the|a|an)\s+/, '');
+      if (na) p = na;
+      p = p.replace(/\s+/g, ' ').trim();
+      if (!p) continue;
+      if (!seen.has(p)) {
+        seen.add(p);
+        result.push(p);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 为一条曲目生成所有去重匹配 key。
+   * key 形式：normalizedTitle \0 normalizedArtist。artist 已分割为多个并逐个比对，
+   * album_artist 同样分割纳入，任一命中即视为同一首歌（顺序无关）。
+   * @param {{title:string, artist?:string, album_artist?:string}} track
+   * @returns {Set<string>}
+   */
+  _trackKeys(track) {
+    const titleKey = this._normalizeTitle(track.title);
+    const keys = new Set();
+    if (!titleKey) return keys;
+    const artists = [];
+    if (track.artist) artists.push(...this._splitArtistsForMatch(track.artist));
+    if (track.album_artist && track.album_artist !== track.artist) {
+      artists.push(...this._splitArtistsForMatch(track.album_artist));
+    }
+    if (artists.length === 0) {
+      keys.add(titleKey + '\0');
+    } else {
+      for (const a of artists) {
+        const k = titleKey + '\0' + a;
+        if (k !== '\0') keys.add(k);
+      }
+    }
+    return keys;
+  }
+
+  /**
+   * 计算并缓存去重信息。
+   * 匹配规则：规范化 title + artist 相同即视为同一首歌。
+   * 当本地和 Subsonic 同时存在时，标记 Subsonic 版本为重复（需排除）。
+   * @returns {{dupIds: Set<string>, localMap: Map<string, object>}}
+   *   dupIds: 需排除的 Subsonic 曲目 ID 集合
+   *   localMap: Subsonic 曲目 ID → 对应的本地曲目对象（用于播放时重定向到本地）
+   */
+  _getDedupInfo() {
+    if (this._dedupCache !== null) return this._dedupCache;
+
+    const localRows = this._db.prepare(
+      "SELECT id, title, artist, album_artist, path, source FROM tracks WHERE source IS NULL"
+    ).all();
+    const subsonicRows = this._db.prepare(
+      "SELECT id, title, artist, album_artist FROM tracks WHERE source = 'subsonic'"
+    ).all();
+
+    if (localRows.length === 0 || subsonicRows.length === 0) {
+      this._dedupCache = { dupIds: new Set(), localMap: new Map() };
+      return this._dedupCache;
+    }
+
+    // 构建本地曲目 key → 本地曲目对象 映射
+    const localKeyMap = new Map();
+    for (const r of localRows) {
+      for (const k of this._trackKeys(r)) {
+        if (!localKeyMap.has(k)) localKeyMap.set(k, r);
+      }
+    }
+
+    // 找出 Subsonic 中与本地重复的曲目，并建立 Subsonic ID → 本地曲目 映射
+    const dupIds = new Set();
+    const localMap = new Map();
+    for (const r of subsonicRows) {
+      for (const k of this._trackKeys(r)) {
+        if (localKeyMap.has(k)) {
+          dupIds.add(r.id);
+          localMap.set(r.id, localKeyMap.get(k));
+          break;
+        }
+      }
+    }
+
+    this._dedupCache = { dupIds, localMap };
+    return this._dedupCache;
+  }
+
+  /**
+   * 获取需排除的 Subsonic 曲目 ID 集合（兼容旧调用）。
+   * @returns {Set<string>}
+   */
+  _getDuplicateSubsonicIds() {
+    return this._getDedupInfo().dupIds;
+  }
+
+  /**
+   * 查找 Subsonic 曲目对应的本地版本（用于播放时优先使用本地文件）。
+   * @param {{id: string, source?: string}} track
+   * @returns {object|null} 本地曲目对象，或 null
+   */
+  findLocalTrackForSubsonic(track) {
+    if (!track || track.source !== 'subsonic') return null;
+    const { localMap } = this._getDedupInfo();
+    return localMap.get(track.id) || null;
+  }
+
+  /**
+   * 使去重缓存失效（在库内容变更后调用）。
+   */
+  _invalidateDedupCache() {
+    this._dedupCache = null;
+    this._dedupLocalPathCache = null;
+  }
+
+  /**
+   * 从曲目数组中过滤掉与本地重复的 Subsonic 曲目。
+   * @template {{id:string, source?:string}} T
+   * @param {T[]} tracks
+   * @returns {T[]}
+   */
+  _dedupeTracks(tracks) {
+    const dupIds = this._getDuplicateSubsonicIds();
+    if (dupIds.size === 0) return tracks;
+    return tracks.filter((t) => !dupIds.has(t.id));
+  }
+
+  /**
+   * 生成 SQL NOT IN 子句用于排除重复 Subsonic 曲目。
+   * 返回 { clause: string, params: string[] }
+   */
+  _dedupExcludeClause() {
+    const dupIds = this._getDuplicateSubsonicIds();
+    if (dupIds.size === 0) return { clause: '', params: [] };
+    const placeholders = dupIds.size === 1 ? '(?)' : `(${Array.from(dupIds).map(() => '?').join(',')})`;
+    return { clause: ` AND id NOT IN ${placeholders}`, params: Array.from(dupIds) };
+  }
+
   getAllTracks() {
     const rows = this._db.prepare('SELECT * FROM tracks ORDER BY added_at').all();
-    const tracks = rows;
+    const tracks = this._dedupeTracks(rows);
     tracks.sort((a, b) => makeSortKey(a.title).localeCompare(makeSortKey(b.title)));
     for (const t of tracks) {
       t.sort_key = makeSortKey(t.title);
@@ -496,12 +706,13 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
   }
 
   getAlbums() {
+    const { clause, params } = this._dedupExcludeClause();
     const rows = this._db.prepare(
       `SELECT album, COALESCE(album_artist, artist, '未知艺术家') AS album_artist,
        year, COUNT(*) AS track_count
-       FROM tracks WHERE album IS NOT NULL
+       FROM tracks WHERE album IS NOT NULL${clause}
        GROUP BY album, COALESCE(album_artist, artist)`
-    ).all();
+    ).all(...params);
     const result = [];
     for (const r of rows) {
       const cover = this._db.prepare(
@@ -520,7 +731,8 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
   }
 
   getArtists() {
-    const rows = this._db.prepare('SELECT id, artist, album, has_cover FROM tracks').all();
+    const { clause, params } = this._dedupExcludeClause();
+    const rows = this._db.prepare(`SELECT id, artist, album, has_cover FROM tracks WHERE 1=1${clause}`).all(...params);
     const artistMap = {};
     for (const row of rows) {
       const names = this._splitArtists(row.artist);
@@ -561,21 +773,23 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
   }
 
   getAlbumTracks(album, albumArtist = null) {
+    const { clause, params } = this._dedupExcludeClause();
     if (albumArtist) {
-      return this._db.prepare(
-        `SELECT * FROM tracks WHERE album=? AND COALESCE(album_artist,artist)=?
+      return this._dedupeTracks(this._db.prepare(
+        `SELECT * FROM tracks WHERE album=? AND COALESCE(album_artist,artist)=?${clause}
          ORDER BY disc_number, track_number`
-      ).all(album, albumArtist);
+      ).all(album, albumArtist, ...params));
     }
-    return this._db.prepare(
-      'SELECT * FROM tracks WHERE album=? ORDER BY disc_number, track_number'
-    ).all(album);
+    return this._dedupeTracks(this._db.prepare(
+      `SELECT * FROM tracks WHERE album=?${clause} ORDER BY disc_number, track_number`
+    ).all(album, ...params));
   }
 
   getArtistTracks(artist) {
+    const { clause, params } = this._dedupExcludeClause();
     const rows = this._db.prepare(
-      `SELECT * FROM tracks ORDER BY LOWER(COALESCE(album,'')), disc_number, track_number`
-    ).all();
+      `SELECT * FROM tracks WHERE 1=1${clause} ORDER BY LOWER(COALESCE(album,'')), disc_number, track_number`
+    ).all(...params);
     const targetLower = artist.toLowerCase();
     const result = [];
     for (const row of rows) {
@@ -591,10 +805,11 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
   searchTracks(query) {
     const q = `%${query}%`;
+    const { clause, params } = this._dedupExcludeClause();
     return this._db.prepare(
-      `SELECT * FROM tracks WHERE title LIKE ? OR artist LIKE ? OR album LIKE ?
+      `SELECT * FROM tracks WHERE (title LIKE ? OR artist LIKE ? OR album LIKE ?)${clause}
        ORDER BY LOWER(COALESCE(artist,'')), LOWER(COALESCE(album,'')), track_number`
-    ).all(q, q, q);
+    ).all(q, q, q, ...params);
   }
 
   getTrack(trackId) {
@@ -651,10 +866,11 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
        INNER JOIN liked_tracks l ON t.id = l.track_id
        ORDER BY l.liked_at DESC`
     ).all();
-    for (const t of rows) {
+    const deduped = this._dedupeTracks(rows);
+    for (const t of deduped) {
       t.artists = this._splitArtists(t.artist);
     }
-    return rows;
+    return deduped;
   }
 
   // ── Play history ──────────────────────────────────────────────────────────
@@ -681,10 +897,11 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
        ) h ON t.id = h.track_id
        ORDER BY h.played_at DESC LIMIT ?`
     ).all(parseInt(limit, 10));
-    for (const t of rows) {
+    const deduped = this._dedupeTracks(rows);
+    for (const t of deduped) {
       t.artists = this._splitArtists(t.artist);
     }
-    return rows;
+    return deduped;
   }
 
   clearPlayHistory() {
@@ -783,6 +1000,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
   getDailyMixes() {
     const db = this._db;
     const mixes = [];
+    const { clause, params } = this._dedupExcludeClause();
 
     // Top 3 艺术家
     const topArtists = db.prepare(
@@ -794,8 +1012,8 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
     for (const a of topArtists) {
       const tracks = db.prepare(
-        `SELECT * FROM tracks WHERE artist = ? ORDER BY album, disc_number, track_number LIMIT 50`
-      ).all(a.name);
+        `SELECT * FROM tracks WHERE artist = ?${clause} ORDER BY album, disc_number, track_number LIMIT 50`
+      ).all(a.name, ...params);
       if (tracks.length > 0) {
         for (const t of tracks) t.artists = this._splitArtists(t.artist);
         mixes.push({ type: 'artist', name: a.name, playCount: a.play_count, tracks });
@@ -812,8 +1030,8 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
     for (const g of topGenres) {
       const tracks = db.prepare(
-        `SELECT * FROM tracks WHERE genre = ? ORDER BY artist, album, disc_number, track_number LIMIT 50`
-      ).all(g.name);
+        `SELECT * FROM tracks WHERE genre = ?${clause} ORDER BY artist, album, disc_number, track_number LIMIT 50`
+      ).all(g.name, ...params);
       if (tracks.length > 0) {
         for (const t of tracks) t.artists = this._splitArtists(t.artist);
         mixes.push({ type: 'genre', name: g.name, playCount: g.play_count, tracks });
@@ -830,8 +1048,8 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
     for (const al of topAlbums) {
       const tracks = db.prepare(
-        `SELECT * FROM tracks WHERE album = ? ORDER BY disc_number, track_number LIMIT 50`
-      ).all(al.name);
+        `SELECT * FROM tracks WHERE album = ?${clause} ORDER BY disc_number, track_number LIMIT 50`
+      ).all(al.name, ...params);
       if (tracks.length > 0) {
         for (const t of tracks) t.artists = this._splitArtists(t.artist);
         mixes.push({ type: 'album', name: al.name, subtitle: al.artist, playCount: al.play_count, tracks });
@@ -1019,6 +1237,48 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     ).get(parseInt(playlistId, 10)) || null;
   }
 
+  /**
+   * 将本地 track ID 列表中属于指定 Subsonic 服务器的曲目映射为 Subsonic 服务器端 ID。
+   * 不属于该服务器的曲目会被跳过（本地曲目或其他服务器的曲目）。
+   * @param {string[]} trackIds - 本地 track ID 列表
+   * @param {number} serverId - Subsonic 服务器 ID
+   * @returns {{subsonicIds: string[], skipped: string[]}}
+   */
+  getSubsonicTrackIds(trackIds, serverId) {
+    const sid = parseInt(serverId, 10);
+    const subsonicIds = [];
+    const skipped = [];
+    if (!trackIds || trackIds.length === 0) return { subsonicIds, skipped };
+    const stmt = this._db.prepare('SELECT id, subsonic_id, source, server_id FROM tracks WHERE id=?');
+    for (const tid of trackIds) {
+      const row = stmt.get(tid);
+      if (row && row.source === 'subsonic' && row.server_id === sid && row.subsonic_id) {
+        subsonicIds.push(row.subsonic_id);
+      } else {
+        skipped.push(tid);
+      }
+    }
+    return { subsonicIds, skipped };
+  }
+
+  // Cover colors
+  storeCoverColors(trackId, colorsJson) {
+    this._db.prepare('INSERT OR REPLACE INTO cover_colors (track_id, colors) VALUES (?,?)').run(trackId, colorsJson);
+  }
+  getCoverColors(trackId) {
+    const row = this._db.prepare('SELECT colors FROM cover_colors WHERE track_id=?').get(trackId);
+    if (!row) return null;
+    try { return JSON.parse(row.colors); } catch { return null; }
+  }
+  getBatchCoverColors(trackIds) {
+    if (!trackIds || trackIds.length === 0) return {};
+    const p = trackIds.map(()=>'?').join(',');
+    const rows = this._db.prepare('SELECT track_id, colors FROM cover_colors WHERE track_id IN ('+p+')').all(...trackIds);
+    const result = {};
+    for (const r of rows) { try { result[r.track_id] = JSON.parse(r.colors); } catch {} }
+    return result;
+  }
+
   addSubsonicServer(name, serverUrl, username, password, protocolMode = 'subsonic') {
     const now = Date.now() / 1000;
     const result = this._db.prepare(
@@ -1133,6 +1393,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       );
       if (!existed) inserted++;
     }
+    this._invalidateDedupCache();
     return inserted;
   }
 
@@ -1157,6 +1418,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       this._db.prepare(`DELETE FROM tracks WHERE id IN (${placeholders})`).run(...ids);
     });
     tx();
+    this._invalidateDedupCache();
   }
 
   commit() {

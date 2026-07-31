@@ -67,6 +67,7 @@ class SmtcController {
     bridge.on('settings_changed', (settingsJson) => {
       this._onSettingsChanged(settingsJson);
     });
+
   }
 
   _sendToRenderer(channel, data) {
@@ -172,30 +173,32 @@ class SmtcController {
     const artist = String(track.artist || '未知艺术家');
     const album = String(track.album || '');
 
+    // 获取封面（歌词模式下同样需要展示封面）
+    const artwork = await this._loadCoverDataUrl(track);
+
     // 控制中心歌词模式
     if (this._smtcLyricsOn) {
       const lrcText = String(track.lyrics || '');
       this._lyricsEntries = parseLrcOriginalLines(lrcText);
       this._currentLyricIdx = -1;
 
+      // 歌手位置固定显示「歌名 - 歌手」；
+      // 歌名位置由下方 _updateLyricTitle 在有歌词时填入当前歌词行，
+      // 无歌词时维持歌名（即本处 title）。
+      this._sendToRenderer('smtc:metadata', {
+        title,
+        artist: `${title} - ${artist}`,
+        album,
+        albumArtist: String(track.album_artist || track.artist || ''),
+        artwork,
+      });
+
       if (this._lyricsEntries.length > 0) {
         this._updateLyricTitle(this._player.position);
-      } else {
-        // 无歌词：歌名位置回退显示歌名
-        this._sendToRenderer('smtc:metadata', {
-          title,
-          artist: `${title} - ${artist}`,
-          album,
-          albumArtist: String(track.album_artist || track.artist || ''),
-          artwork: null,
-        });
       }
     } else {
       this._lyricsEntries = [];
       this._currentLyricIdx = -1;
-
-      // 获取封面
-      const artwork = await this._loadCoverDataUrl(track);
 
       this._sendToRenderer('smtc:metadata', {
         title,
@@ -239,7 +242,8 @@ class SmtcController {
 
 // ── LRC 解析（与前端 parseLRC 分组逻辑一致）─────────────────────────────────
 
-const LRC_TIME_REGEX = /\[(\d{2}):(\d{2})[.:](\d{2,3})\]/g;
+// 小数部分（.xx / .xxx）可选；缺失时按 .000 处理
+const LRC_TIME_REGEX = /\[(\d{2}):(\d{2})(?:[.:](\d{2,3}))?\]/g;
 const WORD_TIME_REGEX = /<\d{2}:\d{2}[.:]\d{2,3}>/g;
 
 function parseLrcOriginalLines(lrcText) {
@@ -256,8 +260,11 @@ function parseLrcOriginalLines(lrcText) {
     while ((m = LRC_TIME_REGEX.exec(trimmed)) !== null) {
       const mm = parseInt(m[1], 10);
       const ss = parseInt(m[2], 10);
-      let cs = parseInt(m[3], 10);
-      if (m[3].length === 2) cs *= 10;
+      let cs = 0;
+      if (m[3] !== undefined) {
+        cs = parseInt(m[3], 10);
+        if (m[3].length === 2) cs *= 10;
+      }
       times.push(mm * 60000 + ss * 1000 + cs);
       lastIdx = m.index + m[0].length;
     }

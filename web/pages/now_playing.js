@@ -742,6 +742,10 @@
       if (els.miniTimeDur) els.miniTimeDur.textContent = '0:00';
       _setBgCover(null, null);
       if (_videoBg) _videoBg.clear();
+      // 取消 pin 上一曲的封面
+      if (window.CoverCache && np._lastTrackId) {
+        window.CoverCache.unpin(np._lastTrackId);
+      }
       np._lastTrackId = null;
       lyricsSource = null;
       _hasEmbeddedLyrics = false;
@@ -752,6 +756,13 @@
 
     // 同一曲不重复加载封面，避免 AutoMix 切换时闪白
     const isSameTrack = np._lastTrackId === track.id;
+    // Pin 当前曲目封面，防止内存清理时被回收；切歌时 unpin 上一曲
+    if (window.CoverCache) {
+      if (!isSameTrack && np._lastTrackId) {
+        window.CoverCache.unpin(np._lastTrackId);
+      }
+      window.CoverCache.pin(track.id);
+    }
     np._lastTrackId = track.id;
 
     // 新曲：重置悬浮播放栏进度条

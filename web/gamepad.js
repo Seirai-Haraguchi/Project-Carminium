@@ -32,7 +32,7 @@
   //  4: LB/L1                 5: RB/R1
   //  6: LT/L2                 7: RT/R2
   //  8: Share/View            9: Options/Menu
-  // 10: L3                    11: R3
+  // 10: L3 (左摇杆按下)       11: R3 (右摇杆按下)
   // 12: D-Pad Up             13: D-Pad Down
   // 14: D-Pad Left           15: D-Pad Right
   // 16: Guide/PS
@@ -49,8 +49,8 @@
     RT: 7,
     SHARE: 8,
     OPTIONS: 9,
-    L3: 10,
-    R3: 11,
+    L3: 10,      // 左摇杆按下 (LS)
+    R3: 11,      // 右摇杆按下 (RS)
     DPAD_UP: 12,
     DPAD_DOWN: 13,
     DPAD_LEFT: 14,
@@ -116,6 +116,20 @@
       + '</svg>';
   }
 
+  function _psL3(size) {
+    return '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size + '">'
+      + '<circle cx="12" cy="12" r="11" fill="#444" stroke="#777" stroke-width="0.8"/>'
+      + '<text x="12" y="16" text-anchor="middle" font-size="9" font-weight="700" fill="#ddd" font-family="Arial,sans-serif">L3</text>'
+      + '</svg>';
+  }
+
+  function _psR3(size) {
+    return '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size + '">'
+      + '<circle cx="12" cy="12" r="11" fill="#444" stroke="#777" stroke-width="0.8"/>'
+      + '<text x="12" y="16" text-anchor="middle" font-size="9" font-weight="700" fill="#ddd" font-family="Arial,sans-serif">R3</text>'
+      + '</svg>';
+  }
+
   function _psTouchpad(size) {
     return '<svg viewBox="0 0 28 18" width="' + (size * 1.3) + '" height="' + (size * 0.82) + '">'
       + '<rect x="0.5" y="0.5" width="27" height="17" rx="4" fill="#3D3D3D" stroke="#777" stroke-width="0.8"/>'
@@ -178,6 +192,20 @@
       + '</svg>';
   }
 
+  function _xboxL3(size) {
+    return '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size + '">'
+      + '<circle cx="12" cy="12" r="11" fill="#3D3D3D" stroke="#888" stroke-width="0.8"/>'
+      + '<text x="12" y="16" text-anchor="middle" font-size="9" font-weight="700" fill="#ddd" font-family="Arial,sans-serif">LS</text>'
+      + '</svg>';
+  }
+
+  function _xboxR3(size) {
+    return '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size + '">'
+      + '<circle cx="12" cy="12" r="11" fill="#3D3D3D" stroke="#888" stroke-width="0.8"/>'
+      + '<text x="12" y="16" text-anchor="middle" font-size="9" font-weight="700" fill="#ddd" font-family="Arial,sans-serif">RS</text>'
+      + '</svg>';
+  }
+
   function _genericA(size) {
     return '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size + '">'
       + '<circle cx="12" cy="12" r="11" fill="#666" stroke="#999" stroke-width="0.8"/>'
@@ -225,6 +253,18 @@
       + '<text x="14" y="13" text-anchor="middle" font-size="8" font-weight="600" fill="#ddd" font-family="Arial,sans-serif">≡</text>'
       + '</svg>';
   }
+  function _genericL3(size) {
+    return '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size + '">'
+      + '<circle cx="12" cy="12" r="11" fill="#555" stroke="#888" stroke-width="0.8"/>'
+      + '<text x="12" y="16" text-anchor="middle" font-size="9" font-weight="700" fill="#ddd" font-family="Arial,sans-serif">L3</text>'
+      + '</svg>';
+  }
+  function _genericR3(size) {
+    return '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size + '">'
+      + '<circle cx="12" cy="12" r="11" fill="#555" stroke="#888" stroke-width="0.8"/>'
+      + '<text x="12" y="16" text-anchor="middle" font-size="9" font-weight="700" fill="#ddd" font-family="Arial,sans-serif">R3</text>'
+      + '</svg>';
+  }
 
   // 按钮图标集合：每种手柄类型的 SVG 生成函数
   var ICON_SETS = {};
@@ -238,6 +278,8 @@
     dpad: _psDpad,
     menu: _psOptions,
     touchpad: _psTouchpad,
+    l3: _psL3,
+    r3: _psR3,
   };
   ICON_SETS[GamepadType.XBOX] = {
     confirm: _xboxA,
@@ -248,6 +290,8 @@
     next: _xboxRB,
     dpad: _xboxDpad,
     menu: _xboxMenu,
+    l3: _xboxL3,
+    r3: _xboxR3,
   };
   ICON_SETS[GamepadType.GENERIC] = {
     confirm: _genericA,
@@ -258,11 +302,28 @@
     next: _genericRB,
     dpad: _genericDpad,
     menu: _genericMenu,
+    l3: _genericL3,
+    r3: _genericR3,
   };
 
-  // ── 按钮索引映射 ──────────────────────────────────────────────
-  var BUTTON_MAP = {};
-  BUTTON_MAP[GamepadType.DUALSENSE] = BUTTON_MAP[GamepadType.DUALSHOCK] = {
+  /**
+   * 根据当前布局返回对应手柄类型的图标集。
+   * 西方布局时交换 confirm/cancel 图标。
+   */
+  function _getIconSet() {
+    var base = ICON_SETS[_activeType];
+    if (!base) return null;
+    if (_buttonLayout !== 'western') return base;
+    // 西方布局：交换 confirm 和 cancel 的图标
+    var swapped = Object.assign({}, base);
+    swapped.confirm = base.cancel;
+    swapped.cancel = base.confirm;
+    return swapped;
+  }
+
+  // ── 按钮索引映射（东方惯例：○ 确认 / ✖ 取消）────────────────────────────
+  var BUTTON_MAP_EASTERN = {};
+  BUTTON_MAP_EASTERN[GamepadType.DUALSENSE] = BUTTON_MAP_EASTERN[GamepadType.DUALSHOCK] = {
     confirm: BTN.FACE_RIGHT,
     cancel: BTN.FACE_BOTTOM,
     play: BTN.FACE_LEFT,
@@ -274,9 +335,9 @@
     menu: BTN.OPTIONS,
     touchpad: BTN.TOUCHPAD,
   };
-  BUTTON_MAP[GamepadType.XBOX] = BUTTON_MAP[GamepadType.GENERIC] = {
-    confirm: BTN.FACE_BOTTOM,
-    cancel: BTN.FACE_RIGHT,
+  BUTTON_MAP_EASTERN[GamepadType.XBOX] = BUTTON_MAP_EASTERN[GamepadType.GENERIC] = {
+    confirm: BTN.FACE_RIGHT,
+    cancel: BTN.FACE_BOTTOM,
     play: BTN.FACE_LEFT,
     like: BTN.FACE_TOP,
     prev: BTN.LB,
@@ -284,8 +345,27 @@
     vol_down: BTN.LT,
     vol_up: BTN.RT,
     menu: BTN.OPTIONS,
-    touchpad: -1, // Xbox 无触摸板
+    touchpad: -1,
   };
+
+  // 西方惯例：✖ 确认 / ○ 取消（交换 confirm/cancel）
+  var BUTTON_MAP_WESTERN = {};
+  Object.keys(BUTTON_MAP_EASTERN).forEach(function (type) {
+    var m = Object.assign({}, BUTTON_MAP_EASTERN[type]);
+    m.confirm = BUTTON_MAP_EASTERN[type].cancel;
+    m.cancel = BUTTON_MAP_EASTERN[type].confirm;
+    BUTTON_MAP_WESTERN[type] = m;
+  });
+
+  // 当前按钮布局：'eastern' 或 'western'
+  var _buttonLayout = 'eastern';
+
+  /**
+   * 根据当前布局返回对应的按钮映射。
+   */
+  function _getButtonMap() {
+    return (_buttonLayout === 'western') ? BUTTON_MAP_WESTERN : BUTTON_MAP_EASTERN;
+  }
 
   // ── 音效系统（Web Audio API 合成）──────────────────────────────
   var _audioCtx = null;
@@ -362,6 +442,186 @@
   // 右摇杆滚动速度系数（px/frame per unit，线性比例）
   var STICK_SCROLL_SPEED = 35;
 
+  // ── 触摸板光标模拟 ────────────────────────────────────────────
+  // 光标位置（相对于窗口）
+  var _cursorX = window.innerWidth / 2;
+  var _cursorY = window.innerHeight / 2;
+  // 触摸板手势状态
+  var _touchpadState = {
+    active: false,      // 是否正在触摸
+    startX: 0,          // 触摸起始 X（归一化 0-1）
+    startY: 0,          // 触摸起始 Y（归一化 0-1）
+    lastX: 0,           // 上次 X
+    lastY: 0,           // 上次 Y
+    startTime: 0,       // 触摸开始时间
+    isClick: false,     // 是否为点击（短触摸）
+  };
+  // 触摸板灵敏度
+  var TOUCHPAD_SENSITIVITY = 1.5;
+  // 触摸板点击判定时间（ms）
+  var TOUCHPAD_CLICK_TIME = 150;
+  // 光标元素
+  var _cursorEl = null;
+
+  // ── 触摸板光标功能 ───────────────────────────────────────────
+
+  /**
+   * 创建/获取光标元素
+   */
+  function _getCursorEl() {
+    if (_cursorEl) return _cursorEl;
+    _cursorEl = document.createElement('div');
+    _cursorEl.id = 'gamepad-cursor';
+    _cursorEl.style.cssText =
+      'position:fixed;' +
+      'width:20px;' +
+      'height:20px;' +
+      'border-radius:50%;' +
+      'background:rgba(255,255,255,0.9);' +
+      'border:2px solid rgba(0,0,0,0.5);' +
+      'box-shadow:0 2px 8px rgba(0,0,0,0.3);' +
+      'pointer-events:none;' +
+      'z-index:999999;' +
+      'transform:translate(-50%,-50%);' +
+      'transition:opacity 0.2s;' +
+      'opacity:0;';
+    document.body.appendChild(_cursorEl);
+    return _cursorEl;
+  }
+
+  /**
+   * 显示/隐藏光标
+   */
+  function _showCursor(show) {
+    var cursor = _getCursorEl();
+    cursor.style.opacity = show ? '1' : '0';
+  }
+
+  /**
+   * 更新光标位置
+   */
+  function _updateCursorPosition(x, y) {
+    // 限制在窗口内
+    _cursorX = Math.max(10, Math.min(window.innerWidth - 10, x));
+    _cursorY = Math.max(10, Math.min(window.innerHeight - 10, y));
+    var cursor = _getCursorEl();
+    cursor.style.left = _cursorX + 'px';
+    cursor.style.top = _cursorY + 'px';
+  }
+
+  /**
+   * 处理触摸板触摸开始
+   */
+  function _onTouchpadStart(x, y) {
+    _touchpadState.active = true;
+    _touchpadState.startX = x;
+    _touchpadState.startY = y;
+    _touchpadState.lastX = x;
+    _touchpadState.lastY = y;
+    _touchpadState.startTime = Date.now();
+    _touchpadState.isClick = true;
+    _showCursor(true);
+  }
+
+  /**
+   * 处理触摸板触摸移动
+   */
+  function _onTouchpadMove(x, y) {
+    if (!_touchpadState.active) return;
+
+    // 计算移动增量
+    var dx = (x - _touchpadState.lastX) * window.innerWidth * TOUCHPAD_SENSITIVITY;
+    var dy = (y - _touchpadState.lastY) * window.innerHeight * TOUCHPAD_SENSITIVITY;
+
+    // 更新光标位置
+    _updateCursorPosition(_cursorX + dx, _cursorY + dy);
+
+    // 更新上次位置
+    _touchpadState.lastX = x;
+    _touchpadState.lastY = y;
+
+    // 如果移动距离较大，不视为点击
+    var moveDist = Math.sqrt(
+      Math.pow(x - _touchpadState.startX, 2) +
+      Math.pow(y - _touchpadState.startY, 2)
+    );
+    if (moveDist > 0.05) {
+      _touchpadState.isClick = false;
+    }
+  }
+
+  /**
+   * 处理触摸板触摸结束
+   */
+  function _onTouchpadEnd() {
+    if (!_touchpadState.active) return;
+
+    var duration = Date.now() - _touchpadState.startTime;
+
+    // 短触摸视为点击
+    if (_touchpadState.isClick && duration < TOUCHPAD_CLICK_TIME) {
+      _simulateClickAtCursor();
+    }
+
+    _touchpadState.active = false;
+    // 延迟隐藏光标
+    setTimeout(function () {
+      if (!_touchpadState.active) {
+        _showCursor(false);
+      }
+    }, 2000);
+  }
+
+  /**
+   * 在光标位置模拟点击
+   */
+  function _simulateClickAtCursor() {
+    var el = document.elementFromPoint(_cursorX, _cursorY);
+    if (!el) return;
+
+    // 创建鼠标事件
+    var mousedown = new MouseEvent('mousedown', {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: _cursorX,
+      clientY: _cursorY,
+      button: 0,
+      buttons: 1,
+    });
+    var mouseup = new MouseEvent('mouseup', {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: _cursorX,
+      clientY: _cursorY,
+      button: 0,
+      buttons: 0,
+    });
+    var click = new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: _cursorX,
+      clientY: _cursorY,
+      button: 0,
+      buttons: 0,
+    });
+
+    el.dispatchEvent(mousedown);
+    el.dispatchEvent(mouseup);
+    el.dispatchEvent(click);
+
+    // 视觉反馈
+    var cursor = _getCursorEl();
+    cursor.style.transform = 'translate(-50%,-50%) scale(0.8)';
+    setTimeout(function () {
+      cursor.style.transform = 'translate(-50%,-50%) scale(1)';
+    }, 100);
+
+    _sndConfirm();
+  }
+
   // ── 手柄类型检测 ──────────────────────────────────────────────
 
   function _detectType(id) {
@@ -402,7 +662,7 @@
       ];
     }
     if (isFullscreen) {
-      // 全窗口视图：触摸板退出全窗口
+      // 全窗口视图
       var hints = [
         { iconKey: 'cancel', labelKey: 'gamepad.back' },
         { iconKey: 'play', labelKey: 'gamepad.playPause' },
@@ -410,13 +670,16 @@
         { iconKey: 'prev', labelKey: 'gamepad.prevTrack' },
         { iconKey: 'next', labelKey: 'gamepad.nextTrack' },
       ];
-      // DualSense/DualShock 有触摸板
+      // DualSense/DualShock 添加触摸板光标提示
       if (_activeType === GamepadType.DUALSENSE || _activeType === GamepadType.DUALSHOCK) {
-        hints.unshift({ iconKey: 'touchpad', labelKey: 'gamepad.touchpad' });
+        hints.unshift({ iconKey: 'touchpad', labelKey: 'gamepad.cursor' });
       }
+      // L3/R3 右键菜单提示（所有手柄类型）
+      hints.push({ iconKey: 'l3', labelKey: 'gamepad.contextMenu' });
       return hints;
     }
-    return [
+    // 普通视图
+    var hints = [
       { iconKey: 'confirm', labelKey: 'gamepad.confirm' },
       { iconKey: 'cancel', labelKey: 'gamepad.back' },
       { iconKey: 'play', labelKey: 'gamepad.playPause' },
@@ -424,6 +687,13 @@
       { iconKey: 'prev', labelKey: 'gamepad.prevTrack' },
       { iconKey: 'next', labelKey: 'gamepad.nextTrack' },
     ];
+    // DualSense/DualShock 添加触摸板光标提示
+    if (_activeType === GamepadType.DUALSENSE || _activeType === GamepadType.DUALSHOCK) {
+      hints.push({ iconKey: 'touchpad', labelKey: 'gamepad.cursor' });
+    }
+    // L3/R3 右键菜单提示（所有手柄类型）
+    hints.push({ iconKey: 'l3', labelKey: 'gamepad.contextMenu' });
+    return hints;
   }
 
   /**
@@ -444,7 +714,7 @@
       return;
     }
 
-    var icons = ICON_SETS[_activeType];
+    var icons = _getIconSet();
     if (!icons) return;
     var hints = _getContextHints();
     var size = 16;
@@ -527,7 +797,7 @@
     if (!gp) return;
     _activeGamepad = gp;
 
-    var map = BUTTON_MAP[_activeType];
+    var map = _getButtonMap()[_activeType];
     if (!map) return;
 
     // 按钮边沿检测
@@ -549,6 +819,72 @@
     if (gp.axes && gp.axes.length >= 4) {
       _processRightStick(gp.axes[2], gp.axes[3]);
     }
+
+    // 触摸板处理（DualSense/DualShock）
+    _processTouchpad(gp);
+  }
+
+  /**
+   * 处理手柄触摸板输入
+   * 
+   * 注意：DualSense/DualShock 的触摸板在 Gamepad API 中有两种表现形式：
+   * 1. 作为按钮 17（BTN.TOUCHPAD）- 检测触摸板是否被按下
+   * 2. 作为 gp.touchpad 数组 - 包含触摸坐标 [x, y]（归一化 0-1）
+   * 
+   * 由于不同浏览器/驱动实现不同，我们需要兼容多种情况：
+   * - 有些只提供按钮，不提供坐标
+   * - 有些提供按钮和坐标
+   * - 有些可能通过 axes 提供坐标
+   */
+  function _processTouchpad(gp) {
+    // 检查是否为 DualSense/DualShock
+    if (_activeType !== GamepadType.DUALSENSE && _activeType !== GamepadType.DUALSHOCK) {
+      return;
+    }
+
+    // 尝试获取触摸板按钮状态（按钮索引 17）
+    var touchpadBtn = gp.buttons && gp.buttons[BTN.TOUCHPAD];
+    var isPressed = touchpadBtn && touchpadBtn.pressed;
+    
+    // 尝试获取触摸板坐标数据
+    // 标准 Gamepad API 中触摸板数据可能在 gp.touchpad 数组
+    var touchpadData = gp.touchpad;
+    
+    // 调试日志（仅在状态变化时输出）
+    if (isPressed !== _touchpadState._lastLoggedPressed) {
+      console.log('[gamepad] Touchpad button state:', isPressed, 'touchpadData:', touchpadData ? 'available' : 'none');
+      _touchpadState._lastLoggedPressed = isPressed;
+    }
+
+    // 检测触摸板是否被按下（作为触摸开始的信号）
+    if (isPressed && !_touchpadState.active) {
+      // 尝试获取触摸坐标，默认屏幕中心
+      var x = 0.5, y = 0.5;
+      if (touchpadData && touchpadData.length >= 2) {
+        x = touchpadData[0];
+        y = touchpadData[1];
+      }
+      _onTouchpadStart(x, y);
+    }
+
+    // 触摸中
+    if (_touchpadState.active) {
+      var x = _touchpadState.lastX;
+      var y = _touchpadState.lastY;
+
+      // 尝试获取实时触摸坐标
+      if (touchpadData && touchpadData.length >= 2) {
+        x = touchpadData[0];
+        y = touchpadData[1];
+      }
+
+      _onTouchpadMove(x, y);
+
+      // 检测触摸结束（按钮释放）
+      if (!isPressed) {
+        _onTouchpadEnd();
+      }
+    }
   }
 
   // ── 按钮按下处理 ───────────────────────────────────────────────
@@ -563,8 +899,11 @@
     if (buttonIndex === map.vol_down) { _actionVolumeDown(); return; }
     if (buttonIndex === map.vol_up) { _actionVolumeUp(); return; }
     if (buttonIndex === map.menu) { _actionMenu(); return; }
-    // 触摸板（仅 DualSense/DualShock）
-    if (map.touchpad >= 0 && buttonIndex === map.touchpad) { _actionTouchpad(); return; }
+    // L3/R3 (左/右摇杆按下)：模拟右键
+    if (buttonIndex === BTN.L3) { _actionRightClick(); return; }
+    if (buttonIndex === BTN.R3) { _actionRightClick(); return; }
+    // 注意：触摸板按钮（BTN.TOUCHPAD）现在专门用于光标模拟
+    // 不再映射到 _actionTouchpad，避免与 _processTouchpad 冲突
     // D-Pad 全向导航（受冷却时间保护）
     if (Date.now() >= _navCooldown) {
       if (buttonIndex === BTN.DPAD_UP) { _spatialNavigate(0, -1); _navCooldown = Date.now() + NAV_COOLDOWN_MS; return; }
@@ -957,6 +1296,58 @@
     }
   }
 
+  function _actionRightClick() {
+    // 在焦点元素上触发右键菜单
+    if (_focusIndex >= 0 && _focusElements[_focusIndex]) {
+      var el = _focusElements[_focusIndex];
+      _simulateContextMenu(el);
+    } else {
+      // 没有焦点时在鼠标/光标位置触发
+      _simulateContextMenuAtCursor();
+    }
+  }
+
+  /**
+   * 在指定元素上模拟右键菜单
+   */
+  function _simulateContextMenu(el) {
+    if (!el) return;
+    var rect = el.getBoundingClientRect();
+    var x = rect.left + rect.width / 2;
+    var y = rect.top + rect.height / 2;
+    _dispatchContextMenu(x, y, el);
+  }
+
+  /**
+   * 在当前光标位置模拟右键菜单
+   */
+  function _simulateContextMenuAtCursor() {
+    var x = _cursorX || window.innerWidth / 2;
+    var y = _cursorY || window.innerHeight / 2;
+    var el = document.elementFromPoint(x, y);
+    _dispatchContextMenu(x, y, el);
+  }
+
+  /**
+   * 分发 contextmenu 事件
+   */
+  function _dispatchContextMenu(x, y, target) {
+    target = target || document.elementFromPoint(x, y) || document.body;
+    var event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: x,
+      clientY: y,
+      screenX: x,
+      screenY: y,
+      button: 2,
+      buttons: 2,
+    });
+    target.dispatchEvent(event);
+    _sndConfirm();
+  }
+
   // ── 导航变化时刷新 ────────────────────────────────────────────
 
   function _onNavigateOrRender() {
@@ -1048,6 +1439,20 @@
     }
 
     console.log('[gamepad] 模块已初始化');
+
+    // 读取手柄按钮布局设置
+    if (App.utils && App.utils.call) {
+      App.utils.call('get_settings').then(function (res) {
+        try {
+          var s = JSON.parse(res);
+          if (s.gamepad_button_layout) {
+            _buttonLayout = s.gamepad_button_layout;
+            _renderHints();
+            console.log('[gamepad] 初始按钮布局:', _buttonLayout);
+          }
+        } catch (e) { /* ignore */ }
+      });
+    }
   }
 
   // ── 导出 ──────────────────────────────────────────────────────
@@ -1057,6 +1462,11 @@
     isConnected: function () { return !!_activeGamepad; },
     isFocused: function () { return _windowFocused; },
     refreshHints: _renderHints,
+    setButtonLayout: function (layout) {
+      _buttonLayout = (layout === 'western') ? 'western' : 'eastern';
+      _renderHints();
+      console.log('[gamepad] 按钮布局已切换:', _buttonLayout);
+    },
   };
 
   // DOM Ready

@@ -13,8 +13,10 @@ class OutputCaptureProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
 
-    // 目标 ~100ms 的累积缓冲（44100Hz × 2ch × 0.1s = 8820 samples）
-    this._accum = new Float32Array(8820 * 2); // interleaved stereo
+    // 目标 ~100ms 的累积缓冲（44100Hz × 2ch × 0.1s = 4410 samples）
+    // 块越小 → DLL 环形缓冲水位锯齿越小、单块转发阻塞影响越小，
+    // 对 gapless 切歌瞬间的欠载更友好。IPC 频率 10/s，开销可忽略。
+    this._accum = new Float32Array(4410 * 2); // interleaved stereo
     this._accumPos = 0;
     this._channels = 2;
 

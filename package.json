@@ -1,10 +1,10 @@
 {
-  "name": "carminium",
-  "version": "0.4.1",
-  "description": "Carminium — 本地音乐播放器 (Electron)",
+  "name": "Carminium",
+  "version": "0.5.11",
+  "description": "Carminium",
   "main": "electron/main.js",
-  "author": "Project Carminium",
-  "license": "MIT",
+  "author": "Seirai Haraguchi",
+  "license": "LGPL-3.0-or-later",
   "scripts": {
     "start": "node scripts/start-electron.js .",
     "dev": "node scripts/start-electron.js . --dev",
@@ -12,7 +12,8 @@
     "build:native": "cd native && zig build copy -Doptimize=ReleaseFast",
     "build": "electron-builder --win",
     "build:dir": "electron-builder --win --dir",
-    "build:portable": "electron-builder --win portable"
+    "build:portable": "electron-builder --win portable",
+    "build:all": "npm run build:native && npm run rebuild && npm run build"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.6.0",
@@ -28,7 +29,7 @@
     "sharp": "^0.35.3"
   },
   "build": {
-    "appId": "ProjectCarminium.Player",
+    "appId": "Yunofactory.ProjectCarminium.Player",
     "productName": "Project Carminium",
     "icon": "build/icon.png",
     "directories": {
@@ -58,6 +59,10 @@
     },
     "asarUnpack": [
       "node_modules/better-sqlite3/**/*",
+      "node_modules/koffi/**/*",
+      "node_modules/@koromix/koffi-win32-x64/**/*",
+      "node_modules/sharp/**/*",
+      "node_modules/@img/sharp-win32-x64/**/*",
       "electron/bin/**/*"
     ]
   }

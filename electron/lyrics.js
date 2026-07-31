@@ -20,7 +20,8 @@ const HEADERS = {
 };
 const TIMEOUT = 8000; // ms
 
-const TIME_RE = /\[(\d{2}):(\d{2})[\.:](\d{2,3})\]/g;
+// 小数部分（.xx / .xxx）可选；缺失时按 .000 处理
+const TIME_RE = /\[(\d{2}):(\d{2})(?:[\.:](\d{2,3}))?\]/g;
 
 // 搜索结果缓存：用于 lrclib/AMLLDB 等在搜索时已返回歌词的平台
 // key: `${source}:${songId}` → { lyrics, has_translation, has_romaji }
@@ -519,8 +520,11 @@ function _parseLrc(lrcText) {
     while ((m = TIME_RE.exec(trimmed)) !== null) {
       const mm = parseInt(m[1], 10);
       const ss = parseInt(m[2], 10);
-      let cs = parseInt(m[3], 10);
-      if (m[3].length === 2) cs *= 10;
+      let cs = 0;
+      if (m[3] !== undefined) {
+        cs = parseInt(m[3], 10);
+        if (m[3].length === 2) cs *= 10;
+      }
       times.push(mm * 60000 + ss * 1000 + cs);
       lastIdx = m.index + m[0].length;
     }

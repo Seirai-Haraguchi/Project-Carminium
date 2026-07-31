@@ -66,6 +66,12 @@ class MusicPlayer extends EventEmitter {
     // Web Audio API 模式标志
     this._webAudioEnabled = false;
 
+    // ── 切歌瞬间的延迟任务定时器 ──
+    // gapless/crossfade 切换时，把重的非听觉工作（下一曲解码预加载、队列广播）
+    // 推迟几百毫秒~1秒，避开曲目边界，防止主线程风暴阻塞 PCM 转发造成欠载卡顿。
+    this._preloadDelayTimer = null;
+    this._queueChangedDelayTimer = null;
+
     // ネイティブレンダラーのイベントハンドリング
     if (this._renderer) {
       // Gapless と AutoMix は相互排他: 両方有効なら AutoMix 優先
@@ -264,7 +270,8 @@ class MusicPlayer extends EventEmitter {
     this.emit('liked_changed', this.isCurrentLiked);
     this.emit('duration_changed', this._fe_duration);
     this.emit('position_changed', 0);
-    this._emitQueueChanged();
+    // 队列广播延迟到边界之后，避免大队列序列化/DOM 重渲染阻塞 PCM 转发
+    this._emitQueueChangedDelayed(400);
 
     // シャッフル履歴
     if (this._shuffle && this._current_index >= 0) {
@@ -274,10 +281,8 @@ class MusicPlayer extends EventEmitter {
       }
     }
 
-    // さらに次の曲をプリロード
-    if (this._automixEnabled || this._gaplessEnabled) {
-      this._preloadNextTrack();
-    }
+    // さらに次の曲をプリロード（遅延：decodeAudioData/GC が境界に集中するのを防ぐ）
+    this._schedulePreloadNext(1200);
   }
 
   // ── Queue management ──────────────────────────────────────────────────────
@@ -395,11 +400,60 @@ class MusicPlayer extends EventEmitter {
     this.emit('queue_changed', JSON.stringify(data));
   }
 
+  /**
+   * 延迟广播 queue_changed（合并多次调用，只保留最后一次）。
+   * 用于切歌边界：大队列的 JSON 序列化 + IPC + 渲染进程 DOM 重渲染
+   * 会阻塞主线程，延迟到边界之后执行，避免与 PCM 转发争抢。
+   * 由于总是发送当前状态快照，延迟期间内的队列变更会自然合并、状态一致。
+   */
+  _emitQueueChangedDelayed(delayMs) {
+    if (this._queueChangedDelayTimer) clearTimeout(this._queueChangedDelayTimer);
+    this._queueChangedDelayTimer = setTimeout(() => {
+      this._queueChangedDelayTimer = null;
+      this._emitQueueChanged();
+    }, delayMs);
+  }
+
+  /**
+   * 延迟预加载下一曲。
+   * 切歌瞬间立即解码下一曲会让 decodeAudioData、大 ArrayBuffer IPC 和 GC
+   * 全部挤在曲目边界上，与 PCM 转发争抢主线程 → 欠载卡顿。
+   * 推迟 ~1.2s 对几分钟的曲目毫无影响（下一轮边界还很远）。
+   */
+  _schedulePreloadNext(delayMs) {
+    if (this._preloadDelayTimer) {
+      clearTimeout(this._preloadDelayTimer);
+      this._preloadDelayTimer = null;
+    }
+    this._preloadDelayTimer = setTimeout(() => {
+      this._preloadDelayTimer = null;
+      if (this._fe_state !== 'playing') return;
+      if (this._automixEnabled || this._gaplessEnabled) {
+        this._preloadNextTrack();
+      }
+    }, delayMs);
+  }
+
+  /** 取消延迟的预加载（手动切歌/停止时调用，避免旧定时器干扰新播放流程） */
+  _cancelScheduledPreload() {
+    if (this._preloadDelayTimer) {
+      clearTimeout(this._preloadDelayTimer);
+      this._preloadDelayTimer = null;
+    }
+  }
+
   setMediaBaseUrl(url) {
     this._media_base_url = url || '';
   }
 
   _resolvePlayablePath(track) {
+    // Subsonic 曲目：如果本地库存在相同歌曲，优先使用本地文件
+    if (track.source === 'subsonic' && this._library) {
+      const localTrack = this._library.findLocalTrackForSubsonic(track);
+      if (localTrack && localTrack.path) {
+        return localTrack.path; // 直接返回本地文件路径
+      }
+    }
     if (track.source !== 'subsonic') return track.path || '';
     const p = track.path || '';
     if (!p.startsWith('subsonic://')) return p;
@@ -424,6 +478,8 @@ class MusicPlayer extends EventEmitter {
 
   _playAt(index) {
     if (index < 0 || index >= this._queue.length) return;
+    // 手动切歌：取消切歌边界延迟的预加载（_playNative 末尾会立即预加载新下一曲）
+    this._cancelScheduledPreload();
     this._current_index = index;
     if (this._shuffle) {
       if (!this._shuffle_history.length || this._shuffle_history[this._shuffle_history.length - 1] !== index) {
@@ -447,6 +503,8 @@ class MusicPlayer extends EventEmitter {
   async _playNative(track) {
     if (!this._renderer || !track) return;
     const myToken = ++this._nativePlayToken;
+    // 新播放流程会自己立即预加载下一曲，取消切歌边界遗留的延迟预加载
+    this._cancelScheduledPreload();
 
     const filePath = this._resolvePlayablePath(track);
     if (!filePath) {
@@ -701,7 +759,8 @@ class MusicPlayer extends EventEmitter {
     this.emit('duration_changed', this._fe_duration);
     // 即座に位置を通知（100ms タイマーを待たずに UI/歌詞を正しい位置に合わせる）
     this.emit('position_changed', seekOffset);
-    this._emitQueueChanged();
+    // 队列广播延迟到边界之后，避免大队列序列化/DOM 重渲染阻塞 PCM 转发
+    this._emitQueueChangedDelayed(400);
 
     // シャッフル履歴に追加
     if (this._shuffle && this._current_index >= 0) {
@@ -711,10 +770,8 @@ class MusicPlayer extends EventEmitter {
       }
     }
 
-    // さらに次の曲をプリロード
-    if (this._automixEnabled || this._gaplessEnabled) {
-      this._preloadNextTrack();
-    }
+    // さらに次の曲をプリロード（遅延：decodeAudioData/GC が境界に集中するのを防ぐ）
+    this._schedulePreloadNext(1200);
   }
 
   setAutomixEnabled(enabled) {
@@ -796,6 +853,7 @@ class MusicPlayer extends EventEmitter {
   }
 
   stop() {
+    this._cancelScheduledPreload();
     if (this._renderer) {
       this._renderer.stop();
       return;
