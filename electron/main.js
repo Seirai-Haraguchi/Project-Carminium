@@ -11,6 +11,7 @@ const electron = require('electron');
 const { app, BrowserWindow, nativeImage, shell, dialog } = electron;
 const path = require('path');
 const fs = require('fs');
+const { getInstance: getMemoryManager } = require('./memory_manager');
 
 // ── 全局异常捕获 ─────────────────────────────────────────────────────────────
 process.on('uncaughtException', (err) => {
@@ -19,19 +20,165 @@ process.on('uncaughtException', (err) => {
 });
 
 // ── Windows AppUserModelID（SMTC / 任务栏标识）─────────────────────────────
+/**
+ * Windows SMTC "未知应用" 问题排查：
+ *
+ * SMTC 通过进程级 AUMID 查找应用显示名称。需满足：
+ *   1. 进程级 AUMID 已设置（SetCurrentProcessExplicitAppUserModelID）
+ *   2. 注册表 HKCU\Software\Classes\AppUserModelId\<AUMID> 下有 DisplayName / IconUri
+ *   3. 图标路径持久可用（便携版每次解压到不同临时目录）
+ *
+ * 此前仅调用 app.setAppUserModelId()，但 Chromium 的 SMTC 会话使用
+ * 进程级 AUMID，需要直接调用 SetCurrentProcessExplicitAppUserModelID。
+ * 此外 reg 命令通过 cmd.exe 执行时，路径中的 %20 会被解释为变量引用，
+ * 导致 IconUri 被破坏。改用 execFileSync 避免 shell 解释。
+ */
+const AUMID = 'Yunofactory.ProjectCarminium.Player';
+const APP_DISPLAY_NAME = 'Project Carminium';
+
 if (app && process.platform === 'win32') {
-  app.setAppUserModelId('ProjectCarminium.Player');
-  // 在 Windows 注册表中注册 AUMID 的图标和显示名称
-  // 这样任务栏和 SMTC 控制面板就能正确显示应用图标
+  app.setAppUserModelId(AUMID);
+
+  // ── 0. 直接调用 SetCurrentProcessExplicitAppUserModelID ──
+  // app.setAppUserModelId() 设置窗口级 AUMID，但 Chromium SMTC 使用进程级 AUMID。
+  // 直接调用 Windows API 确保进程级 AUMID 被正确设置。
+  let _shell32 = null;
   try {
-    const { execSync } = require('child_process');
-    const iconPath = path.join(__dirname, '..', 'build', 'icon.png');
-    const iconUri = 'file:///' + iconPath.replace(/\\/g, '/');
-    const regKey = 'HKCU\\Software\\Classes\\AppUserModelId\\ProjectCarminium.Player';
-    execSync(`reg ADD "${regKey}" /v DisplayName /t REG_SZ /d "Project Carminium" /f`, { stdio: 'ignore' });
-    execSync(`reg ADD "${regKey}" /v IconUri /t REG_SZ /d "${iconUri}" /f`, { stdio: 'ignore' });
+    const koffi = require('koffi');
+    _shell32 = koffi.load('shell32.dll');
+
+    const SetCurrentProcessExplicitAppUserModelID = _shell32.func(
+      'int32 SetCurrentProcessExplicitAppUserModelID(str16 appID)'
+    );
+    const hr = SetCurrentProcessExplicitAppUserModelID(AUMID);
+    if (hr !== 0) {
+      console.warn('[main] SetCurrentProcessExplicitAppUserModelID failed, HRESULT:', hr);
+    } else {
+      console.log('[main] Process AUMID set to:', AUMID);
+    }
   } catch (e) {
-    console.warn('[main] Failed to register AUMID icon:', e.message);
+    console.warn('[main] Failed to set process AUMID via koffi:', e.message);
+  }
+
+  const { execFileSync } = require('child_process');
+
+  // 辅助函数：执行 reg 命令并捕获错误
+  function _reg(args) {
+    try {
+      const output = execFileSync('reg', args, {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+      return { ok: true, output };
+    } catch (e) {
+      const stderr = (e.stderr || '').toString().trim();
+      console.warn('[main] reg command failed:', args.join(' '), stderr || e.message);
+      return { ok: false, output: '', error: stderr || e.message };
+    }
+  }
+
+  // ── 1. 将图标复制到稳定的持久路径 ──
+  // 便携版每次解压到不同临时目录，注册表中的 IconUri 在应用关闭后失效。
+  let iconUriValue = null;
+  const appDataDir = process.env.APPDATA;
+
+  if (appDataDir) {
+    const stableDir = path.join(appDataDir, 'Carminium');
+    const stableIconPath = path.join(stableDir, 'app-icon.png');
+    const sourceIconPath = path.join(__dirname, '..', 'build', 'icon.png');
+
+    try {
+      if (!fs.existsSync(stableDir)) {
+        fs.mkdirSync(stableDir, { recursive: true });
+      }
+      if (fs.existsSync(sourceIconPath)) {
+        fs.copyFileSync(sourceIconPath, stableIconPath);
+      }
+      if (fs.existsSync(stableIconPath)) {
+        // 不使用 %20 编码：file:/// 协议中空格可以直接使用，
+        // %20 在 reg 命令中会被 cmd.exe 误解释为变量引用。
+        iconUriValue = 'file:///' + stableIconPath.replace(/\\/g, '/');
+      }
+    } catch (e) {
+      console.warn('[main] Failed to copy icon to stable path:', e.message);
+    }
+  }
+
+  // 回退：使用源图标路径（开发模式）
+  if (!iconUriValue) {
+    const sourceIconPath = path.join(__dirname, '..', 'build', 'icon.png');
+    if (fs.existsSync(sourceIconPath)) {
+      iconUriValue = 'file:///' + sourceIconPath.replace(/\\/g, '/');
+    }
+  }
+
+  // ── 2. 清理旧的 AUMID 注册表条目 ──
+  try {
+    const regParent = 'HKCU\\Software\\Classes\\AppUserModelId';
+    const result = _reg(['QUERY', regParent]);
+    if (result.ok && result.output) {
+      const lines = result.output.split('\n').map(l => l.trim());
+      for (const line of lines) {
+        if (!line.startsWith(regParent + '\\')) continue;
+        const subAumid = line.substring(regParent.length + 1);
+        // 只清理包含 Carminium 或 Yunofactory 的旧条目
+        if (subAumid !== AUMID &&
+            (subAumid.includes('Carminium') || subAumid.includes('Yunofactory'))) {
+          _reg(['DELETE', line, '/f']);
+          console.log('[main] Cleaned up old AUMID registry entry:', subAumid);
+        }
+      }
+    }
+  } catch { /* ignore */ }
+
+  // ── 3. 注册当前 AUMID 的显示名称和图标 ──
+  const regKey = `HKCU\\Software\\Classes\\AppUserModelId\\${AUMID}`;
+
+  const dnResult = _reg(['ADD', regKey, '/v', 'DisplayName', '/t', 'REG_SZ', '/d', APP_DISPLAY_NAME, '/f']);
+  if (dnResult.ok) {
+    console.log('[main] AUMID DisplayName registered:', APP_DISPLAY_NAME);
+  }
+
+  if (iconUriValue) {
+    const iuResult = _reg(['ADD', regKey, '/v', 'IconUri', '/t', 'REG_SZ', '/d', iconUriValue, '/f']);
+    if (iuResult.ok) {
+      console.log('[main] AUMID IconUri registered:', iconUriValue);
+    }
+  }
+
+  // ── 4. 验证注册表值 ──
+  const verifyResult = _reg(['QUERY', regKey]);
+  if (verifyResult.ok && verifyResult.output) {
+    console.log('[main] AUMID registry verification:\n' + verifyResult.output.trim());
+  } else {
+    console.warn('[main] AUMID registry verification FAILED — values may not be set');
+  }
+
+  // ── 5. IFEO 兜底：通过 Image File Execution Options 注入进程级 AUMID ──
+  // 开发模式下 electron.exe 的默认 AUMID 可能覆盖 SetCurrentProcessExplicitAppUserModelID。
+  // IFEO 在进程创建时由 Windows 直接注入 AUMID，优先级高于运行时 API 调用。
+  // 注意：这会影响所有使用同路径 electron.exe 的应用，退出时需清理。
+  const exePath = process.execPath;
+  if (exePath && exePath.toLowerCase().includes('electron')) {
+    try {
+      const ifeoKey = 'HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\' + exePath.replace(/\\/g, '\\');
+      _reg(['ADD', ifeoKey, '/v', 'AppUserModelId', '/t', 'REG_SZ', '/d', AUMID, '/f']);
+      console.log('[main] IFEO AUMID registered for:', exePath);
+    } catch (e) {
+      console.warn('[main] Failed to set IFEO AUMID:', e.message);
+    }
+  }
+
+  // ── 6. 通知 Shell 刷新关联缓存 ──
+  // SHCNE_ASSOCCHANGED = 0x08000000, SHCNF_IDLIST = 0x0000
+  if (_shell32) {
+    try {
+      const SHChangeNotify = _shell32.func(
+        'void SHChangeNotify(int32 wEventId, int32 uFlags, void *dwItem1, void *dwItem2)'
+      );
+      SHChangeNotify(0x08000000, 0x0000, null, null);
+    } catch { /* non-critical */ }
   }
 }
 
@@ -78,10 +225,10 @@ function createMainWindow() {
   } catch { /* fallback: no icon */ }
 
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 820,
-    minWidth: 380,
-    minHeight: 680,
+    width: 1280,
+    height: 800,
+    minWidth: 1280,
+    minHeight: 720,
     title: 'Project Carminium',
     icon: appIcon,
     show: false,
@@ -203,6 +350,10 @@ function savePlaybackState() {
 
 async function initializeApp() {
   try {
+    // ── 启动主进程内存管理器 ──
+    const memMgr = getMemoryManager();
+    memMgr.start();
+
     const { AppSettings } = require('./settings');
     const { MusicLibrary } = require('./library');
     const { MusicPlayer } = require('./player');
@@ -271,6 +422,11 @@ async function initializeApp() {
 
 function shutdown() {
   try {
+    // 停止内存管理器定时器
+    const { getInstance: getMemoryManager } = require('./memory_manager');
+    getMemoryManager().stop();
+  } catch { /* ignore */ }
+  try {
     if (player) player.stop();
   } catch { /* ignore */ }
   savePlaybackState();
@@ -286,6 +442,19 @@ function shutdown() {
   try {
     if (player) player.close();
   } catch { /* ignore */ }
+  // 清理 IFEO AUMID 注入（避免影响其他使用同路径 electron.exe 的应用）
+  if (process.platform === 'win32') {
+    try {
+      const { execFileSync: _regExec } = require('child_process');
+      const exePath = process.execPath;
+      if (exePath && exePath.toLowerCase().includes('electron')) {
+        const ifeoKey = 'HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\' + exePath.replace(/\\/g, '\\');
+        _regExec('reg', ['DELETE', ifeoKey, '/v', 'AppUserModelId', '/f'], {
+          stdio: 'ignore', windowsHide: true,
+        }).catch(() => {});
+      }
+    } catch { /* ignore */ }
+  }
 }
 
 // ── App 事件 ───────────────────────────────────────────────────────────────

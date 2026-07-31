@@ -15,7 +15,6 @@
     repeat: 'off',
     queue: [],
     currentQueueIndex: -1,
-    isMobileView: false,
     allTracks: [],       // 全量曲目缓存，启动时拉取，library_updated 时刷新
     allAlbums: [],       // 全量专辑缓存
     allArtists: [],      // 全量艺术家缓存
@@ -247,6 +246,10 @@
           App.utils.applyDynamicTheme(App.state.currentDominantRgb, App.state.colorScheme);
         }
       }
+      // 手柄按钮布局变更
+      if (s.gamepad_button_layout !== undefined && App.gamepad && App.gamepad.setButtonLayout) {
+        App.gamepad.setButtonLayout(s.gamepad_button_layout);
+      }
             // AutoMix / gapless / BeatShake 依赖前端 Web Audio API，已随前端模式一并移除
           } catch (e) { /* ignore */ }
         });
@@ -261,7 +264,7 @@
         if (App.playlists && App.playlists.refresh) {
           App.playlists.refresh();
         }
-        // 先拉取全量缓存，再拉取播放状态，最后渲染首页
+        // 先拉取全量缓存，再拉取播放状态，最后渲染首页（按当前模式进入对应默认页）
         App.refreshLibraryCache().then(function () {
           return _fetchInitialState();
         }).then(function () {
@@ -416,6 +419,11 @@
     // 清除旧曲的过渡点标记（新曲的标记在分析完成后由 _maybeComputePlan 设置）
     App.nowPlaying.clearTransitionPoint();
 
+    // ── 内存管理：触发切歌清理 ──
+    if (window.MemoryManager) {
+      window.MemoryManager.fireTrackChangeCleanup();
+    }
+
     // gapless 切换：延迟 updateTrack 到 requestAnimationFrame，
     // 让事件循环先处理 OutputCaptureWorklet 积压的 PCM 消息。
     // 否则 updateTrack 的同步 DOM 操作会阻塞主线程，
@@ -527,6 +535,12 @@
   function navigate(pageId, params) {
     // 清除曲目多选状态
     if (App.selection) App.selection.clear();
+
+    // ── 内存管理：触发页面导航清理 ──
+    if (window.MemoryManager) {
+      window.MemoryManager.fireNavigationCleanup();
+    }
+
     const container = document.getElementById('page-container');
 
     // 保存当前页面的滚动位置，以便返回时恢复
@@ -764,14 +778,6 @@
     });
   });
 
-  // 移动端设置 FAB
-  const mobileSettingsFab = document.getElementById('mobile-settings-fab');
-  if (mobileSettingsFab) {
-    mobileSettingsFab.addEventListener('click', function () {
-      navigate('settings');
-    });
-  }
-
   // 标题栏设置按钮
   const titleBarSettings = document.getElementById('title-bar-settings');
   if (titleBarSettings) {
@@ -864,41 +870,47 @@
         _closePlaylistsSubmenu();
         navigate('playlists', { playlist_id: pl.id, playlist_name: pl.name, source: pl.source, server_id: pl.server_id, remote_id: pl.remote_id, server_name: pl.server_name, cover_art_id: pl.cover_art_id, owner: pl.owner, owner_email: pl.owner_email });
       });
-      // 拖拽放入歌单（仅本地歌单）
-      if (!isRemote) {
-        item.addEventListener('dragover', function (e) {
-          e.preventDefault();
-          e.dataTransfer.dropEffect = 'copy';
-          item.classList.add('drag-over');
-        });
-        item.addEventListener('dragleave', function () {
-          item.classList.remove('drag-over');
-        });
-        item.addEventListener('drop', function (e) {
-          e.preventDefault();
-          item.classList.remove('drag-over');
-          // 取消自动关闭定时器
-          if (App._dragCloseTimer) { clearTimeout(App._dragCloseTimer); App._dragCloseTimer = null; }
-          if (App._dragOpenedSubmenu) {
-            if (App.playlists && App.playlists.closeSubmenu) App.playlists.closeSubmenu();
-            App._dragOpenedSubmenu = false;
-          }
-          var raw = e.dataTransfer.getData('text/plain');
-          if (!raw) return;
-          try {
-            var ids = JSON.parse(raw);
-            if (!Array.isArray(ids) || ids.length === 0) return;
-            App.utils.call('add_tracks_to_playlist', pl.id, JSON.stringify(ids)).then(function (res) {
-              try {
-                var r = JSON.parse(res);
+      // 拖拽放入歌单（本地和远程都支持）
+      item.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        item.classList.add('drag-over');
+      });
+      item.addEventListener('dragleave', function () {
+        item.classList.remove('drag-over');
+      });
+      item.addEventListener('drop', function (e) {
+        e.preventDefault();
+        item.classList.remove('drag-over');
+        // 取消自动关闭定时器
+        if (App._dragCloseTimer) { clearTimeout(App._dragCloseTimer); App._dragCloseTimer = null; }
+        if (App._dragOpenedSubmenu) {
+          if (App.playlists && App.playlists.closeSubmenu) App.playlists.closeSubmenu();
+          App._dragOpenedSubmenu = false;
+        }
+        var raw = e.dataTransfer.getData('text/plain');
+        if (!raw) return;
+        try {
+          var ids = JSON.parse(raw);
+          if (!Array.isArray(ids) || ids.length === 0) return;
+          var method = isRemote ? 'add_tracks_to_remote_playlist' : 'add_tracks_to_playlist';
+          App.utils.call(method, pl.id, JSON.stringify(ids)).then(function (res) {
+            try {
+              var r = JSON.parse(res);
+              if (r.error) {
+                App.utils.toast(r.error);
+              } else {
                 App.utils.toast((r.added || 0) + ' 首曲目已添加到「' + pl.name + '」');
-              } catch (e) { /* ignore */ }
-            });
-          } catch (err) {
-            console.warn('[playlists] drop parse error:', err);
-          }
-        });
-      }
+                if (r.skipped > 0) {
+                  App.utils.toast(r.skipped + ' 首曲目不属于该服务器，已跳过');
+                }
+              }
+            } catch (e) { /* ignore */ }
+          });
+        } catch (err) {
+          console.warn('[playlists] drop parse error:', err);
+        }
+      });
       frag.appendChild(item);
     });
     playlistsListEl.appendChild(frag);
@@ -1659,6 +1671,10 @@
   document.addEventListener('DOMContentLoaded', function () {
     _initAudioEngine();
     _initAutoMixAnalysis();
+    // ── 启动渲染进程内存管理器 ──
+    if (window.MemoryManager) {
+      window.MemoryManager.start();
+    }
     initBridge();
   });
 

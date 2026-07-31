@@ -185,6 +185,16 @@ class NativeRenderer extends EventEmitter {
     this.sendFfmpegState = null;      // (channel: 'main'|'next', finished: bool) => void
 
     this._drainTimer = null;
+
+    // ── Pre-roll（起動前バッファリング）──
+    // WASAPI デバイスを開始する前に DLL リングバッファへ一定量の PCM を蓄える。
+    // 蓄積後は push 速度 = 消費速度で水位が PREROLL_MS 付近に保たれるため、
+    // 切歌瞬間のレンダラー主スレッドブロック（UI 更新・decodeAudioData・GC）
+    // による PCM 転送遅延をバッファが吸収し、欠載による音切れを防ぐ。
+    // 位置表示は getBufferLatencyMs → AudioEngine 側の遅延補正で自動補正される。
+    this.PREROLL_MS = 800;          // 目標水位（ミリ秒）
+    this.PREROLL_TIMEOUT_MS = 3000; // 水位が貯まらなくても強制開始する上限
+    this._prerollTimer = null;
   }
 
   static enumerateDevices() {
@@ -440,17 +450,74 @@ class NativeRenderer extends EventEmitter {
 
   // ── 再生制御 ──────────────────────────────────────────────────────────────
 
+  /**
+   * Pre-roll 対応の再生開始。
+   * 水位が目標に達していれば即座に ca_start、
+   * 足りなければポーリングで水位を待ってから開始する。
+   * タイムアウト時は無音デッドロック防止のため強制開始。
+   */
+  _startWithPreroll() {
+    this._cancelPreroll();
+    if (!this._initialized) return;
+
+    const targetBytes = Math.max(1, Math.round(
+      this._sampleRate * this._bytesPerFrame * (this.PREROLL_MS / 1000)
+    ));
+
+    const tryStart = () => {
+      const r = _f.ca_start();
+      if (r !== 0) {
+        console.error('[wasapi] ca_start failed:', r);
+      }
+    };
+
+    let buffered = 0;
+    try { buffered = _f.ca_get_buffered_bytes(); } catch { /* ignore */ }
+    if (buffered >= targetBytes) {
+      tryStart();
+      return;
+    }
+
+    const startT = Date.now();
+    console.log('[wasapi] preroll: waiting for buffer', Math.round(buffered / (this._bytesPerFrame * this._sampleRate / 1000)) + 'ms /', this.PREROLL_MS + 'ms');
+    this._prerollTimer = setInterval(() => {
+      if (!this._initialized) { this._cancelPreroll(); return; }
+      let level = 0;
+      try { level = _f.ca_get_buffered_bytes(); } catch { /* ignore */ }
+      if (level >= targetBytes || Date.now() - startT > this.PREROLL_TIMEOUT_MS) {
+        const waitedMs = Date.now() - startT;
+        this._cancelPreroll();
+        if (level < targetBytes) {
+          console.warn('[wasapi] preroll timeout after', waitedMs + 'ms, starting anyway (level:',
+            Math.round(level / (this._bytesPerFrame * this._sampleRate / 1000)) + 'ms)');
+        } else {
+          console.log('[wasapi] preroll complete in', waitedMs + 'ms');
+        }
+        tryStart();
+      }
+    }, 30);
+  }
+
+  _cancelPreroll() {
+    if (this._prerollTimer) {
+      clearInterval(this._prerollTimer);
+      this._prerollTimer = null;
+    }
+  }
+
   async play() {
     if (!this._initialized) throw new Error('Not initialized');
-    const r = _f.ca_start();
-    if (r !== 0) throw new Error(`ca_start failed: ${r}`);
+    // 先に状態を playing にして UI を即応させる。
+    // DLL 側の実際の出力開始は pre-roll 完了後（位置は遅延補正で正しく表示される）。
     this._playing = true;
     this._paused = false;
     this.emit('state_changed', 'playing');
+    this._startWithPreroll();
   }
 
   async pause() {
     if (!this._playing) return;
+    this._cancelPreroll();
     _f.ca_stop();
     this._playing = false;
     this._paused = true;
@@ -458,6 +525,7 @@ class NativeRenderer extends EventEmitter {
   }
 
   async stop() {
+    this._cancelPreroll();
     _f.ca_stop();
     this._playing = false;
     this._paused = false;
@@ -475,6 +543,7 @@ class NativeRenderer extends EventEmitter {
     const seekSec = Math.max(0, positionMs / 1000);
     const wasPlaying = this._playing;
 
+    this._cancelPreroll();
     _f.ca_stop();
     this._killFFmpeg();
     this._pendingBuf = Buffer.alloc(0);
@@ -488,10 +557,8 @@ class NativeRenderer extends EventEmitter {
     }
 
     if (wasPlaying) {
-      const r = _f.ca_start();
-      if (r === 0) {
-        this._playing = true;
-      }
+      // 缓冲已清空，走 pre-roll 等水位回升后再起声，避免 seek 后欠载
+      this._startWithPreroll();
     } else {
       this._paused = true;
     }
@@ -815,6 +882,7 @@ class NativeRenderer extends EventEmitter {
   }
 
   async close() {
+    this._cancelPreroll();
     this._stopDrainTimer();
     this._killFFmpeg();
     this._killNextFfmpeg();

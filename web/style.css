@@ -23,6 +23,122 @@
   src: url(fonts/noto-sans.woff2) format('woff2');
 }
 
+/* ── Roboto（内置） ───────────────────────────────────────── */
+@font-face {
+  font-family: 'Roboto';
+  font-style: normal;
+  font-weight: 100;
+  font-display: swap;
+  src: url(fonts/Roboto-Thin.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Roboto';
+  font-style: italic;
+  font-weight: 100;
+  font-display: swap;
+  src: url(fonts/Roboto-ThinItalic.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Roboto';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url(fonts/Roboto-Light.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Roboto';
+  font-style: italic;
+  font-weight: 300;
+  font-display: swap;
+  src: url(fonts/Roboto-LightItalic.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Roboto';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(fonts/Roboto-Regular.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Roboto';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url(fonts/Roboto-Italic.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Roboto';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(fonts/Roboto-Medium.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Roboto';
+  font-style: italic;
+  font-weight: 500;
+  font-display: swap;
+  src: url(fonts/Roboto-MediumItalic.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Roboto';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(fonts/Roboto-Bold.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Roboto';
+  font-style: italic;
+  font-weight: 700;
+  font-display: swap;
+  src: url(fonts/Roboto-BoldItalic.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Roboto';
+  font-style: italic;
+  font-weight: 900;
+  font-display: swap;
+  src: url(fonts/Roboto-BlackItalic.ttf) format('truetype');
+}
+
+/* ── Roboto Condensed（内置） ────────────────────────────── */
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url(fonts/RobotoCondensed-Light.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: italic;
+  font-weight: 300;
+  font-display: swap;
+  src: url(fonts/RobotoCondensed-LightItalic.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url(fonts/RobotoCondensed-Italic.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(fonts/RobotoCondensed-Bold.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: italic;
+  font-weight: 700;
+  font-display: swap;
+  src: url(fonts/RobotoCondensed-BoldItalic.ttf) format('truetype');
+}
+
 /* ── 1. Material Symbols ──────────────────────────────────── */
 .material-symbols-rounded {
   font-family: 'Material Symbols Rounded', sans-serif;
@@ -171,7 +287,7 @@
 
 /* ── 4. Shape & Motion ────────────────────────────────────── */
 :root {
-  --ui-font: 'Google Sans Flex', 'Google Sans', 'Noto Sans SC', 'Noto Sans', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --ui-font: 'Roboto', 'Google Sans Flex', 'Google Sans', 'Noto Sans SC', 'Noto Sans', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
 
   --shape-xs:   4px;
   --shape-sm:   8px;
@@ -237,9 +353,9 @@ a   { color: var(--md-primary); text-decoration: none; }
 /* ── 6. App Shell (Three Columns) ────────────────────────── */
 .app-shell {
   display: grid;
-  grid-template-columns: 96px 1fr 340px;
+  grid-template-columns: 1fr 340px;
   grid-template-rows: 100%;
-  width: 100vw;
+  width: 100%;
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -263,29 +379,29 @@ body.is-resizing *::after {
   transition: none !important;
 }
 
-/* 移动端设置 FAB（默认隐藏，响应式移动布局下显示在右上角） */
-.mobile-settings-fab {
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: none;
-  background: var(--md-primary-container);
-  color: var(--md-on-primary-container);
-  display: none;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  z-index: 60;
-  transition: background var(--motion-short) var(--ease-standard);
+/* ── App Root：标题栏横跨顶部 + 下方（侧边栏 | 主区） ── */
+.app-root {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  grid-template-rows: 36px 1fr;
+  grid-template-areas:
+    "title title"
+    "nav   main";
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
-.mobile-settings-fab:hover {
-  background: color-mix(in srgb, var(--md-primary-container), var(--md-on-primary-container) 8%);
-}
-.mobile-settings-fab .material-symbols-rounded {
-  font-size: 22px;
+.title-bar { grid-area: title; }
+.nav-drawer { grid-area: nav; }
+.app-main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
 }
 
 /* ── 7. Navigation Rail ────────────────────────────────── */
@@ -293,6 +409,8 @@ body.is-resizing *::after {
   display: flex;
   flex-direction: column;
   align-items: center;
+  flex-shrink: 0;
+  width: 96px;
   background: var(--md-surface-container-low);
   height: 100%;
   overflow: hidden;
@@ -1718,7 +1836,7 @@ z-index: 1;
 
 /* 折りたたみ時のレイアウト調整 */
 body.player-collapsed .app-shell {
-  grid-template-columns: 96px 1fr 0;
+  grid-template-columns: 1fr 0;
 }
 body.player-collapsed .content-pane {
   padding-bottom: 96px;
@@ -1895,35 +2013,6 @@ padding: 0;
   aspect-ratio: 1;
 }
 
-@media (max-width: 760px) {
-  .now-playing-pane.fullscreen {
-    display: flex;
-    flex-direction: column;
-    padding: 0;
-    gap: 0;
-    overflow-y: auto;
-    height: calc(100vh - 36px);
-  }
-  .now-playing-pane.fullscreen .np-top-bar,
-  .now-playing-pane.fullscreen .np-pivot,
-  .now-playing-pane.fullscreen .np-panels,
-  .now-playing-pane.fullscreen .np-main-controls,
-  .now-playing-pane.fullscreen .np-secondary-controls,
-  .now-playing-pane.fullscreen .np-volume {
-    display: flex;
-    width: auto;
-    margin: 0;
-  }
-  .now-playing-pane.fullscreen .np-panel--info.active { display: none; }
-  .now-playing-pane.fullscreen .np-panel--queue.active,
-  .now-playing-pane.fullscreen .np-panel--lyrics.active {
-    display: flex;
-    border: none;
-    border-radius: 0;
-    padding-top: 0;
-  }
-}
-
 /* ── 19b. 全屏视图（影院模式）— 自动隐藏播放控制区 ───────────── */
 /* 影院模式在全窗口视图基础上启用，10秒无操作后添加 .controls-hidden
    隐藏所有播放控制元素（顶栏、标签页、控制按钮、音量、歌词工具栏等），
@@ -2002,157 +2091,6 @@ padding: 0;
   padding: 0;
   margin: 0;
   overflow: hidden;
-}
-
-/* 移动端影院模式下控制区不隐藏（触屏交互频繁，隐藏反而影响体验） */
-@media (max-aspect-ratio: 9/16), (max-width: 600px) {
-  .now-playing-pane.theater.controls-hidden .np-top-bar,
-  .now-playing-pane.theater.controls-hidden .np-pivot,
-  .now-playing-pane.theater.controls-hidden .np-main-controls,
-  .now-playing-pane.theater.controls-hidden .np-secondary-controls,
-  .now-playing-pane.theater.controls-hidden .np-volume,
-  .now-playing-pane.theater.controls-hidden .np-lyrics-toolbar,
-  .now-playing-pane.theater.controls-hidden .np-lyrics-source,
-  .now-playing-pane.theater.controls-hidden .np-progress-wrap,
-  .now-playing-pane.theater.controls-hidden .np-collapse-btn {
-    opacity: 1;
-    transform: none;
-    pointer-events: auto;
-  }
-  /* 进度条保持正常高度 */
-  .now-playing-pane.theater.controls-hidden .np-progress-wrap {
-    height: auto;
-    padding: 0 20px 8px;
-    margin: 0;
-    overflow: visible;
-  }
-  /* 信息面板不扩展、不居中 */
-  .now-playing-pane.theater.controls-hidden .np-panel--info.active {
-    grid-row: auto;
-    justify-content: flex-start;
-  }
-}
-
-/* ── レスポンシブ モバイルレイアウト ────────────────────────
-   縦長ウィンドウ / 狭い幅で自動的にスマホ風レイアウトに切り替わる。
-   サイドバー → 底ナビ、再生画面 → 全画面オーバーレイ、
-   折りたたみ → 浮遊ミニプレーヤー状態。 */
-@media (max-aspect-ratio: 9/16), (max-width: 600px) {
-  body,
-  html {
-    overflow: hidden;
-  }
-
-  body.player-collapsed .app-shell,
-  .app-shell {
-    grid-template-columns: 1fr;
-    grid-template-rows: 1fr auto;
-    grid-template-areas:
-      "content"
-      "nav";
-  }
-
-  .nav-drawer {
-    grid-area: nav;
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-around;
-    height: 64px;
-    width: 100vw;
-    padding: 0 8px;
-    border-right: none;
-    border-top: 1px solid var(--md-outline-variant);
-    gap: 0;
-  }
-  /* 移动端隐藏次级导航（历史/喜爱/歌单），保持底部导航简洁 */
-  .nav-item-desktop-only { display: none !important; }
-  .nav-submenu { display: none !important; }
-  /* フラット化：5 つの nav-item を nav-drawer の直接子として均等配置 */
-  .nav-section {
-    display: contents;
-  }
-  .nav-main {
-    margin: 0;
-  }
-  .nav-item {
-    flex: 1 1 0;
-    flex-direction: column;
-    gap: 4px;
-    padding: 8px 4px;
-    width: auto;
-    min-width: 0;
-  }
-  .nav-indicator {
-    width: 56px;
-    height: 32px;
-    border-radius: 16px;
-  }
-  .nav-label {
-    font-size: 12px;
-    font-weight: 500;
-  }
-  .content-pane {
-    grid-area: content;
-    height: 100%;
-    padding-bottom: 0;
-  }
-  .page-container {
-    width: 100%;
-    max-width: none;
-  }
-
-  .mini-player {
-    left: 0;
-    right: 0;
-    bottom: 64px;
-    border-radius: 0;
-    display: flex;
-  }
-  body:not(.player-collapsed) .mini-player {
-    display: none;
-  }
-  /* モバイル悬浮态：歌名・歌手名を非表示、コントロールが残りスペースを占有 */
-  .mini-player-info {
-    display: none;
-  }
-  .mini-player-progress-inline {
-    display: none;
-  }
-  .mini-player-controls {
-    flex: 1;
-    justify-content: center;
-  }
-
-  .now-playing-pane {
-    position: fixed;
-    inset: 0;
-    width: 100vw !important;
-    height: 100vh;
-    z-index: 40;
-    border-left: none;
-    transform: translateY(0);
-    transition: transform var(--motion-medium) var(--ease-standard);
-  }
-  .now-playing-pane.collapsed {
-    width: 100vw !important;
-    transform: translateY(100%);
-  }
-  .now-playing-pane.collapsed > * {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  /* モバイル時は全画面・浮動ウィンドウ入口を非表示 */
-  .np-split-btn,
-  .split-button,
-  .split-dropdown-menu {
-    display: none !important;
-  }
-
-  .mobile-settings-fab {
-    display: flex;
-  }
-
 }
 
 .np-header {
@@ -5134,34 +5072,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   font-size: 14px;
 }
 
-/* 响应式：窄屏退回单列 */
-@media (max-width: 720px) {
-  .artist-album-row {
-    grid-template-columns: 1fr;
-    gap: 12px;
-    padding: 12px 16px;
-  }
-  .artist-album-side {
-    flex-direction: row;
-    align-items: center;
-    gap: 12px;
-  }
-  .artist-album-card-flat {
-    width: auto;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 12px;
-  }
-  .artist-album-card-flat .album-cover {
-    width: 56px;
-    flex-shrink: 0;
-  }
-  .artist-album-card-flat .album-info {
-    padding: 0;
-  }
-}
-
 /* ── 15. Context Menu ────────────────────────────────────── */
 .context-menu-layer {
   position: fixed;
@@ -5550,6 +5460,63 @@ select.cmd-text-field__input + .cmd-text-field__label {
   flex-shrink: 0;
 }
 
+/* ── Settings — 内存信息面板 ──────────────────────────────────────────── */
+.settings-memory-info {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 28px;
+}
+.settings-memory-stats {
+  width: 100%;
+}
+.settings-memory-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 24px;
+}
+.settings-memory-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--md-outline-variant);
+}
+.settings-memory-label {
+  font-size: 13px;
+  color: var(--md-on-surface-variant);
+}
+.settings-memory-value {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--md-on-surface);
+  font-variant-numeric: tabular-nums;
+}
+.settings-memory-cleanup-btn {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 20px;
+  border: 1px solid var(--md-outline);
+  background: transparent;
+  color: var(--md-on-surface);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 120ms;
+}
+.settings-memory-cleanup-btn:hover:not(:disabled) {
+  background: var(--md-state-hover);
+}
+.settings-memory-cleanup-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.settings-memory-cleanup-btn .material-symbols-rounded {
+  font-size: 18px;
+}
+
 /* ── Settings — EQ 垂直滑块（全宽布局，参考音量条样式）──────────────── */
 .settings-eq-fullwidth {
   padding: 16px 28px 8px;
@@ -5777,9 +5744,8 @@ body.beat-shake {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  margin: 0 6px 0 2px;
+  width: 30px;
+  height: 30px;
   flex-shrink: 0;
   color: var(--md-primary);
   transition: color var(--motion-medium) var(--ease-standard);
@@ -5797,6 +5763,11 @@ body.beat-shake {
 /* ── 全屏模式：隐藏标题栏 ──────────────────────────────────── */
 body.window-fullscreen .title-bar {
   display: none;
+}
+/* 标题栏隐藏（窗口全屏）或浮层（全窗口视图）时，收起其预留栅格行，避免顶部留白 */
+body.np-fullscreen .app-root,
+body.window-fullscreen .app-root {
+  grid-template-rows: 0 1fr;
 }
 
 /* 全屏模式：全窗口视图（now-playing-pane）覆盖整个屏幕 */
@@ -5904,11 +5875,6 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   margin-top: 20px;
 }
 
-@media (max-width: 860px) {
-  .ym-header-art { display: none; }
-  .ym-title { font-size: 30px; }
-  .ym-header-left { min-width: 190px; }
-}
 @media (prefers-reduced-motion: reduce) {
   .ym-art-vinyl-spin { animation: none; }
 }
@@ -6271,18 +6237,6 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   margin: 0;
 }
 
-/* ── Responsive ────────────────────────────────────────────── */
-
-@media (max-width: 768px) {
-  .ym-section { padding: 0 16px; }
-  .ym-stats-overview { grid-template-columns: 1fr; }
-  .ym-stats-lists { grid-template-columns: 1fr; }
-  .ym-mix-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
-  .ym-recent-list { grid-template-columns: 1fr; }
-  .ym-stat-value { font-size: 26px; }
-}
-
-
 /* ── Remote Playlists Styles ───────────────────────────────────────────────────── */
 .page-title-with-badge {
   display: flex;
@@ -6535,3 +6489,4 @@ body.gamepad-connected .now-playing-pane:not(.fullscreen) .np-gamepad-hints {
   font-weight: 500;
   letter-spacing: 0.2px;
 }
+

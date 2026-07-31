@@ -90,8 +90,16 @@
    * @param {string} trackId
    */
   utils.loadCover = function (imgEl, trackId) {
-    imgEl.crossOrigin = 'anonymous';
-    imgEl.src = window.coverUrl(trackId);
+    if (window.CoverCache) {
+      var cached = window.CoverCache.getCached(trackId);
+      if (cached) { imgEl.src = cached; return; }
+      window.CoverCache.attachImage(imgEl, trackId, {
+        onError: function () { imgEl.removeAttribute('src'); },
+      });
+    } else {
+      imgEl.crossOrigin = 'anonymous';
+      imgEl.src = window.coverUrl(trackId);
+    }
   };
 
   utils.extractDominantColor = function(imgEl) {
@@ -764,7 +772,8 @@
    * 检测文本是否包含 LRC 时间戳
    */
   utils.isLRC = function (text) {
-    return /\[\d{2}:\d{2}[\.:]\d{2,3}\]/.test(text);
+    // 小数部分（.xx / .xxx）可选；缺失时按 .000 处理
+    return /\[\d{2}:\d{2}(?:[\.:]\d{2,3})?\]/.test(text);
   };
 
   /**
@@ -831,7 +840,8 @@
       }
 
       // 提取时间戳（仅用于判断是否是 LRC 行，不用于 credits 时间戳）
-      var timeMatch = trimmed.match(/\[(\d{2}):(\d{2})[\.:](\d{2,3})\]/);
+      // 小数部分可选
+      var timeMatch = trimmed.match(/\[(\d{2}):(\d{2})(?:[\.:](\d{2,3}))?\]/);
       var textContent = trimmed;
       if (timeMatch) {
         textContent = trimmed.substring(timeMatch.index + timeMatch[0].length).trim();
@@ -897,7 +907,7 @@
 
     return {
       lyrics: normalLines.join('\n'),
-      credits: '制作：' + uniqueNames.join('、'),
+      credits: 'Written By：' + uniqueNames.join('、'),
     };
   };
 
@@ -959,7 +969,8 @@
     if (!lrcText || typeof lrcText !== 'string') return [];
     var lines = lrcText.split('\n');
     var entries = [];
-    var timeRegex = /\[(\d{2}):(\d{2})[\.:](\d{2,3})\]/g;
+    // 小数部分（.xx / .xxx）可选；缺失时按 .000 处理
+    var timeRegex = /\[(\d{2}):(\d{2})(?:[\.:](\d{2,3}))?\]/g;
 
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i].trim();
@@ -973,8 +984,11 @@
       while ((match = timeRegex.exec(line)) !== null) {
         var m = parseInt(match[1], 10);
         var s = parseInt(match[2], 10);
-        var cs = parseInt(match[3], 10);
-        if (match[3].length === 2) cs *= 10;
+        var cs = 0;
+        if (match[3] !== undefined) {
+          cs = parseInt(match[3], 10);
+          if (match[3].length === 2) cs *= 10;
+        }
         times.push(m * 60000 + s * 1000 + cs);
         lastIdx = match.index + match[0].length;
       }

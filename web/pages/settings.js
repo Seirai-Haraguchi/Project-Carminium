@@ -421,6 +421,17 @@
       ],
     },
     {
+      id: 'system',
+      titleKey: 'settings.section.system',
+      icon: 'memory',
+      rows: [
+        {
+          type: 'memory_info',
+          bind: '_memory_info',
+        },
+      ],
+    },
+    {
       id: 'about',
       titleKey: 'settings.section.about',
       icon: 'info',
@@ -528,6 +539,152 @@
         _bindSectionRows(section, settings);
       });
     });
+
+    // ── 内存信息面板绑定 ──
+    _bindMemoryInfo();
+  }
+
+  // ── 内存信息面板 ─────────────────────────────────────────────────────────
+  var _memoryRefreshTimer = null;
+
+  function _bindMemoryInfo() {
+    var statsEl = page.container.querySelector('#memory-stats-display');
+    var cleanupBtn = page.container.querySelector('#memory-cleanup-btn');
+    if (!statsEl) return;
+
+    // 立即加载一次
+    _refreshMemoryStats(statsEl);
+
+    // 定时刷新（每 5 秒）
+    if (_memoryRefreshTimer) clearInterval(_memoryRefreshTimer);
+    _memoryRefreshTimer = setInterval(function () {
+      _refreshMemoryStats(statsEl);
+    }, 5000);
+
+    // 清理按钮
+    if (cleanupBtn) {
+      cleanupBtn.addEventListener('click', function () {
+        cleanupBtn.disabled = true;
+        if (window.MemoryManager) {
+          window.MemoryManager.emergencyCleanup();
+        }
+        // 请求主进程也执行清理
+        if (window.__electronAPI && window.__electronAPI.invoke) {
+          window.__electronAPI.invoke('memory:request_cleanup').catch(function () {});
+          window.__electronAPI.invoke('memory:request_gc').catch(function () {});
+        }
+        setTimeout(function () {
+          cleanupBtn.disabled = false;
+          _refreshMemoryStats(statsEl);
+        }, 500);
+      });
+    }
+
+    // 页面离开时停止刷新
+    var origNavigate = App.navigate;
+    if (!App._memoryNavWrapped) {
+      App._memoryNavWrapped = true;
+      App.navigate = function () {
+        if (_memoryRefreshTimer) {
+          clearInterval(_memoryRefreshTimer);
+          _memoryRefreshTimer = null;
+        }
+        return origNavigate.apply(this, arguments);
+      };
+    }
+  }
+
+  function _refreshMemoryStats(statsEl) {
+    if (!statsEl) return;
+
+    // 渲染进程内存
+    var rendererStats = window.MemoryManager ? window.MemoryManager.getStats() : null;
+
+    // 主进程内存
+    if (window.__electronAPI && window.__electronAPI.invoke) {
+      window.__electronAPI.invoke('memory:get_stats').then(function (res) {
+        try {
+          var mainStats = JSON.parse(res);
+          statsEl.innerHTML = _formatMemoryStats(mainStats, rendererStats);
+        } catch (e) {
+          statsEl.innerHTML = '<p class="settings-row-sub">内存数据解析失败</p>';
+        }
+      }).catch(function () {
+        statsEl.innerHTML = '<p class="settings-row-sub">无法获取内存数据</p>';
+      });
+    } else {
+      statsEl.innerHTML = _formatMemoryStats(null, rendererStats);
+    }
+  }
+
+  function _formatBytes(bytes) {
+    if (!bytes || bytes <= 0) return '0 B';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+  }
+
+  function _formatMemoryStats(main, renderer) {
+    var html = '<div class="settings-memory-grid">';
+
+    // 主进程
+    if (main && main.main) {
+      var m = main.main;
+      html += '<div class="settings-memory-item">' +
+        '<span class="settings-memory-label">主进程 RSS</span>' +
+        '<span class="settings-memory-value">' + _formatBytes(m.rss) + '</span>' +
+        '</div>';
+      html += '<div class="settings-memory-item">' +
+        '<span class="settings-memory-label">主进程堆使用</span>' +
+        '<span class="settings-memory-value">' + _formatBytes(m.heapUsed) + '</span>' +
+        '</div>';
+      html += '<div class="settings-memory-item">' +
+        '<span class="settings-memory-label">主进程堆总量</span>' +
+        '<span class="settings-memory-value">' + _formatBytes(m.heapTotal) + '</span>' +
+        '</div>';
+    }
+
+    // 渲染进程
+    if (renderer) {
+      if (renderer.jsHeapUsed !== undefined) {
+        html += '<div class="settings-memory-item">' +
+          '<span class="settings-memory-label">渲染进程 JS 堆</span>' +
+          '<span class="settings-memory-value">' + _formatBytes(renderer.jsHeapUsed) +
+          ' / ' + _formatBytes(renderer.jsHeapTotal) + '</span>' +
+          '</div>';
+      }
+      if (renderer.blobUrls !== undefined) {
+        html += '<div class="settings-memory-item">' +
+          '<span class="settings-memory-label">Blob URL 追踪</span>' +
+          '<span class="settings-memory-value">' + renderer.blobUrls + '</span>' +
+          '</div>';
+      }
+      if (renderer.totalTrackedListeners !== undefined) {
+        html += '<div class="settings-memory-item">' +
+          '<span class="settings-memory-label">追踪监听器</span>' +
+          '<span class="settings-memory-value">' + renderer.totalTrackedListeners +
+          ' (' + renderer.trackedElements + ' 元素)</span>' +
+          '</div>';
+      }
+      if (renderer.audioBufferCache) {
+        html += '<div class="settings-memory-item">' +
+          '<span class="settings-memory-label">音频缓冲缓存</span>' +
+          '<span class="settings-memory-value">' + _formatBytes(renderer.audioBufferCache.bytes) +
+          ' (' + renderer.audioBufferCache.entries + ' 条)</span>' +
+          '</div>';
+      }
+      if (renderer.coverCache) {
+        html += '<div class="settings-memory-item">' +
+          '<span class="settings-memory-label">封面缓存</span>' +
+          '<span class="settings-memory-value">' + renderer.coverCache.cached +
+          ' / ' + renderer.coverCache.maxPool + '</span>' +
+          '</div>';
+      }
+    }
+
+    html += '</div>';
+    return html;
   }
 
   // ── 渲染辅助 ─────────────────────────────────────────────────────────────
@@ -548,6 +705,18 @@
   }
 
   function _renderRow(row) {
+    if (row.type === 'memory_info') {
+      return '' +
+        '<div class="settings-row settings-memory-info" data-bind="' + row.bind + '">' +
+          '<div class="settings-memory-stats" id="memory-stats-display">' +
+            '<p class="settings-row-sub">加载中…</p>' +
+          '</div>' +
+          '<button class="md-text-btn settings-memory-cleanup-btn" id="memory-cleanup-btn" type="button">' +
+            '<span class="material-symbols-rounded">cleanup</span>' +
+            '<span>立即清理</span>' +
+          '</button>' +
+        '</div>';
+    }
     if (row.type === 'notice') {
       var itemsHtml = (row.items || []).map(function (it) {
         return '<li class="settings-notice-item">' + it + '</li>';
