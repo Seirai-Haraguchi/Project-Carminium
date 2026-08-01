@@ -9,11 +9,20 @@
     "start": "node scripts/start-electron.js .",
     "dev": "node scripts/start-electron.js . --dev",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "install:win": "npm install && npm run rebuild",
+    "install:linux": "npm install && npm run rebuild",
     "build:native": "cd native && zig build copy -Doptimize=ReleaseFast",
+    "build:native:linux": "cd native && zig build copy -Doptimize=ReleaseFast -Dtarget=x86_64-linux-gnu",
+    "build:native:all": "npm run build:native && npm run build:native:linux",
     "build": "electron-builder --win",
     "build:dir": "electron-builder --win --dir",
     "build:portable": "electron-builder --win portable",
-    "build:all": "npm run build:native && npm run rebuild && npm run build"
+    "build:all": "npm run build:native && npm run rebuild && npm run build",
+    "build:linux": "electron-builder --linux",
+    "build:linux-deb": "electron-builder --linux deb",
+    "build:linux-portable": "electron-builder --linux AppImage",
+    "build:linux-all": "electron-builder --linux deb AppImage",
+    "build:cross-win-linux": "electron-builder --win portable --linux deb AppImage"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.6.0",
@@ -40,7 +49,15 @@
       "web/**/*",
       "build/icon.png",
       "version.json",
-      "package.json"
+      "package.json",
+      "!electron/bin/linux/**/*",
+      "!electron/bin/win32/**/*",
+      "!electron/bin/carminium_audio.so",
+      "!electron/bin/carminium_audio.dll",
+      "!electron/bin/ffmpeg",
+      "!electron/bin/ffprobe",
+      "!electron/bin/ffmpeg.exe",
+      "!electron/bin/ffprobe.exe"
     ],
     "win": {
       "target": [
@@ -51,7 +68,84 @@
           ]
         }
       ],
-      "signAndEditExecutable": false
+      "signAndEditExecutable": false,
+      "files": [
+        "electron/bin/win32/**/*",
+        "electron/bin/carminium_audio.dll",
+        "electron/bin/ffmpeg.exe",
+        "electron/bin/ffprobe.exe"
+      ],
+      "asarUnpack": [
+        "node_modules/better-sqlite3/**/*",
+        "node_modules/koffi/**/*",
+        "node_modules/@koromix/koffi-win32-x64/**/*",
+        "node_modules/sharp/**/*",
+        "node_modules/@img/sharp-win32-x64/**/*",
+        "electron/bin/win32/**/*",
+        "electron/bin/carminium_audio.dll",
+        "electron/bin/ffmpeg.exe",
+        "electron/bin/ffprobe.exe"
+      ]
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Audio;Music;Player;AudioVideo",
+      "vendor": "Yunofactory",
+      "synopsis": "Carminium — マテリアルデザイン音楽プレイヤー",
+      "description": "マテリアルデザイン（M3）に準拠した高機能デスクトップ音楽プレイヤー。ローカルと Subsonic の両方に対応。",
+      "depends": [
+        "libasound2",
+        "libpulse0",
+        "libgtk-3-0",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "libatspi2.0-0",
+        "libdrm2",
+        "libgbm1"
+      ],
+      "files": [
+        "electron/bin/linux/**/*",
+        "electron/bin/carminium_audio.so",
+        "electron/bin/ffmpeg",
+        "electron/bin/ffprobe"
+      ],
+      "asarUnpack": [
+        "node_modules/better-sqlite3/**/*",
+        "node_modules/koffi/**/*",
+        "node_modules/@koromix/koffi-linux-x64/**/*",
+        "node_modules/sharp/**/*",
+        "node_modules/@img/sharp-linux-x64-gnu/**/*",
+        "node_modules/@img/sharp-linux-x64-musl/**/*",
+        "electron/bin/linux/**/*",
+        "electron/bin/carminium_audio.so",
+        "electron/bin/ffmpeg",
+        "electron/bin/ffprobe"
+      ]
+    },
+    "deb": {
+      "artifactName": "${productName}-${version}-linux-amd64.deb",
+      "compression": "xz",
+      "section": "sound",
+      "priority": "optional",
+      "packageCategory": "sound"
+    },
+    "appImage": {
+      "artifactName": "${productName}-${version}-linux-x86_64.AppImage",
+      "systemIntegration": "doNotAsk"
     },
     "electronDist": "node_modules/electron/dist",
     "portable": {
@@ -60,9 +154,11 @@
     "asarUnpack": [
       "node_modules/better-sqlite3/**/*",
       "node_modules/koffi/**/*",
-      "node_modules/@koromix/koffi-win32-x64/**/*",
+      "node_modules/@koromix/**/*",
       "node_modules/sharp/**/*",
       "node_modules/@img/sharp-win32-x64/**/*",
+      "node_modules/@img/sharp-linux-x64-gnu/**/*",
+      "node_modules/@img/sharp-linux-x64-musl/**/*",
       "electron/bin/**/*"
     ]
   }
