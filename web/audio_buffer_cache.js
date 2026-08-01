@@ -10,7 +10,7 @@
 (function () {
   'use strict';
 
-  const DEFAULT_MAX_BYTES = 150 * 1024 * 1024; // 150MB（从 500MB 收紧）
+  const DEFAULT_MAX_BYTES = 80 * 1024 * 1024; // 80MB（从 150MB 收紧，防止内存占用过高）
 
   class AudioBufferCache {
     /**

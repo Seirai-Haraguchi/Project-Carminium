@@ -176,10 +176,10 @@
     // AudioBufferCache：在内存压力下缩减
     if (window.__audioEngine && window.__audioEngine._cache) {
       var stats = window.__audioEngine._cache.stats;
-      if (stats && stats.bytes > 100 * 1024 * 1024) {
-        // 超过 100MB 时清理一半最旧条目
+      if (stats && stats.bytes > 60 * 1024 * 1024) {
+        // 超过 60MB 时缩减到 40MB，释放旧 AudioBuffer
         try {
-          window.__audioEngine._cache.shrinkTo(80 * 1024 * 1024);
+          window.__audioEngine._cache.shrinkTo(40 * 1024 * 1024);
           results.audioBufferCache = 'shrunk';
         } catch (e) { /* ignore */ }
       }

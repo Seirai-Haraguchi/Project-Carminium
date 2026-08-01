@@ -14,6 +14,15 @@
   let searchText = '';
   let sortMode = 'az'; // 'az', 'za', 'artist', 'album', 'year'
 
+  // ── 虚拟滚动实例 & 扁平化渲染数据 ──
+  let _vl = null;
+  // _flatList: [{ type: 'header'|'row', track?, letter?, listIndex? }]
+  let _flatList = [];
+  // 当前渲染用的过滤+排序后曲目数组（用于 play_from_list）
+  let _renderedTracks = [];
+  const ROW_HEIGHT = 56;
+  const HEADER_HEIGHT = 32;
+
   // 排序选项配置
   const SORT_OPTIONS = [
     { key: 'az', label: 'A-Z', icon: 'sort_by_alpha' },
@@ -63,7 +72,7 @@
           <input type="text" id="music-search" data-i18n-placeholder="music.searchPlaceholder" placeholder="搜索本地歌曲、艺术家或专辑…" data-i18n-aria-label="common.search" aria-label="搜索">
         </div>
       </div>
-      <ul class="track-list az-list" id="music-list"></ul>
+      <ul class="track-list az-list vl-track-list" id="music-list"></ul>
     `;
 
     const searchInput = document.getElementById('music-search');
@@ -157,7 +166,9 @@
     const list = document.getElementById('music-list');
     if (!list) return;
     const currentId = App.state.currentTrack ? App.state.currentTrack.id : null;
-    Array.from(list.children).forEach(li => {
+    // 虚拟滚动：只更新当前可见的 .vl-track-row-wrapper 元素
+    const rows = list.querySelectorAll('.vl-track-row-wrapper, [data-track-id]');
+    rows.forEach(li => {
       if (li.dataset.trackId === currentId) {
         li.classList.add('playing');
       } else {
@@ -244,7 +255,6 @@
   function _renderList() {
     const ul = document.getElementById('music-list');
     if (!ul) return;
-    ul.innerHTML = '';
 
     let list = filterStr ? allTracks.filter(t => {
       const q = filterStr;
@@ -257,6 +267,11 @@
     list = _sortTracks(list);
 
     if (list.length === 0) {
+      // 销毁虚拟列表，显示空状态
+      if (_vl) { _vl.destroy(); _vl = null; }
+      _flatList = [];
+      _renderedTracks = [];
+      ul.classList.remove('az-list');
       ul.innerHTML = `
         <div class="empty-state">
           <span class="material-symbols-rounded empty-icon">music_off</span>
@@ -270,24 +285,64 @@
     const showGroup = !filterStr;
     const groups = showGroup ? _groupTracks(list) : [{ letter: '', items: list }];
 
-    const fragment = document.createDocumentFragment();
+    // ── 扁平化为虚拟列表的渲染数据 ──
+    // _flatList: [{ type: 'header'|'row', track?, letter?, displayNum? }]
+    _flatList = [];
+    _renderedTracks = list;
     let counter = 0;
     groups.forEach(group => {
       if (showGroup) {
-        const header = document.createElement('li');
-        header.className = 'az-section-header';
-        header.innerHTML = `<span class="az-section-letter">${group.letter}</span>`;
-        fragment.appendChild(header);
+        _flatList.push({ type: 'header', letter: group.letter });
       }
-      group.items.forEach((track) => {
+      group.items.forEach(track => {
         counter++;
-        const li = App.utils.trackRow(track, counter, function (clickedTrack, idx) {
-          App.backend.play_from_list(JSON.stringify(list), list.indexOf(clickedTrack));
-        }, true /* show mini cover instead of number */);
-        fragment.appendChild(li);
+        _flatList.push({ type: 'row', track: track, displayNum: counter });
       });
     });
-    ul.appendChild(fragment);
+
+    // ── 销毁旧实例，清空容器 ──
+    if (_vl) { _vl.destroy(); _vl = null; }
+    ul.classList.add('az-list');
+    ul.innerHTML = '';
+
+    // ── 创建虚拟列表 ──
+    // 动态高度：表头 32px，曲目行 56px
+    _vl = new window.VirtualList({
+      container: ul,
+      scrollContainer: document.getElementById('content-pane'),
+      items: _flatList,
+      itemHeight: ROW_HEIGHT,
+      estimatedItemHeight: ROW_HEIGHT,
+      getHeight: function (item) {
+        return item.type === 'header' ? HEADER_HEIGHT : ROW_HEIGHT;
+      },
+      bufferSize: 8,
+      renderItem: function (item, index, el) {
+        // 复用 DOM：根据 type 切换 className 和内容
+        if (item.type === 'header') {
+          el.className = 'az-section-header vl-item';
+          el.innerHTML = '<span class="az-section-letter">' + item.letter + '</span>';
+          el.removeAttribute('data-track-id');
+        } else {
+          // 曲目行：用 trackRow 构建并替换 el 内容
+          // 注意：trackRow 返回 <li>，但我们复用 <div> 容器，把 li 内容搬进来
+          const track = item.track;
+          const displayNum = item.displayNum;
+          const li = App.utils.trackRow(track, displayNum, function (clickedTrack, idx) {
+            // 在过滤+排序后的列表中找到点击项的实际播放索引
+            const playIdx = _renderedTracks.indexOf(clickedTrack);
+            App.backend.play_from_list(JSON.stringify(_renderedTracks), playIdx);
+          }, true);
+
+          // 把 li 的内容搬到 el（保留事件：trackRow 已给 li 加监听，所以直接用 li 替换）
+          el.className = 'vl-track-row-wrapper';
+          el.innerHTML = '';
+          // 把 li 作为子元素插入（保留所有事件绑定）
+          el.appendChild(li);
+          el.dataset.trackId = track.id;
+        }
+      },
+    });
   }
 
 })();

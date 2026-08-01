@@ -529,6 +529,13 @@
   <!-- Memory manager (before app.js) -->
   <script src="memory_manager.js"></script>
 
+  <!-- UI 状态同步层：解耦 backend 事件接收与 DOM 更新，
+       防止 UI 重渲染阻塞 PCM 转发 IPC → 播放断音。必须在 app.js 之前。 -->
+  <script src="ui_state_sync.js"></script>
+
+  <!-- 虚拟滚动：大列表/网格只渲染可见项，避免 5000+ DOM 节点内存爆炸 -->
+  <script src="virtual_list.js"></script>
+
   <!-- Main app (last) -->
   <script src="app.js"></script>
 </body>

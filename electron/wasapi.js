@@ -448,6 +448,25 @@ class NativeRenderer extends EventEmitter {
     }
   }
 
+  // ── FFmpeg stdout 背压控制 ─────────────────────────────────────────────
+  // 当渲染进程 StreamingPCMProcessor 的 ring buffer 水位过高时，
+  // 暂停 FFmpeg stdout 的 data 事件，阻止 PCM 继续产出。
+  // FFmpeg 管道缓冲区满后会自然阻塞，不丢弃任何数据。
+
+  pauseStdout(channel) {
+    const proc = channel === 'main' ? this._ffmpegProc : this._nextFfmpegProc;
+    if (proc && proc.stdout && !proc.stdout.isPaused()) {
+      try { proc.stdout.pause(); } catch (_) {}
+    }
+  }
+
+  resumeStdout(channel) {
+    const proc = channel === 'main' ? this._ffmpegProc : this._nextFfmpegProc;
+    if (proc && proc.stdout && proc.stdout.isPaused()) {
+      try { proc.stdout.resume(); } catch (_) {}
+    }
+  }
+
   // ── 再生制御 ──────────────────────────────────────────────────────────────
 
   /**

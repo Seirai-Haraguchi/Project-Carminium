@@ -22,8 +22,8 @@ const { ipcMain } = require('electron');
 
 const MONITOR_INTERVAL_MS = 30_000;   // 监控周期：30s
 const CLEANUP_INTERVAL_MS = 60_000;   // 清理周期：60s
-const HEAP_WARN_MB = 250;             // 堆内存告警阈值
-const HEAP_CRITICAL_MB = 400;         // 堆内存危险阈值
+const HEAP_WARN_MB = 150;             // 堆内存告警阈值（从 250 收紧）
+const HEAP_CRITICAL_MB = 250;         // 堆内存危险阈值（从 400 收紧）
 const RENDERER_REPORT_INTERVAL_MS = 60_000; // 渲染进程上报周期
 
 // ── MemoryManager ──────────────────────────────────────────────────────────

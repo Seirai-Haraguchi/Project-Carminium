@@ -130,11 +130,10 @@ class Bridge extends EventEmitter {
       float32Array.byteOffset + float32Array.byteLength
     );
     const ipcChannel = channel === 'main' ? 'audio_pcm_main' : 'audio_pcm_next';
+    // PCM データは主窗口にのみ送信（浮動窗口は音声データを使用せず、
+    // 不要な IPC 転送と structured clone によるメモリ無駄遣いを避ける）
     if (this._mainWindow && !this._mainWindow.isDestroyed()) {
       this._mainWindow.webContents.send(ipcChannel, ab);
-    }
-    if (this._floatingWindow && !this._floatingWindow.isDestroyed()) {
-      this._floatingWindow.webContents.send(ipcChannel, ab);
     }
   }
 
@@ -241,8 +240,25 @@ class Bridge extends EventEmitter {
     ipcMain.on('audio_crossfade_complete', (_e, positionMs) => {
       this._player._handleAudioCrossfadeComplete(positionMs);
     });
+    ipcMain.on('audio_crossfade_start', () => {
+      this._player._handleAudioCrossfadeStart();
+    });
     ipcMain.on('audio_gapless_switch', () => {
       this._player._handleGaplessSwitch();
+    });
+
+    // ── FFmpeg 背压控制 (Renderer → Main) ──
+    // 渲染进程 StreamingPCMProcessor 的 ring buffer 水位过高/过低时，
+    // 暂停/恢复 FFmpeg stdout，防止 buffer 无限扩容又不丢数据
+    ipcMain.handle('ffmpeg_flow_control', (_e, opts) => {
+      const renderer = this._player._renderer;
+      if (!renderer || !opts) return false;
+      if (opts.pause) {
+        renderer.pauseStdout(opts.channel || 'main');
+      } else {
+        renderer.resumeStdout(opts.channel || 'main');
+      }
+      return true;
     });
 
     // ── Web Audio API: 文件解码 IPC ──
@@ -320,6 +336,8 @@ class Bridge extends EventEmitter {
         this._settings.set('music_folders', folders);
       }
       this._scanFolderAsync(resolvedPath);
+      // 新文件夹纳入 FileWatcher 监控
+      if (this._libraryWatcher) this._libraryWatcher.syncFolders();
       return _dump(folder);
     });
 
@@ -331,6 +349,8 @@ class Bridge extends EventEmitter {
         folders.splice(idx, 1);
         this._settings.set('music_folders', folders);
       }
+      // 停止监控已移除的文件夹
+      if (this._libraryWatcher) this._libraryWatcher.syncFolders();
       this._player.reloadLikedTracks();
       this._emit('library_updated', _dump(this._lib.getAllTracks()));
       this._emit('folders_updated', _dump(this._lib.getFolders()));
@@ -946,6 +966,12 @@ class Bridge extends EventEmitter {
       const settingsJson = _dump(this._settings.all());
       this.emit('settings_changed', settingsJson);
       this._emit('settings_changed', settingsJson);
+      // 自动刷新相关设置变更时，重启 FileWatcher / 远程定期同步
+      const AUTO_REFRESH_KEYS = [
+        'library_auto_watch', 'library_watch_poll_minutes', 'library_watch_debounce_ms',
+        'subsonic_auto_sync', 'subsonic_sync_interval_minutes',
+      ];
+      if (AUTO_REFRESH_KEYS.some((k) => k in data)) this.startAutoRefresh();
     });
 
     ipcMain.handle('set_wasapi_exclusive', async (_e, enabled) => {
@@ -1034,6 +1060,60 @@ class Bridge extends EventEmitter {
         console.error('[scan] 推送更新失败:', e);
       }
     });
+  }
+
+  // ── 库自动刷新：本地 FileWatcher + 远程定期 re-sync ──
+
+  /**
+   * 启动库自动刷新。可重复调用（先停后启，用于设置变更后重启）。
+   * 本地：FileWatcher 监控各库文件夹，分层增量扫描后经 onChanged 推送更新。
+   * 远程：定期调用 _syncSubsonicServer（自带防重入）刷新本地缓存数据库。
+   */
+  startAutoRefresh() {
+    this.stopAutoRefresh();
+    try {
+      const { LibraryWatcher, RemoteSyncScheduler } = require('./auto_refresh');
+      this._libraryWatcher = new LibraryWatcher(this._lib, this._settings, {
+        onChanged: (folderPath, stats) => this._onAutoRefreshChanged(folderPath, stats),
+      });
+      this._remoteSyncScheduler = new RemoteSyncScheduler(
+        this._lib, this._settings, (serverId) => this._syncSubsonicServer(serverId)
+      );
+      this._libraryWatcher.start();
+      this._remoteSyncScheduler.start();
+    } catch (e) {
+      console.error('[auto-refresh] 启动失败:', e.message || e);
+    }
+  }
+
+  stopAutoRefresh() {
+    if (this._libraryWatcher) {
+      try { this._libraryWatcher.stop(); } catch { /* ignore */ }
+      this._libraryWatcher = null;
+    }
+    if (this._remoteSyncScheduler) {
+      try { this._remoteSyncScheduler.stop(); } catch { /* ignore */ }
+      this._remoteSyncScheduler = null;
+    }
+  }
+
+  /**
+   * FileWatcher 分层扫描检测到库内容变动后的推送。
+   * 复用前端已监听的 library_updated / folders_updated 事件，无需前端改动。
+   */
+  _onAutoRefreshChanged(folderPath, stats) {
+    try {
+      if (stats.removed > 0) {
+        // 有曲目被移除：同步清理播放器内存中的收藏状态
+        this._player.reloadLikedTracks();
+        this._emitLikedTracksChanged();
+        this._emitPlaylistsChanged();
+      }
+      this._emit('library_updated', _dump(this._lib.getAllTracks()));
+      this._emit('folders_updated', _dump(this._lib.getFolders()));
+    } catch (e) {
+      console.error('[auto-refresh] 推送库更新失败:', e.message || e);
+    }
   }
 
   // ── Subsonic 同步（后台异步）──
@@ -1190,6 +1270,8 @@ class Bridge extends EventEmitter {
 
   close() {
     this._closeFloatingWindow();
+    // 停止库自动刷新（FileWatcher / 远程定期同步）
+    this.stopAutoRefresh();
     // 刷新分析缓存到磁盘（确保退出时不丢失）
     if (this._analysisCache) {
       try { this._analysisCache.flush(); } catch (e) {
