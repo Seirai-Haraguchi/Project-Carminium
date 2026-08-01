@@ -676,6 +676,31 @@ body.is-resizing *::after {
   position: relative;
 }
 
+/* ── 虚拟滚动适配 ──
+   content-pane 保持滚动容器，VirtualList 监听它的 scroll 事件。
+   sticky-header 在 content-pane 内部，backdrop-filter 模糊背后滚动的列表内容。
+   列表容器（vl-track-list 等）不需要自己滚动，只作为 spacer 的父元素。 */
+.vl-track-list,
+.vl-album-grid,
+.vl-artist-list {
+  position: relative;
+}
+
+/* 虚拟列表中的曲目行：外层 wrapper */
+.vl-track-row-wrapper {
+  display: block;
+  padding: 0;
+  margin: 0;
+}
+.vl-track-row-wrapper > .track-row {
+  display: grid;
+  grid-template-columns: 40px 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  min-height: 56px;
+}
+
 .page-container {
   min-height: 100%;
   padding: 0;
@@ -1367,14 +1392,27 @@ overflow-y: auto;
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-background-color: var(--md-surface-container-low);
-filter: blur(120px) saturate(1.6) brightness(1.05);
-transform: scale(1.28) translateZ(0);
+  background-color: var(--md-surface-container-low);
+  filter: blur(120px) saturate(1.6) brightness(1.05);
+  transform: scale(1.28) translateZ(0);
   opacity: 0;
   transition: opacity 1.1s var(--ease-decel);
 }
 .np-bg-cover.active {
   opacity: 0.85;
+}
+
+/* ── 全窗口视图：鼓点驱动极光式流动 ──
+   JS RAF 每帧计算最终值并设置 CSS 变量：
+   --beat-blur: 模糊半径 px（120 静 → 72 峰值）
+   --beat-scale: 缩放比（1.28 静 → 1.36 峰值）
+   --beat-sat: 饱和度（1.6 静 → 2.2 峰值）
+   --beat-bright: 亮度（1.05 静 → 1.25 峰值）
+   --beat-opacity: 透明度（0.85 静 → 0.95 峰值） */
+.now-playing-pane.fullscreen .np-bg-cover.active {
+  filter: blur(var(--beat-blur, 120px)) saturate(var(--beat-sat, 1.6)) brightness(var(--beat-bright, 1.05));
+  transform: scale(var(--beat-scale, 1.28)) translateZ(0);
+  opacity: var(--beat-opacity, 0.85);
 }
 /* 流体动画在播放时继续，暂停时静止以节能 */
 .np-bg-covers.paused {
@@ -1984,7 +2022,7 @@ padding: 0;
   height: 100%;
   min-height: 0;
   padding-top: 48px; /* space for pivot tabs */
-  overflow: hidden; /* 裁剪工具栏和搜索面板 */
+  overflow: hidden; /* 外层裁剪，内层 .np-queue-list / .np-lyrics-wrap 自己滚动 */
 }
 .now-playing-pane.fullscreen .np-panel--lyrics.active {
   position: relative; /* 让工具栏相对于歌词面板定位 */
@@ -2204,6 +2242,9 @@ padding: 0;
 .np-panel--queue .np-queue-list {
   padding: 8px;
   flex: 1;
+  min-height: 0;          /* flex 子项允许缩小，否则 overflow 不生效 */
+  overflow-y: auto;        /* 内容超出时滚动，不再溢出被裁切 */
+  overflow-x: hidden;
 }
 
 /* ── 24. Lyrics ──────────────────────────────────────────── */

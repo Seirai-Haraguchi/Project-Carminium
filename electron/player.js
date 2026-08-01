@@ -60,6 +60,11 @@ class MusicPlayer extends EventEmitter {
     this._automixEnabled = settings ? !!settings.get('automix', false) : false;
     this._crossfadeDurationMs = settings ? parseInt(settings.get('crossfade_duration', 4000), 10) || 4000 : 4000;
 
+    // Crossfade 状态跟踪
+    // AudioEngine 启动 crossfade（next 源淡入）时设为 true，完成/取消时设为 false。
+    // 用于 setRepeat 等切歌无关操作判断是否在过渡期内，避免清理 next 导致过渡中断。
+    this._inCrossfade = false;
+
     // Gapless
     this._gaplessEnabled = settings ? !!settings.get('gapless', false) : false;
 
@@ -223,7 +228,16 @@ class MusicPlayer extends EventEmitter {
   }
 
   _handleAudioCrossfadeComplete(positionMs) {
+    this._inCrossfade = false;
     this._onCrossfadeComplete(positionMs);
+  }
+
+  /**
+   * AudioEngine 启动 crossfade（next 源开始淡入）时被调用。
+   * 设置 _inCrossfade 标志，setRepeat 等操作据此跳过 next 清理，避免中断过渡。
+   */
+  _handleAudioCrossfadeStart() {
+    this._inCrossfade = true;
   }
 
   /**
@@ -235,6 +249,7 @@ class MusicPlayer extends EventEmitter {
    * Buffer gapless の場合、promoteNextToCurrent() は no-op（FFmpeg プロセス不存在）。
    */
   _handleGaplessSwitch() {
+    this._inCrossfade = false;
     // Streaming gapless: promote FFmpeg process from next → main
     if (this._renderer && this._renderer.promoteNextToCurrent) {
       this._renderer.promoteNextToCurrent();
@@ -505,6 +520,8 @@ class MusicPlayer extends EventEmitter {
     const myToken = ++this._nativePlayToken;
     // 新播放流程会自己立即预加载下一曲，取消切歌边界遗留的延迟预加载
     this._cancelScheduledPreload();
+    // 切歌：清零 crossfade 状态（旧过渡已被 stop 中断）
+    this._inCrossfade = false;
 
     const filePath = this._resolvePlayablePath(track);
     if (!filePath) {
@@ -853,6 +870,7 @@ class MusicPlayer extends EventEmitter {
   }
 
   stop() {
+    this._inCrossfade = false;
     this._cancelScheduledPreload();
     if (this._renderer) {
       this._renderer.stop();
@@ -1009,6 +1027,36 @@ class MusicPlayer extends EventEmitter {
     if (this._repeat === mode) return;
     this._repeat = mode;
     this.emit('repeat_changed', mode);
+
+    // 切换 repeat 模式时，需要更新已预加载的下一曲：
+    // 例：repeat='one' 时预加载了当前曲自己 → 切到 'off' 应改为队列下一首或停止
+    //     repeat='off' 队列末尾无预加载 → 切到 'one' 应预加载当前曲
+    //
+    // 例外：如果当前正在 crossfade 过渡中（next 源已开始淡入），
+    // 强行清理 next 会导致过渡中断、音频断流。此时让过渡完成，
+    // 由 _onCrossfadeComplete / _handleGaplessSwitch 中的 _repeat 检查处理后续索引推进。
+    if (this._inCrossfade) {
+      console.log('[player] setRepeat during crossfade, skip next reload');
+      return;
+    }
+
+    // 取消延迟的预加载定时器
+    this._cancelScheduledPreload();
+
+    // 清除 AudioEngine 的 next 状态（已预加载的旧下一曲信息）
+    this._emitAudioControl('clear_next');
+
+    // 清除 renderer 的 next ffmpeg 进程（如果存在）
+    if (this._renderer && this._renderer.cancelPreloadNext) {
+      try { this._renderer.cancelPreloadNext(); } catch (_) {}
+    }
+
+    // 重新预加载新 repeat 模式下的下一曲
+    // 异步执行：避免阻塞 repeat 状态变更的事件传播
+    // 如果新模式下无下一曲（如 repeat='off' 且队列末尾），_preloadNextTrack 会自行跳过
+    this._preloadNextTrack().catch(e => {
+      console.warn('[player] setRepeat: re-preload failed:', e.message);
+    });
   }
 
   getAudioDevices() {

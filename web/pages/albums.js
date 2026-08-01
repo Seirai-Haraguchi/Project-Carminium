@@ -13,6 +13,9 @@
   let searchText = '';
   let sortMode = 'az'; // 'az', 'za', 'artist', 'year'
 
+  // 虚拟列表实例引用（专辑网格不虚拟化，但保留销毁用）
+  let _vl = null;
+
   // 排序选项配置
   const SORT_OPTIONS = [
     { key: 'az', label: 'A-Z', icon: 'sort_by_alpha' },
@@ -225,6 +228,9 @@
     const grid = document.getElementById('album-grid');
     if (!grid) return;
 
+    // 销毁可能存在的旧虚拟列表实例（专辑网格不需要虚拟化，数量少）
+    if (_vl) { _vl.destroy(); _vl = null; }
+
     let list = filterStr ? allAlbums.filter(a => {
       const q = filterStr;
       return (a.album && a.album.toLowerCase().includes(q)) ||
@@ -250,7 +256,9 @@
       return;
     }
 
+    // 恢复 CSS grid 布局
     grid.style.display = 'grid';
+    grid.classList.add('album-grid');
     grid.innerHTML = '';
     const frag = document.createDocumentFragment();
 
@@ -267,7 +275,7 @@
       group.items.forEach(album => {
         const card = document.createElement('div');
         card.className = 'album-card';
-        
+
         let coverHtml = '';
         if (album.cover_track_id) {
           coverHtml = `<img src="${window.coverUrl(album.cover_track_id)}" alt="" loading="lazy">`;

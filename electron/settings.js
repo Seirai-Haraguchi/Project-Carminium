@@ -44,6 +44,11 @@ const DEFAULTS = {
   compressor_enabled: false,
   vocal_enhance: false,
   guitar_friendly: false,
+  library_auto_watch: true,          // 本地库文件夹 FileWatcher 自动刷新
+  library_watch_poll_minutes: 10,    // 本地库轮询兜底间隔（0 = 关闭轮询）
+  library_watch_debounce_ms: 3000,   // FileWatcher 事件去抖窗口
+  subsonic_auto_sync: true,          // 远程库定期 re-sync（刷新本地缓存数据库）
+  subsonic_sync_interval_minutes: 30, // 远程库 re-sync 间隔（0 = 禁用）
   shortcuts: {
     play_pause: 'Space',
     next_track: 'MediaTrackNext',

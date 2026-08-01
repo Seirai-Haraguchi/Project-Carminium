@@ -124,6 +124,16 @@
               sub: _t('settings.videoBackground.sub'),
               onChange: function (checked) { _applyVideoBackground(checked); },
             },
+            {
+              type: 'select',
+              bind: 'np_default_view',
+              label: _t('settings.npDefaultView.label'),
+              sub: _t('settings.npDefaultView.sub'),
+              options: [
+                { value: 'side', label: _t('settings.npDefaultView.side') },
+                { value: 'fullscreen', label: _t('settings.npDefaultView.fullscreen') },
+              ],
+            },
           ],
         },
         {

@@ -368,6 +368,10 @@
 'settings.waveProgress.sub': '在媒体播放器上显示一个扭曲的、恼人的、无用的、看起来像精子的和令人分心的进度条',
 'settings.videoBackground.label': '视频背景',
 'settings.videoBackground.sub': '当库中有与歌曲同名的视频文件时，以视频作为正在播放页面的背景（需在全窗口视图中生效）',
+      'settings.npDefaultView.label': '默认恢复视图',
+      'settings.npDefaultView.sub': '从底栏展开时进入的默认视图模式',
+      'settings.npDefaultView.side': '侧边视图',
+      'settings.npDefaultView.fullscreen': '全窗口视图',
 
       // 设置页 — 歌词
       'settings.lyricsBlur.label': '歌词渐进模糊',
@@ -788,6 +792,10 @@
 'settings.waveProgress.sub': '開啟時進度條以波浪形態流動，關閉則為平面進度條',
 'settings.videoBackground.label': '影片背景',
 'settings.videoBackground.sub': '當庫中有與歌曲同名的影片檔案時，以影片作為正在播放頁面的背景（需在全窗口視圖中生效）',
+      'settings.npDefaultView.label': '默認恢復視圖',
+      'settings.npDefaultView.sub': '從底欄展開時進入的預設視圖模式',
+      'settings.npDefaultView.side': '側邊視圖',
+      'settings.npDefaultView.fullscreen': '全窗口視圖',
 
       'settings.lyricsBlur.label': '歌詞漸進模糊',
       'settings.lyricsBlur.sub': '離當前播放行越遠的歌詞越模糊，當前行完全清晰',
@@ -1196,6 +1204,10 @@
 'settings.waveProgress.sub': 'オン時はプログレスバーがウェーブ状に流れ、オフ時はフラットなプログレスバー',
 'settings.videoBackground.label': '動画背景',
 'settings.videoBackground.sub': 'ライブラリに楽曲と同名の動画ファイルがある場合、動画を再生画面の背景として使用します（全画面表示で有効）',
+      'settings.npDefaultView.label': 'デフォルト復元ビュー',
+      'settings.npDefaultView.sub': 'ミニプレイヤーから展開時のデフォルトビュー',
+      'settings.npDefaultView.side': 'サイドビュー',
+      'settings.npDefaultView.fullscreen': '全画面表示',
 
       'settings.lyricsBlur.label': '歌詞プログレッシブブラー',
       'settings.lyricsBlur.sub': '現在の再生行から遠い歌詞ほどぼかし、現在行は完全にクリア',
@@ -1604,6 +1616,10 @@
 'settings.waveProgress.sub': 'When enabled, the progress bar flows as a wave. When disabled, it is a flat bar',
 'settings.videoBackground.label': 'Video Background',
 'settings.videoBackground.sub': 'When a video file with the same name as the song exists in the library, it is used as the now playing background (effective in full view)',
+      'settings.npDefaultView.label': 'Default Restore View',
+      'settings.npDefaultView.sub': 'Default view mode when expanding from the mini player',
+      'settings.npDefaultView.side': 'Side View',
+      'settings.npDefaultView.fullscreen': 'Full Window View',
 
       'settings.lyricsBlur.label': 'Lyrics Progressive Blur',
       'settings.lyricsBlur.sub': 'Lyrics farther from the current line are more blurred; the current line is fully clear',
@@ -2012,6 +2028,10 @@
 'settings.waveProgress.sub': 'При включении прогресс-бар течёт волной, при выключении — плоский',
 'settings.videoBackground.label': 'Видео-фон',
 'settings.videoBackground.sub': 'Если в библиотеке есть видеофайл с тем же именем, что у песни, он используется как фон страницы воспроизведения (в полноэкранном режиме)',
+      'settings.npDefaultView.label': 'Вид восстановления по умолчанию',
+      'settings.npDefaultView.sub': 'Режим просмотра по умолчанию при разворачивании из мини-плеера',
+      'settings.npDefaultView.side': 'Боковая панель',
+      'settings.npDefaultView.fullscreen': 'Полноэкранный режим',
 
       'settings.lyricsBlur.label': 'Прогрессивное размытие текста',
       'settings.lyricsBlur.sub': 'Строки farther от текущей более размыты; текущая строка полностью чёткая',

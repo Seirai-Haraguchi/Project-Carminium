@@ -127,20 +127,29 @@
       window.pywebview.api.get_cover_base_url().then(function (url) {
         window.__coverBase = url || '';
 
-        // Connect Signals（Proxy 将 .signal_name.connect(cb) 路由到 __bridge.on）
-        App.backend.track_changed.connect(_onTrackChanged);
-        App.backend.playback_state_changed.connect(_onStateChanged);
-        App.backend.position_changed.connect(_onPositionChanged);
-        App.backend.duration_changed.connect(_onDurationChanged);
-        App.backend.volume_changed.connect(_onVolumeChanged);
-        App.backend.shuffle_changed.connect(_onShuffleChanged);
-        App.backend.repeat_changed.connect(_onRepeatChanged);
-        App.backend.queue_changed.connect(_onQueueChanged);
-        App.backend.liked_changed.connect(_onLikedChanged);
-        App.backend.lyrics_changed.connect(_onLyricsChanged);
+        // ── UI 状态同步层 ──────────────────────────────────────────────
+        // 所有 backend 信号先入队到 uiSync，下一帧 RAF 批量 flush 才执行 DOM 更新。
+        // 这样 IPC handler O(1) 返回，不阻塞 PCM 转发 IPC → 大队列渲染时播放不断音。
+        // 详见 ui_state_sync.js。
+        var uiSync = window.uiSync;
+
+        // position_changed 是高频事件（250ms tick），合并到最新值
+        uiSync.markHighFreq('position_changed');
+
+        // 注册处理器（DOM 更新逻辑，在 RAF 中执行）
+        uiSync.on('track_changed', _onTrackChanged);
+        uiSync.on('playback_state_changed', _onStateChanged);
+        uiSync.on('position_changed', _onPositionChanged);
+        uiSync.on('duration_changed', _onDurationChanged);
+        uiSync.on('volume_changed', _onVolumeChanged);
+        uiSync.on('shuffle_changed', _onShuffleChanged);
+        uiSync.on('repeat_changed', _onRepeatChanged);
+        uiSync.on('queue_changed', _onQueueChanged);
+        uiSync.on('liked_changed', _onLikedChanged);
+        uiSync.on('lyrics_changed', _onLyricsChanged);
 
         // 歌单 / 历史 / 喜爱列表变化
-        App.backend.playlists_changed.connect(function (json) {
+        uiSync.on('playlists_changed', function (json) {
           try { App.state.allPlaylists = JSON.parse(json); } catch (e) {}
           if (App.playlists && App.playlists.refresh) {
             App.playlists.refresh();
@@ -150,7 +159,7 @@
             App.pages.playlists.onPlaylistsChanged(json);
           }
         });
-        App.backend.history_changed.connect(function (json) {
+        uiSync.on('history_changed', function (json) {
           if (App.state.currentPage === 'history' && App.pages.history && App.pages.history.onHistoryChanged) {
             App.pages.history.onHistoryChanged(json);
           }
@@ -158,21 +167,21 @@
             App.pages.your_mix.onHistoryChanged(json);
           }
         });
-        App.backend.liked_tracks_changed.connect(function (json) {
+        uiSync.on('liked_tracks_changed', function (json) {
           if (App.state.currentPage === 'liked' && App.pages.liked && App.pages.liked.onLikedTracksChanged) {
             App.pages.liked.onLikedTracksChanged(json);
           }
         });
 
         // Subsonic 服务器列表变化（添加/删除/同步完成）
-        App.backend.subsonic_servers_changed.connect(function (json) {
+        uiSync.on('subsonic_servers_changed', function (json) {
           try { App.state.allSubsonicServers = JSON.parse(json); } catch (e) {}
           if (App.pages.folders && App.pages.folders.onSubsonicServersUpdated) {
             App.pages.folders.onSubsonicServersUpdated(json);
           }
         });
 
-        // Subsonic 异步同步结果（成功/失败）
+        // Subsonic 异步同步结果（成功/失败）—— 低频、独立逻辑，仍走 __bridge.on
         window.__bridge.on('subsonic_sync_result', function (json) {
           try {
             var data = JSON.parse(json);
@@ -196,11 +205,12 @@
         });
 
         // BPM 分析完成：目前仅作元数据存储，前端音频播放器已移除
-        App.backend.bpm_analyzed.connect(function (json) {
+        // no-op handler，无需走 uiSync（不触发 DOM 更新）
+        App.backend.bpm_analyzed.connect(function () {
           /* AutoMix 变速过渡依赖前端 Web Audio API，已随前端模式一并移除 */
         });
 
-        App.backend.library_updated.connect(function (json) {
+        uiSync.on('library_updated', function (json) {
           // 刷新前端全量缓存，然后重渲染当前页
           App.refreshLibraryCache().then(function () {
             if (App.state.currentPage === 'music') App.pages.music.render(document.getElementById('page-container'));
@@ -208,7 +218,7 @@
             if (App.pages.folders.onFoldersUpdated) App.pages.folders.onFoldersUpdated(json);
           });
         });
-        App.backend.folders_updated.connect(function (json) {
+        uiSync.on('folders_updated', function (json) {
           App.refreshLibraryCache().then(function () {
             if (App.pages.folders.onFoldersUpdated) {
               App.pages.folders.onFoldersUpdated(json);
@@ -217,7 +227,7 @@
         });
 
         // 设置变更：同步正在播放页音频模式按钮（excl/shrd）
-        App.backend.settings_changed.connect(function (sjson) {
+        uiSync.on('settings_changed', function (sjson) {
           try {
             var s = JSON.parse(sjson);
             // 同步独占模式标志到 App.state
@@ -227,32 +237,61 @@
             if (App.nowPlaying && App.nowPlaying.updateAudioMode) {
               App.nowPlaying.updateAudioMode(!!s.wasapi_exclusive);
             }
-      // 界面字体变更
-      if (s.ui_font !== undefined) {
-        _applyUiFont(s.ui_font || '');
-      }
-      // 语言变更
-      if (s.language !== undefined && App.i18n && App.i18n.getLang() !== s.language) {
-        App.i18n.init(s.language);
-      }
-      // 莫奈取色来源变更
-      if (s.monet_source !== undefined) {
-        App.state.monetSource = s.monet_source;
-        // 切换到系统壁纸时立即获取系统强调色
-        if (s.monet_source === 'system_wallpaper') {
-          _refreshMonetFromSystem();
-        } else if (App.state.currentDominantRgb) {
-          // 切换到封面取色时，用当前缓存的主色重新应用
-          App.utils.applyDynamicTheme(App.state.currentDominantRgb, App.state.colorScheme);
-        }
-      }
-      // 手柄按钮布局变更
-      if (s.gamepad_button_layout !== undefined && App.gamepad && App.gamepad.setButtonLayout) {
-        App.gamepad.setButtonLayout(s.gamepad_button_layout);
-      }
+            // 界面字体变更
+            if (s.ui_font !== undefined) {
+              _applyUiFont(s.ui_font || '');
+            }
+            // 语言变更
+            if (s.language !== undefined && App.i18n && App.i18n.getLang() !== s.language) {
+              App.i18n.init(s.language);
+            }
+            // 莫奈取色来源变更
+            if (s.monet_source !== undefined) {
+              App.state.monetSource = s.monet_source;
+              // 切换到系统壁纸时立即获取系统强调色
+              if (s.monet_source === 'system_wallpaper') {
+                _refreshMonetFromSystem();
+              } else if (App.state.currentDominantRgb) {
+                // 切换到封面取色时，用当前缓存的主色重新应用
+                App.utils.applyDynamicTheme(App.state.currentDominantRgb, App.state.colorScheme);
+              }
+            }
+            // 手柄按钮布局变更
+            if (s.gamepad_button_layout !== undefined && App.gamepad && App.gamepad.setButtonLayout) {
+              App.gamepad.setButtonLayout(s.gamepad_button_layout);
+            }
+            // デフォルト復元ビュー変更
+            if (s.np_default_view !== undefined && App.nowPlaying) {
+              App.nowPlaying.setDefaultView(s.np_default_view);
+            }
             // AutoMix / gapless / BeatShake 依赖前端 Web Audio API，已随前端模式一并移除
           } catch (e) { /* ignore */ }
         });
+
+        // 信号 → 入队（IPC handler O(1) 返回，不阻塞 PCM 转发）
+        // 高频事件（position_changed）合并，低频事件 FIFO
+        function _wireSignal(signalName) {
+          App.backend[signalName].connect(function (payload) {
+            uiSync.enqueue(signalName, payload);
+          });
+        }
+        _wireSignal('track_changed');
+        _wireSignal('playback_state_changed');
+        _wireSignal('position_changed');
+        _wireSignal('duration_changed');
+        _wireSignal('volume_changed');
+        _wireSignal('shuffle_changed');
+        _wireSignal('repeat_changed');
+        _wireSignal('queue_changed');
+        _wireSignal('liked_changed');
+        _wireSignal('lyrics_changed');
+        _wireSignal('playlists_changed');
+        _wireSignal('history_changed');
+        _wireSignal('liked_tracks_changed');
+        _wireSignal('subsonic_servers_changed');
+        _wireSignal('library_updated');
+        _wireSignal('folders_updated');
+        _wireSignal('settings_changed');
 
         // 初始化 UI
         App.nowPlaying.init();
@@ -1075,6 +1114,16 @@
   // 合成済み PCM を OutputCaptureWorklet → DLL (WASAPI) に転送する。
 
   var _audioEngine = null;
+
+  // 暴露 audioEngine 供外部组件使用（频谱分析等）
+  Object.defineProperty(App, 'audioEngine', {
+    get: function () { return _audioEngine; }
+  });
+
+  // 暴露当前曲目分析数据（含 BPM）供外部组件使用
+  Object.defineProperty(App, 'currentAnalysis', {
+    get: function () { return _currentTrackAnalysis; }
+  });
   var _skipNextTrackGlitch = false;  // crossfade 已处理过渡动画时跳过 glitch
   var _gaplessSwitchPending = false; // gapless 切换待处理：延迟 updateTrack 避免阻塞音频管线
   var _crossfadeSwitchPending = false; // crossfade 切换待处理：延迟 updateTrack 避免阻塞音频管线
@@ -1102,6 +1151,11 @@
       window.__electronAPI.sendAudioPositionTick(ms);
     };
     _audioEngine.onCrossfadeStart = function () {
+      // 通知 main 进程：crossfade 已启动（next 源开始淡入）
+      // player.js 据此设置 _inCrossfade 标志，避免过渡期内清理 next（如 setRepeat）
+      if (window.__electronAPI && window.__electronAPI.sendAudioCrossfadeStart) {
+        window.__electronAPI.sendAudioCrossfadeStart();
+      }
       App.nowPlaying.showTransition(true);
       App.nowPlaying.setTrackInfoHidden(true);
     };

@@ -13,6 +13,13 @@
   let searchText = '';
   let sortMode = 'az'; // 'az', 'za', 'albums', 'tracks'
 
+  // ── 虚拟滚动实例 ──
+  let _vl = null;
+  // _flatList: [{ type:'header', letter } | { type:'row', artist }]
+  let _flatList = [];
+  const ROW_HEIGHT = 64; // 艺术家行比曲目行稍高（头像 + padding）
+  const HEADER_HEIGHT = 32;
+
   // 排序选项配置
   const SORT_OPTIONS = [
     { key: 'az', label: 'A-Z', icon: 'sort_by_alpha' },
@@ -51,7 +58,7 @@
           <input type="text" id="artist-search" data-i18n-placeholder="artists.searchPlaceholder" placeholder="搜索艺术家…" data-i18n-aria-label="artists.searchPlaceholder" aria-label="搜索艺术家">
         </div>
       </div>
-      <div class="artist-list az-list" id="artist-list"></div>
+      <div class="artist-list az-list vl-artist-list" id="artist-list"></div>
     `;
 
     const searchInput = document.getElementById('artist-search');
@@ -247,6 +254,8 @@
     }
 
     if (list.length === 0) {
+      if (_vl) { _vl.destroy(); _vl = null; }
+      _flatList = [];
       listEl.innerHTML = `
         <div class="empty-state">
           <span class="material-symbols-rounded empty-icon">person</span>
@@ -256,46 +265,65 @@
       return;
     }
 
-    listEl.innerHTML = '';
-    const frag = document.createDocumentFragment();
-
     // 根据排序模式生成分组
     const groups = filterStr ? [{ letter: '', items: list }] : _groupArtists(list);
 
+    // ── 扁平化为虚拟列表的渲染数据 ──
+    _flatList = [];
     groups.forEach(group => {
       if (!filterStr) {
-        const header = document.createElement('div');
-        header.className = 'az-section-header';
-        header.innerHTML = `<span class="az-section-letter">${group.letter}</span>`;
-        frag.appendChild(header);
+        _flatList.push({ type: 'header', letter: group.letter });
       }
       group.items.forEach(artist => {
-        const row = document.createElement('div');
-        row.className = 'artist-row';
-        
-        let avatarHtml = '';
-        if (artist.cover_track_id) {
-          avatarHtml = `<img src="${window.coverUrl(artist.cover_track_id)}" alt="" loading="lazy">`;
-        } else {
-          avatarHtml = App.utils.initial(artist.name);
-        }
-        
-        const bg = App.utils.hashColor(artist.name);
-
-        row.innerHTML = `
-          <div class="artist-avatar" style="${!artist.cover_track_id ? 'background:'+bg+';color:#fff;' : ''}">${avatarHtml}</div>
-          <div class="artist-info">
-            <p class="artist-name">${App.utils.esc(artist.name)}</p>
-            <p class="artist-meta">${App.i18n.t('artists.albumCount', { count: artist.album_count })} · ${App.i18n.t('music.trackCount', { count: artist.track_count })}</p>
-          </div>
-          <span class="material-symbols-rounded artist-chevron">chevron_right</span>
-        `;
-
-        row.addEventListener('click', () => _renderDetail(container, artist));
-        frag.appendChild(row);
+        _flatList.push({ type: 'row', artist: artist });
       });
     });
-    listEl.appendChild(frag);
+
+    // ── 销毁旧实例，清空容器 ──
+    if (_vl) { _vl.destroy(); _vl = null; }
+    listEl.innerHTML = '';
+
+    // ── 创建虚拟列表 ──
+    _vl = new window.VirtualList({
+      container: listEl,
+      scrollContainer: document.getElementById('content-pane'),
+      items: _flatList,
+      itemHeight: ROW_HEIGHT,
+      estimatedItemHeight: ROW_HEIGHT,
+      getHeight: function (item) {
+        return item.type === 'header' ? HEADER_HEIGHT : ROW_HEIGHT;
+      },
+      bufferSize: 8,
+      renderItem: function (item, index, el) {
+        if (item.type === 'header') {
+          el.className = 'az-section-header vl-item';
+          el.innerHTML = '<span class="az-section-letter">' + item.letter + '</span>';
+        } else {
+          const artist = item.artist;
+          el.className = 'artist-row vl-item';
+
+          let avatarHtml = '';
+          if (artist.cover_track_id) {
+            avatarHtml = '<img src="' + window.coverUrl(artist.cover_track_id) + '" alt="" loading="lazy">';
+          } else {
+            avatarHtml = App.utils.initial(artist.name);
+          }
+
+          const bg = App.utils.hashColor(artist.name);
+
+          el.innerHTML =
+            '<div class="artist-avatar" style="' + (!artist.cover_track_id ? 'background:' + bg + ';color:#fff;' : '') + '">' + avatarHtml + '</div>' +
+            '<div class="artist-info">' +
+              '<p class="artist-name">' + App.utils.esc(artist.name) + '</p>' +
+              '<p class="artist-meta">' + App.i18n.t('artists.albumCount', { count: artist.album_count }) + ' · ' +
+              App.i18n.t('music.trackCount', { count: artist.track_count }) + '</p>' +
+            '</div>' +
+            '<span class="material-symbols-rounded artist-chevron">chevron_right</span>';
+
+          el.onclick = function () { _renderDetail(container, artist); };
+        }
+      },
+    });
   }
 
   // 艺人详情页状态

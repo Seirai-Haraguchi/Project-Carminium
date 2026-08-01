@@ -406,6 +406,9 @@ async function initializeApp() {
     bridge.setMainWindow(mainWindow);
     smtc.setMainWindow(mainWindow);
 
+    // ── 启动库自动刷新（本地 FileWatcher + 远程定期 re-sync）──
+    bridge.startAutoRefresh();
+
     // 恢复播放状态 — 延迟到渲染进程 AudioEngine 就绪后执行，
     // 避免 audio_control (init/play) 事件在窗口加载前丢失导致无声
     bridge.once('renderer-ready', () => {

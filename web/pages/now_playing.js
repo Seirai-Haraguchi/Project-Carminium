@@ -123,6 +123,9 @@
   let waveProgress = true;
   let lyricsCreditFilters = '';
 
+  // デフォルト復元ビュー：'side' | 'fullscreen'
+  let _npDefaultView = 'side';
+
   // 歌词功能区状态
   let lyricsShowTranslation = true;
   let lyricsShowRomaji = true;
@@ -164,6 +167,176 @@
   var _videoBgEnabled = false;
   var _videoBgGen = 0;
 
+  // ── BPM + 频谱 联合驱动背景流动（极光效果） ──
+  // BPM 提供节拍时序（什么时候该脉动），频谱分析提供实际能量（脉动多强）。
+  // 两者相乘：bpmPulse * spectrumEnergy = 精确节拍形状 × 真实音频响应。
+  // - BPM 缺失时：只用频谱分析（纯能量驱动）
+  // - 频谱缺失时：只用 BPM（机械节拍，无动态强度）
+  // - 两者都有：节拍精确 + 强度真实 = 活的极光
+  var _beatRafId = 0;            // RAF 句柄
+  var _beatBpm = 0;              // 当前曲 BPM
+  var _beatIntervalMs = 500;     // 一拍间隔（ms），默认 120 BPM
+  var _beatLastPos = -1;         // 上一帧播放位置（检测切歌）
+  var _beatPulse = 0;            // 最终脉冲值（0-1，平滑后）
+  // 频谱平滑值
+  var _beatSpecBass = 0;
+  var _beatSpecMid = 0;
+  var _beatSpecTreble = 0;
+  // 本地位置推算：用 AudioContext.currentTime 在 250ms tick 之间做高精度插值
+  var _beatLocalBaseTime = 0;    // 上次 position_changed 时的 AudioContext.currentTime
+  var _beatLocalBasePos = 0;     // 上次 position_changed 时的播放位置
+
+  /**
+   * 更新本地位置基准（由 position_changed 信号驱动）。
+   */
+  function _beatUpdatePosition(ms) {
+    var engine = App.audioEngine;
+    var now = engine && engine._ctx ? engine._ctx.currentTime : 0;
+    _beatLocalBaseTime = now;
+    _beatLocalBasePos = ms;
+  }
+
+  /**
+   * 获取高精度当前播放位置。
+   * 后端 250ms tick 太粗，用 AudioContext.currentTime 在 tick 之间做线性插值。
+   */
+  function _beatGetPrecisePosition() {
+    var engine = App.audioEngine;
+    if (!engine || !engine._ctx) return _beatLocalBasePos;
+    var elapsed = (engine._ctx.currentTime - _beatLocalBaseTime) * 1000;
+    return _beatLocalBasePos + elapsed;
+  }
+
+  function _startBeatLoop() {
+    if (_beatRafId) return;
+    _beatBpm = 0;
+    _beatLastPos = -1;
+    _beatPulse = 0;
+    _beatSpecBass = 0;
+    _beatSpecMid = 0;
+    _beatSpecTreble = 0;
+    _beatRafId = requestAnimationFrame(_beatLoopTick);
+  }
+
+  function _stopBeatLoop() {
+    if (_beatRafId) {
+      cancelAnimationFrame(_beatRafId);
+      _beatRafId = 0;
+    }
+    var pane = document.getElementById('now-playing-pane');
+    if (pane) {
+      pane.style.removeProperty('--beat-blur');
+      pane.style.removeProperty('--beat-scale');
+      pane.style.removeProperty('--beat-sat');
+      pane.style.removeProperty('--beat-bright');
+      pane.style.removeProperty('--beat-opacity');
+    }
+    _beatBpm = 0;
+    _beatPulse = 0;
+    _beatSpecBass = 0;
+    _beatSpecMid = 0;
+    _beatSpecTreble = 0;
+  }
+
+  function _beatLoopTick() {
+    _beatRafId = 0;
+
+    var pane = document.getElementById('now-playing-pane');
+    if (!pane || !pane.classList.contains('fullscreen')) {
+      _stopBeatLoop();
+      return;
+    }
+
+    // 视频背景激活时不做极光效果
+    if (pane.classList.contains('video-active')) {
+      _beatRafId = requestAnimationFrame(_beatLoopTick);
+      return;
+    }
+
+    // ── 1. BPM 节拍形状（时序） ──
+    var analysis = App.currentAnalysis;
+    var bpm = analysis && analysis.bpm ? analysis.bpm : 0;
+    if (bpm !== _beatBpm) {
+      _beatBpm = bpm;
+      _beatIntervalMs = bpm > 0 ? (60000 / bpm) : 500;
+    }
+
+    var pos = _beatGetPrecisePosition();
+    if (_beatLastPos >= 0 && (_beatLastPos > pos + 100 || pos - _beatLastPos > 5000)) {
+      _beatPulse = 0;
+    }
+    _beatLastPos = pos;
+
+    // BPM 节拍形状：节拍开始=1，余弦衰减到 0
+    var bpmPulse;
+    if (bpm > 0) {
+      var beatPhase = (pos % _beatIntervalMs) / _beatIntervalMs;
+      bpmPulse = Math.max(0, Math.cos(beatPhase * Math.PI));
+      bpmPulse = Math.pow(bpmPulse, 0.6);
+    } else {
+      // 无 BPM：基础呼吸（给频谱一个最低底色）
+      var breathPhase = (Date.now() % 3000) / 3000;
+      bpmPulse = 0.3 + (Math.sin(breathPhase * Math.PI * 2) + 1) * 0.15;
+    }
+
+    // ── 2. 频谱实时能量（强度） ──
+    var engine = App.audioEngine;
+    var beat = engine ? engine.getBeatData() : null;
+    var specBass = 0, specMid = 0, specTreble = 0;
+    if (beat) {
+      // 指数平滑：attack 快、release 慢
+      var aR = 0.4, rR = 0.1;
+      _beatSpecBass = _beatSpecBass + (beat.bass - _beatSpecBass) * (beat.bass > _beatSpecBass ? aR : rR);
+      _beatSpecMid = _beatSpecMid + (beat.mid - _beatSpecMid) * (beat.mid > _beatSpecMid ? aR * 0.8 : rR * 1.2);
+      _beatSpecTreble = _beatSpecTreble + (beat.treble - _beatSpecTreble) * (beat.treble > _beatSpecTreble ? aR * 0.6 : rR * 1.5);
+      specBass = _beatSpecBass;
+      specMid = _beatSpecMid;
+      specTreble = _beatSpecTreble;
+    }
+
+    // ── 3. 联合脉冲 = 频谱独立响应 + BPM 节拍强化 ──
+    // 加法叠加，不是纯乘法：
+    //   - 频谱能量可独立贡献（鼓声来了就响应，不被 BPM 衰减期压制）
+    //   - BPM 节拍点提供额外强化（节拍上的鼓声更强）
+    //   - 两者都没有时退化为呼吸底色
+    var combinedPulse;
+    if (beat && beat.level > 0.01) {
+      // 频谱能量独立贡献（bass 权重最高）
+      var specEnergy = specBass * 0.7 + specMid * 0.2 + specTreble * 0.1;
+      // 频谱独立响应：0-0.55（即使不在节拍点，鼓声也能驱动脉动）
+      var specContribution = specEnergy * 0.55;
+      // BPM 节拍强化：节拍点上的能量额外放大 0-0.45
+      var beatContribution = bpmPulse * (0.3 + specEnergy * 0.5) * 0.45;
+      combinedPulse = Math.min(1, specContribution + beatContribution);
+    } else {
+      // 无频谱：纯 BPM 驱动（0.5 倍衰减，避免太机械）
+      combinedPulse = bpmPulse * 0.5;
+    }
+
+    // 平滑最终脉冲值
+    var smoothRate = combinedPulse > _beatPulse ? 0.5 : 0.1;
+    _beatPulse = _beatPulse + (combinedPulse - _beatPulse) * smoothRate;
+
+    // ── 4. 分频段驱动 CSS ──
+    // bass 驱动模糊 + 缩放（鼓点脉动）
+    var blur = 120 - _beatPulse * 48;
+    var scale = 1.28 + _beatPulse * 0.08;
+    // mid 驱动饱和度（人声/吉他色彩涌动）
+    var sat = 1.6 + specMid * 0.6 + _beatPulse * 0.2;
+    // treble 驱动亮度（高频微光）
+    var bright = 1.05 + specTreble * 0.2 + _beatPulse * 0.05;
+    // 联合脉冲驱动透明度
+    var opacity = 0.85 + _beatPulse * 0.1;
+
+    pane.style.setProperty('--beat-blur', blur.toFixed(1) + 'px');
+    pane.style.setProperty('--beat-scale', scale.toFixed(4));
+    pane.style.setProperty('--beat-sat', sat.toFixed(3));
+    pane.style.setProperty('--beat-bright', bright.toFixed(3));
+    pane.style.setProperty('--beat-opacity', opacity.toFixed(3));
+
+    _beatRafId = requestAnimationFrame(_beatLoopTick);
+  }
+
   // 读取歌词字体设置（失败时静默使用默认值）
   function _loadLyricFontSettings() {
     if (!App.utils.call) return;
@@ -183,6 +356,7 @@
         circularCover = !!s.circular_cover;
         waveProgress = s.wave_progress !== false;
         lyricsCreditFilters = s.lyrics_credit_filters || '';
+        _npDefaultView = s.np_default_view || 'side';
         _videoBgEnabled = !!s.video_background;
         if (_videoBg) _videoBg.setEnabled(_videoBgEnabled);
         _applyLyricsLayout();
@@ -1323,20 +1497,25 @@
   };
 
 np.updatePosition = function (ms) {
+// 更新鼓点驱动的本地位置基准（用于 AudioContext.currentTime 插值）
+_beatUpdatePosition(ms);
 if (isSeeking || !duration) return;
-const pct = Math.max(0, Math.min(1, ms / duration));
+// position 上报可能短暂超过 duration（曲目末尾、切歌时序差），
+// clamp 到 [0, duration] 避免显示 5:53/4:57 这种荒谬的时间
+var clampedMs = Math.max(0, Math.min(ms, duration));
+const pct = Math.max(0, Math.min(1, clampedMs / duration));
 els.barFill.style.width = (pct * 100) + '%';
 els.barThumb.style.left = (pct * 100) + '%';
-els.timeCur.textContent = App.utils.formatDuration(ms);
+els.timeCur.textContent = App.utils.formatDuration(clampedMs);
 // 悬浮播放栏居中进度条（复用正在播放页进度条样式）
 if (els.miniProgressTrackFill) els.miniProgressTrackFill.style.width = (pct * 100) + '%';
 if (els.miniProgressThumb) els.miniProgressThumb.style.left = (pct * 100) + '%';
-if (els.miniTimeCur) els.miniTimeCur.textContent = App.utils.formatDuration(ms);
+if (els.miniTimeCur) els.miniTimeCur.textContent = App.utils.formatDuration(clampedMs);
 if (els.miniTimeDur && duration) els.miniTimeDur.textContent = App.utils.formatDuration(duration);
 // 过渡标记固定在过渡点位置，不跟随进度
-_updateLyrics(ms);
+_updateLyrics(clampedMs);
 // 视频背景进度同步（MV 类型：保持与音乐同一进度）
-if (_videoBg) _videoBg.updatePosition(ms);
+if (_videoBg) _videoBg.updatePosition(clampedMs);
 };
 
   // ── AutoMix 过渡：文字崩坏动画 ────────────────────────────────────────
@@ -1699,6 +1878,13 @@ if (_videoBg) _videoBg.updatePosition(ms);
     const pane = document.getElementById('now-playing-pane');
     if (!pane) return;
     const enteringFullscreen = !pane.classList.contains('fullscreen');
+
+    // ── デフォルト全画面表示モードで全画面解除時は直接底欄へ ──
+    if (!enteringFullscreen && _npDefaultView === 'fullscreen') {
+      _toggleCollapse();
+      return;
+    }
+
     // 退出全窗口视图时同步退出影院模式
     if (!enteringFullscreen && pane.classList.contains('theater')) {
       _exitTheater();
@@ -1715,9 +1901,13 @@ if (_videoBg) _videoBg.updatePosition(ms);
       const activeTab = document.querySelector('.np-pivot-tab.active');
       const activeTabName = activeTab ? activeTab.getAttribute('data-tab') : 'lyrics';
       switchTab(activeTabName === 'info' ? 'lyrics' : activeTabName);
+      // 启动鼓点驱动背景流动
+      _startBeatLoop();
     } else {
       const activeTab = document.querySelector('.np-pivot-tab.active');
       switchTab(activeTab ? activeTab.getAttribute('data-tab') : 'info');
+      // 停止鼓点驱动
+      _stopBeatLoop();
     }
 
     // 过渡结束后清理
@@ -1749,6 +1939,7 @@ if (_videoBg) _videoBg.updatePosition(ms);
         var activeTab = document.querySelector('.np-pivot-tab.active');
         var activeTabName = activeTab ? activeTab.getAttribute('data-tab') : 'lyrics';
         switchTab(activeTabName === 'info' ? 'lyrics' : activeTabName);
+        _startBeatLoop();
       }
       pane.classList.add('theater');
       _startTheaterIdleTimer();
@@ -1819,6 +2010,13 @@ if (_videoBg) _videoBg.updatePosition(ms);
     if (pane.classList.contains('theater')) {
       _exitTheater();
     }
+
+    // ── デフォルト全画面表示モード ──
+    if (_npDefaultView === 'fullscreen') {
+      _toggleCollapseFullscreenDefault(pane);
+      return;
+    }
+
 // 全屏表示中なら先に全屏を解除する
 if (pane.classList.contains('fullscreen')) {
 pane.classList.remove('fullscreen');
@@ -1836,26 +2034,26 @@ if (_videoBg) _videoBg.onFullscreenChange();
     var content = document.querySelector('.content-pane');
 
     // ── FLIP：在 grid 切换前记录旧尺寸，切换后立刻反向缩放并动画 ──
-    function _flipContent(firstRect) {
-      if (!content || !firstRect || reduced) return;
+    function _flipContent(firstRect, contentEl, reducedMotion) {
+      if (!contentEl || !firstRect || reducedMotion) return;
       // grid 已在此函数被调用前切换，同步读取新尺寸
-      var lastRect = content.getBoundingClientRect();
+      var lastRect = contentEl.getBoundingClientRect();
       var scaleX = firstRect.width / lastRect.width;
       if (Math.abs(scaleX - 1) < 0.01) return;
       // Invert：施加反向缩放，让元素看起来还在旧尺寸
-      content.style.transformOrigin = 'left center';
-      content.style.transform = 'scaleX(' + scaleX + ')';
-      content.style.willChange = 'transform';
-      content.offsetHeight; // 强制 reflow，确保 Invert 状态已绘制
+      contentEl.style.transformOrigin = 'left center';
+      contentEl.style.transform = 'scaleX(' + scaleX + ')';
+      contentEl.style.willChange = 'transform';
+      contentEl.offsetHeight; // 强制 reflow，确保 Invert 状态已绘制
       // Play：粗暴缩放到目标尺寸
-      var flip = content.animate([
+      var flip = contentEl.animate([
         { transform: 'scaleX(' + scaleX + ')' },
         { transform: 'scaleX(1)' }
       ], { duration: 200, easing: 'cubic-bezier(0.05, 0.7, 0.1, 1)', fill: 'none' });
       flip.onfinish = function () {
-        content.style.transform = '';
-        content.style.transformOrigin = '';
-        content.style.willChange = '';
+        contentEl.style.transform = '';
+        contentEl.style.transformOrigin = '';
+        contentEl.style.willChange = '';
       };
     }
 
@@ -1877,7 +2075,7 @@ if (_videoBg) _videoBg.onFullscreenChange();
         pane.classList.remove('collapsed');
         document.body.classList.remove('player-collapsed');
         pane.classList.add('expanding');
-        _flipContent(firstRect);
+        _flipContent(firstRect, content, reduced);
 
         // 移除底栏 leaving 类（此时 body 已无 player-collapsed，底栏自然 display:none）
         if (mp && mp.classList.contains('mini-leaving')) {
@@ -1905,7 +2103,7 @@ if (_videoBg) _videoBg.onFullscreenChange();
       _expandTimers.push(setTimeout(function () {
         pane.classList.add('collapsed');
         document.body.classList.add('player-collapsed');
-        _flipContent(firstRect2);
+        _flipContent(firstRect2, content, reduced);
 
         // 底栏上滑（CSS 动画驱动，220ms）
         if (mp2 && !reduced) {
@@ -1914,6 +2112,88 @@ if (_videoBg) _videoBg.onFullscreenChange();
       }, 120));
 
       // Phase 3 (360ms后): 清理
+      _expandTimers.push(setTimeout(function () {
+        document.body.classList.remove('player-collapsing');
+        pane.classList.remove('collapsing');
+        if (mp2 && mp2.classList.contains('mini-entering')) {
+          mp2.classList.remove('mini-entering');
+        }
+      }, 360));
+    }
+  }
+
+  // ── デフォルト全画面表示モード専用の折りたたみ/展開 ──
+  function _toggleCollapseFullscreenDefault(pane) {
+    var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    _clearExpandTimers();
+    // 残留アニメーションクラスを清算（快速点击时的卡死防止）
+    pane.classList.remove('expanding', 'collapsing', 'fs-transitioning');
+
+    if (pane.classList.contains('collapsed')) {
+      // ── 展開（底欄 → 直接全画面） ──
+      document.body.classList.add('player-expanding');
+      var mp = els.miniPlayer;
+
+      if (mp && !reduced) {
+        mp.classList.add('mini-leaving');
+      }
+
+      _expandTimers.push(setTimeout(function () {
+        pane.classList.remove('collapsed');
+        document.body.classList.remove('player-collapsed');
+        pane.classList.add('fullscreen');
+        document.body.classList.add('np-fullscreen');
+        // fs-transitioning 使用（fs-expand 动画：scale + fade，专为全窗口设计）
+        pane.classList.add('fs-transitioning');
+
+        if (mp && mp.classList.contains('mini-leaving')) {
+          mp.classList.remove('mini-leaving');
+        }
+
+        // 全画面タブ設定：info パネルは全画面で常にアクティブ
+        const activeTab = document.querySelector('.np-pivot-tab.active');
+        const activeTabName = activeTab ? activeTab.getAttribute('data-tab') : 'lyrics';
+        switchTab(activeTabName === 'info' ? 'lyrics' : activeTabName);
+        _startBeatLoop();
+        if (_videoBg) _videoBg.onFullscreenChange();
+      }, 120));
+
+      // fs-expand 动画 300ms + 120ms 延迟 = 440ms
+      _expandTimers.push(setTimeout(function () {
+        document.body.classList.remove('player-expanding');
+        pane.classList.remove('fs-transitioning');
+      }, 440));
+    } else {
+      // ── 收折（全画面 → 直接底欄） ──
+      if (pane.classList.contains('theater')) {
+        _exitTheater();
+      }
+
+      document.body.classList.add('player-collapsing');
+      // collapsing でフェードアウト（fullscreen は残したまま → position:fixed を維持）
+      pane.classList.add('collapsing');
+
+      // switchTab は fullscreen がまだ残っている状態で呼ぶ
+      const activeTab = document.querySelector('.np-pivot-tab.active');
+      switchTab(activeTab ? activeTab.getAttribute('data-tab') : 'info');
+      _stopBeatLoop();
+      if (_videoBg) _videoBg.onFullscreenChange();
+
+      var mp2 = els.miniPlayer;
+
+      // Phase 2 (120ms): フェードアウト完了後 → collapsed に切り替え
+      _expandTimers.push(setTimeout(function () {
+        pane.classList.remove('fullscreen');
+        document.body.classList.remove('np-fullscreen');
+        pane.classList.add('collapsed');
+        document.body.classList.add('player-collapsed');
+
+        if (mp2 && !reduced) {
+          mp2.classList.add('mini-entering');
+        }
+      }, 120));
+
+      // Phase 3 (360ms): 清理
       _expandTimers.push(setTimeout(function () {
         document.body.classList.remove('player-collapsing');
         pane.classList.remove('collapsing');
@@ -2478,6 +2758,15 @@ function _updateLyricsSourceBadge() {
         }
       }
     }
+  };
+
+  // ── デフォルト復元ビュー設定変更 ─────────────────────────────────────────
+  /**
+   * 設定ページから呼ばれる：動的に _npDefaultView を更新
+   * @param {string} val - 'side' | 'fullscreen'
+   */
+  np.setDefaultView = function (val) {
+    _npDefaultView = val || 'side';
   };
 
   // ── 语言变更：刷新动态文本 ───────────────────────────────────────────────

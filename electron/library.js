@@ -115,6 +115,26 @@ class MusicLibrary {
     this._closed = false;
     this._dedupCache = null;       // { dupIds: Set<string>, localMap: Map<string, object> }
     this._dedupLocalPathCache = null; // Map<dedupKey, localTrackPath>
+
+    // ── 封面数据缓存：磁盘持久化 + 小内存 LRU ──
+    // getCoverData() 每次都会 fs.readFileSync 整个音频文件 + 同步解析 picture frame，
+    // 大规模列表渲染时（100+ 曲目）会让 main 进程 event loop 被阻塞 →
+    // 后续 HTTP /cover 请求超时 → 封面加载失败。
+    //
+    // 策略：
+    //   1. 磁盘缓存（dataDir/cover_cache/<sha1(trackId)>.jpg）— 持久化，跨重启有效
+    //   2. 内存 LRU（最近访问的 50 张，约 1.5MB）— 加速热数据，避免反复读磁盘
+    //
+    // 流程：
+    //   - 请求 → 内存命中？返回
+    //   - 内存未命中 → 磁盘缓存命中？读磁盘 + 提升到内存 → 返回
+    //   - 磁盘未命中 → 读音频文件 + 提取 → 写磁盘 + 写内存 → 返回
+    this._coverDataCache = new Map();  // track_id → Buffer（内存热缓存）
+    this._coverDataCacheMax = 50;       // 内存上限（每张 ~30KB，50 张 ≈ 1.5MB）
+    this._coverCacheDir = path.join(settings.dataDir, 'cover_cache');
+    try {
+      fs.mkdirSync(this._coverCacheDir, { recursive: true });
+    } catch { /* 已存在或无权限 */ }
   }
 
   // ── Schema migration ─────────────────────────────────────────────────────
@@ -291,30 +311,8 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
       try {
         const meta = await this._parseMetadata(filePath);
-        const tid = trackId(filePath);
         const stat = fs.statSync(filePath);
-        this._db.prepare(
-          `INSERT OR REPLACE INTO tracks
-           (id, path, folder_id, title, artist, album, album_artist,
-            track_number, disc_number, year, duration_ms, file_size,
-            has_cover, lyrics, genre, added_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-        ).run(
-          tid, filePath, fid,
-          meta.title || path.basename(filePath, path.extname(filePath)),
-          meta.artist || null,
-          meta.album || null,
-          meta.album_artist || null,
-          meta.track_number || null,
-          meta.disc_number || null,
-          meta.year || null,
-          meta.duration_ms || null,
-          stat.size,
-          meta.has_cover ? 1 : 0,
-          meta.lyrics || null,
-          meta.genre || null,
-          now
-        );
+        this._insertLocalTrackRow(fid, filePath, meta, stat.size, now);
         inserted++;
       } catch (e) {
         console.error(`[MusicLibrary] Failed to insert track: ${filePath}`, e.message || e);
@@ -322,6 +320,205 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     }
     this._db.prepare('UPDATE folders SET last_scan=? WHERE id=?').run(now, fid);
     this._invalidateDedupCache();
+  }
+
+  // ── 增量同步（FileWatcher 分层扫描）──────────────────────────────────────
+
+  /**
+   * 写入/覆盖一条本地曲目记录（INSERT OR REPLACE，仅用于新增场景）。
+   * 注意：REPLACE 会先删除旧行并触发外键级联（收藏/历史/歌单引用），
+   * 因此已存在曲目的内容更新必须使用 _updateLocalTrackRow。
+   */
+  _insertLocalTrackRow(fid, filePath, meta, size, addedAt) {
+    const tid = trackId(filePath);
+    this._db.prepare(
+      `INSERT OR REPLACE INTO tracks
+       (id, path, folder_id, title, artist, album, album_artist,
+        track_number, disc_number, year, duration_ms, file_size,
+        has_cover, lyrics, genre, added_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      tid, filePath, fid,
+      meta.title || path.basename(filePath, path.extname(filePath)),
+      meta.artist || null,
+      meta.album || null,
+      meta.album_artist || null,
+      meta.track_number || null,
+      meta.disc_number || null,
+      meta.year || null,
+      meta.duration_ms || null,
+      size,
+      meta.has_cover ? 1 : 0,
+      meta.lyrics || null,
+      meta.genre || null,
+      addedAt
+    );
+  }
+
+  /**
+   * 更新已存在曲目的元数据（保留 added_at 与收藏/历史/歌单关联）。
+   */
+  _updateLocalTrackRow(filePath, meta, size) {
+    this._db.prepare(
+      `UPDATE tracks SET title=?, artist=?, album=?, album_artist=?,
+       track_number=?, disc_number=?, year=?, duration_ms=?, file_size=?,
+       has_cover=?, lyrics=?, genre=? WHERE path=?`
+    ).run(
+      meta.title || path.basename(filePath, path.extname(filePath)),
+      meta.artist || null,
+      meta.album || null,
+      meta.album_artist || null,
+      meta.track_number || null,
+      meta.disc_number || null,
+      meta.year || null,
+      meta.duration_ms || null,
+      size,
+      meta.has_cover ? 1 : 0,
+      meta.lyrics || null,
+      meta.genre || null,
+      filePath
+    );
+  }
+
+  /**
+   * 分层扫描 L1：仅遍历目录（readdir），收集受支持的音频文件路径。
+   * 不 stat、不解析元数据，开销极小。
+   * @param {string} rootDir
+   * @returns {string[]}
+   */
+  _walkAudioPaths(rootDir) {
+    const paths = [];
+    const stack = [rootDir];
+    while (stack.length > 0) {
+      const dir = stack.pop();
+      let entries;
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          stack.push(fullPath);
+        } else if (entry.isFile()) {
+          if (SUPPORTED_EXT.has(path.extname(entry.name).toLowerCase())) {
+            paths.push(fullPath);
+          }
+        }
+      }
+    }
+    return paths;
+  }
+
+  /**
+   * 分层增量同步（供 FileWatcher / 定期校验调用）：
+   *   L1  数量比对：磁盘遍历结果数 vs DB 记录数
+   *   L2  路径 diff：定位 新增 / 移除 的文件
+   *   L2b 大小校验：对 watch 事件精确命中的文件 stat，检测同路径内容变动
+   *   L3  元数据：仅对差异文件解析并写库
+   *
+   * 安全保护：
+   *   - 磁盘目录不存在（驱动器掉线）→ 跳过，不删任何记录
+   *   - 磁盘扫到 0 个音频但 DB 非空（疑似驱动器异常）→ 跳过，防止误清空库
+   *
+   * @param {string} folderPath
+   * @param {{sizeCheckPaths?: string[]}} [opts] - 需做大小校验的精确路径（来自 watch 事件）
+   * @returns {Promise<{added:number, removed:number, updated:number, total:number, changed:boolean, skipped?:boolean}|null>}
+   */
+  async syncFolderIncremental(folderPath, opts = {}) {
+    const p = path.resolve(folderPath);
+    const fid = this._folderId(p);
+    if (fid === null) return null;
+    if (!fs.existsSync(p)) {
+      return { added: 0, removed: 0, updated: 0, total: 0, changed: false, skipped: true };
+    }
+    const now = Date.now() / 1000;
+
+    // ── L1 + L2：遍历磁盘并与 DB 索引比对 ──
+    const diskPaths = this._walkAudioPaths(p);
+    const dbRows = this._db.prepare(
+      'SELECT id, path, file_size FROM tracks WHERE folder_id=?'
+    ).all(fid);
+
+    if (diskPaths.length === 0 && dbRows.length > 0) {
+      console.warn(`[MusicLibrary] 增量同步跳过：磁盘 0 个音频但 DB 有 ${dbRows.length} 条，疑似驱动器异常: ${p}`);
+      return { added: 0, removed: 0, updated: 0, total: 0, changed: false, skipped: true };
+    }
+
+    const diskSet = new Set(diskPaths);
+    const dbPathSet = new Set();
+    const toRemoveIds = [];
+    const commonRows = [];
+    for (const row of dbRows) {
+      dbPathSet.add(row.path);
+      if (!diskSet.has(row.path)) {
+        toRemoveIds.push(row.id);
+      } else {
+        commonRows.push(row);
+      }
+    }
+    const toAdd = [];
+    for (const dp of diskPaths) {
+      if (!dbPathSet.has(dp)) toAdd.push(dp);
+    }
+
+    // ── L2b 大小校验（仅针对 watch 事件精确命中的文件）──
+    const toUpdate = [];
+    if (opts.sizeCheckPaths && opts.sizeCheckPaths.length > 0) {
+      const checkSet = new Set(opts.sizeCheckPaths.map((sp) => path.resolve(sp)));
+      for (const row of commonRows) {
+        if (!checkSet.has(row.path)) continue;
+        let size;
+        try { size = fs.statSync(row.path).size; } catch { continue; }
+        if (size !== (row.file_size || 0)) toUpdate.push({ path: row.path, size });
+      }
+    }
+
+    if (toRemoveIds.length === 0 && toAdd.length === 0 && toUpdate.length === 0) {
+      this._db.prepare('UPDATE folders SET last_scan=? WHERE id=?').run(now, fid);
+      return { added: 0, removed: 0, updated: 0, total: diskPaths.length, changed: false };
+    }
+
+    // ── L3 移除：分批删除（含收藏/历史/歌单关联）──
+    const CHUNK = 400;
+    for (let i = 0; i < toRemoveIds.length; i += CHUNK) {
+      const chunk = toRemoveIds.slice(i, i + CHUNK);
+      this._deleteTracksByCondition(
+        `id IN (${chunk.map(() => '?').join(',')})`,
+        ...chunk
+      );
+    }
+
+    // ── L3 新增 / 更新：解析元数据并写库 ──
+    let added = 0;
+    for (const filePath of toAdd) {
+      try {
+        const meta = await this._parseMetadata(filePath);
+        const stat = fs.statSync(filePath);
+        this._insertLocalTrackRow(fid, filePath, meta, stat.size, now);
+        added++;
+      } catch (e) {
+        console.error(`[MusicLibrary] 增量同步新增失败: ${filePath}`, e.message || e);
+      }
+    }
+    let updated = 0;
+    for (const u of toUpdate) {
+      try {
+        const meta = await this._parseMetadata(u.path);
+        this._updateLocalTrackRow(u.path, meta, u.size);
+        updated++;
+      } catch (e) {
+        console.error(`[MusicLibrary] 增量同步更新失败: ${u.path}`, e.message || e);
+      }
+    }
+
+    this._db.prepare('UPDATE folders SET last_scan=? WHERE id=?').run(now, fid);
+    this._invalidateDedupCache();
+    return {
+      added, removed: toRemoveIds.length, updated,
+      total: diskPaths.length, changed: true,
+    };
   }
 
   // ── Metadata ──────────────────────────────────────────────────────────────
@@ -406,11 +603,82 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
   getCoverData(trackId) {
     if (!trackId) return null;
+
+    // ── 1. 内存热缓存命中 ──
+    const memCached = this._coverDataCache.get(trackId);
+    if (memCached !== undefined) {
+      // LRU touch：移到末尾（Map 保持插入顺序）
+      if (memCached !== null) {
+        this._coverDataCache.delete(trackId);
+        this._coverDataCache.set(trackId, memCached);
+      }
+      return memCached;
+    }
+
     const row = this._db.prepare('SELECT path, source FROM tracks WHERE id=?').get(trackId);
     if (!row) return null;
     if (row.source === 'subsonic') return null;
     if (!row.path) return null;
-    return this._extractCoverSync(row.path);
+
+    // ── 2. 磁盘缓存命中 ──
+    // 跨重启有效，避免每次启动都重新读音频文件提取
+    const diskPath = this._coverCachePath(trackId);
+    let data = null;
+    try {
+      if (fs.existsSync(diskPath)) {
+        data = fs.readFileSync(diskPath);
+        if (data && data.length === 0) data = null;  // 空文件 = 标记无封面
+      }
+    } catch { /* 磁盘读取失败，继续走提取 */ }
+
+    // ── 3. 提取并写入磁盘缓存 ──
+    if (data === null) {
+      data = this._extractCoverSync(row.path);
+      // 写入磁盘缓存（null 写空文件作为"无封面"标记，避免反复读音频文件）
+      try {
+        fs.writeFileSync(diskPath, data || Buffer.alloc(0));
+      } catch { /* 磁盘写入失败，仅靠内存缓存 */ }
+    }
+
+    // ── 4. 写入内存 LRU ──
+    if (this._coverDataCache.size >= this._coverDataCacheMax) {
+      const oldest = this._coverDataCache.keys().next();
+      if (!oldest.done) this._coverDataCache.delete(oldest.value);
+    }
+    this._coverDataCache.set(trackId, data);
+
+    return data;
+  }
+
+  /**
+   * 磁盘缓存路径：cover_cache/<sha1(trackId)>.jpg
+   * 使用 SHA1 哈希避免 trackId 中的特殊字符破坏文件系统。
+   * null 封面用 0 字节文件标记，区分"未提取过"和"已确认无封面"。
+   */
+  _coverCachePath(trackId) {
+    const hash = crypto.createHash('sha1').update(trackId, 'utf-8').digest('hex');
+    return path.join(this._coverCacheDir, `${hash}.jpg`);
+  }
+
+  /**
+   * 清除封面数据缓存（单条或全部）。
+   * 在曲目元数据变更、文件移动、手动刷新时调用。
+   * @param {string} [trackId] - 指定 track_id 清除单条；省略则清除全部
+   */
+  clearCoverDataCache(trackId) {
+    if (trackId) {
+      this._coverDataCache.delete(trackId);
+      try { fs.unlinkSync(this._coverCachePath(trackId)); } catch { /* ignore */ }
+    } else {
+      this._coverDataCache.clear();
+      // 清空整个磁盘缓存目录
+      try {
+        const files = fs.readdirSync(this._coverCacheDir);
+        for (const f of files) {
+          try { fs.unlinkSync(path.join(this._coverCacheDir, f)); } catch { /* ignore */ }
+        }
+      } catch { /* 目录不存在或无权限 */ }
+    }
   }
 
   _extractCoverSync(filePath) {
@@ -662,10 +930,12 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
   /**
    * 使去重缓存失效（在库内容变更后调用）。
+   * 同时清空封面数据缓存，避免删除/移动曲目后返回陈旧数据。
    */
   _invalidateDedupCache() {
     this._dedupCache = null;
     this._dedupLocalPathCache = null;
+    if (this._coverDataCache) this._coverDataCache.clear();
   }
 
   /**
@@ -1720,4 +1990,4 @@ function _extractOggCover(buf) {
   }
 }
 
-module.exports = { MusicLibrary, trackId, subsonicTrackId };
+module.exports = { MusicLibrary, trackId, subsonicTrackId, SUPPORTED_EXT };

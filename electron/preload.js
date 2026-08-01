@@ -134,6 +134,12 @@ contextBridge.exposeInMainWorld('__electronAPI', {
   sendAudioCrossfadeComplete: (positionMs) => ipcRenderer.send('audio_crossfade_complete', positionMs),
 
   /**
+   * 通知主进程：AutoMix crossfade 已启动（next 源开始淡入）。
+   * player.js 据此设置 _inCrossfade 标志，避免在过渡期内打断（如 setRepeat 清理 next）。
+   */
+  sendAudioCrossfadeStart: () => ipcRenderer.send('audio_crossfade_start'),
+
+  /**
    * 通知主进程：无缝切换完成（Web Audio API 模式）。
    * player.js 据此推进队列索引，无需 promoteNextToCurrent。
    */
