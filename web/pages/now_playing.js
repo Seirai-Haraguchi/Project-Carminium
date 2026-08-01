@@ -207,6 +207,9 @@
     return _beatLocalBasePos + elapsed;
   }
 
+  // 高精度播放位置（全窗口视图 BPM 相位对齐等で使用）
+  np.getPrecisePosition = _beatGetPrecisePosition;
+
   function _startBeatLoop() {
     if (_beatRafId) return;
     _beatBpm = 0;

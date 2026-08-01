@@ -1,8 +1,14 @@
 # Dependencies
 node_modules/
+# WSL/Linux 専用作業ディレクトリ（Windows 側 node_modules と共有して事故るのを防止）
+node_modules_linux/
+node_modules_win/
+# WSL ビルド専用ディレクトリ（DrvFs 越しの native addon コンパイル失敗防止）
+build-linux/
 
 # Electron build output
 dist-electron/
+dist-electron-linux/
 
 # Logs
 *.log

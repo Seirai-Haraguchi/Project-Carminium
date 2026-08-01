@@ -1,13 +1,14 @@
 /**
  * Carminium — ネイティブオーディオレンダラー (Zig + miniaudio)
  *
- * native/carminium_audio.zig が生成した carminium_audio.dll を koffi 経由で呼び出す。
- * DLL 側は miniaudio (WASAPI 共有/排他モード) で直接出力。
+ * native/carminium_audio.zig が生成したネイティブライブラリ（Windows: .dll / Linux: .so）
+ * を koffi 経由で呼び出す。
+ * ネイティブ側は miniaudio（Windows: WASAPI / Linux: PulseAudio または ALSA）で直接出力。
  *
  * アーキテクチャ:
  *   FFmpeg (デコード) → IPC → Renderer (Web Audio API 合成)
  *                                         ↓
- *   Renderer (合成済み PCM) → IPC → ca_push_pcm() → DLL → WASAPI
+ *   Renderer (合成済み PCM) → IPC → ca_push_pcm() → native.so/.dll → オーディオデバイス
  *
  * このモジュールは FFmpeg のデコードと miniaudio への PCM 出力のみを担当する。
  * Gapless/AutoMix/音量の合成はすべてレンダラー側の Web Audio API で行われる。
@@ -22,6 +23,13 @@ const path = require('path');
 
 const SHARE_SHARED = 0;
 const SHARE_EXCLUSIVE = 1;
+
+// プラットフォーム別ファイル名・サブディレクトリ
+const IS_WIN = process.platform === 'win32';
+const PLATFORM_SUBDIR = IS_WIN ? 'win32' : (process.platform === 'linux' ? 'linux' : process.platform);
+const LIB_NAME = IS_WIN ? 'carminium_audio.dll' : 'carminium_audio.so';
+const FFMPEG_NAME = IS_WIN ? 'ffmpeg.exe' : 'ffmpeg';
+const FFPROBE_NAME = IS_WIN ? 'ffprobe.exe' : 'ffprobe';
 
 // asar パッケージ内のパスを実際のファイルシステム上のパス（app.asar.unpacked）に変換する。
 // koffi.load() や child_process.spawn() は Electron のパッチ済み fs を経由しないため、
@@ -42,22 +50,30 @@ function _loadDll() {
   if (_lib) return true;
 
   const candidates = [
-    path.join(__dirname, 'bin', 'carminium_audio.dll'),
-    path.join(__dirname, '..', 'native', 'zig-out', 'bin', 'carminium_audio.dll'),
+    // 最優先：プラットフォーム別サブディレクトリ（Win/Linux 両方のバイナリを共存可能に）
+    path.join(__dirname, 'bin', PLATFORM_SUBDIR, LIB_NAME),
+    // 互換：electron/bin 直下（従来構成）
+    path.join(__dirname, 'bin', LIB_NAME),
+    // 開発環境：native/zig-out 配下
+    path.join(__dirname, '..', 'native', 'zig-out', 'bin', LIB_NAME),
   ];
-  let dllPath = null;
-  for (const c of candidates) {
-    if (fs.existsSync(c)) { dllPath = _resolveRealPath(c); break; }
+  // Linux: デベロッパー環境でビルドした zig-out/lib からも探す
+  if (!IS_WIN) {
+    candidates.push(path.join(__dirname, '..', 'native', 'zig-out', 'lib', LIB_NAME));
   }
-  if (!dllPath) {
-    console.error('[wasapi] carminium_audio.dll not found. Searched:', candidates);
+  let libPath = null;
+  for (const c of candidates) {
+    if (fs.existsSync(c)) { libPath = _resolveRealPath(c); break; }
+  }
+  if (!libPath) {
+    console.error('[wasapi] Native library not found:', LIB_NAME, '. Searched:', candidates);
     return false;
   }
 
   try {
-    _lib = koffi.load(dllPath);
+    _lib = koffi.load(libPath);
   } catch (e) {
-    console.error('[wasapi] Failed to load carminium_audio.dll:', e.message);
+    console.error('[wasapi] Failed to load native library', LIB_NAME, ':', e.message);
     return false;
   }
 
@@ -85,7 +101,7 @@ function _loadDll() {
       _f[name] = _lib.func(sig);
     }
   } catch (e) {
-    console.error('[wasapi] Failed to declare DLL function:', e.message);
+    console.error('[wasapi] Failed to declare native function:', e.message);
     _lib = null;
     _f = {};
     return false;
@@ -98,21 +114,35 @@ let _ffmpegPath = null, _ffprobePath = null;
 
 function _findFFmpeg() {
   if (_ffmpegPath !== null) return _ffmpegPath;
-  const bundled = path.join(__dirname, 'bin', 'ffmpeg.exe');
+  const bundled = path.join(__dirname, 'bin', PLATFORM_SUBDIR, FFMPEG_NAME);
   if (fs.existsSync(bundled)) { _ffmpegPath = _resolveRealPath(bundled); return _ffmpegPath; }
-  const devBin = path.join(__dirname, '..', 'bin', 'ffmpeg.exe');
+  const bundledFlat = path.join(__dirname, 'bin', FFMPEG_NAME);
+  if (fs.existsSync(bundledFlat)) { _ffmpegPath = _resolveRealPath(bundledFlat); return _ffmpegPath; }
+  const devBin = path.join(__dirname, '..', 'bin', PLATFORM_SUBDIR, FFMPEG_NAME);
   if (fs.existsSync(devBin)) { _ffmpegPath = _resolveRealPath(devBin); return _ffmpegPath; }
+  const devBinFlat = path.join(__dirname, '..', 'bin', FFMPEG_NAME);
+  if (fs.existsSync(devBinFlat)) { _ffmpegPath = _resolveRealPath(devBinFlat); return _ffmpegPath; }
   try {
-    execSync('ffmpeg -version', { stdio: 'ignore', timeout: 5000 });
+    execSync(IS_WIN ? 'ffmpeg -version' : 'ffmpeg -version 2>/dev/null',
+      { stdio: 'ignore', timeout: 5000 });
     _ffmpegPath = 'ffmpeg';
     return _ffmpegPath;
   } catch { /* not in PATH */ }
-  const locations = [
-    'C:\\ffmpeg\\bin\\ffmpeg.exe',
-    'C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe',
-    'C:\\Program Files (x86)\\ffmpeg\\bin\\ffmpeg.exe',
-    path.join(process.env.LOCALAPPDATA || '', 'ffmpeg', 'bin', 'ffmpeg.exe'),
-  ];
+  // プラットフォーム別追加探索パス
+  const locations = IS_WIN
+    ? [
+        'C:\\ffmpeg\\bin\\ffmpeg.exe',
+        'C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe',
+        'C:\\Program Files (x86)\\ffmpeg\\bin\\ffmpeg.exe',
+        path.join(process.env.LOCALAPPDATA || '', 'ffmpeg', 'bin', 'ffmpeg.exe'),
+      ]
+    : [
+        '/usr/bin/ffmpeg',
+        '/usr/local/bin/ffmpeg',
+        '/opt/ffmpeg/bin/ffmpeg',
+        path.join(process.env.HOME || '', '.local', 'bin', 'ffmpeg'),
+        '/snap/bin/ffmpeg',
+      ];
   for (const loc of locations) {
     if (fs.existsSync(loc)) { _ffmpegPath = loc; return _ffmpegPath; }
   }
@@ -122,19 +152,37 @@ function _findFFmpeg() {
 
 function _findFFprobe() {
   if (_ffprobePath !== null) return _ffprobePath;
-  const bundled = path.join(__dirname, 'bin', 'ffprobe.exe');
+  const bundled = path.join(__dirname, 'bin', PLATFORM_SUBDIR, FFPROBE_NAME);
   if (fs.existsSync(bundled)) { _ffprobePath = _resolveRealPath(bundled); return _ffprobePath; }
-  const devBin = path.join(__dirname, '..', 'bin', 'ffprobe.exe');
+  const bundledFlat = path.join(__dirname, 'bin', FFPROBE_NAME);
+  if (fs.existsSync(bundledFlat)) { _ffprobePath = _resolveRealPath(bundledFlat); return _ffprobePath; }
+  const devBin = path.join(__dirname, '..', 'bin', PLATFORM_SUBDIR, FFPROBE_NAME);
   if (fs.existsSync(devBin)) { _ffprobePath = _resolveRealPath(devBin); return _ffprobePath; }
+  const devBinFlat = path.join(__dirname, '..', 'bin', FFPROBE_NAME);
+  if (fs.existsSync(devBinFlat)) { _ffprobePath = _resolveRealPath(devBinFlat); return _ffprobePath; }
   try {
-    execSync('ffprobe -version', { stdio: 'ignore', timeout: 5000 });
+    execSync(IS_WIN ? 'ffprobe -version' : 'ffprobe -version 2>/dev/null',
+      { stdio: 'ignore', timeout: 5000 });
     _ffprobePath = 'ffprobe';
     return _ffprobePath;
   } catch { /* not in PATH */ }
   const ff = _findFFmpeg();
   if (ff && ff !== 'ffmpeg') {
-    const probePath = path.join(path.dirname(ff), 'ffprobe.exe');
+    const probePath = path.join(path.dirname(ff), FFPROBE_NAME);
     if (fs.existsSync(probePath)) { _ffprobePath = probePath; return _ffprobePath; }
+  }
+  // Linux 追加 PATH
+  if (!IS_WIN) {
+    const linuxLocations = [
+      '/usr/bin/ffprobe',
+      '/usr/local/bin/ffprobe',
+      '/opt/ffmpeg/bin/ffprobe',
+      path.join(process.env.HOME || '', '.local', 'bin', 'ffprobe'),
+      '/snap/bin/ffprobe',
+    ];
+    for (const loc of linuxLocations) {
+      if (fs.existsSync(loc)) { _ffprobePath = loc; return _ffprobePath; }
+    }
   }
   _ffprobePath = false;
   return _ffprobePath;
