@@ -562,13 +562,13 @@
     // Body
     const body = document.createElement('div');
     body.className = 'track-body';
-    const artist = track.artist || '未知艺术家';
+    const artist = track.artist || App.i18n.t('common.unknownArtist');
     const artists = track.artists || [artist];
     const firstArtist = artists[0];
     const album  = track.album  || '';
     const albumArtist = track.album_artist || artist;
     body.innerHTML = `
-      <p class="track-title">${_esc(track.title || track.path || '未知曲目')}</p>
+      <p class="track-title">${_esc(track.title || track.path || App.i18n.t('common.unknownTrack'))}</p>
       <p class="track-artist-album">
         <span class="track-link track-artist-link" data-artist="${_esc(firstArtist)}">${_esc(artist)}</span>
         ${album ? '<span class="track-link-sep"> · </span><span class="track-link track-album-link" data-album="' + _esc(album) + '" data-album-artist="' + _esc(albumArtist) + '">' + _esc(album) + '</span>' : ''}
@@ -1186,10 +1186,10 @@
       actions.className = 'cmd-dialog-actions';
       var cancelBtn = document.createElement('button');
       cancelBtn.className = 'cmd-dialog-btn cmd-dialog-btn--cancel';
-      cancelBtn.textContent = opts.cancelText || '取消';
+      cancelBtn.textContent = opts.cancelText || App.i18n.t('common.cancel');
       var confirmBtn = document.createElement('button');
       confirmBtn.className = 'cmd-dialog-btn cmd-dialog-btn--confirm';
-      confirmBtn.textContent = opts.confirmText || '确定';
+      confirmBtn.textContent = opts.confirmText || App.i18n.t('common.confirm');
       actions.appendChild(cancelBtn);
       actions.appendChild(confirmBtn);
       dlg.appendChild(titleEl);
@@ -1234,17 +1234,17 @@
   utils.confirmExclusiveSwitch = function (targetOn) {
     if (targetOn) {
       return utils.confirmDialog({
-        title: '切换到 WASAPI 独占模式',
-        body: '独占模式将直接占用输出设备，绕过 Windows 音频引擎以获得更低延迟与位完美输出。期间以下功能将不可用：播放中切换输出设备、音频处理 API 选择、系统音量合成器单独控制、其他应用同时发声。是否继续？',
-        confirmText: '切换',
-        cancelText: '取消',
+        title: App.i18n.t('audio.switchExclusiveTitle'),
+        body: App.i18n.t('audio.switchExclusiveBody'),
+        confirmText: App.i18n.t('audio.switchExclusiveConfirm'),
+        cancelText: App.i18n.t('common.cancel'),
       });
     }
     return utils.confirmDialog({
-      title: '切回共享模式',
-      body: '将恢复使用 Windows 音频引擎的共享模式播放，重新启用输出设备切换等功能。是否继续？',
-      confirmText: '切回',
-      cancelText: '取消',
+      title: App.i18n.t('audio.switchSharedTitle'),
+      body: App.i18n.t('audio.switchSharedBody'),
+      confirmText: App.i18n.t('audio.switchSharedConfirm'),
+      cancelText: App.i18n.t('common.cancel'),
     });
   };
 

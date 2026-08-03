@@ -6,7 +6,7 @@
  *   1. 外观与视觉    — 主题、配色、歌词与文字
  *   2. 音频和库      — 输出设备、歌手分隔等
  *   3. 自动化与控制  — 启动行为、快捷键
- *   4. 实验性        — 窗口随鼓点震动等效果
+ *   4. 实验性        — 实验性功能
  *   5. 关于          — 跳转独立关于页
  */
 (function () {
@@ -316,6 +316,14 @@
               placeholder: ';',
               onApply: function () { App.refreshLibraryCache(); },
             },
+            {
+              type: 'file_picker',
+              bind: 'tag_editor_path',
+              label: _t('settings.tagEditorPath.label'),
+              sub: _t('settings.tagEditorPath.sub'),
+              placeholder: _t('settings.tagEditorPath.placeholder'),
+              pickLabel: _t('settings.tagEditorPath.pick'),
+            },
           ],
         },
       ],
@@ -421,14 +429,7 @@
       id: 'experimental',
       titleKey: 'settings.section.experimental',
       icon: 'science',
-      rows: [
-        {
-          type: 'toggle',
-          bind: 'window_beat_shake',
-          label: _t('settings.windowBeatShake.label'),
-          sub: _t('settings.windowBeatShake.sub'),
-        },
-      ],
+      rows: [],
     },
     {
       id: 'system',
@@ -790,6 +791,25 @@
         </div>
       `;
     }
+    if (row.type === 'file_picker') {
+      return `
+        <div class="settings-row settings-row-text settings-row-file-picker" data-bind="${row.bind}">
+          <div>
+            <p class="settings-row-label">${row.label}</p>
+            <p class="settings-row-sub">${row.sub || ''}</p>
+          </div>
+          <div class="settings-file-picker-control">
+            <input type="text" class="settings-font-input" data-bind="${row.bind}"
+                   placeholder="${row.placeholder || ''}">
+            <button class="md-text-btn settings-file-picker-btn" type="button"
+                    data-bind="${row.bind}">
+              <span class="material-symbols-rounded">folder_open</span>
+              <span>${row.pickLabel || '浏览'}</span>
+            </button>
+          </div>
+        </div>
+      `;
+    }
     if (row.type === 'device_select') {
       const defaultLabel = App.utils.esc(row.placeholder || _t('settings.outputDevice.default'));
       return `
@@ -918,6 +938,8 @@
           if (row.onApply) row.onApply(val);
         };
         el.addEventListener('change', el._settingsChangeHandler);
+      } else if (row.type === 'file_picker') {
+        _bindFilePickerRow(row, settings[row.bind] || '');
       } else if (row.type === 'device_select') {
         _bindDeviceSelectRow(row, settings[row.bind] || '');
       } else if (row.type === 'shortcut') {
@@ -1069,6 +1091,40 @@
         if (App.shortcuts && App.shortcuts.reload) App.shortcuts.reload();
       });
     });
+  }
+
+  // ── 文件选择器行绑定（用于标签编辑器等可执行文件路径）──────────────────────
+  function _bindFilePickerRow(row, currentValue) {
+    const rowEl = document.querySelector(`.settings-row-file-picker[data-bind="${row.bind}"]`);
+    if (!rowEl) return;
+    const input = rowEl.querySelector('input[type="text"]');
+    const btn = rowEl.querySelector('.settings-file-picker-btn');
+    if (!input || !btn) return;
+
+    input.value = currentValue || '';
+
+    // 文本框直接编辑（失焦或回车时保存）
+    input.removeEventListener('change', input._pickerChangeHandler);
+    input._pickerChangeHandler = function () {
+      const val = this.value.trim();
+      App.utils.call('save_settings', JSON.stringify({ [row.bind]: val }));
+      if (App.state) App.state.tagEditorPath = val;
+      if (row.onApply) row.onApply(val);
+    };
+    input.addEventListener('change', input._pickerChangeHandler);
+
+    // 浏览按钮：弹出文件选择对话框
+    btn.removeEventListener('click', btn._pickerClickHandler);
+    btn._pickerClickHandler = function () {
+      App.utils.call('pick_tag_editor_path').then(function (picked) {
+        if (!picked) return;
+        input.value = picked;
+        App.utils.call('save_settings', JSON.stringify({ [row.bind]: picked }));
+        if (App.state) App.state.tagEditorPath = picked;
+        if (row.onApply) row.onApply(picked);
+      });
+    };
+    btn.addEventListener('click', btn._pickerClickHandler);
   }
 
   // ── 设备下拉菜单绑定 ─────────────────────────────────────────────────────

@@ -101,13 +101,35 @@ class AnalysisCache {
 
   /**
    * 强制立即保存（用于应用退出前）。
+   * 終了時は同期的に保存し、プロセス終了前に確実に永続化する。
+   * （_save の非同期版だとプロセス終了前に保存が完了せず、
+   *   .tmp ファイルが残って次回起動時に破損扱いになるリスクがある）
    */
   flush() {
     if (this._saveTimer) {
       clearTimeout(this._saveTimer);
       this._saveTimer = null;
     }
-    this._save();
+    if (!this._dirty) return;
+    this._dirty = false;
+
+    const obj = {};
+    for (const [key, value] of this._cache) {
+      obj[key] = value;
+    }
+    try {
+      const data = JSON.stringify(obj);
+      if (data.length > MAX_FILE_SIZE) {
+        console.warn('[AnalysisCache] Cache too large to flush, skipping:', data.length);
+        return;
+      }
+      const tmpPath = this._path + '.tmp';
+      fs.writeFileSync(tmpPath, data, 'utf8');
+      fs.renameSync(tmpPath, this._path);
+    } catch (e) {
+      console.error('[AnalysisCache] Flush save failed:', e.message);
+      this._dirty = true;
+    }
   }
 
   // ── 内部：加载 ────────────────────────────────────────────────────────
@@ -164,28 +186,39 @@ class AnalysisCache {
     if (!this._dirty) return;
     this._dirty = false;
 
-    try {
-      // 序列化为普通对象
-      const obj = {};
-      for (const [key, value] of this._cache) {
-        obj[key] = value;
-      }
-
-      const data = JSON.stringify(obj);
-      if (data.length > MAX_FILE_SIZE) {
-        console.warn('[AnalysisCache] Cache too large to save, skipping:', data.length);
-        return;
-      }
-
-      // 原子写入：临时文件 → rename
-      const tmpPath = this._path + '.tmp';
-      fs.writeFileSync(tmpPath, data, 'utf8');
-      fs.renameSync(tmpPath, this._path);
-    } catch (e) {
-      console.error('[AnalysisCache] Save failed:', e.message);
-      // 保存失败不影响运行，下次再试
-      this._dirty = true;
+    // 序列化为普通对象
+    const obj = {};
+    for (const [key, value] of this._cache) {
+      obj[key] = value;
     }
+
+    let data;
+    try {
+      data = JSON.stringify(obj);
+    } catch (e) {
+      console.error('[AnalysisCache] Serialize failed:', e.message);
+      this._dirty = true;
+      return;
+    }
+    if (data.length > MAX_FILE_SIZE) {
+      console.warn('[AnalysisCache] Cache too large to save, skipping:', data.length);
+      return;
+    }
+
+    // 非同期で原子書き込み（臨時ファイル → rename）
+    // 以前は writeFileSync + renameSync で同期保存していたが、
+    // これがメインプロセスのイベントループをブロックし、
+    // 定期保存（debounce 2s）のたびに音切れリスクがあった。
+    // fs.promises は libuv スレッドプールに I/O を逃がすため安全。
+    // 終了時の確実な永続化は flush() で同期版を使う。
+    const tmpPath = this._path + '.tmp';
+    fs.promises.writeFile(tmpPath, data, 'utf8')
+      .then(() => fs.promises.rename(tmpPath, this._path))
+      .catch((e) => {
+        console.error('[AnalysisCache] Save failed:', e.message);
+        // 保存失败不影响运行，下次再试
+        this._dirty = true;
+      });
   }
 
   // ── 内部：验证 ────────────────────────────────────────────────────────

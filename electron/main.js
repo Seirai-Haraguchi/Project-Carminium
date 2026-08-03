@@ -13,6 +13,24 @@ const path = require('path');
 const fs = require('fs');
 const { getInstance: getMemoryManager } = require('./memory_manager');
 
+// ── Chromium 起動フラグ（SMTC アプリ名解決の要因）──────────────────────────
+// Win11 24H2 で Chromium の mediaSession が生成する SMTC セッションが
+// "不明なアプリ" になる問題に対する対処：
+//   1. --enable-features=HardwareMediaKeyHandling,MediaSessionService
+//      Chromium の SMTC 統合を明示的に有効化（既定で無効化されるケースがある）
+//   2. --app-user-model-id=<AUMID>
+//      Chromium 内部のメディアセッション識別子をプロセス AUMID と一致させる
+//      （setAppUserModelId と同等だが、より低レイヤの Chromium 側にも伝播）
+//   3. --disable-features=MediaSessionSegmentation
+//      セッション分割無効化（24H2 で分離されたセッションが未登録 AUMID を使うのを防ぐ）
+// 注意: app.whenReady() より前に appendSwitch すること。
+app.commandLine.appendSwitch('enable-features',
+  'HardwareMediaKeyHandling,MediaSessionService');
+app.commandLine.appendSwitch('disable-features',
+  'MediaSessionSegmentation');
+// app-user-model-id は AUMID 定数が定義された後に設定するため、
+// このブロックの直後（AUMID 定義後）で appendSwitch する。
+
 // ── 全局异常捕获 ─────────────────────────────────────────────────────────────
 process.on('uncaughtException', (err) => {
   console.error('[main] uncaughtException:', err);
@@ -21,12 +39,14 @@ process.on('uncaughtException', (err) => {
 
 // ── Windows AppUserModelID（SMTC / 任务栏标识）─────────────────────────────
 /**
- * Windows SMTC "未知应用" 问题排查：
+ * Windows SMTC "未知应用" 问题排查（Win11 24H2 + Chromium 130+）：
  *
  * SMTC 通过进程级 AUMID 查找应用显示名称。需满足：
  *   1. 进程级 AUMID 已设置（SetCurrentProcessExplicitAppUserModelID）
  *   2. 注册表 HKCU\Software\Classes\AppUserModelId\<AUMID> 下有 DisplayName / IconUri
  *   3. 图标路径持久可用（便携版每次解压到不同临时目录）
+ *   4. 渲染进程的 <audio> 元素与 document.title 提供应用名回退
+ *      （Chromium 在 AUMID 查询失败时会回退到媒体元素/文档标题）
  *
  * 此前仅调用 app.setAppUserModelId()，但 Chromium 的 SMTC 会话使用
  * 进程级 AUMID，需要直接调用 SetCurrentProcessExplicitAppUserModelID。
@@ -35,6 +55,16 @@ process.on('uncaughtException', (err) => {
  */
 const AUMID = 'Yunofactory.ProjectCarminium.Player';
 const APP_DISPLAY_NAME = 'Project Carminium';
+
+// app.name 应保持为用户可见的显示名。
+// 将它误设为 AUMID 会让 Chromium / Windows 的部分回退链路拿到内部标识，
+// 进而无法把媒体会话正确显示为应用名。
+app.setName(APP_DISPLAY_NAME);
+
+// Chromium の内部 AUMID もプロセス AUMID と一致させる。
+// setAppUserModelId はウィンドウレベルだが、--app-user-model-id は
+// Chromium の BrowserProcess レベルに伝播し、SMTC セッション生成時に使われる。
+app.commandLine.appendSwitch('app-user-model-id', AUMID);
 
 if (app && process.platform === 'win32') {
   app.setAppUserModelId(AUMID);
@@ -78,14 +108,245 @@ if (app && process.platform === 'win32') {
     }
   }
 
+  function _escapePowerShellSingleQuoted(value) {
+    return String(value || '').replace(/'/g, "''");
+  }
+
+  function _sanitizeShortcutName(name) {
+    const normalized = String(name || '')
+      .replace(/[<>:"/\\|?*\u0000-\u001F]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return normalized || APP_DISPLAY_NAME;
+  }
+
+  function _ensureStartMenuShortcut(aumid, displayName, targetPath, iconPath) {
+    if (!aumid || !displayName || !targetPath) return null;
+
+    const shortcutName = _sanitizeShortcutName(displayName);
+    const script = `
+$ErrorActionPreference = 'Stop'
+$shortcutName = '${_escapePowerShellSingleQuoted(shortcutName)}'
+$targetPath = '${_escapePowerShellSingleQuoted(targetPath)}'
+$aumid = '${_escapePowerShellSingleQuoted(aumid)}'
+$iconPath = '${_escapePowerShellSingleQuoted(iconPath || '')}'
+$workingDir = [System.IO.Path]::GetDirectoryName($targetPath)
+$startMenuDir = [Environment]::GetFolderPath('Programs')
+$shortcutPath = Join-Path $startMenuDir ($shortcutName + '.lnk')
+
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+
+[ComImport, Guid("00021401-0000-0000-C000-000000000046")]
+internal class CShellLink {}
+
+[ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("000214F9-0000-0000-C000-000000000046")]
+internal interface IShellLinkW
+{
+    void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder pszFile, int cch, out WIN32_FIND_DATAW pfd, uint fFlags);
+    void GetIDList(out IntPtr ppidl);
+    void SetIDList(IntPtr pidl);
+    void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder pszName, int cch);
+    void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+    void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder pszDir, int cch);
+    void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string pszDir);
+    void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder pszArgs, int cch);
+    void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string pszArgs);
+    void GetHotkey(out short pwHotkey);
+    void SetHotkey(short wHotkey);
+    void GetShowCmd(out int piShowCmd);
+    void SetShowCmd(int iShowCmd);
+    void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder pszIconPath, int cch, out int piIcon);
+    void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string pszIconPath, int iIcon);
+    void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string pszPathRel, uint dwReserved);
+    void Resolve(IntPtr hwnd, uint fFlags);
+    void SetPath([MarshalAs(UnmanagedType.LPWStr)] string pszFile);
+}
+
+[ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("0000010b-0000-0000-C000-000000000046")]
+internal interface IPersistFile
+{
+    void GetClassID(out Guid pClassID);
+    void IsDirty();
+    void Load([MarshalAs(UnmanagedType.LPWStr)] string pszFileName, uint dwMode);
+    void Save([MarshalAs(UnmanagedType.LPWStr)] string pszFileName, bool fRemember);
+    void SaveCompleted([MarshalAs(UnmanagedType.LPWStr)] string pszFileName);
+    void GetCurFile([MarshalAs(UnmanagedType.LPWStr)] out string ppszFileName);
+}
+
+[ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")]
+internal interface IPropertyStore
+{
+    uint GetCount(out uint cProps);
+    uint GetAt(uint iProp, out PROPERTYKEY pkey);
+    uint GetValue(ref PROPERTYKEY key, out PROPVARIANT pv);
+    uint SetValue(ref PROPERTYKEY key, ref PROPVARIANT pv);
+    uint Commit();
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct PROPERTYKEY
+{
+    public Guid fmtid;
+    public uint pid;
+
+    public PROPERTYKEY(Guid formatId, uint propertyId)
+    {
+        fmtid = formatId;
+        pid = propertyId;
+    }
+}
+
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+internal struct WIN32_FIND_DATAW
+{
+    public uint dwFileAttributes;
+    public System.Runtime.InteropServices.ComTypes.FILETIME ftCreationTime;
+    public System.Runtime.InteropServices.ComTypes.FILETIME ftLastAccessTime;
+    public System.Runtime.InteropServices.ComTypes.FILETIME ftLastWriteTime;
+    public uint nFileSizeHigh;
+    public uint nFileSizeLow;
+    public uint dwReserved0;
+    public uint dwReserved1;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+    public string cFileName;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 14)]
+    public string cAlternateFileName;
+}
+
+[StructLayout(LayoutKind.Explicit)]
+internal struct PROPVARIANT
+{
+    [FieldOffset(0)]
+    public ushort vt;
+    [FieldOffset(8)]
+    public IntPtr pointerValue;
+
+    public static PROPVARIANT FromString(string value)
+    {
+        var pv = new PROPVARIANT();
+        pv.vt = 31; // VT_LPWSTR
+        pv.pointerValue = Marshal.StringToCoTaskMemUni(value);
+        return pv;
+    }
+
+    public void Clear()
+    {
+        PropVariantClear(ref this);
+    }
+
+    [DllImport("ole32.dll")]
+    private static extern int PropVariantClear(ref PROPVARIANT pvar);
+}
+
+public static class ShortcutHelper
+{
+    private static readonly PROPERTYKEY PKEY_AppUserModel_ID =
+        new PROPERTYKEY(new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), 5);
+
+    public static void CreateShortcut(string shortcutPath, string targetPath, string workingDir, string displayName, string iconPath, string aumid)
+    {
+        var shellLink = (IShellLinkW)new CShellLink();
+        shellLink.SetPath(targetPath);
+        shellLink.SetWorkingDirectory(workingDir);
+        shellLink.SetDescription(displayName);
+        if (!string.IsNullOrWhiteSpace(iconPath))
+        {
+            shellLink.SetIconLocation(iconPath, 0);
+        }
+
+        var propertyStore = (IPropertyStore)shellLink;
+        var appIdVariant = PROPVARIANT.FromString(aumid);
+        try
+        {
+            var appUserModelIdKey = PKEY_AppUserModel_ID;
+            uint hr = propertyStore.SetValue(ref appUserModelIdKey, ref appIdVariant);
+            if (hr != 0) Marshal.ThrowExceptionForHR((int)hr);
+            hr = propertyStore.Commit();
+            if (hr != 0) Marshal.ThrowExceptionForHR((int)hr);
+        }
+        finally
+        {
+            appIdVariant.Clear();
+        }
+
+        ((IPersistFile)shellLink).Save(shortcutPath, true);
+    }
+}
+'@
+
+[ShortcutHelper]::CreateShortcut($shortcutPath, $targetPath, $workingDir, $shortcutName, $iconPath, $aumid)
+Write-Output $shortcutPath
+`;
+
+    try {
+      const output = execFileSync('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-STA',
+        '-Command', script,
+      ], {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+      return output.trim().split(/\r?\n/).filter(Boolean).pop() || null;
+    } catch (e) {
+      const stderr = (e.stderr || '').toString().trim();
+      console.warn('[main] Failed to create Start Menu shortcut:', stderr || e.message);
+      return null;
+    }
+  }
+
   // ── 1. 将图标复制到稳定的持久路径 ──
   // 便携版每次解压到不同临时目录，注册表中的 IconUri 在应用关闭后失效。
+  // 注意: Win11 24H2 は file:/// URL の解釈がバグってることがあるため、
+  // IconUri にはプレーンな絶対パスを使う（file:// プレフィックス無し）。
+  // さらに重要: Windows SMTC の IconUri は .ico 形式を強く期待する。
+  // .png ではアイコンを取得できず「不明なアプリ」になる既知のバグがあるため、
+  // 起動時に .png を ICO コンテナに包んで .ico ファイルとして登録する。
   let iconUriValue = null;
+  let iconPathForLog = null;
   const appDataDir = process.env.APPDATA;
+
+  /**
+   * PNG ファイルを PNG-in-ICO 形式の .ico ファイルとして保存する（同期版）。
+   * Windows Vista 以降は ICO コンテナ内に PNG を直接格納でき、
+   * Windows は表示時に適切なサイズへ自動スケーリングする。
+   * 構造: ICONDIR(6B) + ICONDIRENTRY(16B) + PNG データ
+   */
+  function _generateIcoFromPngSync(pngPath, icoPath) {
+    const pngBuffer = fs.readFileSync(pngPath);
+    const w = pngBuffer.readUInt32BE(16);   // IHDR width offset
+    const h = pngBuffer.readUInt32BE(20);   // IHDR height offset
+
+    const icoHeader = Buffer.alloc(6);
+    icoHeader.writeUInt16LE(0, 0);     // reserved
+    icoHeader.writeUInt16LE(1, 2);     // type = 1 (icon)
+    icoHeader.writeUInt16LE(1, 4);     // count = 1 image
+
+    const icoEntry = Buffer.alloc(16);
+    // 256 以上は 0 を設定（ICO 仕様で 0 = 256 を意味する）
+    icoEntry.writeUInt8(w >= 256 ? 0 : w, 0);
+    icoEntry.writeUInt8(h >= 256 ? 0 : h, 1);
+    icoEntry.writeUInt8(0, 2);          // color count
+    icoEntry.writeUInt8(0, 3);          // reserved
+    icoEntry.writeUInt16LE(1, 4);       // planes
+    icoEntry.writeUInt16LE(32, 6);      // bit count
+    icoEntry.writeUInt32LE(pngBuffer.length, 8);  // bytes in res
+    icoEntry.writeUInt32LE(22, 12);     // image offset (6 + 16)
+
+    const icoBuffer = Buffer.concat([icoHeader, icoEntry, pngBuffer]);
+    fs.writeFileSync(icoPath, icoBuffer);
+    return icoPath;
+  }
 
   if (appDataDir) {
     const stableDir = path.join(appDataDir, 'Carminium');
-    const stableIconPath = path.join(stableDir, 'app-icon.png');
+    const stableIcoPath = path.join(stableDir, 'app-icon.ico');
     const sourceIconPath = path.join(__dirname, '..', 'build', 'icon.png');
 
     try {
@@ -93,12 +354,20 @@ if (app && process.platform === 'win32') {
         fs.mkdirSync(stableDir, { recursive: true });
       }
       if (fs.existsSync(sourceIconPath)) {
-        fs.copyFileSync(sourceIconPath, stableIconPath);
+        try {
+          _generateIcoFromPngSync(sourceIconPath, stableIcoPath);
+          console.log('[main] Generated ICO file:', stableIcoPath);
+        } catch (icoErr) {
+          console.warn('[main] Failed to generate ICO:', icoErr.message);
+        }
       }
-      if (fs.existsSync(stableIconPath)) {
-        // 不使用 %20 编码：file:/// 协议中空格可以直接使用，
-        // %20 在 reg 命令中会被 cmd.exe 误解释为变量引用。
-        iconUriValue = 'file:///' + stableIconPath.replace(/\\/g, '/');
+      if (fs.existsSync(stableIcoPath)) {
+        iconUriValue = stableIcoPath;
+        iconPathForLog = stableIcoPath;
+      } else if (fs.existsSync(sourceIconPath)) {
+        // .ico 生成失敗時のフォールバック
+        iconUriValue = sourceIconPath;
+        iconPathForLog = sourceIconPath;
       }
     } catch (e) {
       console.warn('[main] Failed to copy icon to stable path:', e.message);
@@ -108,8 +377,19 @@ if (app && process.platform === 'win32') {
   // 回退：使用源图标路径（开发模式）
   if (!iconUriValue) {
     const sourceIconPath = path.join(__dirname, '..', 'build', 'icon.png');
+    const fallbackIcoPath = path.join(__dirname, '..', 'build', 'app-icon.ico');
     if (fs.existsSync(sourceIconPath)) {
-      iconUriValue = 'file:///' + sourceIconPath.replace(/\\/g, '/');
+      // フォールバック時も .ico を生成して使う
+      try {
+        _generateIcoFromPngSync(sourceIconPath, fallbackIcoPath);
+        iconUriValue = fallbackIcoPath;
+        iconPathForLog = fallbackIcoPath;
+        console.log('[main] Generated fallback ICO:', fallbackIcoPath);
+      } catch (icoErr) {
+        // .ico 生成に失敗した場合は .png をそのまま使う
+        iconUriValue = sourceIconPath;
+        iconPathForLog = sourceIconPath;
+      }
     }
   }
 
@@ -141,10 +421,29 @@ if (app && process.platform === 'win32') {
   }
 
   if (iconUriValue) {
+    // 既存の IconUri を明示的に削除してから再設定（24H2 で古い file:/// 値がキャッシュされるのを防ぐ）
+    _reg(['DELETE', regKey, '/v', 'IconUri', '/f']);
     const iuResult = _reg(['ADD', regKey, '/v', 'IconUri', '/t', 'REG_SZ', '/d', iconUriValue, '/f']);
     if (iuResult.ok) {
-      console.log('[main] AUMID IconUri registered:', iconUriValue);
+      console.log('[main] AUMID IconUri registered (absolute path):', iconUriValue);
+    } else {
+      console.warn('[main] AUMID IconUri registration FAILED');
     }
+  } else {
+    console.warn('[main] No icon path available — IconUri will not be set');
+  }
+
+  // ── 3.5. Start Menu 快捷方式 ──
+  // Windows Shell 对“可见应用名”的解析更依赖 Start Menu 中已注册的应用项。
+  // 对便携 / 未打包为 MSIX 的应用，仅设置 AUMID 往往仍会显示“未知应用”。
+  const startMenuShortcut = _ensureStartMenuShortcut(
+    AUMID,
+    APP_DISPLAY_NAME,
+    process.execPath,
+    iconUriValue
+  );
+  if (startMenuShortcut) {
+    console.log('[main] Start Menu shortcut ensured:', startMenuShortcut);
   }
 
   // ── 4. 验证注册表值 ──
@@ -172,14 +471,25 @@ if (app && process.platform === 'win32') {
 
   // ── 6. 通知 Shell 刷新关联缓存 ──
   // SHCNE_ASSOCCHANGED = 0x08000000, SHCNF_IDLIST = 0x0000
+  // これにより Windows Shell が AUMID → 表示名/アイコンのキャッシュを再構築する。
+  // SMTC が「不明なアプリ」になる原因の多くは、このキャッシュ更新が漏れること。
   if (_shell32) {
     try {
       const SHChangeNotify = _shell32.func(
         'void SHChangeNotify(int32 wEventId, int32 uFlags, void *dwItem1, void *dwItem2)'
       );
       SHChangeNotify(0x08000000, 0x0000, null, null);
-    } catch { /* non-critical */ }
+      console.log('[main] SHChangeNotify(SHCNE_ASSOCCHANGED) sent — Shell cache refreshed');
+    } catch (e) {
+      console.warn('[main] SHChangeNotify failed:', e.message);
+    }
   }
+
+  console.log('[main] === AUMID registration complete ===');
+  console.log('[main]   AUMID:', AUMID);
+  console.log('[main]   DisplayName:', APP_DISPLAY_NAME);
+  console.log('[main]   IconUri:', iconPathForLog || '(none)');
+  console.log('[main]   Icon format:', iconPathForLog && iconPathForLog.endsWith('.ico') ? 'ICO' : 'PNG');
 }
 
 // ── 单实例锁 ───────────────────────────────────────────────────────────────
@@ -225,10 +535,10 @@ function createMainWindow() {
   } catch { /* fallback: no icon */ }
 
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 1280,
-    minHeight: 720,
+    width: 1152,
+    height: 864,
+    minWidth: 960,
+    minHeight: 520,
     title: 'Project Carminium',
     icon: appIcon,
     show: false,

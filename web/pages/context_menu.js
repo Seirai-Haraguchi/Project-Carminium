@@ -125,7 +125,7 @@
                 } else {
                   App.utils.toast(App.i18n.t('playlist.tracksAdded', { count: r.added || 0, name: pl.name }));
                   if (r.skipped > 0) {
-                    App.utils.toast(r.skipped + ' 首曲目不属于该服务器，已跳过');
+                    App.utils.toast(App.i18n.t('playlist.tracksSkipped', { count: r.skipped }));
                   }
                 }
               } catch (e) { /* ignore */ }
@@ -321,8 +321,13 @@
       { id: 'add_to_playlist', icon: 'playlist_add', text: App.i18n.t('cm.addToPlaylist'), hasSubmenu: true },
       { id: 'copy_path', icon: 'content_copy', text: isMulti ? App.i18n.t('cm.copyPathSelected') : App.i18n.t('cm.copyPath') },
       { id: 'explorer', icon: 'folder_open', text: App.i18n.t('cm.showInExplorer') },
-      { id: 'info', icon: 'info', text: App.i18n.t('cm.fileInfo'), color: 'var(--md-tertiary)' }
     ];
+
+    // 仅在已设置外部标签编辑应用时显示该项
+    if (App.state && App.state.tagEditorPath) {
+      items.push({ id: 'tag_editor', icon: 'edit_note', text: App.i18n.t('cm.editTags') });
+    }
+    items.push({ id: 'info', icon: 'info', text: App.i18n.t('cm.fileInfo'), color: 'var(--md-tertiary)' });
 
     items.forEach(item => {
       const el = document.createElement('div');
@@ -385,6 +390,16 @@
           }
         } else if (item.id === 'explorer') {
           App.backend.show_in_explorer(track.path);
+        } else if (item.id === 'tag_editor') {
+          var filePaths = selectedTracks.map(function (t) { return t.path; }).filter(Boolean);
+          App.utils.call('open_in_tag_editor', filePaths).then(function (res) {
+            try {
+              var r = JSON.parse(res);
+              if (r && r.error) {
+                App.utils.toast(App.i18n.t('cm.tagEditorFailed'));
+              }
+            } catch (e) { /* ignore */ }
+          });
         } else if (item.id === 'info') {
           if (isMulti) {
             var info = App.i18n.t('cm.infoSelectedTitle') + '\n' +

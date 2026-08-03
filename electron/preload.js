@@ -42,17 +42,6 @@ contextBridge.exposeInMainWorld('__electronAPI', {
     return () => ipcRenderer.removeListener(fullChannel, handler);
   },
 
-  /**
-   * 监听窗口震动事件。
-   * @param {function()} callback
-   * @returns {function} 取消监听函数
-   */
-  onBeatShake: (callback) => {
-    const handler = () => callback();
-    ipcRenderer.on('beat_shake', handler);
-    return () => ipcRenderer.removeListener('beat_shake', handler);
-  },
-
   // ── Audio PCM IPC（Web Audio API ↔ Main） ──────────────────────────────
 
   /**

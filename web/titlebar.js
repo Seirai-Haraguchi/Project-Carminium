@@ -393,7 +393,7 @@
         try { info = JSON.parse(res); } catch (e) { return; }
 
         if (versionEl && info.version) {
-          versionEl.textContent = 'v' + info.version;
+          versionEl.textContent = '' + info.version;
         }
         if (codenameEl && info.codename) {
           codenameEl.textContent = info.codename;

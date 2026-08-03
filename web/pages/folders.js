@@ -170,6 +170,8 @@ container.innerHTML = `
       frag.appendChild(row);
     });
     listEl.appendChild(frag);
+    // 对动态插入的 DOM 应用 i18n 翻译
+    if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(listEl);
   }
 
   // Handle signal push
@@ -248,6 +250,8 @@ container.innerHTML = `
       }
     });
     listEl.appendChild(frag);
+    // 对动态插入的 DOM 应用 i18n 翻译
+    if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(listEl);
 
     listEl.querySelectorAll('.btn-subsonic-sync').forEach(btn => {
       btn.addEventListener('click', function () {

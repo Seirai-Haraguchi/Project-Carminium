@@ -22,7 +22,7 @@
     }
 currentPlaylist = {
 id: parseInt(params.playlist_id, 10),
-name: params.playlist_name || '歌单',
+name: params.playlist_name || App.i18n.t('playlist.local'),
 source: params.source || 'local',
 server_id: params.server_id || null,
 remote_id: params.remote_id || null,
@@ -38,8 +38,8 @@ owner_email: params.owner_email || null,
     container.innerHTML = `
       <div class="empty-state" style="margin-top: 120px;">
         <span class="material-symbols-rounded empty-icon">queue_music</span>
-        <h2 class="empty-title">未选择歌单</h2>
-        <p class="empty-sub">从左侧「歌单」按钮中选择一个歌单</p>
+        <h2 class="empty-title">${App.i18n.t('empty.noPlaylists')}</h2>
+        <p class="empty-sub">${App.i18n.t('empty.selectPlaylist')}</p>
       </div>
     `;
   }
@@ -154,7 +154,7 @@ owner_email: params.owner_email || null,
     // 始终使用英雄式布局
     container.innerHTML = `
       <div class="detail-header playlist-detail-header">
-        <button class="back-btn" id="btn-back" aria-label="返回" title="返回">
+        <button class="back-btn" id="btn-back" data-i18n-aria-label="common.back" data-i18n-title="common.back" aria-label="${App.i18n.t('common.back')}" title="${App.i18n.t('common.back')}">
           <span class="material-symbols-rounded">arrow_back</span>
         </button>
         <div class="detail-cover playlist-detail-cover">
@@ -163,24 +163,24 @@ owner_email: params.owner_email || null,
         </div>
         <div class="detail-cover-gradient"></div>
         <div class="detail-meta">
-          <p class="detail-type">${isRemote ? '远程歌单' : '歌单'}</p>
+          <p class="detail-type">${isRemote ? App.i18n.t('playlist.remote') : App.i18n.t('playlist.local')}</p>
           <h1 class="detail-name">${App.utils.esc(playlist.name)}</h1>
-          <p class="detail-sub" id="playlist-count">加载中…</p>
+          <p class="detail-sub" id="playlist-count">${App.i18n.t('common.loading')}</p>
           ${_renderOwnerInfo(playlist)}
           <div class="detail-actions">
             <button class="detail-play-btn" id="btn-play-playlist">
-              <span class="material-symbols-rounded">play_arrow</span>播放
+              <span class="material-symbols-rounded">play_arrow</span>${App.i18n.t('playlist.play')}
             </button>
             ${isRemote ? `
-              <button class="detail-play-btn" id="btn-sync-playlist" title="同步远程歌单" style="background: var(--md-surface-container); color: var(--md-on-surface);">
-                <span class="material-symbols-rounded">sync</span>同步
+              <button class="detail-play-btn" id="btn-sync-playlist" title="${App.i18n.t('playlist.syncRemote')}" style="background: var(--md-surface-container); color: var(--md-on-surface);">
+                <span class="material-symbols-rounded">sync</span>${App.i18n.t('playlist.sync')}
               </button>
             ` : `
-              <button class="detail-play-btn" id="btn-rename-playlist" title="重命名" style="background: var(--md-surface-container); color: var(--md-on-surface);">
-                <span class="material-symbols-rounded">edit</span>重命名
+              <button class="detail-play-btn" id="btn-rename-playlist" title="${App.i18n.t('playlist.rename')}" style="background: var(--md-surface-container); color: var(--md-on-surface);">
+                <span class="material-symbols-rounded">edit</span>${App.i18n.t('playlist.rename')}
               </button>
-              <button class="detail-play-btn" id="btn-delete-playlist" title="删除歌单" style="background: var(--md-surface-container); color: var(--md-error);">
-                <span class="material-symbols-rounded">delete</span>删除
+              <button class="detail-play-btn" id="btn-delete-playlist" title="${App.i18n.t('playlist.deleteTitle')}" style="background: var(--md-surface-container); color: var(--md-error);">
+                <span class="material-symbols-rounded">delete</span>${App.i18n.t('playlist.delete')}
               </button>
             `}
           </div>
@@ -189,11 +189,14 @@ owner_email: params.owner_email || null,
       <div class="playlist-search-wrapper" style="padding: 0 28px 12px;">
         <div class="search-bar">
           <span class="material-symbols-rounded">search</span>
-          <input type="text" id="playlist-search" placeholder="搜索歌单曲目…" aria-label="搜索歌单">
+          <input type="text" id="playlist-search" data-i18n-placeholder="playlist.searchPlaceholder" placeholder="${App.i18n.t('playlist.searchPlaceholder')}" aria-label="${App.i18n.t('common.search')}">
         </div>
       </div>
       <ul class="track-list az-list" id="playlist-track-list"></ul>
     `;
+
+    // 对动态插入的 DOM 应用 i18n 翻译
+    if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(container);
 
     // 设置封面：有封面用封面，无封面用渐变占位符
     const blurEl = document.getElementById('pl-cover-blur');
@@ -244,10 +247,10 @@ owner_email: params.owner_email || null,
 
       document.getElementById('btn-delete-playlist').addEventListener('click', function () {
         App.utils.confirmDialog({
-          title: '删除歌单',
-          body: `将删除歌单「${playlist.name}」，歌单内的曲目不会被删除。此操作不可撤销。是否继续？`,
-          confirmText: '删除',
-          cancelText: '取消',
+          title: App.i18n.t('playlist.deleteTitle'),
+          body: App.i18n.t('playlist.deleteBody', { name: playlist.name }),
+          confirmText: App.i18n.t('playlist.delete'),
+          cancelText: App.i18n.t('common.cancel'),
         }).then(function (ok) {
           if (ok) {
             App.utils.call('delete_playlist', playlist.id).then(function () {
@@ -276,10 +279,10 @@ owner_email: params.owner_email || null,
         if (icon) icon.textContent = 'sync';
       }
       if (data.ok) {
-        App.utils.toast('已同步远程歌单「' + (data.name || '') + '」，共 ' + data.trackCount + ' 首曲目');
+        App.utils.toast(App.i18n.t('playlist.syncedTrackCount', { name: data.name || '', count: data.trackCount }));
         _loadTracks(playlistId);
       } else {
-        App.utils.toast('同步失败：' + (data.error || '未知错误'));
+        App.utils.toast(App.i18n.t('playlist.syncFailed') + '：' + (data.error || App.i18n.t('common.unknown')));
         _loadTracks(playlistId);
       }
     }).catch(function (err) {
@@ -288,7 +291,7 @@ owner_email: params.owner_email || null,
         const icon = syncBtn.querySelector('.material-symbols-rounded');
         if (icon) icon.textContent = 'sync';
       }
-      App.utils.toast('同步失败：' + String(err));
+      App.utils.toast(App.i18n.t('playlist.syncFailed') + '：' + String(err));
       _loadTracks(playlistId);
     });
   }
@@ -300,13 +303,13 @@ owner_email: params.owner_email || null,
     const dlg = document.createElement('div');
     dlg.className = 'cmd-dialog';
     dlg.innerHTML = `
-      <div class="cmd-dialog-title">重命名歌单</div>
+      <div class="cmd-dialog-title">${App.i18n.t('playlist.renameTitle')}</div>
       <div class="cmd-dialog-body" style="padding:0 24px 12px;">
         <input type="text" id="rename-input" class="settings-font-input" style="width:100%; box-sizing:border-box; padding:10px 12px;" value="${App.utils.esc(playlist.name)}">
       </div>
       <div class="cmd-dialog-actions">
-        <button class="cmd-dialog-btn cmd-dialog-btn--cancel">取消</button>
-        <button class="cmd-dialog-btn cmd-dialog-btn--confirm">保存</button>
+        <button class="cmd-dialog-btn cmd-dialog-btn--cancel">${App.i18n.t('common.cancel')}</button>
+        <button class="cmd-dialog-btn cmd-dialog-btn--confirm">${App.i18n.t('common.save')}</button>
       </div>
     `;
     overlay.appendChild(dlg);
@@ -388,7 +391,7 @@ owner_email: params.owner_email || null,
     const countEl = document.getElementById('playlist-count');
     if (countEl) {
       countEl.textContent = list.length === 0
-        ? (filterStr ? '无结果' : '歌单为空')
+        ? (filterStr ? App.i18n.t('common.noResults') : App.i18n.t('empty.playlistEmpty'))
         : `${list.length} 首曲目`;
     }
 
@@ -396,7 +399,7 @@ owner_email: params.owner_email || null,
       ul.innerHTML = `
         <div class="empty-state">
           <span class="material-symbols-rounded empty-icon">queue_music</span>
-          <h2 class="empty-title">${filterStr ? '无结果' : '歌单为空'}</h2>
+          <h2 class="empty-title">${filterStr ? App.i18n.t('common.noResults') : App.i18n.t('empty.playlistEmpty')}</h2>
         </div>
       `;
       return;
@@ -410,8 +413,8 @@ owner_email: params.owner_email || null,
       // 添加"从歌单移除"按钮（右键菜单中也可提供）
       const removeBtn = document.createElement('button');
       removeBtn.className = 'track-action-btn';
-      removeBtn.title = '从歌单移除';
-      removeBtn.setAttribute('aria-label', '从歌单移除');
+removeBtn.title = App.i18n.t('playlist.removeFromPlaylist');
+        removeBtn.setAttribute('aria-label', App.i18n.t('playlist.removeFromPlaylist'));
       removeBtn.innerHTML = '<span class="material-symbols-rounded">playlist_remove</span>';
       removeBtn.addEventListener('click', function (e) {
         e.stopPropagation();

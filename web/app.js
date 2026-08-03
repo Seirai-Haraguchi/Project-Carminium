@@ -23,6 +23,7 @@
     colorScheme: 'tonal_spot', // Material You 配色方案
     monetSource: 'album_cover', // 莫奈取色来源: "album_cover" | "system_wallpaper"
     isExclusive: false,  // WASAPI 独占模式标志（由 settings_changed 同步）
+    tagEditorPath: '',   // 外部音乐标签编辑应用路径（由 settings_changed 同步）
   };
 
   // ── 0.5 滚动位置记忆 ──────────────────────────────────────────────────────
@@ -213,8 +214,10 @@
         uiSync.on('library_updated', function (json) {
           // 刷新前端全量缓存，然后重渲染当前页
           App.refreshLibraryCache().then(function () {
-            if (App.state.currentPage === 'music') App.pages.music.render(document.getElementById('page-container'));
-            if (App.state.currentPage === 'your_mix' && App.pages.your_mix) App.pages.your_mix.render(document.getElementById('page-container'));
+            var _c = document.getElementById('page-container');
+            if (App.state.currentPage === 'music') App.pages.music.render(_c);
+            if (App.state.currentPage === 'your_mix' && App.pages.your_mix) App.pages.your_mix.render(_c);
+            if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(_c);
             if (App.pages.folders.onFoldersUpdated) App.pages.folders.onFoldersUpdated(json);
           });
         });
@@ -264,7 +267,10 @@
             if (s.np_default_view !== undefined && App.nowPlaying) {
               App.nowPlaying.setDefaultView(s.np_default_view);
             }
-            // AutoMix / gapless / BeatShake 依赖前端 Web Audio API，已随前端模式一并移除
+            // 外部音乐标签编辑应用路径变更
+            if (s.tag_editor_path !== undefined) {
+              App.state.tagEditorPath = s.tag_editor_path || '';
+            }
           } catch (e) { /* ignore */ }
         });
 
@@ -409,7 +415,8 @@
         App.nowPlaying.updateAudioMode(!!settings.wasapi_exclusive);
       }
 
-      // AutoMix / gapless / BeatShake / setSinkId 依赖前端 Web Audio API，已随前端模式一并移除
+      // 同步外部音乐标签编辑应用路径到 App.state
+      App.state.tagEditorPath = settings.tag_editor_path || '';
     });
 
     // 监听系统主题变化
@@ -601,13 +608,15 @@
     setTimeout(() => {
       if (App.pages[pageId] && App.pages[pageId].render) {
         App.pages[pageId].render(container, params);
+        // 对动态插入的 DOM 应用 i18n 翻译（data-i18n 等属性）
+        if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(container);
         // 恢复新页面的滚动位置（异步页面会在数据加载后逐步恢复）
         App.scrollMemory.scheduleRestore(pageId);
         setTimeout(() => {
           if (App.pages[pageId].updatePlayState) App.pages[pageId].updatePlayState();
         }, 50);
       } else {
-        container.innerHTML = `<h2>页面未找到或未实现</h2>`;
+        container.innerHTML = `<h2>${App.i18n.t('error.pageNotFound')}</h2>`;
       }
       if (!useInternalTransition) {
         container.classList.add('page-enter');
@@ -627,6 +636,8 @@
         // 保存滚动位置，渲染后恢复
         App.scrollMemory.save(page);
         App.pages[page].render(container, App.state.currentPageParams || undefined);
+        // 对重新渲染的 DOM 应用 i18n 翻译
+        if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(container);
         App.scrollMemory.scheduleRestore(page);
       }
       // 通知正在播放面板刷新动态文本
@@ -939,9 +950,9 @@
               if (r.error) {
                 App.utils.toast(r.error);
               } else {
-                App.utils.toast((r.added || 0) + ' 首曲目已添加到「' + pl.name + '」');
+                App.utils.toast(App.i18n.t('playlist.tracksAdded', { count: r.added || 0, name: pl.name }));
                 if (r.skipped > 0) {
-                  App.utils.toast(r.skipped + ' 首曲目不属于该服务器，已跳过');
+                  App.utils.toast(App.i18n.t('playlist.tracksSkipped', { count: r.skipped }));
                 }
               }
             } catch (e) { /* ignore */ }
@@ -1564,7 +1575,7 @@
     _closePlaylistsSubmenu();
     var servers = (App.state && App.state.allSubsonicServers) ? App.state.allSubsonicServers : [];
     if (servers.length === 0) {
-      App.utils.toast('请先在「媒体库」中添加 Subsonic 服务器');
+      App.utils.toast(App.i18n.t('subsonic.noServerAdded'));
       return;
     }
     var overlay = document.createElement('div');
@@ -1576,22 +1587,22 @@
       return '<option value="' + s.id + '">' + App.utils.esc(s.name) + ' (' + s.server_url + ')</option>';
     }).join('');
     dlg.innerHTML = ''
-      + '<div class="cmd-dialog-title">从 Subsonic 服务器导入歌单</div>'
+      + '<div class="cmd-dialog-title">' + App.i18n.t('playlist.importFromServer') + '</div>'
       + '<div class="cmd-dialog-body">'
       + '  <div class="cmd-text-field">'
       + '    <select id="ss-server-select" class="cmd-text-field__input" style="padding: 10px 12px;">' + serverOptions + '</select>'
-      + '    <label class="cmd-text-field__label">选择服务器</label>'
+      + '    <label class="cmd-text-field__label">' + App.i18n.t('playlist.selectServer') + '</label>'
       + '  </div>'
       + '  <div id="ss-playlists-container" style="min-height: 200px; max-height: 400px; overflow-y: auto; margin-top: 16px;">'
       + '    <div style="display: flex; align-items: center; justify-content: center; padding: 40px; color: var(--md-on-surface-variant);">'
       + '      <span class="material-symbols-rounded" style="margin-right: 8px;">sync</span>'
-      + '      <span>请选择服务器以获取歌单列表</span>'
+      + '      <span>' + App.i18n.t('playlist.selectPlaylists') + '</span>'
       + '    </div>'
       + '  </div>'
       + '</div>'
       + '<div class="cmd-dialog-actions">'
-      + '  <button class="cmd-dialog-btn cmd-dialog-btn--cancel">取消</button>'
-      + '  <button class="cmd-dialog-btn cmd-dialog-btn--confirm" id="btn-import-playlists" disabled>导入选中</button>'
+      + '  <button class="cmd-dialog-btn cmd-dialog-btn--cancel">' + App.i18n.t('common.cancel') + '</button>'
+      + '  <button class="cmd-dialog-btn cmd-dialog-btn--confirm" id="btn-import-playlists" disabled>' + App.i18n.t('playlist.importSelected') + '</button>'
       + '</div>';
     overlay.appendChild(dlg);
     document.body.appendChild(overlay);
@@ -1615,7 +1626,7 @@
       playlistsContainer.innerHTML = ''
         + '<div style="display: flex; align-items: center; justify-content: center; padding: 40px; color: var(--md-on-surface-variant);">'
         + '  <span class="material-symbols-rounded" style="margin-right: 8px; animation: spin 1s linear infinite;">sync</span>'
-        + '  <span>获取歌单列表中…</span>'
+        + '  <span>' + App.i18n.t('playlist.fetchingPlaylists') + '</span>'
         + '</div>';
       App.utils.call('fetch_subsonic_playlists', serverId).then(function(res) {
         var data = JSON.parse(res);
@@ -1634,7 +1645,7 @@
           playlistsContainer.innerHTML = ''
             + '<div style="display: flex; align-items: center; justify-content: center; padding: 40px; color: var(--md-on-surface-variant);">'
             + '  <span class="material-symbols-rounded" style="margin-right: 8px;">playlist_play</span>'
-            + '  <span>该服务器没有歌单</span>'
+            + '  <span>' + App.i18n.t('playlist.noPlaylistsOnServer') + '</span>'
             + '</div>';
           return;
         }
@@ -1652,7 +1663,7 @@
           info.innerHTML = ''
             + '<div style="font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + App.utils.esc(pl.name) + '</div>'
             + '<div style="font-size: 12px; color: var(--md-on-surface-variant); margin-top: 2px;">'
-            + (pl.song_count || 0) + ' 首曲目 · ' + (pl.owner || '未知') + ' · ' + (pl.public ? '公开' : '私有')
+            + App.i18n.t('albums.trackCountShort', { count: pl.song_count || 0 }) + ' · ' + (pl.owner || App.i18n.t('common.unknown')) + ' · ' + (pl.public ? App.i18n.t('playlist.public') : App.i18n.t('playlist.private'))
             + '</div>';
           label.appendChild(checkbox);
           label.appendChild(info);
@@ -1685,28 +1696,28 @@
       var playlistIds = Object.keys(selectedPlaylists);
       console.log('[import] selected playlist IDs:', playlistIds);
       importBtn.disabled = true;
-      importBtn.textContent = '导入中…';
+      importBtn.textContent = App.i18n.t('playlist.importing');
       App.utils.call('import_subsonic_playlists', serverId, JSON.stringify(playlistIds)).then(function(res) {
         var data = JSON.parse(res);
         console.log('[import] result:', data);
         if (data.error) {
-          App.utils.toast('导入失败：' + data.error);
+          App.utils.toast(App.i18n.t('playlist.importFailed', { error: data.error }));
           importBtn.disabled = false;
-          importBtn.textContent = '导入选中';
+          importBtn.textContent = App.i18n.t('playlist.importSelected');
           return;
         }
         var errors = (data.results || []).filter(function(r) { return r.status === 'error'; });
         if (errors.length > 0) {
-          App.utils.toast('导入完成：' + data.imported + ' 成功，' + data.skipped + ' 跳过，' + errors.length + ' 失败：' + errors[0].error);
+          App.utils.toast(App.i18n.t('playlist.importResultErrors', { imported: data.imported, skipped: data.skipped, errors: errors.length, firstError: errors[0].error }));
         } else {
-          App.utils.toast('导入完成：' + data.imported + ' 个歌单成功，' + data.skipped + ' 个跳过');
+          App.utils.toast(App.i18n.t('playlist.importResult', { imported: data.imported, skipped: data.skipped }));
         }
         close();
         if (App.playlists && App.playlists.refresh) App.playlists.refresh();
       }).catch(function(err) {
-        App.utils.toast('导入失败：' + String(err));
+        App.utils.toast(App.i18n.t('playlist.importFailed', { error: String(err) }));
         importBtn.disabled = false;
-        importBtn.textContent = '导入选中';
+        importBtn.textContent = App.i18n.t('playlist.importSelected');
       });
     });
 

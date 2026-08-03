@@ -7,6 +7,7 @@
 const https = require('https');
 const http = require('http');
 const { URL } = require('url');
+const _qrcDecrypt = require('./qrc_decrypt');
 
 const NETEASE_BASE = 'https://music.163.com';
 const SEARCH_URL = NETEASE_BASE + '/api/search/get';
@@ -29,7 +30,7 @@ const _fetchCache = new Map();
 
 // ── HTTP 辅助 ────────────────────────────────────────────────────────────────
 
-function _request(urlStr, { method = 'GET', body = null, headers = null } = {}) {
+function _request(urlStr, { method = 'GET', body = null, headers = null, json = false } = {}) {
   return new Promise((resolve, reject) => {
     const url = new URL(urlStr);
     const lib = url.protocol === 'https:' ? https : http;
@@ -41,7 +42,9 @@ function _request(urlStr, { method = 'GET', body = null, headers = null } = {}) 
       headers: headers ? { ...headers } : { ...HEADERS },
     };
     if (body) {
-      opts.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+      opts.headers['Content-Type'] = json
+        ? 'application/json'
+        : 'application/x-www-form-urlencoded';
       opts.headers['Content-Length'] = Buffer.byteLength(body);
     }
     const req = lib.request(opts, (resp) => {
@@ -99,14 +102,19 @@ async function search(query) {
 async function fetchLyrics(songId) {
   try {
     const sid = String(songId);
-    const url = LYRIC_URL + '?id=' + sid + '&lv=1&kv=1&tv=-1';
+    // yv=-1 で逐字歌词（YRC）もあわせて取得
+    const url = LYRIC_URL + '?id=' + sid + '&lv=1&kv=1&tv=-1&yv=-1';
     const raw = await _request(url);
     const result = JSON.parse(raw);
 
     const lrc = result.lrc?.lyric || '';
     const tlyric = result.tlyric?.lyric || '';
     const romalrc = result.romalrc?.lyric || '';
-    const combined = _combineLrc(lrc, romalrc, tlyric);
+    const yrclrc = result.yrc?.lyric || '';
+
+    // YRC 逐字歌词があれば增强LRCへ変換して優先、なければ行レベルLRCへフォールバック
+    const originalLrc = yrclrc.trim() ? _yrcToEnhancedLrc(yrclrc) : lrc;
+    const combined = _combineLrc(originalLrc, romalrc, tlyric);
 
     return JSON.stringify({
       lyrics: combined,
@@ -160,7 +168,77 @@ async function searchQQMusic(query) {
   }
 }
 
+/**
+ * 获取 QQ 音乐歌词（翻译 + 罗马音 + 逐字）。
+ * 优先走 musicu 的 GetPlayLyricInfo 接口取 QRC 逐字歌词（含 trans/roma），
+ * 失败时降级到旧的 fcg_query_lyric_new 行级接口。
+ * @param {string} songMid
+ * @returns {Promise<string>} JSON 字符串 { lyrics, has_translation, has_romaji, error }
+ */
 async function fetchQQMusicLyrics(songMid) {
+  try {
+    const qrcResult = await _fetchQQMusicLyricsQrc(songMid);
+    if (qrcResult) return qrcResult;
+  } catch (e) {
+    // 继续降级
+  }
+  return _fetchQQMusicLyricsLegacy(songMid);
+}
+
+// ── QQ音乐 musicu（QRC 逐字 + 翻译 + 罗马音）────────────────────────────────
+
+const QQ_MUSICU_URL = 'https://u.y.qq.com/cgi-bin/musicu.fcg';
+
+/**
+ * 通过 musicu GetPlayLyricInfo 拉取 QRC 逐字歌词、翻译与罗马音。
+ * 加 qrc:1 后 lyric 为 QRC 逐字格式（通常加密：魔改 TripleDES + zlib）。
+ * @param {string} songMid
+ * @returns {Promise<string|null>} 成功返回 JSON 字符串；无歌词返回 null（触发降级）
+ */
+async function _fetchQQMusicLyricsQrc(songMid) {
+  const mid = String(songMid);
+  const body = JSON.stringify({
+    comm: { ct: 19, cv: 1859, uin: '0' },
+    req: {
+      module: 'music.musichallSong.PlayLyricInfo',
+      method: 'GetPlayLyricInfo',
+      param: { songMID: mid, trans: 1, roma: 1, qrc: 1 },
+    },
+  });
+  const raw = await _request(QQ_MUSICU_URL, {
+    method: 'POST',
+    body,
+    headers: QQ_HEADERS,
+    json: true,
+  });
+  const result = JSON.parse(raw);
+  const data =
+    (result.req && result.req.data) || (result.req_1 && result.req_1.data);
+  if (!data || !data.lyric) return null;
+
+  const lyric = _decodeQqLyricField(data.lyric);
+  const trans = _decodeQqLyricField(data.trans);
+  const roma = _decodeQqLyricField(data.roma);
+
+  // QRC（[start,dur]text(start,dur)...）→ 增强 LRC；已是 LRC 则原样使用
+  const originalLrc = _isQrc(lyric) ? _qrcToEnhancedLrc(lyric) : lyric;
+  if (!originalLrc.trim()) return null;
+  const romaLrc = roma ? (_isQrc(roma) ? _qrcToEnhancedLrc(roma) : roma) : '';
+
+  const combined = _combineLrc(originalLrc, romaLrc, trans);
+
+  return JSON.stringify({
+    lyrics: combined,
+    has_translation: !!trans.trim(),
+    has_romaji: !!roma.trim(),
+    error: null,
+  });
+}
+
+/**
+ * 旧版 fcg_query_lyric_new 行级接口（降级用，无逐字、无罗马音）
+ */
+async function _fetchQQMusicLyricsLegacy(songMid) {
   try {
     const mid = String(songMid);
     const url = QQ_LYRIC_URL + '?songmid=' + mid + '&format=json&pcachetime=' + Date.now();
@@ -179,7 +257,6 @@ async function fetchQQMusicLyrics(songMid) {
 
     const lrc = result.lyric ? Buffer.from(result.lyric, 'base64').toString('utf-8') : '';
     const trans = result.trans ? Buffer.from(result.trans, 'base64').toString('utf-8') : '';
-    // QQ音乐通常没有罗马音
     const combined = _combineLrc(lrc, '', trans);
 
     return JSON.stringify({
@@ -196,6 +273,125 @@ async function fetchQQMusicLyrics(songMid) {
       error: String(e),
     });
   }
+}
+
+// ── QRC 逐字歌词 → 增强LRC 转换 ──────────────────────────────────────────────
+
+/**
+ * 解码 QQ 歌词字段。musicu 返回三种形态：
+ * 1. 纯 hex 字符串 → 加密 QRC（魔改 TripleDES + zlib，解出为 XML 包裹的 QRC）
+ * 2. base64 → 明文 LRC/QRC 文本（如 trans 字段）
+ * 3. base64 → 加密字节流（旧接口形态，少见）
+ * @param {string} raw
+ * @returns {string} QRC/LRC 纯文本
+ */
+function _decodeQqLyricField(raw) {
+  if (!raw) return '';
+  const text = String(raw).trim();
+  if (!text) return '';
+
+  // hex 编码的加密 QRC
+  if (text.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(text)) {
+    return _extractQrcContent(_qrcDecrypt.decryptQqLyric(Buffer.from(text, 'hex')));
+  }
+
+  const buf = Buffer.from(text, 'base64');
+  const asText = buf.toString('utf-8');
+  // 明文判定：LRC/QRC 均以 [xx 标签开头（[ti: 头或 [mm:ss / [start,dur] 行）
+  if (/^\[ti:|^\[\d{2}:\d{2}|^\[\d+,\d+\]/m.test(asText)) {
+    return asText;
+  }
+  return _extractQrcContent(_qrcDecrypt.decryptQqLyric(buf));
+}
+
+/**
+ * 从解密结果提取 QRC 正文。QQ 加密歌词解出为 XML：
+ * <?xml ...?><QrcInfos>...<Lyric_1 LyricType="1" LyricContent="[ti:...]..."/>
+ * LyricContent 属性含 XML 实体转义，需还原；非 XML 形态原样返回。
+ * @param {string} text
+ * @returns {string}
+ */
+function _extractQrcContent(text) {
+  if (!text) return '';
+  if (text.indexOf('<') !== 0 && text.indexOf('LyricContent') === -1) return text;
+  const m = text.match(/LyricContent="([\s\S]*?)"/);
+  if (!m) return text;
+  return m[1]
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(parseInt(n, 10)))
+    .replace(/&amp;/g, '&');
+}
+
+/**
+ * 判断文本是否为 QRC 格式（行首 [startMs,durMs]）
+ */
+function _isQrc(text) {
+  return /^\[\d+,\d+\]/m.test(text || '');
+}
+
+/**
+ * QQ音乐 QRC 逐字歌词转增强 LRC
+ *
+ * QRC 行格式:
+ *   [lineStart,lineDur]text1(wordStart,wordDur)text2(wordStart,wordDur)...
+ *   ※ 时间均为绝对毫秒；可能带 [offset:xxx] 头
+ *
+ * 增强 LRC 输出:
+ *   [mm:ss.xx]<mm:ss.xx>word1<mm:ss.xx>word2...<mm:ss.xx>
+ *
+ * @param {string} qrcText
+ * @returns {string} 增强 LRC 文本（无有效行时返回空串）
+ */
+function _qrcToEnhancedLrc(qrcText) {
+  if (!qrcText || !qrcText.trim()) return '';
+
+  // [offset:xxx] 头：正偏移=歌词提前（从时间中减去）
+  let offset = 0;
+  const om = qrcText.match(/\[offset:\s*(-?\d+)\]/i);
+  if (om) offset = parseInt(om[1], 10) || 0;
+
+  const lines = qrcText.split('\n');
+  const outLines = [];
+  const headerRe = /^\[(\d+),(\d+)\]/;
+  // 词格式：文本(start,dur) 或 文本(start,dur,0)
+  const wordRe = /([^()\r\n]*)\((\d+),(\d+)(?:,\d+)?\)/g;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const hMatch = line.match(headerRe);
+    if (!hMatch) continue; // 头部标签（ti/ar/al/...）跳过
+
+    const lineStart = Math.max(0, parseInt(hMatch[1], 10) - offset);
+    const lineDur = parseInt(hMatch[2], 10) || 0;
+    const lineEnd = lineStart + lineDur;
+
+    const content = line.substring(hMatch[0].length);
+    wordRe.lastIndex = 0;
+    let wMatch;
+    const words = [];
+    while ((wMatch = wordRe.exec(content)) !== null) {
+      words.push({
+        start: Math.max(0, parseInt(wMatch[2], 10) - offset),
+        text: wMatch[1] || '',
+      });
+    }
+    if (words.length === 0) continue;
+
+    let lrcLine = _formatTime(lineStart);
+    for (let w = 0; w < words.length; w++) {
+      lrcLine += _formatWordTime(words[w].start) + words[w].text;
+    }
+    // 行终端マーカー
+    lrcLine += _formatWordTime(lineEnd);
+    outLines.push(lrcLine);
+  }
+
+  return outLines.join('\n');
 }
 
 // ── lrclib ────────────────────────────────────────────────────────────────────
@@ -505,11 +701,160 @@ async function fetchLyricsById(songId, source) {
   }
 }
 
+// ── YRC 逐字歌词 → 增强LRC 変換 ──────────────────────────────────────────────
+
+/**
+ * ミリ秒 → 增强LRC行内逐字タイムスタンプ <mm:ss.xx>
+ * @param {number} ms
+ * @returns {string}
+ */
+function _formatWordTime(ms) {
+  if (!isFinite(ms) || ms < 0) ms = 0;
+  var totalSec = ms / 1000.0;
+  var mm = Math.floor(totalSec / 60);
+  var ss = totalSec % 60;
+  // 小数2桁、整数部2桁ゼロ埋め
+  var ssStr = ss.toFixed(2).padStart(5, '0');
+  return '<' + String(mm).padStart(2, '0') + ':' + ssStr + '>';
+}
+
+/**
+ * 网易云 YRC 逐字歌词を增强LRCへ変換する
+ *
+ * YRC テキスト形式（1行）:
+ *   [lineStart,lineDur](wordStart,wordDur,0)text(wordStart,wordDur,0)text...
+ *   ※ wordStart は行頭からの絶対タイムスタンプ(ms)
+ *
+ * YRC JSON 形式（新版API）:
+ *   [{"t":lineStart,"c":[{"tx":"text","li":offset,"or":offset},...]}]
+ *   ※ li/or は行頭からの相対オフセット(ms)
+ *
+ * 增强LRC 出力形式（1行）:
+ *   [mm:ss.xx]<mm:ss.xx>word1<mm:ss.xx>word2...<mm:ss.xx>
+ *   ※ 最後の空 <mm:ss.xx> は行終端マーカー
+ *
+ * @param {string} yrcText
+ * @returns {string} 增强 LRC 文本（解析失敗時は空文字）
+ */
+function _yrcToEnhancedLrc(yrcText) {
+  if (!yrcText || !yrcText.trim()) return '';
+
+  var trimmed = yrcText.trim();
+
+  // JSON 形式か判定（"t" フィールドを含む配列）
+  if (trimmed.charAt(0) === '[' && trimmed.indexOf('"t"') >= 0) {
+    try {
+      var parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].t !== undefined) {
+        return _yrcJsonToEnhancedLrc(parsed);
+      }
+    } catch (e) {
+      // JSON 解析失敗 → テキスト形式へフォールバック
+    }
+  }
+
+  return _yrcTextToEnhancedLrc(trimmed);
+}
+
+/**
+ * YRC テキスト形式を增强LRCへ変換
+ */
+function _yrcTextToEnhancedLrc(yrcText) {
+  var textLines = yrcText.split('\n');
+  var outLines = [];
+
+  // 行頭 [start,dur] と 各 (wordStart,wordDur,0)text を抽出
+  var headerRe = /^\[(\d+),(\d+)\]/;
+  // () の後に続く文字列を取得（次の ( まで）
+  var wordRe = /\((\d+),(\d+),\d*\)([^(\r\n]*)/g;
+
+  for (var i = 0; i < textLines.length; i++) {
+    var line = textLines[i].trim();
+    if (!line) continue;
+
+    var hMatch = line.match(headerRe);
+    if (!hMatch) continue;
+
+    var lineStart = parseInt(hMatch[1], 10);
+    var lineDur = parseInt(hMatch[2], 10);
+    var lineEnd = lineStart + lineDur;
+
+    var content = line.substring(hMatch[0].length);
+    wordRe.lastIndex = 0;
+    var wMatch;
+    var words = [];
+    while ((wMatch = wordRe.exec(content)) !== null) {
+      words.push({
+        start: parseInt(wMatch[1], 10),
+        text: wMatch[3] || '',
+      });
+    }
+
+    if (words.length === 0) continue;
+
+    // 增强 LRC 行を構築
+    var lrcLine = _formatTime(lineStart);
+    for (var w = 0; w < words.length; w++) {
+      lrcLine += _formatWordTime(words[w].start) + words[w].text;
+    }
+    // 行終端マーカー
+    lrcLine += _formatWordTime(lineEnd);
+    outLines.push(lrcLine);
+  }
+
+  return outLines.join('\n');
+}
+
+/**
+ * YRC JSON 形式を增强LRCへ変換
+ * 形式: [{"t":lineStart,"c":[{"tx":"text","li":offset,"or":offset},...]}]
+ */
+function _yrcJsonToEnhancedLrc(yrcData) {
+  if (!Array.isArray(yrcData)) return '';
+  var outLines = [];
+
+  for (var i = 0; i < yrcData.length; i++) {
+    var lineObj = yrcData[i];
+    var lineStart = parseInt(lineObj.t, 10);
+    if (!isFinite(lineStart) || lineStart < 0) lineStart = 0;
+
+    var wordArr = lineObj.c;
+    if (!Array.isArray(wordArr) || wordArr.length === 0) continue;
+
+    var lrcLine = _formatTime(lineStart);
+    var lineEnd = lineStart;
+
+    for (var w = 0; w < wordArr.length; w++) {
+      var wordObj = wordArr[w];
+      var offset = parseInt(wordObj.li, 10) || 0;
+      var wordStart = lineStart + offset;
+      var text = wordObj.tx || '';
+      lrcLine += _formatWordTime(wordStart) + text;
+
+      // 行終端を更新（or を duration として扱う）
+      var dur = parseInt(wordObj.or, 10) || 0;
+      if (dur > 0) {
+        lineEnd = Math.max(lineEnd, wordStart + dur);
+      } else {
+        lineEnd = Math.max(lineEnd, wordStart);
+      }
+    }
+
+    // 行終端マーカー
+    lrcLine += _formatWordTime(lineEnd);
+    outLines.push(lrcLine);
+  }
+
+  return outLines.join('\n');
+}
+
 // ── LRC 合并逻辑 ──────────────────────────────────────────────────────────────
 
 function _parseLrc(lrcText) {
   if (!lrcText) return [];
   const entries = [];
+  // 行内逐字タイムスタンプ <mm:ss.xx> を除去するための正規表現
+  const WORD_TIME_RE = /<\d{2}:\d{2}[\.:]\d{2,3}>/g;
   for (const line of lrcText.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
@@ -529,9 +874,12 @@ function _parseLrc(lrcText) {
       lastIdx = m.index + m[0].length;
     }
     if (times.length > 0) {
-      const text = trimmed.slice(lastIdx).trim();
+      // rawText: <mm:ss.xx> タグ付きの生テキスト（增强LRC用）
+      const rawText = trimmed.slice(lastIdx).trim();
+      // plainText: <mm:ss.xx> タグを除去したプレーンテキスト
+      const plainText = rawText.replace(WORD_TIME_RE, '');
       for (const t of times) {
-        entries.push([t, text]);
+        entries.push([t, plainText, rawText]);
       }
     }
   }
@@ -542,11 +890,32 @@ function _parseLrc(lrcText) {
 function _findClosest(entries, targetTime, tolerance = 1000) {
   let best = null;
   let bestDiff = tolerance;
-  for (const [t, text] of entries) {
+  for (const entry of entries) {
+    const t = entry[0];
+    const text = entry[1]; // plainText
     const diff = Math.abs(t - targetTime);
     if (diff <= bestDiff) {
       bestDiff = diff;
       best = text;
+    }
+  }
+  return best;
+}
+
+/**
+ * _findClosest の rawText 版（<mm:ss.xx> 逐字タグを保持）
+ * 罗马音が逐字時間を持つ場合（QRC roma 等）に使用
+ */
+function _findClosestRaw(entries, targetTime, tolerance = 1000) {
+  let best = null;
+  let bestDiff = tolerance;
+  for (const entry of entries) {
+    const t = entry[0];
+    const rawText = entry[2];
+    const diff = Math.abs(t - targetTime);
+    if (diff <= bestDiff) {
+      bestDiff = diff;
+      best = rawText;
     }
   }
   return best;
@@ -568,12 +937,18 @@ function _combineLrc(original, romaji, translation) {
   const transEntries = translation ? _parseLrc(translation) : [];
 
   const lines = [];
-  for (const [timeMs, text] of origEntries) {
-    if (!text) continue;
-    lines.push(`${_formatTime(timeMs)}${text}`);
+  for (const entry of origEntries) {
+    const timeMs = entry[0];
+    const plainText = entry[1];
+    const rawText = entry[2]; // 增强LRCの場合は <mm:ss.xx> タグ付き
+    if (!plainText) continue;
+    // 原文行：增强LRCの逐字タイムスタンプを保持
+    lines.push(`${_formatTime(timeMs)}${rawText}`);
 
-    const romajiText = romajiEntries.length > 0 ? _findClosest(romajiEntries, timeMs) : null;
-    const transText = transEntries.length > 0 ? _findClosest(transEntries, timeMs) : null;
+    const romajiText = romajiEntries.length > 0 ? _findClosestRaw(romajiEntries, timeMs) : null;
+    let transText = transEntries.length > 0 ? _findClosest(transEntries, timeMs) : null;
+    // 过滤 QQ 翻译附带的版权声明行
+    if (transText && transText.indexOf('QQ音乐享有本翻译作品') !== -1) transText = null;
 
     if (romajiText && transText) {
       lines.push(`${_formatTime(timeMs)}${romajiText}`);
@@ -582,6 +957,9 @@ function _combineLrc(original, romaji, translation) {
       lines.push(`${_formatTime(timeMs)}${transText}`);
     } else if (romajiText) {
       lines.push(`${_formatTime(timeMs)}${romajiText}`);
+      // 罗马音单独存在时补一条空翻译行，确保前端同时间戳聚类为 3 行
+      // （前端约定：2 行=原文+翻译、3 行=原文+罗马音+翻译）
+      lines.push(`${_formatTime(timeMs)}`);
     }
   }
   return lines.join('\n');
