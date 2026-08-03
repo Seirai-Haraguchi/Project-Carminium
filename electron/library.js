@@ -93,6 +93,11 @@ CREATE TABLE IF NOT EXISTS subsonic_sources (
     added_at      REAL NOT NULL,
     last_sync     REAL
 );
+
+CREATE TABLE IF NOT EXISTS cover_colors (
+    track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+    colors   TEXT NOT NULL
+);
 `;
 
 function trackId(filePath) {
@@ -239,11 +244,12 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
   }
 
   rescanFolder(folderPath) {
+    // 不再删除曲目！旧实现调用 _deleteTracksByCondition('folder_id=?', fid)
+    // 会级联清空 liked_tracks / play_history / playlist_tracks，
+    // 导致重新扫描后「喜欢的音乐」「播放历史」「Your Mix」全部清零。
+    // 现在改为仅返回文件夹信息，实际同步交由 syncFolderIncremental 增量执行，
+    // 仅对真正消失的曲目做级联删除，保留仍然存在曲目的关联数据。
     const p = path.resolve(folderPath);
-    const fid = this._folderId(p);
-    if (fid !== null) {
-      this._deleteTracksByCondition('folder_id=?', fid);
-    }
     return this._folderInfo(p) || {};
   }
 
@@ -331,8 +337,12 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
    */
   _insertLocalTrackRow(fid, filePath, meta, size, addedAt) {
     const tid = trackId(filePath);
+    // 使用 INSERT OR IGNORE 而非 INSERT OR REPLACE：
+    // INSERT OR REPLACE 在主键冲突时会先 DELETE 旧行再 INSERT 新行，
+    // 触发 ON DELETE CASCADE 级联删除 liked_tracks / play_history / playlist_tracks。
+    // INSERT OR IGNORE 在冲突时静默跳过，保留已存在曲目的关联数据。
     this._db.prepare(
-      `INSERT OR REPLACE INTO tracks
+      `INSERT OR IGNORE INTO tracks
        (id, path, folder_id, title, artist, album, album_artist,
         track_number, disc_number, year, duration_ms, file_size,
         has_cover, lyrics, genre, added_at)
@@ -1443,6 +1453,20 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return rows;
   }
 
+  // 返回 { playlistId: [trackId, ...] } 映射，用于前端排除筛选
+  getAllPlaylistTrackIds() {
+    const rows = this._db.prepare(
+      `SELECT playlist_id, track_id FROM playlist_tracks`
+    ).all();
+    const map = {};
+    for (const r of rows) {
+      const key = String(r.playlist_id);
+      if (!map[key]) map[key] = [];
+      map[key].push(r.track_id);
+    }
+    return map;
+  }
+
   // ── Subsonic sources ─────────────────────────────────────────────────────
 
   // Remote methods to be added
@@ -1641,30 +1665,75 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     if (!songs || songs.length === 0) return 0;
     const serverIdInt = parseInt(serverId, 10);
     let inserted = 0;
+    const insertStmt = this._db.prepare(
+      `INSERT OR IGNORE INTO tracks
+       (id, path, folder_id, title, artist, album, album_artist,
+        track_number, disc_number, year, duration_ms, file_size,
+        has_cover, genre, added_at, source, server_id, subsonic_id, cover_id, suffix)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    );
+    const updateStmt = this._db.prepare(
+      `UPDATE tracks SET
+        title=?, artist=?, album=?, album_artist=?,
+        track_number=?, disc_number=?, year=?, duration_ms=?, file_size=?,
+        has_cover=?, genre=?, server_id=?, subsonic_id=?, cover_id=?, suffix=?
+        WHERE id=?`
+    );
     for (const s of songs) {
       const subId = s.id;
       if (!subId) continue;
       const tid = subsonicTrackId(serverIdInt, subId);
       const existed = this._db.prepare('SELECT 1 FROM tracks WHERE id=? LIMIT 1').get(tid) !== undefined;
-      const syntheticPath = `subsonic://${serverIdInt}/${subId}`;
-      this._db.prepare(
-        `INSERT OR REPLACE INTO tracks
-         (id, path, folder_id, title, artist, album, album_artist,
-          track_number, disc_number, year, duration_ms, file_size,
-          has_cover, lyrics, genre, added_at,
-          source, server_id, subsonic_id, cover_id, suffix)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-      ).run(
-        tid, syntheticPath, null,
-        s.title, s.artist, s.album, s.album_artist,
-        s.track_number, s.disc_number, s.year, s.duration_ms, s.size || 0,
-        s.cover_art_id ? 1 : 0, null, s.genre || null, Date.now() / 1000,
-        'subsonic', serverIdInt, subId, s.cover_art_id, s.suffix
-      );
-      if (!existed) inserted++;
+      if (!existed) {
+        // 新曲目：使用 INSERT OR IGNORE（不触发级联删除）
+        insertStmt.run(
+          tid, `subsonic://${serverIdInt}/${subId}`, null,
+          s.title, s.artist, s.album, s.album_artist,
+          s.track_number, s.disc_number, s.year, s.duration_ms, s.size || 0,
+          s.cover_art_id ? 1 : 0, s.genre || null,
+          Date.now() / 1000,
+          'subsonic', serverIdInt, subId, s.cover_art_id, s.suffix
+        );
+        inserted++;
+      } else {
+        // 已存在曲目：使用 UPDATE，避免 INSERT OR REPLACE 触发级联删除
+        // 保留 liked_tracks / play_history / playlist_tracks 关联数据
+        updateStmt.run(
+          s.title, s.artist, s.album, s.album_artist,
+          s.track_number, s.disc_number, s.year, s.duration_ms, s.size || 0,
+          s.cover_art_id ? 1 : 0, s.genre || null,
+          serverIdInt, subId, s.cover_art_id, s.suffix, tid
+        );
+      }
     }
     this._invalidateDedupCache();
     return inserted;
+  }
+
+  /**
+   * 删除指定 Subsonic 服务器中不再存在于服务器端的曲目（增量清理）。
+   * 与 deleteSubsonicTracks（全删重建）不同，此方法仅删除真正消失的曲目，
+   * 保留仍然存在曲目的 liked_tracks / play_history / playlist_tracks 关联数据。
+   * @param {number} serverId - Subsonic 服务器 ID
+   * @param {Set<string>} liveSubIds - 服务器端仍存在的 subsonic_id 集合
+   */
+  deleteStaleSubsonicTracks(serverId, liveSubIds) {
+    const serverIdInt = parseInt(serverId, 10);
+    const rows = this._db.prepare(
+      `SELECT id, subsonic_id FROM tracks WHERE source='subsonic' AND server_id=?`
+    ).all(serverIdInt);
+    const staleIds = [];
+    for (const row of rows) {
+      if (!liveSubIds.has(row.subsonic_id)) {
+        staleIds.push(row.id);
+      }
+    }
+    if (staleIds.length === 0) return 0;
+    this._deleteTracksByCondition(
+      `id IN (${staleIds.map(() => '?').join(',')})`,
+      ...staleIds
+    );
+    return staleIds.length;
   }
 
   /**

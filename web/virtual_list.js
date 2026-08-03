@@ -83,7 +83,7 @@
       this._pool = [];
       this._activeNodes = [];  // [{ el, index }]
 
-      this._scrollTop = 0;
+      this._scrollTop = this._scrollContainer.scrollTop || 0;
       this._lastStartIndex = -1;
       this._lastEndIndex = -1;
       this._rafPending = false;

@@ -1,11 +1,12 @@
 {
   "name": "Carminium",
-  "version": "0.5.11",
+  "version": "0.5.31",
   "description": "Carminium",
   "main": "electron/main.js",
   "author": "Seirai Haraguchi",
   "license": "LGPL-3.0-or-later",
   "scripts": {
+    "postinstall": "electron-builder install-app-deps",
     "start": "node scripts/start-electron.js .",
     "dev": "node scripts/start-electron.js . --dev",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
@@ -106,17 +107,6 @@
       "vendor": "Yunofactory",
       "synopsis": "Carminium — マテリアルデザイン音楽プレイヤー",
       "description": "マテリアルデザイン（M3）に準拠した高機能デスクトップ音楽プレイヤー。ローカルと Subsonic の両方に対応。",
-      "depends": [
-        "libasound2",
-        "libpulse0",
-        "libgtk-3-0",
-        "libnss3",
-        "libxss1",
-        "libxtst6",
-        "libatspi2.0-0",
-        "libdrm2",
-        "libgbm1"
-      ],
       "files": [
         "electron/bin/linux/**/*",
         "electron/bin/carminium_audio.so",
@@ -139,13 +129,22 @@
     "deb": {
       "artifactName": "${productName}-${version}-linux-amd64.deb",
       "compression": "xz",
-      "section": "sound",
+      "depends": [
+        "libasound2",
+        "libpulse0",
+        "libgtk-3-0",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "libatspi2.0-0",
+        "libdrm2",
+        "libgbm1"
+      ],
       "priority": "optional",
       "packageCategory": "sound"
     },
     "appImage": {
-      "artifactName": "${productName}-${version}-linux-x86_64.AppImage",
-      "systemIntegration": "doNotAsk"
+      "artifactName": "${productName}-${version}-linux-x86_64.AppImage"
     },
     "electronDist": "node_modules/electron/dist",
     "portable": {

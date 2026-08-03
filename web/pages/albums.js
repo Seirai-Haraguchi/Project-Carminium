@@ -334,8 +334,12 @@
       <ul class="track-list" id="album-track-list"></ul>
     `;
 
+    // 对动态插入的 DOM 应用 i18n 翻译
+    if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(container);
+
     document.getElementById('btn-back').addEventListener('click', () => {
       page.render(container);
+      if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(container);
       App.scrollMemory.restore('albums');
     });
 

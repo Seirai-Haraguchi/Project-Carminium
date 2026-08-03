@@ -80,14 +80,6 @@
 
     // ── SMTC (navigator.mediaSession) 设置 ──
     setupMediaSession();
-
-    // ── BeatShake 窗口震动 ──
-    window.__electronAPI.onBeatShake(function () {
-      document.body.classList.add('beat-shake');
-      setTimeout(function () {
-        document.body.classList.remove('beat-shake');
-      }, 300);
-    });
   }
 
   // ── App.backend Proxy ──────────────────────────────────────────────────────
@@ -208,6 +200,9 @@
     _silenceAudio.volume = 0;
     _silenceAudio.style.display = 'none';
     _silenceAudio.setAttribute('aria-hidden', 'true');
+    // 关键：设置 title 属性。Chromium 在 AUMID 查询失败时，
+    // 会回退到媒体元素的 title 或 document.title 作为应用名。
+    _silenceAudio.title = 'Project Carminium';
     document.body.appendChild(_silenceAudio);
 
     return _silenceAudio;
@@ -289,6 +284,11 @@
 
   function setupMediaSession() {
     if (!('mediaSession' in navigator)) return;
+
+    // 关键：固定 document.title。Chromium 的 SMTC 在 AUMID 查询失败时，
+    // 会回退到 document.title 作为应用显示名。index.html 的 <title> 可能在
+    // 路由切换时被改写，这里在初始化时强制固定为应用显示名。
+    document.title = 'Project Carminium';
 
     // 预创建静音心跳元素（需要用户交互后才能真正播放）
     _getSilenceAudio();

@@ -42,8 +42,7 @@
       'common.notPlaying': '未在播放',
       'common.nowPlaying': '正在播放',
       'common.unknown': '未知',
-
-      // 页面别名（data-i18n 用）
+      'common.save': '保存',
       'music.title': '所有音乐',
       'music.playAll': '全部播放',
       'music.trackCount': '{count} 首曲目',
@@ -249,6 +248,8 @@
       'cm.copyPathSelected': '复制文件路径（选中）',
       'cm.showInExplorer': '在资源管理器中显示',
       'cm.fileInfo': '文件属性',
+      'cm.editTags': '使用标签编辑器编辑元数据',
+      'cm.tagEditorFailed': '标签编辑器启动失败，请检查设置中的路径',
       'cm.copyInfo': '复制信息',
       'cm.selectedCount': '已选中 {count} 首曲目',
       'cm.andMore': ' 等',
@@ -271,6 +272,7 @@
       'playlist.newTitle': '新建歌单',
       'playlist.createdAdded': '已创建歌单「{name}」并添加 {count} 首曲目',
       "playlist.tracksAdded": "{count} 首曲目已添加到「{name}」",
+"playlist.tracksSkipped": "{count} 首曲目不属于该服务器，已跳过",
 "playlist.sync": "同步",
 "playlist.syncing": "同步中…",
 "playlist.synced": "已同步",
@@ -283,9 +285,66 @@
 "playlist.importSelected": "导入选中",
 "playlist.importing": "导入中…",
 "playlist.importResult": "导入完成：{imported} 个成功，{skipped} 个跳过",
+"playlist.importFailed": "导入失败：{error}",
+"playlist.importResultErrors": "导入完成：{imported} 成功，{skipped} 跳过，{errors} 失败：{firstError}",
+"playlist.public": "公开",
+"playlist.private": "私有",
+"subsonic.noServerAdded": "请先在「媒体库」中添加 Subsonic 服务器",
 "playlist.syncedTrackCount": "已同步「{name}」，共 {count} 首曲目",
 
-      // Subsonic
+      // 搜索占位符
+      'music.searchPlaceholder': '搜索本地歌曲、艺术家或专辑…',
+      'liked.searchPlaceholder': '搜索喜爱的曲目…',
+      'history.searchPlaceholder': '搜索历史曲目…',
+      'folders.searchPlaceholder': '搜索本地文件夹路径…',
+      'artists.searchPlaceholder': '搜索艺术家…',
+      'albums.searchPlaceholder': '搜索专辑或艺术家…',
+      'playlist.searchPlaceholder': '搜索歌单曲目…',
+
+      // 排序标签
+      'music.sortArtist': '歌手',
+      'music.sortAlbum': '专辑',
+      'music.sortYear': '发行年份',
+'music.filter': '筛选',
+'music.excludeArtist': '排除艺术家',
+'music.excludeAlbum': '排除专辑',
+'music.excludeServer': '排除服务器',
+'music.clearFilters': '清除全部',
+'music.excludeUsername': '排除用户名',
+'music.excludePlaylist': '排除歌单',
+'music.searchFilterItems': '搜索排除项…',
+'music.tracks': '首',
+'music.filterSummary': '…共 {count} 个筛选项',
+'artists.sortAlbums': '专辑数',
+      'artists.sortTracks': '曲目数',
+
+      // 文件夹操作
+      'folders.sync': '同步',
+      'folders.edit': '编辑',
+      'folders.editServer': '编辑服务器',
+      'folders.remove': '移除',
+      'folders.empty': '未添加本地文件夹',
+      'folders.notSynced': '未同步',
+      'folders.streamingCount': '{count} 个流媒体库',
+      'folders.removeServerTitle': '移除 Subsonic 服务器',
+      'folders.removeServerBody': '确定要移除服务器「{name}」吗？已同步的曲目索引与缓存的封面也会被删除。',
+      'folders.removeConfirm': '确定要移除文件夹「{path}」吗？',
+
+      // 详情页返回
+      'artists.backToList': '返回艺术家列表',
+      'albums.backToList': '返回专辑列表',
+
+      // 歌单详情页
+      'playlist.remote': '远程歌单',
+      'playlist.local': '歌单',
+      'playlist.play': '播放',
+      'playlist.syncRemote': '同步远程歌单',
+      'playlist.rename': '重命名',
+      'playlist.renameTitle': '重命名歌单',
+      'playlist.delete': '删除',
+      'playlist.deleteTitle': '删除歌单',
+      'playlist.deleteBody': '将删除歌单「{name}」，歌单内的曲目不会被删除。此操作不可撤销。是否继续？',
+'playlist.removeFromPlaylist': '从歌单移除',
       'subsonic.removeTitle': '移除 Subsonic 服务器',
       'subsonic.removeBody': '确定要移除服务器「{name}」吗？已同步的曲目索引与缓存的封面也会被删除。',
       'subsonic.remove': '移除',
@@ -412,6 +471,10 @@
       // 设置页 — 音乐库
       'settings.artistSeparators.label': '歌手分隔符',
       'settings.artistSeparators.sub': '每个字符均为一个分隔符；同时自动识别 feat. / ft. / vs. / with',
+      'settings.tagEditorPath.label': '音乐标签编辑应用',
+      'settings.tagEditorPath.sub': '外部标签编辑器（如 Mp3tag）的可执行文件路径，用于在歌曲右键菜单中调用编辑元数据',
+      'settings.tagEditorPath.placeholder': 'C:\\Program Files\\Mp3tag\\Mp3tag.exe',
+      'settings.tagEditorPath.pick': '浏览',
 
       // 设置页 — 自动化
       'settings.shuffle.label': '默认随机播放',
@@ -445,10 +508,6 @@
       'shortcut.notSet': '未设置',
       'shortcut.pressKeys': '按快捷键…',
 
-      // 设置页 — 实验性
-      'settings.windowBeatShake.label': '窗口随鼓点震动',
-      'settings.windowBeatShake.sub': '播放时根据音乐能量 onset 轻微震动主窗口',
-
       // 设置页 — 关于
       'settings.about.label': '关于本应用',
       'settings.about.sub': '查看版本信息与开源许可',
@@ -474,6 +533,7 @@
       // 错误
       'error.initFailed': '初始化失败：{message}',
       'error.backendFailed': '无法连接后端服务',
+      'error.pageNotFound': '页面未找到或未实现',
 
       // 手柄控制器
       'gamepad.confirm': '确认',
@@ -502,8 +562,9 @@
       'common.notPlaying': '未在播放',
       'common.nowPlaying': '正在播放',
       'common.unknown': '未知',
+      'common.save': '儲存',
 
-      // 頁面別名（data-i18n 用）
+// 頁面別名（data-i18n 用）
       'music.title': '所有音樂',
       'music.playAll': '全部播放',
       'music.trackCount': '{count} 首曲目',
@@ -696,6 +757,8 @@
       'cm.copyPathSelected': '複製檔案路徑（選中）',
       'cm.showInExplorer': '在檔案總管中顯示',
       'cm.fileInfo': '檔案屬性',
+      'cm.editTags': '使用標籤編輯器編輯元資料',
+      'cm.tagEditorFailed': '標籤編輯器啟動失敗，請檢查設定中的路徑',
       'cm.copyInfo': '複製資訊',
       'cm.selectedCount': '已選中 {count} 首曲目',
       'cm.andMore': ' 等',
@@ -717,8 +780,79 @@
       'playlist.newTitle': '新建歌單',
       'playlist.createdAdded': '已建立歌單「{name}」並新增 {count} 首曲目',
       'playlist.tracksAdded': '{count} 首曲目已新增到「{name}」',
+      'playlist.tracksSkipped': '{count} 首曲目不屬於該伺服器，已跳過',
 
-      'subsonic.removeTitle': '移除 Subsonic 伺服器',
+      // 搜尋占位符
+      'music.searchPlaceholder': '搜尋本地歌曲、藝術家或專輯…',
+      'liked.searchPlaceholder': '搜尋喜愛的曲目…',
+      'history.searchPlaceholder': '搜尋歷史曲目…',
+      'folders.searchPlaceholder': '搜尋本地資料夾路徑…',
+      'artists.searchPlaceholder': '搜尋藝術家…',
+      'albums.searchPlaceholder': '搜尋專輯或藝術家…',
+      'playlist.searchPlaceholder': '搜尋歌單曲目…',
+
+      // 排序標籤
+      'music.sortArtist': '歌手',
+      'music.sortAlbum': '專輯',
+      'music.sortYear': '發行年份',
+'music.filter': '篩選',
+'music.excludeArtist': '排除藝術家',
+'music.excludeAlbum': '排除專輯',
+'music.excludeServer': '排除伺服器',
+'music.clearFilters': '清除全部',
+'music.excludeUsername': '排除使用者名稱',
+'music.excludePlaylist': '排除歌單',
+'music.searchFilterItems': '搜尋排除項…',
+'music.tracks': '首',
+'music.filterSummary': '…共 {count} 個篩選項',
+'artists.sortAlbums': '專輯數',
+      'artists.sortTracks': '曲目數',
+
+      // 資料夾操作
+      'folders.sync': '同步',
+      'folders.edit': '編輯',
+      'folders.editServer': '編輯伺服器',
+      'folders.remove': '移除',
+      'folders.empty': '未新增本地資料夾',
+      'folders.notSynced': '未同步',
+      'folders.streamingCount': '{count} 個串流媒體庫',
+      'folders.removeServerTitle': '移除 Subsonic 伺服器',
+      'folders.removeServerBody': '確定要移除伺服器「{name}」嗎？已同步的曲目索引與快取的封面也會被刪除。',
+      'folders.removeConfirm': '確定要移除資料夾「{path}」嗎？',
+
+      // 詳情頁返回
+      'artists.backToList': '返回藝術家列表',
+      'albums.backToList': '返回專輯列表',
+
+      // 歌單詳情頁
+      'playlist.remote': '遠端歌單',
+      'playlist.local': '歌單',
+      'playlist.play': '播放',
+      'playlist.syncRemote': '同步遠端歌單',
+      'playlist.rename': '重新命名',
+      'playlist.renameTitle': '重新命名歌單',
+      'playlist.delete': '刪除',
+      'playlist.deleteTitle': '刪除歌單',
+      'playlist.deleteBody': '將刪除歌單「{name}」，歌單內的曲目不會被刪除。此操作不可復原。是否繼續？',
+      'playlist.removeFromPlaylist': '從歌單移除',
+      'playlist.sync': '同步',
+      'playlist.syncing': '同步中…',
+      'playlist.synced': '已同步',
+      'playlist.syncFailed': '同步失敗',
+      'playlist.syncedTrackCount': '已同步「{name}」，共 {count} 首曲目',
+      'playlist.importFromServer': '從 Subsonic 伺服器匯入',
+      'playlist.selectServer': '選擇伺服器',
+      'playlist.fetchingPlaylists': '取得歌單列表中…',
+      'playlist.noPlaylistsOnServer': '該伺服器沒有歌單',
+      'playlist.selectPlaylists': '選擇要匯入的歌單',
+      'playlist.importSelected': '匯入選中',
+      'playlist.importing': '匯入中…',
+      'playlist.importResult': '匯入完成：{imported} 個成功，{skipped} 個跳過',
+      'playlist.importFailed': '匯入失敗：{error}',
+      'playlist.importResultErrors': '匯入完成：{imported} 成功，{skipped} 跳過，{errors} 失敗：{firstError}',
+      'playlist.public': '公開',
+      'playlist.private': '私有',
+      'subsonic.noServerAdded': '請先在「媒體庫」中新增 Subsonic 伺服器',
       'subsonic.removeBody': '確定要移除伺服器「{name}」嗎？已同步的曲目索引與快取的封面也會被刪除。',
       'subsonic.remove': '移除',
       'subsonic.testing': '測試中…',
@@ -833,6 +967,10 @@
 
       'settings.artistSeparators.label': '歌手分隔符',
       'settings.artistSeparators.sub': '每個字元均為一個分隔符；同時自動辨識 feat. / ft. / vs. / with',
+      'settings.tagEditorPath.label': '音樂標籤編輯應用',
+      'settings.tagEditorPath.sub': '外部標籤編輯器（如 Mp3tag）的可執行檔路徑，用於在歌曲右鍵選單中呼叫編輯元資料',
+      'settings.tagEditorPath.placeholder': 'C:\\Program Files\\Mp3tag\\Mp3tag.exe',
+      'settings.tagEditorPath.pick': '瀏覽',
 
       'settings.shuffle.label': '預設隨機播放',
       'settings.shuffle.sub': '啟動應用時預設開啟隨機模式',
@@ -863,9 +1001,6 @@
       'shortcut.notSet': '未設定',
       'shortcut.pressKeys': '按快捷鍵…',
 
-      'settings.windowBeatShake.label': '視窗隨鼓點震動',
-      'settings.windowBeatShake.sub': '播放時根據音樂能量 onset 輕微震動主視窗',
-
       'settings.about.label': '關於本應用',
       'settings.about.sub': '檢視版本資訊與開源授權',
       'settings.about.emptyHint': '暫無可設定項',
@@ -887,6 +1022,7 @@
 
       'error.initFailed': '初始化失敗：{message}',
       'error.backendFailed': '無法連線後端服務',
+      'error.pageNotFound': '頁面未找到或未實現',
 
       // 手柄控制器
       'gamepad.confirm': '確認',
@@ -915,8 +1051,9 @@
       'common.notPlaying': '再生していません',
       'common.nowPlaying': '再生中',
       'common.unknown': '不明',
+      'common.save': '保存',
 
-      // ページエイリアス（data-i18n 用）
+// ページエイリアス（data-i18n 用）
       'music.title': 'すべての音楽',
       'music.playAll': 'すべて再生',
       'music.trackCount': '{count} 曲',
@@ -1109,6 +1246,8 @@
       'cm.copyPathSelected': 'ファイルパスをコピー（選択）',
       'cm.showInExplorer': 'エクスプローラーで表示',
       'cm.fileInfo': 'ファイルのプロパティ',
+      'cm.editTags': 'タグエディタでメタデータを編集',
+      'cm.tagEditorFailed': 'タグエディタの起動に失敗しました。設定のパスを確認してください',
       'cm.copyInfo': '情報をコピー',
       'cm.selectedCount': '{count} 曲を選択中',
       'cm.andMore': ' など',
@@ -1130,8 +1269,79 @@
       'playlist.newTitle': '新しいプレイリスト',
       'playlist.createdAdded': 'プレイリスト「{name}」を作成し、{count} 曲を追加しました',
       'playlist.tracksAdded': '{count} 曲を「{name}」に追加しました',
+      'playlist.tracksSkipped': '{count} 曲はこのサーバーに属していません、スキップしました',
 
-      'subsonic.removeTitle': 'Subsonic サーバーを削除',
+      // 検索プレースホルダー
+      'music.searchPlaceholder': 'ローカル曲、アーティスト、アルバムを検索…',
+      'liked.searchPlaceholder': 'お気に入りの曲を検索…',
+      'history.searchPlaceholder': '再生履歴を検索…',
+      'folders.searchPlaceholder': 'ローカルフォルダパスを検索…',
+      'artists.searchPlaceholder': 'アーティストを検索…',
+      'albums.searchPlaceholder': 'アルバムまたはアーティストを検索…',
+      'playlist.searchPlaceholder': 'プレイリストの曲を検索…',
+
+      // ソートラベル
+      'music.sortArtist': 'アーティスト',
+      'music.sortAlbum': 'アルバム',
+      'music.sortYear': '発売年',
+'music.filter': 'フィルター',
+'music.excludeArtist': 'アーティストを除外',
+'music.excludeAlbum': 'アルバムを除外',
+'music.excludeServer': 'サーバーを除外',
+'music.clearFilters': 'すべて解除',
+'music.excludeUsername': 'ユーザー名を除外',
+'music.excludePlaylist': 'プレイリストを除外',
+'music.searchFilterItems': '除外項目を検索…',
+'music.tracks': '曲',
+'music.filterSummary': '…全{count}件のフィルター項目',
+'artists.sortAlbums': 'アルバム数',
+      'artists.sortTracks': '曲数',
+
+      // フォルダ操作
+      'folders.sync': '同期',
+      'folders.edit': '編集',
+      'folders.editServer': 'サーバーを編集',
+      'folders.remove': '削除',
+      'folders.empty': 'ローカルフォルダが追加されていません',
+      'folders.notSynced': '未同期',
+      'folders.streamingCount': '{count} 個のストリーミングライブラリ',
+      'folders.removeServerTitle': 'Subsonic サーバーを削除',
+      'folders.removeServerBody': 'サーバー「{name}」を削除しますか？同期済みの曲目インデックスとキャッシュされたカバーも削除されます。',
+      'folders.removeConfirm': 'フォルダ「{path}」を削除しますか？',
+
+      // 詳細ページに戻る
+      'artists.backToList': 'アーティストリストに戻る',
+      'albums.backToList': 'アルバムリストに戻る',
+
+      // プレイリスト詳細ページ
+      'playlist.remote': 'リモートプレイリスト',
+      'playlist.local': 'プレイリスト',
+      'playlist.play': '再生',
+      'playlist.syncRemote': 'リモートプレイリストを同期',
+      'playlist.rename': '名前変更',
+      'playlist.renameTitle': 'プレイリスト名を変更',
+      'playlist.delete': '削除',
+      'playlist.deleteTitle': 'プレイリストを削除',
+      'playlist.deleteBody': 'プレイリスト「{name}」を削除します。プレイリスト内の曲は削除されません。この操作は取り消せません。続行しますか？',
+      'playlist.removeFromPlaylist': 'プレイリストから削除',
+      'playlist.sync': '同期',
+      'playlist.syncing': '同期中…',
+      'playlist.synced': '同期済み',
+      'playlist.syncFailed': '同期失敗',
+      'playlist.syncedTrackCount': '「{name}」を同期済み、全 {count} 曲',
+      'playlist.importFromServer': 'Subsonic サーバーからインポート',
+      'playlist.selectServer': 'サーバーを選択',
+      'playlist.fetchingPlaylists': 'プレイリストリストを取得中…',
+      'playlist.noPlaylistsOnServer': 'このサーバーにはプレイリストがありません',
+      'playlist.selectPlaylists': 'インポートするプレイリストを選択',
+      'playlist.importSelected': '選択をインポート',
+      'playlist.importing': 'インポート中…',
+      'playlist.importResult': 'インポート完了：{imported} 件成功、{skipped} 件スキップ',
+      'playlist.importFailed': 'インポート失敗：{error}',
+      'playlist.importResultErrors': 'インポート完了：{imported} 成功、{skipped} スキップ、{errors} 失敗：{firstError}',
+      'playlist.public': '公開',
+      'playlist.private': '非公開',
+      'subsonic.noServerAdded': '先に「メディアライブラリ」で Subsonic サーバーを追加してください',
       'subsonic.removeBody': 'サーバー「{name}」を削除しますか？同期済みの曲目インデックスとキャッシュされたカバーも削除されます。',
       'subsonic.remove': '削除',
       'subsonic.testing': 'テスト中…',
@@ -1245,6 +1455,10 @@
 
       'settings.artistSeparators.label': 'アーティスト区切り文字',
       'settings.artistSeparators.sub': '各文字が区切り文字として機能。feat. / ft. / vs. / with も自動認識',
+      'settings.tagEditorPath.label': '音楽タグ編集アプリ',
+      'settings.tagEditorPath.sub': '外部タグエディタ（Mp3tag など）の実行ファイルパス。曲の右クリックメニューからメタデータ編集に呼び出します',
+      'settings.tagEditorPath.placeholder': 'C:\\Program Files\\Mp3tag\\Mp3tag.exe',
+      'settings.tagEditorPath.pick': '参照',
 
       'settings.shuffle.label': 'デフォルトシャッフル',
       'settings.shuffle.sub': 'アプリ起動時にデフォルトでシャッフルモードをオン',
@@ -1275,9 +1489,6 @@
       'shortcut.notSet': '未設定',
       'shortcut.pressKeys': 'ショートカットキーを押す…',
 
-      'settings.windowBeatShake.label': 'ビートでウィンドウ振動',
-      'settings.windowBeatShake.sub': '再生中の音楽エネルギー onset に応じてメインウィンドウが軽微に振動',
-
       'settings.about.label': 'このアプリについて',
       'settings.about.sub': 'バージョン情報とオープンソースライセンスを表示',
       'settings.about.emptyHint': '設定可能な項目はありません',
@@ -1299,6 +1510,7 @@
 
       'error.initFailed': '初期化失敗：{message}',
       'error.backendFailed': 'バックエンドサービスに接続できません',
+      'error.pageNotFound': 'ページが見つかりません',
 
       // ゲームパッド
       'gamepad.confirm': '確認',
@@ -1327,8 +1539,9 @@
       'common.notPlaying': 'Not playing',
       'common.nowPlaying': 'Now Playing',
       'common.unknown': 'Unknown',
+      'common.save': 'Save',
 
-      // Page aliases (for data-i18n)
+// Page aliases (for data-i18n)
       'music.title': 'All Music',
       'music.playAll': 'Play All',
       'music.trackCount': '{count} tracks',
@@ -1521,6 +1734,8 @@
       'cm.copyPathSelected': 'Copy File Path (Selected)',
       'cm.showInExplorer': 'Show in File Explorer',
       'cm.fileInfo': 'File Properties',
+      'cm.editTags': 'Edit metadata in tag editor',
+      'cm.tagEditorFailed': 'Failed to launch tag editor. Check the path in Settings',
       'cm.copyInfo': 'Copy Info',
       'cm.selectedCount': '{count} tracks selected',
       'cm.andMore': ' and more',
@@ -1542,8 +1757,79 @@
       'playlist.newTitle': 'New Playlist',
       'playlist.createdAdded': 'Created playlist "{name}" and added {count} tracks',
       'playlist.tracksAdded': '{count} tracks added to "{name}"',
+      'playlist.tracksSkipped': '{count} tracks do not belong to this server, skipped',
 
-      'subsonic.removeTitle': 'Remove Subsonic Server',
+      // Search placeholders
+      'music.searchPlaceholder': 'Search songs, artists, or albums…',
+      'liked.searchPlaceholder': 'Search liked tracks…',
+      'history.searchPlaceholder': 'Search history tracks…',
+      'folders.searchPlaceholder': 'Search local folder paths…',
+      'artists.searchPlaceholder': 'Search artists…',
+      'albums.searchPlaceholder': 'Search albums or artists…',
+      'playlist.searchPlaceholder': 'Search playlist tracks…',
+
+      // Sort labels
+      'music.sortArtist': 'Artist',
+      'music.sortAlbum': 'Album',
+      'music.sortYear': 'Year',
+'music.filter': 'Filter',
+'music.excludeArtist': 'Exclude Artist',
+'music.excludeAlbum': 'Exclude Album',
+'music.excludeServer': 'Exclude Server',
+'music.clearFilters': 'Clear All',
+'music.excludeUsername': 'Exclude Username',
+'music.excludePlaylist': 'Exclude Playlist',
+'music.searchFilterItems': 'Search filter items…',
+'music.tracks': 'tracks',
+'music.filterSummary': '... {count} filter items in total',
+'artists.sortAlbums': 'Albums',
+      'artists.sortTracks': 'Tracks',
+
+      // Folder actions
+      'folders.sync': 'Sync',
+      'folders.edit': 'Edit',
+      'folders.editServer': 'Edit Server',
+      'folders.remove': 'Remove',
+      'folders.empty': 'No local folders added',
+      'folders.notSynced': 'Not synced',
+      'folders.streamingCount': '{count} streaming libraries',
+      'folders.removeServerTitle': 'Remove Subsonic Server',
+      'folders.removeServerBody': 'Remove server "{name}"? Synced track index and cached covers will also be deleted.',
+      'folders.removeConfirm': 'Remove folder "{path}"?',
+
+      // Detail page back
+      'artists.backToList': 'Back to artists',
+      'albums.backToList': 'Back to albums',
+
+      // Playlist detail page
+      'playlist.remote': 'Remote Playlist',
+      'playlist.local': 'Playlist',
+      'playlist.play': 'Play',
+      'playlist.syncRemote': 'Sync remote playlist',
+      'playlist.rename': 'Rename',
+      'playlist.renameTitle': 'Rename Playlist',
+      'playlist.delete': 'Delete',
+      'playlist.deleteTitle': 'Delete Playlist',
+      'playlist.deleteBody': 'Playlist "{name}" will be deleted. Tracks in the playlist will not be removed. This action cannot be undone. Continue?',
+      'playlist.removeFromPlaylist': 'Remove from playlist',
+      'playlist.sync': 'Sync',
+      'playlist.syncing': 'Syncing…',
+      'playlist.synced': 'Synced',
+      'playlist.syncFailed': 'Sync failed',
+      'playlist.syncedTrackCount': 'Synced "{name}", {count} tracks total',
+      'playlist.importFromServer': 'Import from Subsonic Server',
+      'playlist.selectServer': 'Select Server',
+      'playlist.fetchingPlaylists': 'Fetching playlist list…',
+      'playlist.noPlaylistsOnServer': 'No playlists on this server',
+      'playlist.selectPlaylists': 'Select playlists to import',
+      'playlist.importSelected': 'Import Selected',
+      'playlist.importing': 'Importing…',
+      'playlist.importResult': 'Import complete: {imported} succeeded, {skipped} skipped',
+      'playlist.importFailed': 'Import failed: {error}',
+      'playlist.importResultErrors': 'Import complete: {imported} succeeded, {skipped} skipped, {errors} failed: {firstError}',
+      'playlist.public': 'Public',
+      'playlist.private': 'Private',
+      'subsonic.noServerAdded': 'Please add a Subsonic server in Library first',
       'subsonic.removeBody': 'Remove server "{name}"? Synced track index and cached covers will also be deleted.',
       'subsonic.remove': 'Remove',
       'subsonic.testing': 'Testing…',
@@ -1657,6 +1943,10 @@
 
       'settings.artistSeparators.label': 'Artist Separators',
       'settings.artistSeparators.sub': 'Each character is a separator. Also auto-detects feat. / ft. / vs. / with',
+      'settings.tagEditorPath.label': 'Music Tag Editor App',
+      'settings.tagEditorPath.sub': 'Path to an external tag editor executable (e.g. Mp3tag). Called from the track context menu to edit metadata',
+      'settings.tagEditorPath.placeholder': 'C:\\Program Files\\Mp3tag\\Mp3tag.exe',
+      'settings.tagEditorPath.pick': 'Browse',
 
       'settings.shuffle.label': 'Default Shuffle',
       'settings.shuffle.sub': 'Enable shuffle mode by default on app startup',
@@ -1687,9 +1977,6 @@
       'shortcut.notSet': 'Not set',
       'shortcut.pressKeys': 'Press shortcut…',
 
-      'settings.windowBeatShake.label': 'Window Beat Shake',
-      'settings.windowBeatShake.sub': 'Slightly shake the main window based on music energy onset during playback',
-
       'settings.about.label': 'About This App',
       'settings.about.sub': 'View version info and open-source license',
       'settings.about.emptyHint': 'No configurable items',
@@ -1711,6 +1998,7 @@
 
       'error.initFailed': 'Initialization failed: {message}',
       'error.backendFailed': 'Cannot connect to backend service',
+      'error.pageNotFound': 'Page not found',
 
       // Gamepad
       'gamepad.confirm': 'Confirm',
@@ -1739,8 +2027,9 @@
       'common.notPlaying': 'Не воспроизводится',
       'common.nowPlaying': 'Сейчас воспроизводится',
       'common.unknown': 'Неизвестно',
+      'common.save': 'Сохранить',
 
-      // Псевдонимы страниц (для data-i18n)
+// Псевдонимы страниц (для data-i18n)
       'music.title': 'Вся музыка',
       'music.playAll': 'Играть все',
       'music.trackCount': '{count} треков',
@@ -1933,6 +2222,8 @@
       'cm.copyPathSelected': 'Копировать путь (выбранные)',
       'cm.showInExplorer': 'Показать в проводнике',
       'cm.fileInfo': 'Свойства файла',
+      'cm.editTags': 'Редактировать метаданные в редакторе тегов',
+      'cm.tagEditorFailed': 'Не удалось запустить редактор тегов. Проверьте путь в настройках',
       'cm.copyInfo': 'Копировать информацию',
       'cm.selectedCount': 'Выбрано {count} треков',
       'cm.andMore': ' и более',
@@ -1954,8 +2245,79 @@
       'playlist.newTitle': 'Новый плейлист',
       'playlist.createdAdded': 'Создан плейлист «{name}» и добавлено {count} треков',
       'playlist.tracksAdded': '{count} треков добавлено в «{name}»',
+      'playlist.tracksSkipped': '{count} треков не принадлежат этому серверу, пропущено',
 
-      'subsonic.removeTitle': 'Удалить сервер Subsonic',
+      // Поисковые подсказки
+      'music.searchPlaceholder': 'Поиск песен, исполнителей или альбомов…',
+      'liked.searchPlaceholder': 'Поиск избранных треков…',
+      'history.searchPlaceholder': 'Поиск по истории…',
+      'folders.searchPlaceholder': 'Поиск путей к локальным папкам…',
+      'artists.searchPlaceholder': 'Поиск исполнителей…',
+      'albums.searchPlaceholder': 'Поиск альбомов или исполнителей…',
+      'playlist.searchPlaceholder': 'Поиск треков в плейлисте…',
+
+      // Метки сортировки
+      'music.sortArtist': 'Исполнитель',
+      'music.sortAlbum': 'Альбом',
+      'music.sortYear': 'Год',
+'music.filter': 'Фильтр',
+'music.excludeArtist': 'Исключить исполнителя',
+'music.excludeAlbum': 'Исключить альбом',
+'music.excludeServer': 'Исключить сервер',
+'music.clearFilters': 'Очистить все',
+'music.excludeUsername': 'Исключить пользователя',
+'music.excludePlaylist': 'Исключить плейлист',
+'music.searchFilterItems': 'Поиск элементов…',
+'music.tracks': 'треков',
+'music.filterSummary': '…всего {count} фильтров',
+      'artists.sortAlbums': 'Альбомы',
+      'artists.sortTracks': 'Треки',
+
+      // Действия с папками
+      'folders.sync': 'Синхр.',
+      'folders.edit': 'Изменить',
+      'folders.editServer': 'Изменить сервер',
+      'folders.remove': 'Удалить',
+      'folders.empty': 'Локальные папки не добавлены',
+      'folders.notSynced': 'Не синхронизировано',
+      'folders.streamingCount': '{count} потоковых библиотек',
+      'folders.removeServerTitle': 'Удалить сервер Subsonic',
+      'folders.removeServerBody': 'Удалить сервер «{name}»? Индекс синхронизированных треков и кэшированные обложки также будут удалены.',
+      'folders.removeConfirm': 'Удалить папку «{path}»?',
+
+      // Возврат на страницу списка
+      'artists.backToList': 'Вернуться к исполнителям',
+      'albums.backToList': 'Вернуться к альбомам',
+
+      // Страница плейлиста
+      'playlist.remote': 'Удалл. плейлист',
+      'playlist.local': 'Плейлист',
+      'playlist.play': 'Воспр.',
+      'playlist.syncRemote': 'Синхр. удалл. плейлист',
+      'playlist.rename': 'Переимен.',
+      'playlist.renameTitle': 'Переименовать плейлист',
+      'playlist.delete': 'Удалить',
+      'playlist.deleteTitle': 'Удалить плейлист',
+      'playlist.deleteBody': 'Плейлист «{name}» будет удалён. Треки в плейлисте не будут удалены. Это действие нельзя отменить. Продолжить?',
+      'playlist.removeFromPlaylist': 'Удалить из плейлиста',
+      'playlist.sync': 'Синхр.',
+      'playlist.syncing': 'Синхронизация…',
+      'playlist.synced': 'Синхронизировано',
+      'playlist.syncFailed': 'Ошибка синхронизации',
+      'playlist.syncedTrackCount': 'Синхронизировано «{name}», всего {count} треков',
+      'playlist.importFromServer': 'Импорт с сервера Subsonic',
+      'playlist.selectServer': 'Выбрать сервер',
+      'playlist.fetchingPlaylists': 'Получение списка плейлистов…',
+      'playlist.noPlaylistsOnServer': 'На этом сервере нет плейлистов',
+      'playlist.selectPlaylists': 'Выберите плейлисты для импорта',
+      'playlist.importSelected': 'Импорт выбранных',
+      'playlist.importing': 'Импорт…',
+      'playlist.importResult': 'Импорт завершён: {imported} успешно, {skipped} пропущено',
+      'playlist.importFailed': 'Ошибка импорта: {error}',
+      'playlist.importResultErrors': 'Импорт завершён: {imported} успешно, {skipped} пропущено, {errors} с ошибкой: {firstError}',
+      'playlist.public': 'Публичный',
+      'playlist.private': 'Приватный',
+      'subsonic.noServerAdded': 'Сначала добавьте сервер Subsonic в библиотеке',
       'subsonic.removeBody': 'Удалить сервер «{name}»? Индекс синхронизированных треков и кэшированные обложки также будут удалены.',
       'subsonic.remove': 'Удалить',
       'subsonic.testing': 'Тестирование…',
@@ -2069,6 +2431,10 @@
 
       'settings.artistSeparators.label': 'Разделители исполнителей',
       'settings.artistSeparators.sub': 'Каждый символ является разделителем. Также распознаёт feat. / ft. / vs. / with',
+      'settings.tagEditorPath.label': 'Приложение для редактирования тегов',
+      'settings.tagEditorPath.sub': 'Путь к внешнему редактору тегов (например, Mp3tag). Вызывается из контекстного меню трека для редактирования метаданных',
+      'settings.tagEditorPath.placeholder': 'C:\\Program Files\\Mp3tag\\Mp3tag.exe',
+      'settings.tagEditorPath.pick': 'Обзор',
 
       'settings.shuffle.label': 'Случайный порядок по умолчанию',
       'settings.shuffle.sub': 'Включать случайный порядок при запуске приложения',
@@ -2099,9 +2465,6 @@
       'shortcut.notSet': 'Не задано',
       'shortcut.pressKeys': 'Нажмите сочетание клавиш…',
 
-      'settings.windowBeatShake.label': 'Дрожание окна по биту',
-      'settings.windowBeatShake.sub': 'Лёгкое дрожание главного окна по энергии музыки во время воспроизведения',
-
       'settings.about.label': 'О приложении',
       'settings.about.sub': 'Информация о версии и лицензия',
       'settings.about.emptyHint': 'Нет настраиваемых параметров',
@@ -2123,6 +2486,7 @@
 
       'error.initFailed': 'Ошибка инициализации: {message}',
       'error.backendFailed': 'Не удалось подключиться к backend сервису',
+      'error.pageNotFound': 'Страница не найдена',
 
       // Геймпад
       'gamepad.confirm': 'Подтвердить',

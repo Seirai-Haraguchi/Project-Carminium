@@ -847,9 +847,13 @@ async function syncServerToLibrary(client, library, serverId, options = {}) {
     }
   }
 
-  // 1) 清除旧记录
-  library.deleteSubsonicTracks(serverId);
-  library.commit();
+  // 1) 不再全删重建！
+  // 旧实现调用 library.deleteSubsonicTracks(serverId) 会级联删除
+  // liked_tracks / play_history / playlist_tracks，导致每次同步后
+  // 「喜欢的音乐」「播放历史」「Your Mix」全部清零。
+  // 现在改为增量 upsert + 同步后清理已消失的曲目（deleteStaleSubsonicTracks）。
+  // 收集服务器端仍存在的 subsonic_id，用于后续增量清理。
+  const liveSubIds = new Set();
 
   // 2) 拉取艺术家列表
   const artists = await client.getArtists();
@@ -913,6 +917,11 @@ async function syncServerToLibrary(client, library, serverId, options = {}) {
       }
     }
 
+    // 收集服务器端仍存在的 subsonic_id（用于后续增量清理）
+    for (const song of songs) {
+      if (song.id) liveSubIds.add(song.id);
+    }
+
     try {
       const numSongs = library.upsertSubsonicTracksBatch(serverId, songs);
       stats.albums++;
@@ -938,6 +947,17 @@ async function syncServerToLibrary(client, library, serverId, options = {}) {
 
   // 最后强制发一次
   maybeLibraryChanged(true);
+
+  // 2b) 增量清理：删除服务器端已不存在但本地仍残留的曲目
+  // （仅删除真正消失的曲目，保留仍存在曲目的收藏/历史/歌单关联）
+  try {
+    const removed = library.deleteStaleSubsonicTracks(serverId, liveSubIds);
+    if (removed > 0) {
+      stats.warnings.push(`增量清理：移除 ${removed} 首已不存在的曲目`);
+    }
+  } catch (e) {
+    stats.warnings.push(`增量清理失败: ${e}`);
+  }
 
   // 3) 预缓存封面
   if (prefetchCovers) {

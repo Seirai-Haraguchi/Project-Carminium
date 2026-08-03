@@ -1326,6 +1326,249 @@ body.is-resizing *::after {
   color: var(--md-on-secondary-container);
 }
 
+/* ── Music Page Filter ──────────────────────────────────── */
+.music-filter-btn {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--shape-full);
+  border: none;
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  cursor: pointer;
+  transition: background var(--motion-short) var(--ease-standard),
+              color var(--motion-short) var(--ease-standard);
+}
+.music-filter-btn:hover { background: var(--md-state-hover); color: var(--md-on-surface); }
+.music-filter-btn .material-symbols-rounded { font-size: 20px; }
+.music-filter-btn.active { color: var(--md-primary); }
+
+.music-filter-chips {
+  display: none;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 28px 12px;
+}
+.music-filter-chip {
+  background: var(--md-secondary-container);
+  border-color: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+  max-width: 320px;
+}
+.music-filter-chip span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.music-filter-chip-remove:hover { opacity: 0.7; }
+.music-filter-summary {
+  font-size: 13px;
+  color: var(--md-on-surface-variant);
+  align-self: center;
+  white-space: nowrap;
+}
+
+/* ── Filter Dialog ──────────────────────────────────────── */
+.mf-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100002;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.32);
+  opacity: 0;
+  transition: opacity 0.18s cubic-bezier(0.2, 0, 0, 1);
+}
+.mf-dialog-overlay.open { opacity: 1; }
+
+.mf-dialog {
+  width: calc(100vw - 48px);
+  max-width: 800px;
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  background: var(--md-surface-container-low);
+  color: var(--md-on-surface);
+  border-radius: 28px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  border: 1px solid var(--md-outline-variant);
+  transform: scale(0.96);
+  transition: transform 0.18s cubic-bezier(0.2, 0, 0, 1);
+  overflow: hidden;
+}
+.mf-dialog-overlay.open .mf-dialog { transform: scale(1); }
+
+.mf-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 24px 0;
+}
+.mf-dialog-title {
+  font-size: 24px;
+  font-weight: 400;
+  color: var(--md-on-surface);
+  line-height: 1.3;
+  margin: 0;
+}
+
+.mf-dialog-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 24px 8px;
+  padding: 0 16px;
+  height: 44px;
+  background: var(--md-surface-container);
+  border-radius: var(--shape-full);
+  border: 1px solid var(--md-outline-variant);
+  transition: border-color var(--motion-short) var(--ease-standard);
+}
+.mf-dialog-search:focus-within { border-color: var(--md-primary); }
+.mf-dialog-search .material-symbols-rounded { font-size: 20px; color: var(--md-on-surface-variant); }
+.mf-dialog-search input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  color: var(--md-on-surface);
+  outline: none;
+  font-family: inherit;
+}
+.mf-dialog-search input::placeholder { color: var(--md-on-surface-variant); }
+
+.mf-dialog-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 8px 0 0;
+}
+
+/* Category tabs — horizontal pill row */
+.mf-category-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 20px 12px;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.mf-category-tabs::-webkit-scrollbar { height: 0; }
+.mf-category-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: var(--shape-full);
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--motion-short) var(--ease-standard),
+              color var(--motion-short) var(--ease-standard),
+              border-color var(--motion-short) var(--ease-standard);
+}
+.mf-category-tab .material-symbols-rounded { font-size: 18px; }
+.mf-category-tab:hover { background: var(--md-state-hover); }
+.mf-category-tab.active {
+  background: var(--md-secondary-container);
+  border-color: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+}
+.mf-category-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Category content — scrollable list */
+.mf-category-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 12px 8px;
+  min-height: 200px;
+  max-height: 420px;
+}
+
+/* Individual check item */
+.mf-check-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--shape-medium);
+  cursor: pointer;
+  transition: background var(--motion-short) var(--ease-standard);
+}
+.mf-check-item:hover { background: var(--md-state-hover); }
+.mf-check-item.checked { background: var(--md-secondary-container); }
+.mf-check-item.checked .mf-check-item-label { color: var(--md-on-secondary-container); }
+.mf-check-item input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--md-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.mf-check-item-icon {
+  font-size: 20px;
+  color: var(--md-on-surface-variant);
+  flex-shrink: 0;
+}
+.mf-check-item.checked .mf-check-item-icon { color: var(--md-on-secondary-container); }
+.mf-check-item-label {
+  font-size: 14px;
+  color: var(--md-on-surface);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.mf-check-item-sub {
+  font-size: 12px;
+  color: var(--md-on-surface-variant);
+  flex-shrink: 0;
+}
+.mf-check-item.checked .mf-check-item-sub { color: var(--md-on-secondary-container); opacity: 0.8; }
+
+/* Empty state inside dialog */
+.mf-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 0;
+  color: var(--md-on-surface-variant);
+}
+.mf-empty .material-symbols-rounded { font-size: 36px; opacity: 0.5; }
+.mf-empty span:last-child { font-size: 14px; }
+
+.mf-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px 16px;
+  border-top: 1px solid var(--md-outline-variant);
+  flex-shrink: 0;
+}
+
 /* ── 19. Now Playing Panel ───────────────────────────────── */
 .now-playing-pane {
 background: var(--md-surface-container-low);
@@ -4544,6 +4787,22 @@ select.cmd-text-field__input + .cmd-text-field__label {
   flex-direction: column;
 }
 
+/* Settings — file_picker 行（输入框 + 浏览按钮） */
+.settings-file-picker-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.settings-file-picker-control .settings-font-input {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.settings-file-picker-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 /* Settings footer */
 .settings-footer {
   padding: 16px 28px;
@@ -5632,24 +5891,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   color: var(--md-on-surface-variant);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
-}
-
-/* ── BeatShake 窗口震动（Electron）────────────────────────── */
-@keyframes beat-shake {
-  0% { transform: translate(0, 0); }
-  10% { transform: translate(-2px, -1px); }
-  20% { transform: translate(2px, 1px); }
-  30% { transform: translate(-1px, 2px); }
-  40% { transform: translate(1px, -2px); }
-  50% { transform: translate(-2px, 1px); }
-  60% { transform: translate(2px, -1px); }
-  70% { transform: translate(-1px, -2px); }
-  80% { transform: translate(1px, 2px); }
-  90% { transform: translate(-1px, 1px); }
-  100% { transform: translate(0, 0); }
-}
-body.beat-shake {
-  animation: beat-shake 300ms ease-out;
 }
 
 /* ── 无边框窗口拖拽区域（Electron）────────────────────────── */

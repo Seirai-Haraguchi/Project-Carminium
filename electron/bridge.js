@@ -8,6 +8,7 @@
 
 const { EventEmitter } = require('events');
 const { ipcMain, dialog, app, shell, BrowserWindow, net } = require('electron');
+const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -119,6 +120,69 @@ class Bridge extends EventEmitter {
 
   setMainWindow(win) {
     this._mainWindow = win;
+  }
+
+  // ── library_updated / folders_updated の debounce + キャッシュ ──
+  //
+  // 問題：FileWatcher 発火 / Subsonic 同期進行中 / フォルダ追加削除などで
+  // library_updated が短時間に連続発火すると、そのたびに getAllTracks() を
+  // 同期実行して JSON.stringify するため、メインプロセスが長時間ブロックされる。
+  // その間 audio_output IPC も処理できず WASAPI バッファアンダーラン →
+  // 音切れ + UI フリーズ（いわゆる「なんだか分からないけど止まる」）。
+  //
+  // 対策：
+  //   1. 複数回の変更要求を 500ms の debounce で 1 回にまとめる
+  //   2. getAllTracks() の結果 JSON をキャッシュし、dirty フラグで再計算を管理
+  //   3. これにより Subsonic 同期中の 20 曲ごとの libraryChangedCb が
+  //      何十回も重い計算を走らせるのを防ぐ
+  //
+  // 注意：1 回の計算自体は依然として同期ブロックするが、頻度が劇的に下がるため
+  // 再生中の音切れリスクは実用上ほぼ解消する。
+
+  _LIBRARY_UPDATED_DEBOUNCE_MS = 500;
+  _allTracksJson = null;
+  _allTracksJsonDirty = true;
+  _foldersJson = null;
+  _foldersJsonDirty = true;
+  _libraryUpdatedTimer = null;
+  _libraryUpdatedPending = false;
+
+  _getAllTracksJsonCached() {
+    if (this._allTracksJsonDirty) {
+      this._allTracksJson = _dump(this._lib.getAllTracks());
+      this._allTracksJsonDirty = false;
+    }
+    return this._allTracksJson;
+  }
+
+  _getFoldersJsonCached() {
+    if (this._foldersJsonDirty) {
+      this._foldersJson = _dump(this._lib.getFolders());
+      this._foldersJsonDirty = false;
+    }
+    return this._foldersJson;
+  }
+
+  /**
+   * library_updated / folders_updated を debounce 付きで送信。
+   * 短時間に複数回のライブラリ変更があっても 1 回にまとめて送信する。
+   */
+  _emitLibraryUpdated() {
+    this._allTracksJsonDirty = true;
+    this._foldersJsonDirty = true;
+    this._libraryUpdatedPending = true;
+    if (this._libraryUpdatedTimer) return;
+    this._libraryUpdatedTimer = setTimeout(() => {
+      this._libraryUpdatedTimer = null;
+      if (!this._libraryUpdatedPending) return;
+      this._libraryUpdatedPending = false;
+      // debounce 収束後に 1 回だけ重い計算を実行
+      const tracksJson = this._getAllTracksJsonCached();
+      const foldersJson = this._getFoldersJsonCached();
+      this._emit('library_updated', tracksJson);
+      this._emit('folders_updated', foldersJson);
+    }, this._LIBRARY_UPDATED_DEBOUNCE_MS);
+    if (this._libraryUpdatedTimer.unref) this._libraryUpdatedTimer.unref();
   }
 
   // ── Audio PCM 中継メソッド ────────────────────────────────────────────
@@ -352,15 +416,17 @@ class Bridge extends EventEmitter {
       // 停止监控已移除的文件夹
       if (this._libraryWatcher) this._libraryWatcher.syncFolders();
       this._player.reloadLikedTracks();
-      this._emit('library_updated', _dump(this._lib.getAllTracks()));
-      this._emit('folders_updated', _dump(this._lib.getFolders()));
+      this._emitLibraryUpdated();
       this._emitLikedTracksChanged();
     });
 
     ipcMain.handle('rescan_folder', (_e, folderPath) => {
       const folderInfo = this._lib.rescanFolder(folderPath);
       const resolvedPath = folderInfo.path || folderPath;
-      this._scanFolderAsync(resolvedPath);
+      // 使用增量同步（syncFolderIncremental）而非全量扫描（scanFolder），
+      // 仅对真正新增/消失的曲目做写库，保留仍存在曲目的
+      // liked_tracks / play_history / playlist_tracks 关联数据。
+      this._scanFolderAsync(resolvedPath, true);
       return _dump(folderInfo);
     });
 
@@ -428,7 +494,8 @@ class Bridge extends EventEmitter {
     ipcMain.handle('get_crossfade_duration', () => this._player.crossfadeDurationMs);
 
     // ── 莫奈取色：系统强调色 ──
-    ipcMain.handle('get_system_accent_color', () => _getSystemAccentColor());
+    // 注意：非同期で実行し、メインプロセスのイベントループをブロックしない
+    ipcMain.handle('get_system_accent_color', async () => _getSystemAccentColor());
 
     // ── Gapless ──
     ipcMain.handle('set_gapless', (_e, enabled) => {
@@ -576,17 +643,6 @@ class Bridge extends EventEmitter {
     });
     ipcMain.handle('advance_to_next', () => this._player.advanceToNext());
 
-    // ── BeatShake ──
-    ipcMain.handle('trigger_beat_shake', () => {
-      // Electron 版本：窗口震动由前端 CSS animation 实现
-      if (this._mainWindow && !this._mainWindow.isDestroyed()) {
-        this._mainWindow.webContents.send('beat_shake');
-      }
-      if (this._floatingWindow && !this._floatingWindow.isDestroyed()) {
-        this._floatingWindow.webContents.send('beat_shake');
-      }
-    });
-
     // ── Liked ──
     ipcMain.handle('toggle_liked', () => {
       this._player.toggleLiked();
@@ -648,6 +704,9 @@ class Bridge extends EventEmitter {
     ipcMain.handle('get_playlist_tracks', (_e, playlistId) => {
       return _dump(this._lib.getPlaylistTracks(parseInt(playlistId, 10)));
     });
+    ipcMain.handle('get_all_playlist_track_ids', () => {
+      return _dump(this._lib.getAllPlaylistTrackIds());
+    });
 
     // ── 添加曲目到远程歌单（同步到 Subsonic 服务器）──
     ipcMain.handle('add_tracks_to_remote_playlist', async (_e, playlistId, trackIdsJson) => {
@@ -696,7 +755,7 @@ class Bridge extends EventEmitter {
       this._lib.removeSubsonicServer(parseInt(serverId, 10));
       this._player.reloadLikedTracks();
       this._emitSubsonicServersChanged();
-      this._emit('library_updated', _dump(this._lib.getAllTracks()));
+      this._emitLibraryUpdated();
       this._emitLikedTracksChanged();
     });
 
@@ -1018,6 +1077,53 @@ class Bridge extends EventEmitter {
       shell.showItemInFolder(filePath);
     });
 
+    // ── 外部音乐标签编辑应用 ──
+    // 弹出文件选择对话框，让用户挑选外部标签编辑器可执行文件
+    ipcMain.handle('pick_tag_editor_path', () => {
+      const filters = process.platform === 'win32'
+        ? [{ name: '可执行文件', extensions: ['exe', 'bat', 'cmd'] }, { name: '所有文件', extensions: ['*'] }]
+        : [{ name: '所有文件', extensions: ['*'] }];
+      const result = dialog.showOpenDialogSync(this._mainWindow, {
+        title: '选择音乐标签编辑应用',
+        properties: ['openFile'],
+        filters: filters,
+      });
+      return (result && result.length > 0) ? result[0] : '';
+    });
+
+    // 使用外部标签编辑器打开指定音频文件（支持单个或多个文件）
+    // 参数：filePath 或 filePaths 数组
+    ipcMain.handle('open_in_tag_editor', (_e, filePathOrPaths) => {
+      const exePath = this._settings.get('tag_editor_path', '');
+      if (!exePath) {
+        return _dump({ error: 'no_tag_editor_path' });
+      }
+      if (!fs.existsSync(exePath)) {
+        return _dump({ error: 'exe_not_found' });
+      }
+      const paths = Array.isArray(filePathOrPaths)
+        ? filePathOrPaths.filter(Boolean)
+        : [filePathOrPaths].filter(Boolean);
+      if (paths.length === 0) {
+        return _dump({ error: 'no_file' });
+      }
+      try {
+        const child = spawn(exePath, paths, {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: false,
+        });
+        child.on('error', (err) => {
+          console.error('[tag_editor] 启动失败:', err.message);
+        });
+        child.unref();
+        return _dump({ ok: true });
+      } catch (e) {
+        console.error('[tag_editor] 启动异常:', e);
+        return _dump({ error: 'launch_failed', message: e.message });
+      }
+    });
+
     // ── App Info ──
     ipcMain.handle('get_app_info', () => {
       let versionData = {};
@@ -1046,16 +1152,19 @@ class Bridge extends EventEmitter {
 
   // ── 文件夹扫描（后台异步）──
 
-  _scanFolderAsync(folderPath) {
+  _scanFolderAsync(folderPath, useIncremental = false) {
     setImmediate(async () => {
       try {
-        await this._lib.scanFolder(folderPath);
+        if (useIncremental) {
+          await this._lib.syncFolderIncremental(folderPath);
+        } else {
+          await this._lib.scanFolder(folderPath);
+        }
       } catch (e) {
         console.error('[scan] 后台扫描失败:', e);
       }
       try {
-        this._emit('library_updated', _dump(this._lib.getAllTracks()));
-        this._emit('folders_updated', _dump(this._lib.getFolders()));
+        this._emitLibraryUpdated();
       } catch (e) {
         console.error('[scan] 推送更新失败:', e);
       }
@@ -1109,8 +1218,7 @@ class Bridge extends EventEmitter {
         this._emitLikedTracksChanged();
         this._emitPlaylistsChanged();
       }
-      this._emit('library_updated', _dump(this._lib.getAllTracks()));
-      this._emit('folders_updated', _dump(this._lib.getFolders()));
+      this._emitLibraryUpdated();
     } catch (e) {
       console.error('[auto-refresh] 推送库更新失败:', e.message || e);
     }
@@ -1178,7 +1286,7 @@ class Bridge extends EventEmitter {
         };
 
         const libraryChangedCb = () => {
-          this._emit('library_updated', _dump(this._lib.getAllTracks()));
+          this._emitLibraryUpdated();
         };
 
         let stats;
@@ -1207,7 +1315,7 @@ class Bridge extends EventEmitter {
         try { this._lib.updateSubsonicServerLastSync(serverId); } catch { /* ignore */ }
 
         this._emitSubsonicServersChanged();
-        this._emit('library_updated', _dump(this._lib.getAllTracks()));
+        this._emitLibraryUpdated();
         this._emit('subsonic_sync_result', _dump({ ok: true, server_id: serverId, stats }));
 
         // 后台预缓存封面
@@ -1272,6 +1380,12 @@ class Bridge extends EventEmitter {
     this._closeFloatingWindow();
     // 停止库自动刷新（FileWatcher / 远程定期同步）
     this.stopAutoRefresh();
+    // 保留中の library_updated debounce タイマーを破棄
+    if (this._libraryUpdatedTimer) {
+      clearTimeout(this._libraryUpdatedTimer);
+      this._libraryUpdatedTimer = null;
+    }
+    this._libraryUpdatedPending = false;
     // 刷新分析缓存到磁盘（确保退出时不丢失）
     if (this._analysisCache) {
       try { this._analysisCache.flush(); } catch (e) {
@@ -1283,15 +1397,36 @@ class Bridge extends EventEmitter {
 
 // ── 系统强调色读取 ──
 // 从 Windows 注册表读取 DWM 个性色，用于莫奈取色「系统壁纸」来源。
-function _getSystemAccentColor() {
+// 非同期 execFile で実行し、メインプロセスのイベントループをブロックしない。
+// （以前は execSync で reg query を同期実行していたため、起動直後や
+//   設定画面の更新時にメインスレッドが最大 3 秒ブロックされ、
+//   その間 audio_output IPC も処理できず WASAPI バッファアンダーラン →
+//   「なんだか分からないけど止まる」原因の一つだった）
+async function _getSystemAccentColor() {
+  const { execFile } = require('child_process');
+
+  /**
+   * @param {string} cmd
+   * @param {string[]} args
+   * @returns {Promise<string>} stdout
+   */
+  const run = (cmd, args) => new Promise((resolve, reject) => {
+    execFile(cmd, args, {
+      encoding: 'utf8',
+      timeout: 3000,
+      windowsHide: true,
+    }, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(stdout || '');
+    });
+  });
+
   try {
-    const { execSync } = require('child_process');
     // Windows DWM accent color: HKCU\SOFTWARE\Microsoft\Windows\DWM
     // AccentColor 为 ARGB DWORD，格式: 0xAARRGGBB
-    const output = execSync(
-      'reg query "HKCU\\SOFTWARE\\Microsoft\\Windows\\DWM" /v AccentColor 2>nul',
-      { encoding: 'utf8', timeout: 3000 }
-    );
+    const output = await run('reg', [
+      'query', 'HKCU\\SOFTWARE\\Microsoft\\Windows\\DWM', '/v', 'AccentColor',
+    ]);
     const match = output.match(/AccentColor\s+REG_DWORD\s+0x([0-9a-fA-F]{8})/);
     if (match) {
       const argb = parseInt(match[1], 16);
@@ -1305,10 +1440,11 @@ function _getSystemAccentColor() {
       }
     }
     // 回退：ColorPrevalence 关闭时，读取 Start/Taskbar accent
-    const output2 = execSync(
-      'reg query "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent" /v AccentColorMenu 2>nul',
-      { encoding: 'utf8', timeout: 3000 }
-    );
+    const output2 = await run('reg', [
+      'query',
+      'HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent',
+      '/v', 'AccentColorMenu',
+    ]);
     const match2 = output2.match(/AccentColorMenu\s+REG_DWORD\s+0x([0-9a-fA-F]{8})/);
     if (match2) {
       const argb = parseInt(match2[1], 16);

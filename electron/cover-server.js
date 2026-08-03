@@ -312,31 +312,27 @@ class CoverHTTPServer {
   }
 
   _sendFileRange(res, filePath, start, length) {
-    const chunkSize = 256 * 1024; // 256KB
-    let remaining = length;
-    let pos = start;
-    const fd = fs.openSync(filePath, 'r');
-
-    function sendChunk() {
-      if (remaining <= 0) {
-        fs.closeSync(fd);
-        res.end();
-        return;
-      }
-      const toRead = Math.min(chunkSize, remaining);
-      const buf = Buffer.alloc(toRead);
-      const bytesRead = fs.readSync(fd, buf, 0, toRead, pos);
-      if (bytesRead === 0) {
-        fs.closeSync(fd);
-        res.end();
-        return;
-      }
-      res.write(buf.slice(0, bytesRead));
-      pos += bytesRead;
-      remaining -= bytesRead;
-      sendChunk();
-    }
-    sendChunk();
+    // 以前は fs.openSync + fs.readSync のループで同期的に読み出していたが、
+    // これがメインプロセスのイベントループを長時間ブロックし、
+    // 特に大きな FLAC ファイルの Range リクエスト時に
+    // audio_output IPC の処理が滞って WASAPI バッファアンダーラン →
+    // 「なんだか分からないけど止まる」原因になっていた。
+    // createReadStream は I/O を libuv スレッドプールに逃がすため、
+    // メインスレッドをブロックしない。
+    const stream = fs.createReadStream(filePath, {
+      start,
+      end: start + length - 1, // createReadStream の end は inclusive
+      highWaterMark: 256 * 1024, // 256KB（旧 chunkSize と同等）
+    });
+    stream.on('error', (err) => {
+      console.error('[cover-server] stream error:', err.message);
+      try { res.destroy(); } catch { /* ignore */ }
+    });
+    // res がクライアント側から切断された場合はストリームも停止
+    res.on('close', () => {
+      try { stream.destroy(); } catch { /* ignore */ }
+    });
+    stream.pipe(res);
   }
 
   // ── Video（支持 Range 请求）────────────────────────────────────────────

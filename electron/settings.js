@@ -35,9 +35,9 @@ const DEFAULTS = {
   color_scheme: 'tonal_spot',
   monet_source: 'album_cover',  // "album_cover" | "system_wallpaper"
   language: 'zh-CN',  // "zh-CN" | "zh-TW" | "ja" | "en" | "ru"
-  window_beat_shake: false,
   smtc_lyrics: false,
   artist_separators: ';',
+  tag_editor_path: '',          // 外部音乐标签编辑应用路径（如 Mp3tag）
   eq_enabled: false,
   eq_bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   dynamic_bass: false,
