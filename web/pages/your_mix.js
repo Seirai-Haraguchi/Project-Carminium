@@ -42,7 +42,7 @@
                   <path id="ym-wave-main" fill="none" stroke="url(#ym-wave-grad)" stroke-width="2" stroke-linecap="round"/>
                 </svg>
               </div>
-              <h1 class="page-title ym-title"><span>YOUR</span><span>MIX</span></h1>
+              <h1 class="page-title ym-title">${App.i18n.t('yourMix.title')}</h1>
             </div>
             <div class="ym-header-art" aria-hidden="true">
               <span class="material-symbols-rounded ym-art-icon ym-art-disc">album</span>
@@ -140,7 +140,7 @@
     var bgStyle = '';
     var coverHTML = '';
     if (coverTrack && coverTrack.has_cover) {
-      coverHTML = '<img src="' + window.coverUrl(coverTrack.id) + '" alt="" loading="lazy">';
+      coverHTML = '<img src="' + window.coverUrl(coverTrack.id, 512) + '" alt="" loading="lazy">';
     } else {
       bgStyle = ' style="background:' + App.utils.hashColor(coverTrack ? (coverTrack.album || coverTrack.title || mix.name) : mix.name) + '"';
       coverHTML = '<span class="ym-mix-cover-letter">' + App.utils.initial(coverTrack ? (coverTrack.album || coverTrack.title) : mix.name) + '</span>';

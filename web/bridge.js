@@ -34,8 +34,21 @@
   // ── Cover URL ──────────────────────────────────────────────────────────────
   window.__coverBase = ''; // 由 bridge 初始化时设置
 
-  window.coverUrl = function (trackId) {
-    return window.__coverBase + '/cover/' + trackId;
+  // size: 数值（目标边长 px）或 'max'（原始最大分辨率，用于正在播放页）
+  // 该参数会被 cover-server 读取并据此缩放，从而让前端只下载所需尺寸的图片，
+  // 大幅降低内存与带宽占用。
+  window.coverUrl = function (trackId, size) {
+    var url = window.__coverBase + '/cover/' + trackId;
+    if (size && size !== 'default' && size !== 'auto') {
+      url += '?size=' + encodeURIComponent(String(size));
+    }
+    return url;
+  };
+
+  // 艺人头像：由本地封面服务器经在线 API（免 key 多源）抓取并缓存
+  window.artistImageUrl = function (name) {
+    if (!name) return '';
+    return window.__coverBase + '/artist-image/' + encodeURIComponent(name);
   };
 
   // ── Signal 名称集合（兼容旧 .connect() 调用）────────────────────────────────
@@ -76,6 +89,20 @@
     // 转发 Bridge 事件到 __bridge.dispatch
     window.__electronAPI.onBridgeEvent(function (event, payload) {
       window.__bridge.dispatch(event, payload);
+    });
+
+    // ── 应用可见性（省电模式）──
+    // 主进程在窗口失焦时发送 'background'，聚焦时发送 'foreground'。
+    // 后台时设置全局冻结标志（供动画循环检查）并清理缓存。
+    window.__appFrozen = false;
+    window.__bridge.on('app:visibility', function (state) {
+      window.__appFrozen = state === 'background';
+      if (window.__appFrozen) {
+        // 后台：紧急清理非关键缓存
+        if (window.MemoryManager && window.MemoryManager.emergencyCleanup) {
+          window.MemoryManager.emergencyCleanup();
+        }
+      }
     });
 
     // ── SMTC (navigator.mediaSession) 设置 ──

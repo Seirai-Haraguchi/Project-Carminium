@@ -302,23 +302,36 @@
           const artist = item.artist;
           el.className = 'artist-row vl-item';
 
-          let avatarHtml = '';
-          if (artist.cover_track_id) {
-            avatarHtml = '<img src="' + window.coverUrl(artist.cover_track_id) + '" alt="" loading="lazy">';
-          } else {
-            avatarHtml = App.utils.initial(artist.name);
-          }
+          const name = artist.name || '';
+          const bg = App.utils.hashColor(name);
 
-          const bg = App.utils.hashColor(artist.name);
-
+          // 头像先落纯色 + 首字母占位，在线写真探测成功后再替换
           el.innerHTML =
-            '<div class="artist-avatar" style="' + (!artist.cover_track_id ? 'background:' + bg + ';color:#fff;' : '') + '">' + avatarHtml + '</div>' +
+            '<div class="artist-avatar" data-artist="' + App.utils.esc(name) + '" style="background:' + bg + ';color:#fff;">' +
+              '<span style="font-size:20px;font-weight:700;color:#fff;">' + App.utils.initial(name) + '</span>' +
+            '</div>' +
             '<div class="artist-info">' +
-              '<p class="artist-name">' + App.utils.esc(artist.name) + '</p>' +
+              '<p class="artist-name">' + App.utils.esc(name) + '</p>' +
               '<p class="artist-meta">' + App.i18n.t('artists.albumCount', { count: artist.album_count }) + ' · ' +
               App.i18n.t('music.trackCount', { count: artist.track_count }) + '</p>' +
             '</div>' +
             '<span class="material-symbols-rounded artist-chevron">chevron_right</span>';
+
+          const url = (window.artistImageUrl && name) ? window.artistImageUrl(name) : null;
+          const avEl = el.querySelector('.artist-avatar');
+          if (url && avEl) {
+            const probe = new Image();
+            probe.onload = function () {
+              // 行可能已被回收给别的艺术家，只有仍是同一人才替换
+              if (avEl.dataset.artist !== name) return;
+              avEl.style.background = '';
+              avEl.style.backgroundImage = 'url(' + url + ')';
+              avEl.style.backgroundSize = 'cover';
+              avEl.style.backgroundPosition = 'center';
+              avEl.innerHTML = '';
+            };
+            probe.src = url;   // onerror 不处理：保留纯色 + 首字母占位
+          }
 
           el.onclick = function () { _renderDetail(container, artist); };
         }
@@ -328,15 +341,14 @@
 
   // 艺人详情页状态
   let _allArtistAlbums = [];  // 当前艺人所有专辑（含 tracks）
+  let _allArtistTracks = [];  // 当前艺人全部曲目（含 tracks）
+  let _currentArtistName = '';  // 当前艺人名（供专辑点击跳转使用）
 
   function _renderDetail(container, artist) {
     // 保存列表滚动位置，以便返回时恢复
     App.scrollMemory.save('artists');
     container.innerHTML = `
       <div class="detail-header">
-        <button class="back-btn" id="btn-back" data-i18n-aria-label="artists.backToList" data-i18n-title="artists.backToList">
-          <span class="material-symbols-rounded">arrow_back</span>
-        </button>
         <div class="detail-cover" id="detail-cover">
           <div class="detail-cover-blur" id="detail-cover-blur"></div>
           <div class="detail-cover-shape s1"></div>
@@ -356,29 +368,32 @@
           </div>
         </div>
       </div>
-      <div class="artist-albums-scroll" id="artist-albums-scroll"></div>
+      <div class="artist-detail-body" id="artist-detail-body">
+        <div class="np-pivot artist-pivot" role="tablist">
+          <button class="np-pivot-tab active" data-tab="songs" role="tab" aria-selected="true" data-i18n="artists.songs">歌曲</button>
+          <button class="np-pivot-tab" data-tab="albums" role="tab" aria-selected="false" data-i18n="artists.albums">专辑</button>
+        </div>
+        <div class="artist-panel active" data-panel="songs" id="artist-panel-songs">
+          <ul class="track-list" id="artist-songs-list"></ul>
+        </div>
+        <div class="artist-panel" data-panel="albums" id="artist-panel-albums" hidden>
+          <div class="album-grid artist-album-grid" id="artist-album-grid"></div>
+        </div>
+      </div>
     `;
 
     // 对动态插入的 DOM 应用 i18n 翻译
     if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(container);
 
-    document.getElementById('btn-back').addEventListener('click', () => {
-      page.render(container);
-      if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(container);
-      App.scrollMemory.restore('artists');
-    });
-
     const blurEl = document.getElementById('detail-cover-blur');
     const mainEl = document.getElementById('detail-avatar');
-    const shapes = document.querySelectorAll('.detail-cover-shape');
 
-    // 先以纯色占位
+    // 占位：纯色 + 首字母（在线头像加载前/失败后的干净状态，不使用专辑封面）
     const placeholderColor = App.utils.hashColor(artist.name);
     const initial = App.utils.initial(artist.name);
     blurEl.style.background = placeholderColor;
     mainEl.style.background = placeholderColor;
     mainEl.innerHTML = `<span style="font-size:48px; color:#fff; font-weight:700;">${initial}</span>`;
-    shapes.forEach(s => { s.style.background = placeholderColor; });
 
     // 从前端 allTracks 缓存过滤艺术家曲目
     const allTracks = (App.state && App.state.allTracks) ? App.state.allTracks : [];
@@ -392,56 +407,31 @@
       if (da !== db) return da - db;
       return (a.track_number || 0) - (b.track_number || 0);
     });
+    _allArtistTracks = tracks;  // 供下方歌曲预览使用（模块级，跨函数可见）
+    _currentArtistName = artist.name;  // 供专辑点击跳转使用
 
-    // ── 多封面拼贴 ──
-    var coverTracks = [];
-    for (var t = 0; t < tracks.length; t++) {
-      if (tracks[t].has_cover) coverTracks.push(tracks[t]);
-    }
-
-    if (coverTracks.length >= 1) {
-      var coverCount = Math.min(coverTracks.length, 4);
-      var blurUrls = [];
-      for (var b = 0; b < coverCount; b++) {
-        blurUrls.push('url(' + window.coverUrl(coverTracks[b].id) + ')');
-      }
-      blurEl.style.background = '';
-      blurEl.style.backgroundImage = blurUrls.join(', ');
-      if (coverCount === 2) {
-        blurEl.style.backgroundSize = '50% 100%, 50% 100%';
-        blurEl.style.backgroundPosition = '0 0, 100% 0';
-      } else if (coverCount === 3) {
-        blurEl.style.backgroundSize = '50% 50%, 50% 50%, 100% 50%';
-        blurEl.style.backgroundPosition = '0 0, 100% 0, 0 100%';
-      } else {
-        blurEl.style.backgroundSize = '50% 50%, 50% 50%, 50% 50%, 50% 50%';
-        blurEl.style.backgroundPosition = '0 0, 100% 0, 0 100%, 100% 100%';
-      }
-      blurEl.style.backgroundRepeat = 'no-repeat';
-      mainEl.style.background = '';
-      mainEl.style.backgroundImage = 'url(' + window.coverUrl(coverTracks[0].id) + ')';
-      mainEl.innerHTML = '';
-      if (shapes.length >= 1 && coverTracks.length >= 2) {
-        shapes[0].style.background = '';
-        shapes[0].style.backgroundImage = 'url(' + window.coverUrl(coverTracks[1].id) + ')';
-      } else if (shapes.length >= 1 && coverTracks.length === 1) {
-        shapes[0].style.background = '';
-        shapes[0].style.backgroundImage = 'url(' + window.coverUrl(coverTracks[0].id) + ')';
-      }
-      if (shapes.length >= 2 && coverTracks.length >= 3) {
-        shapes[1].style.background = '';
-        shapes[1].style.backgroundImage = 'url(' + window.coverUrl(coverTracks[2].id) + ')';
-      } else if (shapes.length >= 2 && coverTracks.length >= 1) {
-        shapes[1].style.background = '';
-        shapes[1].style.backgroundImage = 'url(' + window.coverUrl(coverTracks[0].id) + ')';
-      }
-      if (shapes.length >= 3 && coverTracks.length >= 4) {
-        shapes[2].style.background = '';
-        shapes[2].style.backgroundImage = 'url(' + window.coverUrl(coverTracks[3].id) + ')';
-      } else if (shapes.length >= 3 && coverTracks.length >= 1) {
-        shapes[2].style.background = '';
-        shapes[2].style.backgroundImage = 'url(' + window.coverUrl(coverTracks[0].id) + ')';
-      }
+    // ── 在线艺人头像（优先真实照片；失败/超时则保持干净占位，绝不回退到专辑拼贴）──
+    var aUrl = (window.artistImageUrl && artist.name) ? window.artistImageUrl(artist.name) : null;
+    if (aUrl) {
+      var probe = new Image();
+      probe.onload = function () {
+        mainEl.style.background = '';
+        mainEl.style.backgroundImage = 'url(' + aUrl + ')';
+        mainEl.style.backgroundSize = 'cover';
+        mainEl.style.backgroundPosition = 'center';
+        mainEl.innerHTML = '';
+        if (blurEl) {
+          blurEl.style.background = '';
+          blurEl.style.backgroundImage = 'url(' + aUrl + ')';
+          blurEl.style.backgroundSize = 'cover';
+          blurEl.style.backgroundPosition = 'center';
+          blurEl.style.backgroundRepeat = 'no-repeat';
+        }
+      };
+      probe.onerror = function () {
+        // 抓取失败：保留纯色 + 首字母占位，不使用任何专辑封面
+      };
+      probe.src = aUrl;
     }
 
     // ── 按专辑分组 ──
@@ -468,8 +458,10 @@
       };
     });
 
-    // ── 渲染：每个专辑一行，左侧封面+信息，右侧曲目 ──
-    _renderAlbumsWithTracks(container);
+    // ── 渲染：pivot 两页（歌曲 / 专辑）──
+    _renderSongsPanel();
+    _renderAlbumsPanel();
+    _setupPivot();
 
     // ── 播放全部 ──
     document.getElementById('btn-play-artist').addEventListener('click', function () {
@@ -477,81 +469,104 @@
     });
   }
 
-  // 渲染：专辑与曲目交错排列（每行：左专辑 | 右该专辑曲目）
-  function _renderAlbumsWithTracks(container) {
-    var scrollEl = document.getElementById('artist-albums-scroll');
-    if (!scrollEl) return;
-    scrollEl.innerHTML = '';
+  // ── Pivot（复用正在播放页面的 .np-pivot pill 样式）──
+  function _setupPivot() {
+    var tabs = document.querySelectorAll('.artist-pivot .np-pivot-tab');
+    var panels = document.querySelectorAll('.artist-detail-body .artist-panel');
+    tabs.forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        var target = tab.getAttribute('data-tab');
+        tabs.forEach(function (t) {
+          var isActive = t.getAttribute('data-tab') === target;
+          t.classList.toggle('active', isActive);
+          t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+        panels.forEach(function (panel) {
+          var show = panel.getAttribute('data-panel') === target;
+          panel.classList.toggle('active', show);
+          panel.hidden = !show;
+        });
+      });
+    });
+  }
 
-    if (_allArtistAlbums.length === 0) {
-      scrollEl.innerHTML =
+  // 歌曲页签：该艺人全部曲目（复用 .track-list / trackRow 样式）
+  function _renderSongsPanel() {
+    var listEl = document.getElementById('artist-songs-list');
+    if (!listEl) return;
+
+    listEl.innerHTML = '';
+
+    if (_allArtistTracks.length === 0) {
+      listEl.innerHTML =
         '<div class="artist-album-empty">' + App.i18n.t('artists.noTracks') + '</div>';
       return;
     }
 
     var frag = document.createDocumentFragment();
+    _allArtistTracks.forEach(function (track, i) {
+      var li = App.utils.trackRow(track, i + 1, function (clickedTrack, idx) {
+        App.backend.play_from_list(JSON.stringify(_allArtistTracks), idx);
+      }, true, i);
+      frag.appendChild(li);
+    });
+    listEl.appendChild(frag);
+  }
 
+  // 专辑页签：该艺人专辑网格（复用 .album-grid / .album-card 样式）
+  function _renderAlbumsPanel() {
+    var gridEl = document.getElementById('artist-album-grid');
+    if (!gridEl) return;
+    gridEl.innerHTML = '';
+
+    if (_allArtistAlbums.length === 0) {
+      gridEl.innerHTML =
+        '<div class="artist-album-empty">' + App.i18n.t('artists.noTracks') + '</div>';
+      return;
+    }
+
+    var frag = document.createDocumentFragment();
     _allArtistAlbums.forEach(function (album) {
-      // ── 专辑行容器 ──
-      var row = document.createElement('div');
-      row.className = 'artist-album-row';
+      var card = document.createElement('div');
+      card.className = 'album-card';
 
-      // 左侧：封面 + 专辑名 + 年份
       var coverHtml = '';
       if (album.cover_track_id) {
-        coverHtml = '<img src="' + window.coverUrl(album.cover_track_id) + '" alt="" loading="lazy">';
+        coverHtml = '<img src="' + window.coverUrl(album.cover_track_id, 512) + '" alt="" loading="lazy">';
       } else {
         var bg = App.utils.hashColor(album.name);
-        coverHtml = '<div class="artist-album-cover-placeholder" style="background:' + bg + '">' +
-          '<span>' + App.utils.initial(album.name) + '</span></div>';
+        coverHtml =
+          '<div style="width:100%; height:100%; background:' + bg + '; display:flex; align-items:center; justify-content:center;">' +
+            '<span class="album-cover-letter">' + App.utils.initial(album.name) + '</span>' +
+          '</div>';
       }
 
-      // 复用 .album-card 结构：封面 + 专辑名 + 年份（去掉歌手）
-      var yearText = album.year ? album.year + ' · ' + App.i18n.t('albums.trackCountShort', { count: album.track_count }) : App.i18n.t('albums.trackCountShort', { count: album.track_count });
-      row.innerHTML =
-        '<div class="artist-album-side">' +
-          '<div class="album-card artist-album-card-flat">' +
-            '<div class="album-cover">' + coverHtml + '</div>' +
-            '<div class="album-info">' +
-              '<p class="album-name">' + App.utils.esc(album.name) + '</p>' +
-              '<p class="album-meta">' + yearText + '</p>' +
-            '</div>' +
-          '</div>' +
-        '</div>' +
-        '<ul class="track-list artist-album-track-list"></ul>';
+      card.innerHTML =
+        '<div class="album-cover">' + coverHtml + '</div>' +
+        '<div class="album-info">' +
+          '<p class="album-name">' + App.utils.esc(album.name) + '</p>' +
+          '<p class="album-meta">' + (album.year || '?') + ' · ' + App.i18n.t('albums.trackCountShort', { count: album.track_count }) + '</p>' +
+        '</div>';
 
-      // 右侧：该专辑的曲目列表
-      var trackList = row.querySelector('.artist-album-track-list');
-      var trackFrag = document.createDocumentFragment();
-
-      album.tracks.forEach(function (track, idx) {
-        // 显示专辑内歌曲序号（track_number），无时 fallback 到连续序号
-        var displayNum = track.track_number || (idx + 1);
-        var li = App.utils.trackRow(track, displayNum, function (clickedTrack, clickIdx) {
-          App.backend.play_from_list(JSON.stringify(album.tracks), clickIdx);
-        }, false, idx);
-        trackFrag.appendChild(li);
+      card.addEventListener('click', function () {
+        App.navigate('albums', { album: album.name, album_artist: _currentArtistName });
       });
-      trackList.appendChild(trackFrag);
-
-      frag.appendChild(row);
+      frag.appendChild(card);
     });
-
-    scrollEl.appendChild(frag);
+    gridEl.appendChild(frag);
   }
 
   page.updatePlayState = function () {
-    const currentId = App.state.currentTrack ? App.state.currentTrack.id : null;
-    // 每个专辑都有自己的 track-list，全部遍历
-    const lists = document.querySelectorAll('.artist-album-track-list');
-    lists.forEach(function (list) {
-      Array.from(list.children).forEach(li => {
-        if (li.dataset.trackId === currentId) {
-          li.classList.add('playing');
-        } else {
-          li.classList.remove('playing');
-        }
-      });
+    // 歌曲页签的曲目列表更新播放态
+    var list = document.getElementById('artist-songs-list');
+    if (!list) return;
+    var currentId = App.state.currentTrack ? App.state.currentTrack.id : null;
+    Array.prototype.forEach.call(list.children, function (li) {
+      if (li.dataset.trackId === currentId) {
+        li.classList.add('playing');
+      } else {
+        li.classList.remove('playing');
+      }
     });
   };
 

@@ -89,16 +89,18 @@
    * @param {HTMLImageElement} imgEl
    * @param {string} trackId
    */
-  utils.loadCover = function (imgEl, trackId) {
+  // size: 目标分辨率（px）或 'max'；列表行缩略图默认 128 以最小化内存占用。
+  utils.loadCover = function (imgEl, trackId, size) {
     if (window.CoverCache) {
-      var cached = window.CoverCache.getCached(trackId);
+      var cached = window.CoverCache.getCached(trackId, size);
       if (cached) { imgEl.src = cached; return; }
       window.CoverCache.attachImage(imgEl, trackId, {
+        size: size,
         onError: function () { imgEl.removeAttribute('src'); },
       });
     } else {
       imgEl.crossOrigin = 'anonymous';
-      imgEl.src = window.coverUrl(trackId);
+      imgEl.src = window.coverUrl(trackId, size);
     }
   };
 
@@ -497,12 +499,12 @@
    * @param {object} track
    * @returns {HTMLElement}
    */
-  utils.miniCover = function (track) {
+  utils.miniCover = function (track, size) {
     const div = document.createElement('div');
     div.className = 'track-mini-cover';
     if (track.has_cover) {
       const img = document.createElement('img');
-      utils.loadCover(img, track.id);
+      utils.loadCover(img, track.id, size);
       img.alt = '';
       img.loading = 'lazy';
       img.onerror = function () {
@@ -535,7 +537,7 @@
    * @param {number}   [playIndex]  0-based playback position in the queue; defaults to index - 1
    * @returns {HTMLLIElement}
    */
-  utils.trackRow = function (track, index, onClick, showMiniCover, playIndex) {
+  utils.trackRow = function (track, index, onClick, showMiniCover, playIndex, coverSize) {
     // playIndex が指定されなければ表示番号から推測する（従来互換）
     const playIdx = (typeof playIndex === 'number') ? playIndex : (index - 1);
     const li = document.createElement('li');
@@ -551,7 +553,7 @@
     const numCell = document.createElement('div');
     numCell.className = 'track-num';
     if (showMiniCover) {
-      numCell.appendChild(utils.miniCover(track));
+      numCell.appendChild(utils.miniCover(track, coverSize || 128));
     } else {
       numCell.innerHTML = `
         <span class="track-num-text">${index}</span>
@@ -847,14 +849,18 @@
         textContent = trimmed.substring(timeMatch.index + timeMatch[0].length).trim();
       }
 
+      // 增强 LRC（逐字时间戳）行内嵌 <mm:ss.xx> 标签，会插在「关键词」与「：」之间，
+      // 导致普通正则无法命中。统一剥离这些标签，还原纯文本用于 credits 判定与取值。
+      var plainContent = textContent.replace(/<\d{2}:\d{2}[\.:]\d{2,3}>/g, '');
+
       // LRC 元数据行（如 [ti:...]、[ar:...]）— 不结束 creditPhase
       if (!timeMatch && /^\[[a-zA-Z]+:/.test(trimmed)) {
         if (!creditPhase) normalLines.push(line);
         continue;
       }
 
-      // 纯时间戳行（无文本内容）
-      if (!textContent) {
+      // 纯时间戳行（无文本内容，或仅剩逐字标签）
+      if (!plainContent) {
         if (!creditPhase) normalLines.push(line);
         continue;
       }
@@ -863,7 +869,7 @@
       creditRegex.lastIndex = 0;
       var matches = [];
       var cm;
-      while ((cm = creditRegex.exec(textContent)) !== null) {
+      while ((cm = creditRegex.exec(plainContent)) !== null) {
         matches.push({ index: cm.index, end: cm.index + cm[0].length });
       }
 
@@ -871,8 +877,8 @@
         // 提取每个关键词后面的值
         for (var j = 0; j < matches.length; j++) {
           var valStart = matches[j].end;
-          var valEnd = (j + 1 < matches.length) ? matches[j + 1].index : textContent.length;
-          var value = textContent.substring(valStart, valEnd).trim();
+          var valEnd = (j + 1 < matches.length) ? matches[j + 1].index : plainContent.length;
+          var value = plainContent.substring(valStart, valEnd).trim();
           // 去除尾部分隔符
           value = value.replace(/[、,，\/\s]+$/, '');
           if (value) {

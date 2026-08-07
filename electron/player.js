@@ -1010,6 +1010,9 @@ class MusicPlayer extends EventEmitter {
   get pitch() { return this._renderer ? this._renderer.pitch : 1.0; }
   get rate() { return this._renderer ? this._renderer.rate : 1.0; }
 
+  /** 是否正在播放（供 main.js 冻结判定使用） */
+  get isPlaying() { return this._fe_state === 'playing'; }
+
   setShuffle(enabled) {
     if (this._shuffle === enabled) return;
     this._shuffle = enabled;

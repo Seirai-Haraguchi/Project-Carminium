@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const MAX_ENTRIES = 5000;          // 最多缓存 5000 首歌的分析结果
+const MAX_ENTRIES = 2000;          // 收紧至 2000 条（原 5000），降低主进程内存占用
 const SAVE_DEBOUNCE_MS = 2000;     // 保存防抖间隔
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB 安全上限
 

@@ -1,0 +1,118 @@
+  /**
+   * 加载单张封面图片，处理为 Blob URL 并缓存。
+   *
+   * 并发受 LOAD_CONCURRENCY 限制：虚拟列表快速滚动时，几十行会在同一帧
+   * 集中入场，若不排队就会同时发起几十个请求并在主线程串行解码。
+   * 队列采用后进先出——最后请求的往往正是此刻真正停在视口里的那些行。
+   *
+   * @param {string} trackId
+   * @param {Function} callback  (url | null)
+   */
+  function _loadCover(trackId, callback) {
+    if (!trackId) { callback(null); return; }
+
+    // 已缓存
+    var entry = _blobCache.get(trackId);
+    if (entry) {
+      // LRU：移到末尾并刷新 timestamp（防止 cleanupStale 误删正在使用的封面）
+      entry.timestamp = _now();
+      _blobCache.delete(trackId);
+      _blobCache.set(trackId, entry);
+      callback(entry.status === 'ready' ? entry.url : null);
+      return;
+    }
+
+    // 已排队或进行中：挂到同一批回调上
+    if (_loadingQueue.has(trackId)) {
+      if (!_pendingCallbacks[trackId]) _pendingCallbacks[trackId] = [];
+      _pendingCallbacks[trackId].push(callback);
+      // 重新请求说明它又变可见了，把它提到队尾（LIFO 下即最高优先级）
+      var pos = _waitQueue.indexOf(trackId);
+      if (pos >= 0 && pos !== _waitQueue.length - 1) {
+        _waitQueue.splice(pos, 1);
+        _waitQueue.push(trackId);
+      }
+      return;
+    }
+
+    _loadingQueue.add(trackId);
+    if (!_pendingCallbacks[trackId]) _pendingCallbacks[trackId] = [];
+    _pendingCallbacks[trackId].push(callback);
+
+    if (_inFlight >= LOAD_CONCURRENCY) {
+      _waitQueue.push(trackId);
+      return;
+    }
+    _startLoad(trackId);
+  }
+
+  /** 从等待队列取出下一批任务填满并发额度。 */
+  function _pumpQueue() {
+    while (_inFlight < LOAD_CONCURRENCY && _waitQueue.length > 0) {
+      var id = _waitQueue.pop();
+      if (!_pendingCallbacks[id] || _pendingCallbacks[id].length === 0) {
+        _loadingQueue.delete(id);
+        continue;
+      }
+      _startLoad(id);
+    }
+  }
+
+  /** 真正发起一次封面加载。 */
+  function _startLoad(trackId) {
+    _inFlight++;
+    _evict();   // 预留缓存槽
+
+    var img = new Image();
+    img.crossOrigin = 'anonymous';
+    // 交给浏览器在独立线程解码，避免 drawImage 时在主线程同步解码原图
+    img.decoding = 'async';
+
+    var done = false;
+    function finish(status, url) {
+      if (done) return;
+      done = true;
+      _inFlight--;
+      _loadingQueue.delete(trackId);
+      _blobCache.set(trackId, { url: url, timestamp: _now(), status: status });
+      _flushCallbacks(trackId, status === 'ready' ? url : null);
+      _pumpQueue();
+    }
+
+    img.onload = function () {
+      if (done) return;
+      var decoded = (typeof img.decode === 'function')
+        ? img.decode().catch(function () { /* 已解码或不支持，忽略 */ })
+        : Promise.resolve();
+
+      decoded.then(function () {
+        return _processImage(img);
+      }).then(function (blob) {
+        if (done) return;
+        var blobUrl = URL.createObjectURL(blob);
+
+        // 取色推迟到空闲帧：它需要 getImageData（GPU→CPU 回读），
+        // 在滚动中同步执行会连续掉帧，而色彩只用于占位渐变，可以晚到。
+        if (!_colorCache.has(trackId)) {
+          if (_idleColorJobs.length > 64) _idleColorJobs.shift();
+          _idleColorJobs.push(function () {
+            if (_colorCache.has(trackId)) return;
+            var colors = _extractColors(img);
+            if (colors) {
+              _colorCache.set(trackId, colors);
+              _reportColors(trackId, colors);
+            }
+          });
+          _scheduleIdleColors();
+        }
+
+        finish('ready', blobUrl);
+      }).catch(function () {
+        finish('error', null);
+      });
+    };
+
+    img.onerror = function () { finish('no-cover', null); };
+
+    img.src = window.coverUrl(trackId);
+  }

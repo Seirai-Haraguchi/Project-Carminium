@@ -28,7 +28,6 @@
           <span class="title-bar-title">Project Carminium</span>
           <span class="title-bar-version" id="title-bar-version"></span>
         </div>
-        <span class="title-bar-codename" id="title-bar-codename"></span>
       </div>
       <div class="title-bar-center" id="title-bar-gamepad-hints" style="display:none;"></div>
       <div class="title-bar-right">
@@ -54,7 +53,7 @@
           <span class="nav-indicator">
             <span class="material-symbols-rounded">auto_awesome</span>
           </span>
-          <span class="nav-label" data-i18n="nav.yourMix">Your Mix</span>
+          <span class="nav-label" data-i18n="nav.yourMix">推荐</span>
         </button>
         <button class="nav-item" data-page="music" id="nav-music" data-i18n-aria-label="nav.music">
           <span class="nav-indicator">
@@ -120,25 +119,18 @@
     <!-- ── 右侧正在播放 ───────────────────────────────────── -->
     <aside class="now-playing-pane" id="now-playing-pane" aria-label="全窗口视图">
 
-      <!-- 模糊封面背景层（流体位移 + 噪点 + Material You 遮罩） -->
+      <!-- 模糊封面背景层（双层烘焙滤镜错动漂移 + 噪点 + Material You 遮罩） -->
       <div class="np-bg" aria-hidden="true">
-        <svg class="np-bg-defs" xmlns="http://www.w3.org/2000/svg" width="0" height="0" focusable="false">
-          <defs>
-            <filter id="np-fluid-filter" x="-25%" y="-25%" width="150%" height="150%" color-interpolation-filters="sRGB">
-              <feTurbulence type="fractalNoise" baseFrequency="0.006 0.009" numOctaves="1" seed="7" result="turb">
-                <animate attributeName="baseFrequency"
-                         values="0.006 0.009; 0.011 0.006; 0.007 0.012; 0.006 0.009"
-                         dur="24s" repeatCount="indefinite"
-                         calcMode="spline" keyTimes="0; 0.33; 0.66; 1"
-                         keySplines="0.4 0 0.6 1; 0.4 0 0.6 1; 0.4 0 0.6 1"/>
-              </feTurbulence>
-              <feDisplacementMap in="SourceGraphic" in2="turb" scale="55" xChannelSelector="R" yChannelSelector="G"/>
-            </filter>
-          </defs>
-        </svg>
         <div class="np-bg-covers" id="np-bg-covers">
-          <div class="np-bg-cover" id="np-bg-cover-a"></div>
-          <div class="np-bg-cover" id="np-bg-cover-b"></div>
+          <!-- 交叉淡入淡出包装层 ×2：内部为「基底 + 涌动」两个静态烘焙滤镜层 -->
+          <div class="np-bg-cover" id="np-bg-cover-a">
+            <div class="np-bg-cover-base"></div>
+            <div class="np-bg-cover-surge"></div>
+          </div>
+          <div class="np-bg-cover" id="np-bg-cover-b">
+            <div class="np-bg-cover-base"></div>
+            <div class="np-bg-cover-surge"></div>
+          </div>
         </div>
         <div class="np-bg-noise"></div>
         <div class="np-bg-mask"></div>
@@ -226,7 +218,7 @@
             <div class="np-time-row">
               <span id="np-time-cur">0:00</span>
               <span class="np-transition-label" id="np-transition-label" data-i18n="np.transition">过渡</span>
-              <span id="np-time-dur">0:00</span>
+              <span id="np-time-dur">-0:00</span>
             </div>
           </div>
         </div>
@@ -451,7 +443,7 @@
             <div class="np-progress-thumb" id="mini-progress-thumb"></div>
           </div>
         </div>
-        <span class="mini-time" id="mini-time-dur">0:00</span>
+        <span class="mini-time" id="mini-time-dur">-0:00</span>
       </div>
       <div class="mini-player-controls">
         <button class="mini-btn" id="mini-btn-prev" data-i18n-title="np.prev">

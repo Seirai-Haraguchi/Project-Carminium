@@ -76,7 +76,6 @@
     bgCovers: document.getElementById('np-bg-covers'),
     bgCoverA: document.getElementById('np-bg-cover-a'),
     bgCoverB: document.getElementById('np-bg-cover-b'),
-    bgDefs: document.querySelector('.np-bg-defs'),
     // 歌词功能区
     lyricsToolbar: document.getElementById('np-lyrics-toolbar'),
     lyricsSearchBtn: document.getElementById('np-lyrics-search-btn'),
@@ -106,11 +105,35 @@
     lyricsSourceOptions: document.querySelectorAll('.np-lyrics-source-option'),
   };
 
-  let duration = 0;
-  let isSeeking = false;
-  let lyricsData = [];
-  let lastLyricsIdx = -1;
+let duration = 0;
+let isSeeking = false;
+let lyricsData = [];
+let lastLyricsIdx = -1;
+// 歌词所属曲目 ID：用于检测 position_changed 到达时歌词是否仍属于旧曲
+let _lyricsTrackId = null;
+// 最后已知的播放位置：_renderLyrics 完成后用此值立即同步歌词
+let _lastKnownPositionMs = 0;
   let lyricsRaf = null;
+
+  // ── Apple Music 风格间奏指示器 ──────────────────────────────
+  // 判定不依赖空行：以「上一行结束时间 → 下一行开始时间」的实际间隔为准，
+  // 另覆盖「曲首 → 第一句」与「末行 → 曲尾」两段。
+  // 动画模型参考 MediaIsland InterludeDotsPresenter（AMLL 风格）：
+  // 全部由播放位置逐帧驱动，入场指数长大、正弦呼吸、收尾 back 缓动吸气收缩。
+  const INTERLUDE_MIN_GAP = 4000;   // 间奏时长低于此不显示（ms）
+  const INTERLUDE_END_LEAD = 250;   // 动画在下一句开唱前提前收尾（ms）
+  const IL_BREATHE_TARGET = 1500;   // 呼吸目标周期（ms，按间奏长度取整切分）
+  const IL_ENTRANCE = 2000;         // 入场缩放缓动时长
+  const IL_ENTRANCE_DELAY = 500;    // 入场前保持不可见
+  const IL_ENTRANCE_FADE = 500;     // 入场淡入时长
+  const IL_EXIT = 750;              // 收尾收缩时长
+  const IL_EXIT_FADE = 375;         // 收尾淡出时长
+  let interludes = [];              // {start, end, nextStart, lineIdx, el, wrap, dots}
+  let _activeInterlude = null;
+  let _interludeExiting = false;    // 收起动画进行中：抑制即时滚动，等收起后再居中校正
+  let _interludeExitEl = null;      // 正在收起的间奏元素（用于监听 transitionend）
+  let _interludeScrollTimer = 0;    // 收起后居中校正的兜底定时器
+  let _ilRafId = 0;                 // 间奏动画独立 RAF（与 position tick 解耦，60fps）
   let lyricFontSettings = {
     lyrics_font: "",
     lyrics_jp_font: "",
@@ -153,12 +176,10 @@
   // 切歌代次：防止快速切歌时旧封面预加载覆盖新封面
   let _bgGen = 0;
 
-  // AutoMix 过渡期间隐藏曲目信息（文字崩坏动画）
+  // AutoMix 过渡期间隐藏曲目信息（平滑淡出/淡入，避免逐帧字符乱码造成的频闪）
   let _trackInfoHidden = false;
-  let _glitchAnimId = null;           // requestAnimationFrame 句柄
-  let _glitchGen = 0;                 // 动画代数：每次启动新动画时递增，旧帧检测到代数过期即停止覆写
-  let _glitchDuration = 700;          // 崩坏动画时长（ms）
-  let _glitchOrderCache = {};         // 文本 → 随机排列索引缓存（避免闪烁）
+  let _glitchDuration = 700;          // 信息板块过渡时长（ms）
+  let _glitchCleanupTimer = null;     // 清理内联 transition 的定时器
   let _needsGlitchRestore = false;    // updateTrack 后是否需要启动恢复动画
   let _preserveHiddenState = false;   // updateTrack 中保留 _trackInfoHidden 不重置
 
@@ -188,10 +209,19 @@
 
   /**
    * 更新本地位置基准（由 position_changed 信号驱动）。
+   * 播放中后端位置偶发落后于 AudioContext 插值时，不接受把基准拉回（小幅后退视为抖动），
+   * 避免 RAF 跟着回跳造成逐字填充「重复滑动」；大幅后退（seek/切歌）才采纳。
    */
   function _beatUpdatePosition(ms) {
     var engine = App.audioEngine;
     var now = engine && engine._ctx ? engine._ctx.currentTime : 0;
+    if (!isSeeking && App.state.playbackState === 'playing' && _beatLocalBaseTime > 0) {
+      var interpolated = _beatLocalBasePos + (now - _beatLocalBaseTime) * 1000;
+      if (ms < interpolated && interpolated - ms < 200) {
+        // 小幅落后：沿用既有插值基准，等下次 tick 对齐
+        return;
+      }
+    }
     _beatLocalBaseTime = now;
     _beatLocalBasePos = ms;
   }
@@ -228,11 +258,8 @@
     }
     var pane = document.getElementById('now-playing-pane');
     if (pane) {
-      pane.style.removeProperty('--beat-blur');
       pane.style.removeProperty('--beat-scale');
-      pane.style.removeProperty('--beat-sat');
-      pane.style.removeProperty('--beat-bright');
-      pane.style.removeProperty('--beat-opacity');
+      pane.style.removeProperty('--beat-surge');
     }
     _beatBpm = 0;
     _beatPulse = 0;
@@ -247,6 +274,12 @@
     var pane = document.getElementById('now-playing-pane');
     if (!pane || !pane.classList.contains('fullscreen')) {
       _stopBeatLoop();
+      return;
+    }
+
+    // 应用冻结（窗口后台）时跳过渲染，省电
+    if (window.__appFrozen) {
+      _beatRafId = requestAnimationFrame(_beatLoopTick);
       return;
     }
 
@@ -320,22 +353,14 @@
     var smoothRate = combinedPulse > _beatPulse ? 0.5 : 0.1;
     _beatPulse = _beatPulse + (combinedPulse - _beatPulse) * smoothRate;
 
-    // ── 4. 分频段驱动 CSS ──
-    // bass 驱动模糊 + 缩放（鼓点脉动）
-    var blur = 120 - _beatPulse * 48;
-    var scale = 1.28 + _beatPulse * 0.08;
-    // mid 驱动饱和度（人声/吉他色彩涌动）
-    var sat = 1.6 + specMid * 0.6 + _beatPulse * 0.2;
-    // treble 驱动亮度（高频微光）
-    var bright = 1.05 + specTreble * 0.2 + _beatPulse * 0.05;
-    // 联合脉冲驱动透明度
-    var opacity = 0.85 + _beatPulse * 0.1;
+    // ── 4. 分频段驱动 CSS（仅合成器属性：transform + opacity，滤镜静态烘焙，零重光栅） ──
+    // bass 鼓点 → 整体缩放脉动
+    var scale = 1 + _beatPulse * 0.07;
+    // mid/treble 能量 → 涌动层不透明度（色彩涌动 + 高频微光）
+    var surge = Math.min(0.9, specMid * 0.75 + specTreble * 0.45 + _beatPulse * 0.25);
 
-    pane.style.setProperty('--beat-blur', blur.toFixed(1) + 'px');
     pane.style.setProperty('--beat-scale', scale.toFixed(4));
-    pane.style.setProperty('--beat-sat', sat.toFixed(3));
-    pane.style.setProperty('--beat-bright', bright.toFixed(3));
-    pane.style.setProperty('--beat-opacity', opacity.toFixed(3));
+    pane.style.setProperty('--beat-surge', surge.toFixed(3));
 
     _beatRafId = requestAnimationFrame(_beatLoopTick);
   }
@@ -381,9 +406,63 @@
     });
   }
 
+  // ── 背景模糊源降采样（参考 folia-major 的 FluidBackground） ──
+  // 96px 高斯模糊会抹掉一切小于模糊半径的细节，因此 ≤384px 的模糊源与全尺寸原图
+  // 模糊后视觉完全等同；但小图的纹理上传是单 tile 的，可彻底消除大封面首次合成时
+  // 的网格光栅闪烁，并让静态烘焙滤镜的光栅化成本大幅下降。离屏解码不触碰屏幕。
+  var BG_BLUR_SOURCE_MAX = 384;
+  var BG_BLUR_CACHE_LIMIT = 24;
+  var _bgBlurSourceCache = new Map(); // 封面 URL → 降采样 dataURL（LRU）
+
+  /**
+   * 构建降采样模糊源。resolve 值：
+   *   dataURL/原 URL — 可用作背景图；null — 封面加载失败（调用方回退纯色）。
+   */
+  function _buildBgBlurSource(url) {
+    var cached = _bgBlurSourceCache.get(url);
+    if (cached) return Promise.resolve(cached);
+    return new Promise(function (resolve) {
+      var img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.decoding = 'async';
+      img.onload = function () {
+        try {
+          var nw = img.naturalWidth || img.width;
+          var nh = img.naturalHeight || img.height;
+          if (!nw || !nh) { resolve(url); return; }
+          var scale = Math.min(1, BG_BLUR_SOURCE_MAX / Math.max(nw, nh));
+          // 原图已足够小：无需降采样，直接用原 URL
+          if (scale >= 1) { resolve(url); return; }
+          var canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(nw * scale));
+          canvas.height = Math.max(1, Math.round(nh * scale));
+          var ctx = canvas.getContext('2d');
+          if (!ctx) { resolve(url); return; }
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          var dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+          // LRU：超限逐出最旧条目
+          if (_bgBlurSourceCache.size >= BG_BLUR_CACHE_LIMIT) {
+            _bgBlurSourceCache.delete(_bgBlurSourceCache.keys().next().value);
+          }
+          _bgBlurSourceCache.set(url, dataUrl);
+          resolve(dataUrl);
+        } catch (e) {
+          // canvas 被污染等情况：回退原 URL
+          resolve(url);
+        }
+      };
+      img.onerror = function () { resolve(null); };
+      img.src = url;
+    });
+  }
+
   // ── 氛围背景：封面交叉淡入淡出 ──────────────────────────────
   // url      封面图地址（有封面时）
   // fallback 无封面时使用的纯色（哈希色）；两者皆空表示无曲目，淡出全部封面层
+  // 结构：包装层（opacity 交叉淡入淡出）内叠「基底 + 涌动」两个静态烘焙滤镜层，
+  // 封面图通过 --cover-image / --cover-color CSS 变量一次性下发，滤镜永不重光栅。
   function _setBgCover(url, fallbackColor) {
     if (!els.bgCoverA || !els.bgCoverB) return;
     var gen = ++_bgGen;
@@ -399,25 +478,21 @@
     }
 
     if (url) {
-      // 预加载，加载完成后再切换，避免背景空白闪烁
-      var img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = function () {
+      // 先离屏构建降采样模糊源（含解码），完成后再切换，避免背景空白闪烁
+      _buildBgBlurSource(url).then(function (bgUrl) {
         if (gen !== _bgGen) return;
-        next.style.backgroundImage = 'url("' + url + '")';
-        next.style.backgroundColor = '';
+        if (bgUrl) {
+          next.style.setProperty('--cover-image', 'url("' + bgUrl + '")');
+          next.style.removeProperty('--cover-color');
+        } else {
+          next.style.removeProperty('--cover-image');
+          next.style.setProperty('--cover-color', fallbackColor || 'var(--md-surface-container-low)');
+        }
         reveal();
-      };
-      img.onerror = function () {
-        if (gen !== _bgGen) return;
-        next.style.backgroundImage = '';
-        next.style.backgroundColor = fallbackColor || 'var(--md-surface-container-low)';
-        reveal();
-      };
-      img.src = url;
+      });
     } else if (fallbackColor) {
-      next.style.backgroundImage = '';
-      next.style.backgroundColor = fallbackColor;
+      next.style.removeProperty('--cover-image');
+      next.style.setProperty('--cover-color', fallbackColor);
       reveal();
     } else {
       // 无曲目：淡出所有封面层，仅保留遮罩底色
@@ -432,14 +507,8 @@
     if (!els.bgCovers) return;
     if (playing) {
       els.bgCovers.classList.remove('paused');
-      if (els.bgDefs && els.bgDefs.unpauseAnimations) {
-        try { els.bgDefs.unpauseAnimations(); } catch (e) { /* ignore */ }
-      }
     } else {
       els.bgCovers.classList.add('paused');
-      if (els.bgDefs && els.bgDefs.pauseAnimations) {
-        try { els.bgDefs.pauseAnimations(); } catch (e) { /* ignore */ }
-      }
     }
   }
 
@@ -815,6 +884,8 @@
       els.barFill.style.width = (pct * 100) + '%';
       els.barThumb.style.left = (pct * 100) + '%';
       els.timeCur.textContent = App.utils.formatDuration(pct * duration);
+      // 剩余时间显示为负值
+      els.timeDur.textContent = '-' + App.utils.formatDuration(duration - pct * duration);
     }
     function _onSeekMove(e) { _updateSeek(e); }
     function _onSeekUp(e) {
@@ -902,9 +973,6 @@
     } else {
       _trackInfoHidden = false;
     }
-    // 递增代数：使正在运行的崩坏动画帧失效，防止旧曲名覆写新曲名
-    _glitchGen++;
-
     if (!track) {
       els.title.textContent = App.i18n.t('common.notPlaying');
       els.artist.textContent = '—';
@@ -929,6 +997,20 @@
       _updateEmbeddedOptionVisibility();
       _updateLyricsSourceBadge(true);
       return;
+    }
+
+    // 非隐藏/非恢复路径：确保信息文字处于可见态（opacity 1），
+    // 防止上一轮过渡淡出后异常残留为透明导致文字消失。
+    if (!_trackInfoHidden && !_needsGlitchRestore) {
+      els.title.style.opacity = '1';
+      els.artist.style.opacity = '1';
+      els.album.style.opacity = '1';
+      if (els.miniTitle) els.miniTitle.style.opacity = '1';
+      if (els.miniArtist) els.miniArtist.style.opacity = '1';
+      if (els.miniInfo) {
+        els.miniInfoTitle.style.opacity = '1';
+        els.miniInfoArtist.style.opacity = '1';
+      }
     }
 
     // 同一曲不重复加载封面，避免 AutoMix 切换时闪白
@@ -975,11 +1057,11 @@
           App.state.currentDominantRgb = null;
           _setBgCover(null, App.utils.hashColor(track.album || track.title));
         };
-        App.utils.loadCover(els.coverImg, track.id);
+        App.utils.loadCover(els.coverImg, track.id, 'max');
       }
       els.coverImg.style.display = '';
       els.coverIcon.style.display = 'none';
-      _setBgCover(window.coverUrl ? window.coverUrl(track.id) : null, null);
+      _setBgCover(window.coverUrl ? window.coverUrl(track.id, 'max') : null, null);
     } else {
       els.coverImg.style.display = 'none';
       els.coverIcon.style.display = '';
@@ -1007,7 +1089,7 @@
             els.miniCoverImg.style.display = 'none';
             els.miniCoverIcon.style.display = '';
           };
-          App.utils.loadCover(els.miniCoverImg, track.id);
+          App.utils.loadCover(els.miniCoverImg, track.id, 128);
         }
         els.miniCoverImg.style.display = '';
         els.miniCoverIcon.style.display = 'none';
@@ -1035,7 +1117,7 @@
               els.miniInfoCoverImg.style.display = 'none';
               els.miniInfoCoverIcon.style.display = '';
             };
-            App.utils.loadCover(els.miniInfoCoverImg, track.id);
+            App.utils.loadCover(els.miniInfoCoverImg, track.id, 128);
           }
           els.miniInfoCoverImg.style.display = '';
           els.miniInfoCoverIcon.style.display = 'none';
@@ -1087,10 +1169,35 @@
     }
   }
 
+  /** 构建间奏指示器 DOM（三点） */
+  function _buildInterludeEl(start, end, lineIdx, nextStart) {
+    var el = document.createElement('div');
+    el.className = 'np-lyrics-interlude';
+    var dotsWrap = document.createElement('div');
+    dotsWrap.className = 'np-il-dots';
+    var dots = [];
+    for (var d = 0; d < 3; d++) {
+      var dot = document.createElement('span');
+      dot.className = 'np-il-dot';
+      dotsWrap.appendChild(dot);
+      dots.push(dot);
+    }
+    el.appendChild(dotsWrap);
+    return { start: start, end: end, nextStart: nextStart, lineIdx: lineIdx, el: el, wrap: dotsWrap, dots: dots };
+  }
+
   function _renderLyrics(track) {
     lyricsData = [];
     lastLyricsIdx = -1;
     lyricsTimeOffset = 0;  // 切歌时重置偏移
+    _lyricsTrackId = track ? track.id : null;  // 记录歌词所属曲目
+    interludes = [];
+    _activeInterlude = null;
+    _interludeExiting = false;
+    _interludeExitEl = null;
+    if (_interludeScrollTimer) { clearTimeout(_interludeScrollTimer); _interludeScrollTimer = 0; }
+    _stopInterludeRaf();
+    _clearWordAnim();
 
     if (!els.lyrics) return;
     els.lyrics.innerHTML = '';
@@ -1145,9 +1252,85 @@
         _updateLyricsSourceBadge(true);
         return;
       }
+      // 拆分内容行与空行声明：空行（有时间戳、无文本）= 间奏标记
+      var rawEntries = lyricsData;
+      var displayLines = [];
+      var hasWordSync = false;
+      for (var p = 0; p < rawEntries.length; p++) {
+        var e = rawEntries[p];
+        if (e.text !== '') {
+          displayLines.push(e);
+          if (e.words && e.words.length) hasWordSync = true;
+        }
+      }
+      if (displayLines.length === 0) {
+        els.lyrics.innerHTML =
+          '<div class="np-lyrics-placeholder">' +
+            '<span class="material-symbols-rounded">lyrics</span>' +
+            '<p>' + App.i18n.t('np.noLyrics') + '</p>' +
+          '</div>';
+        _updateLyricsSourceBadge(true);
+        return;
+      }
+      var trackDurMs = track.duration_ms || 0;
+
+      // 曲首前奏：开头到第一句间隔足够长时插入指示器
+      var introEnd = Math.max(0, displayLines[0].time - INTERLUDE_END_LEAD);
+      if (introEnd >= INTERLUDE_MIN_GAP) {
+        interludes.push(_buildInterludeEl(0, introEnd, -1, displayLines[0].time));
+      }
+
+      // 按歌词类型分流检测间奏：
+      //  · 逐行（非逐字）：仅在「空行声明」处插入，不做行间 gap 估算
+      //  · 逐字：用末字 end → 下一行 start 的精确间隔判定（含尾奏）
+      var dispIdx = -1;
+      for (var j = 0; j < rawEntries.length; j++) {
+        var re = rawEntries[j];
+        if (re.text === '') {
+          if (!hasWordSync) {
+            var nextT = (j + 1 < rawEntries.length) ? rawEntries[j + 1].time : (trackDurMs || re.time);
+            var emEnd = Math.max(re.time, nextT - INTERLUDE_END_LEAD);
+            if (emEnd - re.time >= INTERLUDE_MIN_GAP) {
+              interludes.push(_buildInterludeEl(re.time, emEnd, dispIdx, nextT));
+            }
+          }
+          continue;
+        }
+        dispIdx++;
+        if (hasWordSync && re.words && re.words.length) {
+          var lineEnd = re.words[re.words.length - 1].end;
+          var nextC = null;
+          for (var m = j + 1; m < rawEntries.length; m++) {
+            if (rawEntries[m].text !== '') { nextC = rawEntries[m]; break; }
+          }
+          if (nextC) {
+            var gapEnd = Math.max(lineEnd, nextC.time - INTERLUDE_END_LEAD);
+            if (gapEnd - lineEnd >= INTERLUDE_MIN_GAP) {
+              interludes.push(_buildInterludeEl(lineEnd, gapEnd, dispIdx, nextC.time));
+            }
+          } else if (trackDurMs > 0 && trackDurMs - lineEnd >= INTERLUDE_MIN_GAP) {
+            // 尾奏
+            interludes.push(_buildInterludeEl(lineEnd, trackDurMs, dispIdx, Infinity));
+          }
+        }
+      }
+
+      interludes.sort(function (a, b) { return a.start - b.start; });
+      lyricsData = displayLines;
+
+      // 渲染：间奏元素按 start 顺序在对应行之前插入
       var frag = document.createDocumentFragment();
+      var ilCursor = 0;
+      var flushInterludesBefore = function (time) {
+        while (ilCursor < interludes.length && interludes[ilCursor].end <= time + 1) {
+          frag.appendChild(interludes[ilCursor].el);
+          ilCursor++;
+        }
+      };
+
       for (var i = 0; i < lyricsData.length; i++) {
         var line = lyricsData[i];
+        flushInterludesBefore(line.time);
         var lineHasJp = /[\u3040-\u309F\u30A0-\u30FF]/.test(line.text);
         var div = document.createElement('div');
         div.className = 'np-lyrics-line';
@@ -1181,6 +1364,8 @@
         }
         frag.appendChild(div);
       }
+      while (ilCursor < interludes.length) { frag.appendChild(interludes[ilCursor].el); ilCursor++; }
+
       els.lyrics.appendChild(frag);
 
       // 追加制作信息（独立样式）
@@ -1219,6 +1404,14 @@
     // 更新翻译/罗马音按钮可见性
     _updateLyricsToggleVisibility();
     _updateLyricsSourceBadge();
+
+    // 歌词渲染完成后，立即用最后已知的播放位置同步歌词高亮和滚动位置。
+    // 消除切歌后等待下一个 position_changed tick（最多 250ms）的真空期：
+    // 在此期间歌词已渲染但高亮停留在初始状态（无激活行、滚动在顶部），
+    // 当歌曲已在播放到中间时，用户会看到歌词从顶部跳到正确位置的闪烁。
+    if (lyricsData.length > 0 && _lastKnownPositionMs > 0) {
+      _updateLyrics(_lastKnownPositionMs);
+    }
   }
 
   /**
@@ -1240,37 +1433,308 @@
     }
   }
 
+  // 字素簇切分（Intl.Segmenter），退化为码点切分
+  var _graphemeSegmenter = (typeof Intl !== 'undefined' && Intl.Segmenter)
+    ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    : null;
+  function _segmentGraphemes(text) {
+    if (_graphemeSegmenter) {
+      var out = [];
+      var it = _graphemeSegmenter.segment(text)[Symbol.iterator]();
+      var step;
+      while (!(step = it.next()).done) out.push(step.value.segment);
+      return out;
+    }
+    return Array.from(text);
+  }
+
   function _appendWords(container, words) {
     for (var i = 0; i < words.length; i++) {
+      var raw = words[i].text;
+      // 首尾空白提取为真实文本节点：保留词间距与换行机会（MediaIsland 将空白并入相邻字）
+      var m = raw.match(/^(\s*)([\s\S]*?)(\s*)$/);
+      var lead = m[1], core = m[2], trail = m[3];
+      if (!core) {
+        container.appendChild(document.createTextNode(raw));
+        continue;
+      }
+      if (lead) container.appendChild(document.createTextNode(lead));
       var span = document.createElement('span');
       span.className = 'np-lyrics-word';
-      span.textContent = words[i].text;
       span.dataset.time = String(words[i].start);
       span.dataset.end = String(words[i].end);
+      var clusters = _segmentGraphemes(core);
+      for (var c = 0; c < clusters.length; c++) {
+        var g = clusters[c];
+        // 词内空白并入前一个字（不单独做动画）
+        if (/^\s+$/.test(g) && span.lastChild) {
+          span.lastChild.textContent += g;
+          continue;
+        }
+        var cs = document.createElement('span');
+        cs.className = 'np-lyrics-char';
+        cs.textContent = g;
+        span.appendChild(cs);
+      }
       container.appendChild(span);
+      if (trail) container.appendChild(document.createTextNode(trail));
     }
+  }
+
+  // ── 逐字歌词动画（参考 MediaIsland WordLyricsPresenter / AMLL）──
+  // 纯播放位置函数逐帧驱动，seek 天然正确：
+  // · 填充：字内线性推进，边缘羽化（clamp(fontSize*0.45, 4, 7)px，前 35% 实后 65% 渐隐）
+  // · 上浮：1-(1-p)^3 单向到位后保持；单字有效时长 <120ms 时整词共享时间轴防抖动
+  // · 强调：词时长 >1s 触发 AMLL 波浪——缩放 1+0.1*amount*wave、横向展开、
+  //   纵向漂浮 sin(πp)、辉光 text-shadow；字符窗口按 duration/2.5/字数 错相
+  const WL_MIN_CHAR_LIFT_MS = 120;
+  const WL_EMPHASIS_MIN_MS = 1000;
+  let _wordAnimLine = null;   // 当前挂逐字动画的行元素
+  let _wordRafId = 0;
+
+  function _wlProgress(pos, start, end) {
+    if (pos <= start) return 0;
+    if (end <= start || pos >= end) return 1;
+    return (pos - start) / (end - start);
+  }
+
+  // 贝塞尔 y(x)：二分反求参数 t（与 MediaIsland EvaluateCubicBezier 一致）
+  function _wlBezSample(t, c1, c2) {
+    var u = 1 - t;
+    return 3 * u * u * t * c1 + 3 * u * t * t * c2 + t * t * t;
+  }
+  function _wlBezier(x, cx1, cy1, cx2, cy2) {
+    x = Math.max(0, Math.min(1, x));
+    var lo = 0, hi = 1, t = x;
+    for (var i = 0; i < 20; i++) {
+      var cx = _wlBezSample(t, cx1, cx2);
+      if (Math.abs(cx - x) < 1e-6) break;
+      if (cx < x) lo = t; else hi = t;
+      t = (lo + hi) / 2;
+    }
+    return _wlBezSample(t, cy1, cy2);
+  }
+
+  // AMLL 波浪：前半快速升至峰值，后半从容回落
+  function _wlWave(p) {
+    p = Math.max(0, Math.min(1, p));
+    if (p <= 0 || p >= 1) return 0;
+    return p < 0.5
+      ? _wlBezier(p / 0.5, 0.2, 0.4, 0.58, 1)
+      : 1 - _wlBezier((p - 0.5) / 0.5, 0.3, 0, 0.58, 1);
+  }
+
+  function _wlEmphasisAmount(durMs, isLast) {
+    var d = Math.max(WL_EMPHASIS_MIN_MS, durMs);
+    var a = d / 2000;
+    a = a > 1 ? Math.sqrt(a) : Math.pow(a, 3);
+    a *= 0.6;
+    if (isLast) a *= 1.6;
+    return Math.min(1.2, a);
+  }
+  function _wlEmphasisBlur(durMs, isLast) {
+    var d = Math.max(WL_EMPHASIS_MIN_MS, durMs);
+    var b = d / 3000;
+    b = b > 1 ? Math.sqrt(b) : Math.pow(b, 3);
+    b *= 0.5;
+    if (isLast) b *= 1.5;
+    return Math.min(0.8, b);
+  }
+
+  /** 行激活时测量字宽并缓存逐字时间轴（挂在 lineEl._wl） */
+  function _prepareWordLine(lineEl) {
+    var data = { words: [], fontSize: 16, liftDist: 1, feather: 6 };
+    var wordEls = lineEl.querySelectorAll('.np-lyrics-word');
+    if (!wordEls.length) { lineEl._wl = data; return; }
+    var fs = parseFloat(getComputedStyle(wordEls[0]).fontSize);
+    if (fs > 0) data.fontSize = fs;
+    data.liftDist = Math.max(0.75, Math.min(1.15, data.fontSize * 0.07));
+    data.feather = Math.max(4, Math.min(7, data.fontSize * 0.45));
+
+    for (var i = 0; i < wordEls.length; i++) {
+      var wEl = wordEls[i];
+      var wStart = parseInt(wEl.dataset.time, 10) || 0;
+      var wEnd = parseInt(wEl.dataset.end, 10) || 0;
+      var wDur = Math.max(0, wEnd - wStart);
+      var charEls = wEl.querySelectorAll('.np-lyrics-char');
+      if (!charEls.length) continue;
+
+      // 词只提供起止时间：按字实际渲染宽度占比分配各字时间，宽字长、窄字短
+      var widths = [];
+      var total = 0;
+      for (var c = 0; c < charEls.length; c++) {
+        var w = charEls[c].getBoundingClientRect().width;
+        if (!(w > 0)) w = data.fontSize * 0.5;
+        widths.push(w);
+        total += w;
+      }
+      if (total <= 0) total = 1;
+
+      var wholeLift = false;
+      var cum = 0;
+      var cTimes = [];
+      for (var c2 = 0; c2 < widths.length; c2++) {
+        var cs = wStart + wDur * (cum / total);
+        cum += widths[c2];
+        var ce = wStart + wDur * (cum / total);
+        cTimes.push({ start: cs, end: ce });
+        if (ce - cs < WL_MIN_CHAR_LIFT_MS) wholeLift = true;
+      }
+
+      var isLast = i === wordEls.length - 1;
+      var eligible = wDur > WL_EMPHASIS_MIN_MS;
+      var amount = eligible ? _wlEmphasisAmount(wDur, isLast) : 0;
+      var blur = eligible ? _wlEmphasisBlur(wDur, isLast) : 0;
+      // 强调窗口：末词延长 1.2 倍；字符按 duration/2.5/字数 错相（窗口重叠形成连续波浪）
+      var durEff = Math.max(WL_EMPHASIS_MIN_MS, wDur);
+      if (isLast) durEff *= 1.2;
+
+      var chars = [];
+      for (var c3 = 0; c3 < charEls.length; c3++) {
+        var delay = durEff / 2.5 / charEls.length * c3;
+        chars.push({
+          el: charEls[c3],
+          width: widths[c3],
+          start: cTimes[c3].start,
+          end: cTimes[c3].end,
+          liftStart: wholeLift ? wStart : cTimes[c3].start,
+          liftEnd: wholeLift ? wEnd : cTimes[c3].end,
+          empStart: eligible ? wStart + delay : 0,
+          empEnd: eligible ? wStart + delay + durEff : 0,
+          _t: '',
+          _s: '',
+          _fo: '',
+          _fe: ''
+        });
+      }
+      data.words.push({ amount: amount, blur: blur, chars: chars });
+    }
+    lineEl._wl = data;
+  }
+
+  /** 逐帧渲染一行逐字动画（fill/lift/emphasis 皆为位置纯函数） */
+  function _renderWordLine(lineEl, pos) {
+    var data = lineEl._wl;
+    if (!data) return;
+    var fs = data.fontSize;
+    for (var i = 0; i < data.words.length; i++) {
+      var word = data.words[i];
+      var n = word.chars.length;
+      for (var c = 0; c < n; c++) {
+        var ch = word.chars[c];
+
+        // 填充 + 羽化边缘（占字宽百分比）
+        var p = _wlProgress(pos, ch.start, ch.end);
+        var filled = p * ch.width;
+        var fo = Math.max(0, filled - data.feather * 0.35) / ch.width * 100;
+        var fe = Math.min(ch.width, filled + data.feather * 0.65) / ch.width * 100;
+        if (p >= 1) { fo = 100; fe = 100; }
+        else if (p <= 0) { fo = 0; fe = 0; }
+        // dirty check：--fo/--fe 驱动 background-image 渐变，每帧无条件写入会触发
+        // 逐字重绘；仅在百分比变化时 setProperty，空闲/已填满字符零开销。
+        var foStr = fo.toFixed(2) + '%';
+        var feStr = fe.toFixed(2) + '%';
+        if (foStr !== ch._fo) { ch.el.style.setProperty('--fo', foStr); ch._fo = foStr; }
+        if (feStr !== ch._fe) { ch.el.style.setProperty('--fe', feStr); ch._fe = feStr; }
+
+        // 持续上浮：1-(1-p)^3，到位后保持
+        var lp = _wlProgress(pos, ch.liftStart, ch.liftEnd);
+        var lift = -data.liftDist * (1 - Math.pow(1 - lp, 3));
+
+        // AMLL 强调：波浪缩放 + 横向展开 + 纵向漂浮 + 辉光
+        var tx = 0, ty = 0, scale = 1, glow = 0, glowR = 0;
+        if (word.amount > 0 || word.blur > 0) {
+          var ep = _wlProgress(pos, ch.empStart, ch.empEnd);
+          var wave = _wlWave(ep);
+          if (wave > 0) {
+            scale = 1 + 0.1 * word.amount * wave;
+            tx = -wave * 0.03 * word.amount * fs * (n / 2 - c);
+            ty = -fs * 0.025 * word.amount * wave;
+            if (word.blur > 0) {
+              glow = Math.max(0, Math.min(1, word.blur * wave));
+              glowR = fs * Math.min(0.3, word.blur * 0.3);
+            }
+          }
+          if (ep > 0 && ep < 1) {
+            ty += -fs * 0.05 * Math.sin(Math.PI * ep);
+          }
+        }
+
+        var t = 'translate3d(' + tx.toFixed(2) + 'px,' + (lift + ty).toFixed(2) + 'px,0)';
+        if (scale > 1.0001) t += ' scale(' + scale.toFixed(4) + ')';
+        if (t !== ch._t) { ch.el.style.transform = t; ch._t = t; }
+        var s = glow > 0.001
+          ? '0 0 ' + glowR.toFixed(1) + 'px rgba(255,255,255,' + glow.toFixed(3) + ')'
+          : '';
+        if (s !== ch._s) { ch.el.style.textShadow = s; ch._s = s; }
+      }
+    }
+  }
+
+  /** 清理行的逐字动画状态（移除 class、复位内联样式） */
+  function _teardownWordLine(lineEl) {
+    lineEl.classList.remove('word-sync');
+    var data = lineEl._wl;
+    if (data) {
+      for (var i = 0; i < data.words.length; i++) {
+        var chars = data.words[i].chars;
+        for (var c = 0; c < chars.length; c++) {
+          var el = chars[c].el;
+          el.style.transform = '';
+          el.style.textShadow = '';
+          el.style.removeProperty('--fo');
+          el.style.removeProperty('--fe');
+        }
+      }
+    }
+    lineEl._wl = null;
+  }
+
+  function _clearWordAnim() {
+    if (_wordAnimLine) _teardownWordLine(_wordAnimLine);
+    _wordAnimLine = null;
+    _stopWordRaf();
+  }
+
+  function _startWordRaf() {
+    if (_wordRafId) return;
+    var tick = function () {
+      _wordRafId = 0;
+      var lineEl = _wordAnimLine;
+      if (!lineEl) return;
+      // 应用冻结（窗口后台）时跳过渲染，省电
+      if (window.__appFrozen) { _wordRafId = requestAnimationFrame(tick); return; }
+      if (App.state.playbackState === 'playing' && lineEl._wl) {
+        _renderWordLine(lineEl, _beatGetPrecisePosition() - lyricsTimeOffset);
+      }
+      _wordRafId = requestAnimationFrame(tick);
+    };
+    _wordRafId = requestAnimationFrame(tick);
+  }
+
+  function _stopWordRaf() {
+    if (_wordRafId) { cancelAnimationFrame(_wordRafId); _wordRafId = 0; }
   }
 
   // 歌词渐进模糊：根据距离当前行的距离计算模糊量
   // 距离 0 → blur 0px，距离 1 → blur 1.5px，距离 2 → blur 3px，
   // 距离 3 → blur 4.5px，距离 ≥4 → blur 6px（封顶）
+  function _blurForDistance(d) {
+    if (d <= 0) return 0;
+    if (d === 1) return 1.5;
+    if (d === 2) return 3;
+    if (d === 3) return 4.5;
+    return 6;
+  }
   function _applyProgressiveBlurToLines(activeIdx) {
     if (!progressiveBlurEnabled) return;
     var lines = els.lyricsWrap.querySelectorAll('.np-lyrics-line');
     for (var j = 0; j < lines.length; j++) {
-      var distance = Math.abs(j - activeIdx);
-      var blurPx = 0;
-      if (distance === 0) {
-        blurPx = 0;
-      } else if (distance === 1) {
-        blurPx = 1.5;
-      } else if (distance === 2) {
-        blurPx = 3;
-      } else if (distance === 3) {
-        blurPx = 4.5;
-      } else {
-        blurPx = 6;
-      }
+      var blurPx = _blurForDistance(Math.abs(j - activeIdx));
+      // 增量更新：仅当该行 blur 值变化时才写 inline filter，
+      // 避免对全量行重复赋值触发 blur 重算（fullscreen 下可见行多，收益显著）。
+      if (lines[j]._blurPx === blurPx) continue;
+      lines[j]._blurPx = blurPx;
       lines[j].style.filter = blurPx > 0 ? 'blur(' + blurPx + 'px)' : '';
     }
   }
@@ -1281,10 +1745,11 @@
     var wrap = document.getElementById('np-lyrics-wrap');
     if (wrap) wrap.classList.toggle('progressive-blur', progressiveBlurEnabled);
     if (!progressiveBlurEnabled) {
-      // 清除所有行上的内联 filter
+      // 清除所有行上的内联 filter 及缓存
       var lines = els.lyricsWrap.querySelectorAll('.np-lyrics-line');
       for (var j = 0; j < lines.length; j++) {
         lines[j].style.filter = '';
+        lines[j]._blurPx = null;
       }
     } else if (lastLyricsIdx >= 0) {
       _applyProgressiveBlurToLines(lastLyricsIdx);
@@ -1394,6 +1859,174 @@
     els.lyrics.style.setProperty('--lyrics-font-size', lyricsFontSize + 'px');
   }
 
+  // ── 间奏指示器：激活 / 进度 / 退出 ─────────────────────────
+
+  /** 查找当前播放位置所处的间奏 */
+  function _findInterlude(adjustedPos) {
+    for (var k = 0; k < interludes.length; k++) {
+      var il = interludes[k];
+      if (adjustedPos >= il.start && adjustedPos < il.end) return il;
+    }
+    return null;
+  }
+
+  /** 重置指示器到隐藏初始态 */
+  function _resetInterludeEl(il) {
+    il.el.classList.remove('active');
+    il.wrap.style.transform = '';
+    for (var d = 0; d < il.dots.length; d++) il.dots[d].style.opacity = '';
+  }
+
+  /** 进入间奏：接管歌词区高亮与滚动定位 */
+  function _enterInterlude(il, lines) {
+    if (_activeInterlude && _activeInterlude !== il) _resetInterludeEl(_activeInterlude);
+    _activeInterlude = il;
+    il.wrap.style.transform = '';
+    _clearWordAnim();  // 间奏接管期间卸下逐字动画
+
+    // 间奏期间没有"激活行"：之前的行全部 past，之后的行保持未激活
+    for (var j = 0; j < lines.length; j++) {
+      lines[j].classList.remove('active', 'past');
+      if (j <= il.lineIdx) lines[j].classList.add('past');
+    }
+    il.el.classList.add('active');
+
+    // 模糊/级联焦点落在即将上来的那一行
+    var focusIdx = Math.max(0, Math.min(il.lineIdx + 1, lines.length - 1));
+    _applyProgressiveBlurToLines(focusIdx);
+    App.utils.cascadeLyricLines(lines, focusIdx, lastLyricsIdx);
+
+    // 滚动定位到指示器（与激活行同一策略）
+    var pane = document.getElementById('now-playing-pane');
+    var factor = (pane && pane.classList.contains('fullscreen')) ? 0.23 : 0.22;
+    var target = il.el.offsetTop - els.lyricsWrap.clientHeight * factor + il.el.clientHeight / 2;
+    App.utils.animateLyricsScroll(els.lyricsWrap, target);
+  }
+
+  function _ilEaseOutExpo(p) {
+    if (p <= 0) return 0;
+    if (p >= 1) return 1;
+    return 1 - Math.pow(2, -10 * p);
+  }
+
+  function _ilEaseInOutBack(p) {
+    p = Math.max(0, Math.min(1, p));
+    var f = 1.70158 * 1.525;
+    return p < 0.5
+      ? Math.pow(2 * p, 2) * ((f + 1) * 2 * p - f) / 2
+      : (Math.pow(2 * p - 2, 2) * ((f + 1) * (p * 2 - 2) + f) + 2) / 2;
+  }
+
+  /**
+   * 逐帧渲染间奏三点（参考 MediaIsland InterludeDotsPresenter，AMLL 风格）：
+   * 全部为播放位置的纯函数，seek 天然正确——
+   * · 呼吸：连续正弦整体缩放（±5%），周期按间奏长度取整切分，最后一个完整周期恰好收尾
+   * · 入场：前 2s EaseOutExpo 从 0 长大；前 500ms 不可见，再 500ms 淡入
+   * · 收尾：末 750ms 1−EaseInOutBack 收缩（back 缓动开头过冲 = 吸气放大，随后收到 0），末 375ms 淡出
+   * · 三点共享缩放与基线，仅透明度按 1/3 时差错峰渐亮，最低保持 0.25
+   */
+  function _renderInterludeFrame(il, adjustedPos) {
+    var dur = il.end - il.start;
+    var t = adjustedPos - il.start;
+    if (dur <= 0 || t < 0 || t > dur) return;
+    var remaining = dur - t;
+
+    var breathe = dur / Math.ceil(dur / IL_BREATHE_TARGET);
+    var scale = Math.sin(1.5 * Math.PI - (t / breathe) * 2) / 20 + 1;
+    var globalOpacity = 1;
+
+    if (t < IL_ENTRANCE) {
+      scale *= _ilEaseOutExpo(t / IL_ENTRANCE);
+    }
+    if (t < IL_ENTRANCE_DELAY) {
+      globalOpacity = 0;
+    } else if (t < IL_ENTRANCE_DELAY + IL_ENTRANCE_FADE) {
+      globalOpacity *= (t - IL_ENTRANCE_DELAY) / IL_ENTRANCE_FADE;
+    }
+
+    if (remaining < IL_EXIT) {
+      scale *= 1 - _ilEaseInOutBack((IL_EXIT - remaining) / IL_EXIT / 2);
+    }
+    if (remaining < IL_EXIT_FADE) {
+      globalOpacity *= Math.max(0, Math.min(1, remaining / IL_EXIT_FADE));
+    }
+
+    scale = Math.max(0, scale) * 0.82;
+    var dotsDur = Math.max(1, dur - IL_EXIT);
+
+    il.wrap.style.transform = 'scale(' + scale.toFixed(4) + ')';
+    for (var d = 0; d < 3; d++) {
+      var dotOpacity = Math.max(0.25, Math.min(1, ((t - (dotsDur / 3 * d)) * 3 / dotsDur) * 0.75));
+      il.dots[d].style.opacity = Math.max(0, Math.min(1, globalOpacity * dotOpacity)).toFixed(3);
+    }
+  }
+
+  /** 离开间奏：收尾动画已在时间轴末段播完，直接复位隐藏 */
+  function _exitInterlude(il) {
+    _resetInterludeEl(il);
+  }
+
+  /**
+   * 间奏动画独立 RAF：
+   * 后端 position_changed 约 250ms 一拍，直接用它驱动呼吸会卡成幻灯片。
+   * 这里用 _beatGetPrecisePosition()（AudioContext.currentTime 插值）在 60fps 下
+   * 平滑推进三点动画，与 position tick 解耦。暂停时不推进（保持最后一帧）。
+   */
+  function _startInterludeRaf() {
+    if (_ilRafId) return;
+    var tick = function () {
+      _ilRafId = 0;
+      var il = _activeInterlude;
+      if (!il) return;
+      if (App.state.playbackState === 'playing') {
+        var pos = _beatGetPrecisePosition() - lyricsTimeOffset;
+        if (pos >= il.start && pos < il.end) {
+          _renderInterludeFrame(il, pos);
+        }
+      }
+      _ilRafId = requestAnimationFrame(tick);
+    };
+    _ilRafId = requestAnimationFrame(tick);
+  }
+
+  function _stopInterludeRaf() {
+    if (_ilRafId) { cancelAnimationFrame(_ilRafId); _ilRafId = 0; }
+  }
+
+  /** 居中滚动到某行（激活行统一的滚动入口） */
+  function _doActivationScroll(lineEl) {
+    if (!lineEl) return;
+    var pane = document.getElementById('now-playing-pane');
+    var factor = (pane && pane.classList.contains('fullscreen')) ? 0.23 : 0.22;
+    var target = lineEl.offsetTop - els.lyricsWrap.clientHeight * factor + lineEl.clientHeight / 2;
+    App.utils.animateLyricsScroll(els.lyricsWrap, target);
+  }
+
+  /**
+   * 间奏收起期间：下一行"上移"由 CSS 收起动画本身完成（即平移），
+   * 此处把滚动校正推迟到收起结束之后，用收起后正确的 offsetTop 做一次居中，
+   * 避免在 grid-template-rows 布局动画进行中又跑 JS 滚动去抢同一批元素 → 顿卡。
+   */
+  function _schedulePostCollapseScroll(lineEl) {
+    var el = _interludeExitEl;
+    if (!el) { _doActivationScroll(lineEl); return; }
+    var done = false;
+    var run = function () {
+      if (done) return;
+      done = true;
+      if (_interludeScrollTimer) { clearTimeout(_interludeScrollTimer); _interludeScrollTimer = 0; }
+      _interludeExiting = false;
+      _interludeExitEl = null;
+      _doActivationScroll(lineEl);
+    };
+    el.addEventListener('transitionend', function (e) {
+      if (e.target === el && e.propertyName === 'grid-template-rows') run();
+    }, { once: true });
+    // 兜底：reduced-motion / 元素被快速移除导致 transitionend 不触发时仍校正
+    if (_interludeScrollTimer) clearTimeout(_interludeScrollTimer);
+    _interludeScrollTimer = setTimeout(run, 420);
+  }
+
   function _updateLyrics(posMs) {
     if (lyricsData.length === 0 || !els.lyricsWrap) return;
 
@@ -1411,6 +2044,31 @@
     if (idx < 0) idx = 0;
 
     var lines = els.lyricsWrap.querySelectorAll('.np-lyrics-line');
+
+    // 间奏指示器优先于行高亮：处于时间间隙时接管歌词区
+    var il = _findInterlude(adjustedPos);
+    if (il) {
+      if (_activeInterlude !== il) {
+        _enterInterlude(il, lines);
+        _renderInterludeFrame(il, adjustedPos);   // 立即绘第一帧
+        _startInterludeRaf();                      // 后续交由 60fps RAF 平滑推进
+      }
+      return;
+    }
+    if (_activeInterlude) {
+      _stopInterludeRaf();
+      _interludeExitEl = _activeInterlude.el;
+      _exitInterlude(_activeInterlude);
+      _interludeExiting = true;
+      _activeInterlude = null;
+      // seek 回间奏前的同一行时 idx 可能未变，强制重走行激活逻辑
+      lastLyricsIdx = -1;
+    }
+    // 间奏收尾 lead 期（动画已隐去、下一行未开唱）：保持无激活行，避免上一行闪回
+    for (var k2 = 0; k2 < interludes.length; k2++) {
+      if (adjustedPos >= interludes[k2].end && adjustedPos < interludes[k2].nextStart) return;
+    }
+
     if (idx !== lastLyricsIdx) {
       var prevLyricsIdx = lastLyricsIdx;
       lastLyricsIdx = idx;
@@ -1429,10 +2087,12 @@
       // 滚动到当前行偏上的位置而非居中（全屏/影院模式下偏下定位）
       var activeLine = lines[idx];
       if (activeLine) {
-        var pane = document.getElementById('now-playing-pane');
-        var factor = (pane && pane.classList.contains('fullscreen')) ? 0.23 : 0.22;
-        var target = activeLine.offsetTop - els.lyricsWrap.clientHeight * factor + activeLine.clientHeight / 2;
-        App.utils.animateLyricsScroll(els.lyricsWrap, target);
+        if (_interludeExiting) {
+          // 间奏刚结束：平移由收起动画完成，等收起结束再居中校正（避免与布局动画打架）
+          _schedulePostCollapseScroll(activeLine);
+        } else {
+          _doActivationScroll(activeLine);
+        }
       }
     }
 
@@ -1450,6 +2110,27 @@
           word.classList.add('active');
         }
       }
+    }
+
+    // 逐字动画（MediaIsland 风格）：激活行挂 word-sync 并逐帧渲染
+    var wLine = lines[idx];
+    if (wLine && wLine.querySelector('.np-lyrics-word')) {
+      var lineChanged = _wordAnimLine !== wLine;
+      if (lineChanged) {
+        if (_wordAnimLine) _teardownWordLine(_wordAnimLine);
+        _wordAnimLine = wLine;
+        wLine.classList.add('word-sync');
+        _prepareWordLine(wLine);
+      }
+      // 播放中由 60fps RAF 独家驱动字帧，tick 不重绘——避免后端 position 偶发落后于
+      // AudioContext 插值时把已推进的填充拉回几毫秒造成「重复滑动」。
+      // 切行首帧（防一帧空白闪烁）与暂停态仍由 tick 绘制。
+      if (lineChanged || App.state.playbackState !== 'playing') {
+        _renderWordLine(wLine, adjustedPos);
+      }
+      _startWordRaf();
+    } else if (_wordAnimLine) {
+      _clearWordAnim();
     }
   }
 
@@ -1496,12 +2177,15 @@
 
   np.updateDuration = function (ms) {
     duration = ms;
-    els.timeDur.textContent = App.utils.formatDuration(ms);
+    // 显示剩余时间为负值（新曲位置为 0，剩余 = 总时长）
+    els.timeDur.textContent = '-' + App.utils.formatDuration(ms);
   };
 
 np.updatePosition = function (ms) {
 // 更新鼓点驱动的本地位置基准（用于 AudioContext.currentTime 插值）
 _beatUpdatePosition(ms);
+// 记录最后已知位置（供 _renderLyrics 后立即同步歌词）
+_lastKnownPositionMs = ms;
 if (isSeeking || !duration) return;
 // position 上报可能短暂超过 duration（曲目末尾、切歌时序差），
 // clamp 到 [0, duration] 避免显示 5:53/4:57 这种荒谬的时间
@@ -1510,13 +2194,21 @@ const pct = Math.max(0, Math.min(1, clampedMs / duration));
 els.barFill.style.width = (pct * 100) + '%';
 els.barThumb.style.left = (pct * 100) + '%';
 els.timeCur.textContent = App.utils.formatDuration(clampedMs);
+// 剩余时间显示为负值
+var remaining = duration - clampedMs;
+els.timeDur.textContent = '-' + App.utils.formatDuration(remaining);
 // 悬浮播放栏居中进度条（复用正在播放页进度条样式）
 if (els.miniProgressTrackFill) els.miniProgressTrackFill.style.width = (pct * 100) + '%';
 if (els.miniProgressThumb) els.miniProgressThumb.style.left = (pct * 100) + '%';
 if (els.miniTimeCur) els.miniTimeCur.textContent = App.utils.formatDuration(clampedMs);
-if (els.miniTimeDur && duration) els.miniTimeDur.textContent = App.utils.formatDuration(duration);
+if (els.miniTimeDur && duration) els.miniTimeDur.textContent = '-' + App.utils.formatDuration(remaining);
 // 过渡标记固定在过渡点位置，不跟随进度
+// 歌词守卫：过渡期间 position_changed 可能在新曲的 updateTrack（含 _renderLyrics）之前到达，
+// 此时歌词仍属于旧曲。用旧曲歌词 + 新曲位置更新高亮会导致 lastLyricsIdx 错乱。
+// _renderLyrics 完成后会将 _lyricsTrackId 同步为当前曲，此后正常更新。
+if (_lyricsTrackId && App.state.currentTrack && _lyricsTrackId === App.state.currentTrack.id) {
 _updateLyrics(clampedMs);
+}
 // 视频背景进度同步（MV 类型：保持与音乐同一进度）
 if (_videoBg) _videoBg.updatePosition(clampedMs);
 };
@@ -1539,93 +2231,36 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
     }
   };
 
-  // 文字崩坏：根据进度将字符逐个替换为 ?（保留空格）
-  // progress: 0 = 原文，1 = 全 ?
-  function _glitchText(original, progress) {
-    if (!original || progress <= 0) return original;
-    var chars = original.split('');
-    var len = chars.length;
-
-    // 生成或获取随机排列（只替换非空格字符）
-    if (!_glitchOrderCache[original]) {
-      var indices = [];
-      for (var i = 0; i < len; i++) {
-        if (chars[i] !== ' ') indices.push(i);
-      }
-      // Fisher-Yates shuffle
-      for (var j = indices.length - 1; j > 0; j--) {
-        var r = Math.floor(Math.random() * (j + 1));
-        var tmp = indices[j]; indices[j] = indices[r]; indices[r] = tmp;
-      }
-      _glitchOrderCache[original] = indices;
-    }
-    var order = _glitchOrderCache[original];
-
-    if (progress >= 1) {
-      var full = chars.slice();
-      for (var k = 0; k < order.length; k++) full[order[k]] = '?';
-      return full.join('');
-    }
-
-    var numReplace = Math.floor(progress * order.length);
-    var result = chars.slice();
-    for (var m = 0; m < numReplace; m++) result[order[m]] = '?';
-    return result.join('');
-  }
-
-  // 启动文字崩坏/恢复动画
-  // toHidden=true: 原文 → ???;  toHidden=false: ??? → 原文
+  // 信息板块过渡：用透明度平滑淡出/淡入（替代逐帧字符乱码，彻底消除频闪）。
+  //   toHidden=true  : 文字 opacity 1 → 0（过渡开始隐藏）
+  //   toHidden=false : 文字 opacity 0 → 1（过渡结束恢复）
+  // 直接对 textContent 没有任何逐帧写入，标题/歌手/专辑不再产生跳变闪烁。
   function _animateGlitch(toHidden) {
-    if (_glitchAnimId) {
-      cancelAnimationFrame(_glitchAnimId);
-      _glitchAnimId = null;
+    var dur = _glitchDuration;
+    var ease = 'cubic-bezier(0.4, 0, 0.2, 1)';
+
+    var targets = [
+      els.title, els.artist, els.album,
+      els.miniTitle, els.miniArtist
+    ];
+    if (els.miniInfo) {
+      targets.push(els.miniInfoTitle, els.miniInfoArtist);
     }
 
-    // 递增代数：旧动画的 pending 帧会检测到代数过期而停止覆写 DOM
-    var myGen = ++_glitchGen;
+    targets.forEach(function (t) {
+      if (!t) return;
+      t.style.transition = 'opacity ' + dur + 'ms ' + ease;
+      t.style.opacity = toHidden ? '0' : '1';
+    });
 
-    var track = App.state.currentTrack;
-    if (!track) return;
-
-    var title = track.title || App.i18n.t('common.unknownTrack');
-    var artist = track.artist || App.i18n.t('common.unknownArtist');
-    var album = track.album || '';
-    var startTime = performance.now();
-
-    function step(now) {
-      // 代数过期 → 新的 updateTrack 或动画已接管，停止覆写
-      if (myGen !== _glitchGen) { _glitchAnimId = null; return; }
-
-      var elapsed = now - startTime;
-      var rawProgress = Math.min(elapsed / _glitchDuration, 1);
-      // easeInOutQuad
-      var eased = rawProgress < 0.5
-        ? 2 * rawProgress * rawProgress
-        : 1 - Math.pow(-2 * rawProgress + 2, 2) / 2;
-      // p: 0 = 原文，1 = 全 ?
-      var p = toHidden ? eased : 1 - eased;
-
-      var gt = _glitchText(title, p);
-      var ga = _glitchText(artist, p);
-      var gal = _glitchText(album, p);
-
-      els.title.textContent = gt;
-      els.artist.textContent = ga;
-      els.album.textContent = gal;
-      els.miniTitle.textContent = gt;
-      els.miniArtist.textContent = ga;
-      if (els.miniInfo) {
-        els.miniInfoTitle.textContent = gt;
-        els.miniInfoArtist.textContent = ga;
-      }
-
-      if (rawProgress < 1) {
-        _glitchAnimId = requestAnimationFrame(step);
-      } else {
-        _glitchAnimId = null;
-      }
-    }
-    _glitchAnimId = requestAnimationFrame(step);
+    // 过渡结束后清理内联 transition，避免影响后续正常排版与主题切换
+    if (_glitchCleanupTimer) clearTimeout(_glitchCleanupTimer);
+    _glitchCleanupTimer = setTimeout(function () {
+      targets.forEach(function (t) {
+        if (t) t.style.transition = '';
+      });
+      _glitchCleanupTimer = null;
+    }, dur + 60);
   }
 
   // 封面/歌词/背景的视觉过渡（CSS transition 平滑过渡）
@@ -1833,7 +2468,7 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
 
       let coverHtml = '';
       if (track.has_cover) {
-        coverHtml = `<img src="${window.coverUrl(track.id)}" alt="">`;
+        coverHtml = `<img src="${window.coverUrl(track.id, 128)}" alt="">`;
       } else {
         const bg = App.utils.hashColor(track.album || track.title);
         coverHtml = `<div class="np-queue-cover" style="background:${bg}">${App.utils.initial(track.album || track.title)}</div>`;
@@ -1903,19 +2538,47 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
     if (enteringFullscreen) {
       const activeTab = document.querySelector('.np-pivot-tab.active');
       const activeTabName = activeTab ? activeTab.getAttribute('data-tab') : 'lyrics';
-      switchTab(activeTabName === 'info' ? 'lyrics' : activeTabName);
+      switchTab(activeTabName === 'info' ? 'lyrics' : activeTabName, true);
       // 启动鼓点驱动背景流动
       _startBeatLoop();
+      // 进入全屏时 CSS display:contents + grid-area 切换可能使面板未能渲染，
+      // 延迟一帧后强制刷新 panel active 状态。
+      requestAnimationFrame(function () {
+        var tabName = activeTabName === 'info' ? 'lyrics' : activeTabName;
+        switchTab(tabName, true); // 重新激活确保 grid-area 生效
+      });
     } else {
       const activeTab = document.querySelector('.np-pivot-tab.active');
-      switchTab(activeTab ? activeTab.getAttribute('data-tab') : 'info');
+      switchTab(activeTab ? activeTab.getAttribute('data-tab') : 'info', false);
       // 停止鼓点驱动
       _stopBeatLoop();
+      // 全屏→侧边切换后，CSS position/grid 变化可能导致面板未正确渲染，
+      // 延迟一帧后确保至少有一个面板处于 active 状态。
+      requestAnimationFrame(function () {
+        var anyActive = false;
+        els.panels.forEach(function (p) { if (p.classList.contains('active')) anyActive = true; });
+        if (!anyActive) {
+          switchTab('info', false);
+        }
+      });
     }
 
-    // 过渡结束后清理
+    // 过渡结束后清理——额外确保面板可见
     setTimeout(function () {
       pane.classList.remove('fs-transitioning');
+      if (enteringFullscreen) {
+        // 全屏模式下：确保右侧面板（歌词或待播列表）处于激活状态
+        var rightActive = false;
+        els.panels.forEach(function (p) {
+          if (p.classList.contains('active') && p.getAttribute('data-panel') !== 'info') rightActive = true;
+        });
+        if (!rightActive) switchTab('lyrics', true);
+      } else {
+        // 非全屏模式：确保至少有一个面板处于激活状态
+        var anyActive = false;
+        els.panels.forEach(function (p) { if (p.classList.contains('active')) anyActive = true; });
+        if (!anyActive) switchTab('info', false);
+      }
     }, 320);
   }
 
@@ -1941,7 +2604,7 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
         document.body.classList.add('np-fullscreen');
         var activeTab = document.querySelector('.np-pivot-tab.active');
         var activeTabName = activeTab ? activeTab.getAttribute('data-tab') : 'lyrics';
-        switchTab(activeTabName === 'info' ? 'lyrics' : activeTabName);
+        switchTab(activeTabName === 'info' ? 'lyrics' : activeTabName, true);
         _startBeatLoop();
       }
       pane.classList.add('theater');
@@ -2009,6 +2672,8 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
   function _toggleCollapse() {
     const pane = document.getElementById('now-playing-pane');
     if (!pane) return;
+    // 设置页激活时禁止展开侧边播放器
+    if (document.body.classList.contains('settings-active')) return;
     // 影院模式中は先に影院モードを解除する
     if (pane.classList.contains('theater')) {
       _exitTheater();
@@ -2025,7 +2690,7 @@ if (pane.classList.contains('fullscreen')) {
 pane.classList.remove('fullscreen');
 document.body.classList.remove('np-fullscreen');
 const activeTab = document.querySelector('.np-pivot-tab.active');
-switchTab(activeTab ? activeTab.getAttribute('data-tab') : 'info');
+switchTab(activeTab ? activeTab.getAttribute('data-tab') : 'info', false);
 if (_videoBg) _videoBg.onFullscreenChange();
 }
 
@@ -2156,15 +2821,26 @@ if (_videoBg) _videoBg.onFullscreenChange();
         // 全画面タブ設定：info パネルは全画面で常にアクティブ
         const activeTab = document.querySelector('.np-pivot-tab.active');
         const activeTabName = activeTab ? activeTab.getAttribute('data-tab') : 'lyrics';
-        switchTab(activeTabName === 'info' ? 'lyrics' : activeTabName);
+        switchTab(activeTabName === 'info' ? 'lyrics' : activeTabName, true);
         _startBeatLoop();
         if (_videoBg) _videoBg.onFullscreenChange();
+        // 延迟一帧后强制刷新 panel active 状态（display:contents + grid-area 切换）
+        requestAnimationFrame(function () {
+          var tabName = activeTabName === 'info' ? 'lyrics' : activeTabName;
+          switchTab(tabName, true);
+        });
       }, 120));
 
       // fs-expand 动画 300ms + 120ms 延迟 = 440ms
       _expandTimers.push(setTimeout(function () {
         document.body.classList.remove('player-expanding');
         pane.classList.remove('fs-transitioning');
+        // 确保右侧面板处于激活状态
+        var rightActive = false;
+        els.panels.forEach(function (p) {
+          if (p.classList.contains('active') && p.getAttribute('data-panel') !== 'info') rightActive = true;
+        });
+        if (!rightActive) switchTab('lyrics', true);
       }, 440));
     } else {
       // ── 收折（全画面 → 直接底欄） ──
@@ -2178,7 +2854,7 @@ if (_videoBg) _videoBg.onFullscreenChange();
 
       // switchTab は fullscreen がまだ残っている状態で呼ぶ
       const activeTab = document.querySelector('.np-pivot-tab.active');
-      switchTab(activeTab ? activeTab.getAttribute('data-tab') : 'info');
+      switchTab(activeTab ? activeTab.getAttribute('data-tab') : 'info', true);
       _stopBeatLoop();
       if (_videoBg) _videoBg.onFullscreenChange();
 
@@ -2208,7 +2884,9 @@ if (_videoBg) _videoBg.onFullscreenChange();
   }
 
   // ── Pivot helpers ────────────────────────────────────────────────────────
-  function switchTab(tabName) {
+  // forceFullscreen: 调用方明确知道当前是否处于全窗口视图时传入，
+  // 避免 classList.contains('fullscreen') 在 class 刚切换但渲染未完成时误判。
+  function switchTab(tabName, forceFullscreen) {
     // タブの active 切り替え
     els.pivotTabs.forEach(function (tab) {
       var isActive = tab.getAttribute('data-tab') === tabName;
@@ -2217,7 +2895,7 @@ if (_videoBg) _videoBg.onFullscreenChange();
     });
     // パネルの active 切り替え
     const pane = document.getElementById('now-playing-pane');
-    const isFullscreen = pane && pane.classList.contains('fullscreen');
+    const isFullscreen = forceFullscreen !== undefined ? forceFullscreen : (pane && pane.classList.contains('fullscreen'));
     els.panels.forEach(function (panel) {
       const isInfoPanel = panel.getAttribute('data-panel') === 'info';
       // 全屏模式下信息面板始终激活（左栏固定显示）

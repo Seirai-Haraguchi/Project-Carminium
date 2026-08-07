@@ -99,6 +99,8 @@
     els.barFill.style.width = (pct * 100) + '%';
     els.barThumb.style.left = (pct * 100) + '%';
     els.timeCur.textContent = fmtTime(pct * duration);
+    // 剩余时间显示为负值
+    els.timeDur.textContent = '-' + fmtTime(duration - pct * duration);
   }
   function _onSeekMove(e) { _updateSeek(e); }
   function _onSeekUp(e) {
@@ -157,7 +159,7 @@
         '<div class="np-queue-cover-wrap">' +
           '<div class="np-queue-cover">' +
             (track.has_cover
-              ? '<img src="' + window.coverUrl(track.id) + '" alt="">'
+              ? '<img src="' + window.coverUrl(track.id, 128) + '" alt="">'
               : '<span class="material-symbols-rounded">music_note</span>') +
           '</div>' +
         '</div>' +
@@ -204,8 +206,8 @@
       els.coverIcon.style.color = 'var(--md-on-surface-variant)';
       els.barFill.style.width = '0%';
       els.barThumb.style.left = '0%';
-      els.timeCur.textContent = '0:00';
-      els.timeDur.textContent = '0:00';
+els.timeCur.textContent = '0:00';
+els.timeDur.textContent = '-0:00';
       App.utils.applyDynamicTheme(null);
       currentDominantRgb = null;
       // ミニ情報バーも更新
@@ -223,7 +225,7 @@
     els.album.textContent = track.album || '';
 
     if (track.has_cover) {
-      App.utils.loadCover(els.coverImg, track.id);
+      App.utils.loadCover(els.coverImg, track.id, 512);
       els.coverImg.onload = function () {
         var rgb = App.utils.extractDominantColor(els.coverImg);
         App.utils.applyDynamicTheme(rgb);
@@ -234,7 +236,7 @@
       els.cover.style.background = '';
       // ミニ情報バーのカバーも更新
       if (els.miniCoverImg) {
-        App.utils.loadCover(els.miniCoverImg, track.id);
+        App.utils.loadCover(els.miniCoverImg, track.id, 128);
         els.miniCoverImg.style.display = '';
         els.miniCoverIcon.style.display = 'none';
       }
@@ -471,22 +473,25 @@
     }
   }
 
-  function updatePosition(posMs) {
-    if (isSeeking) return;
-    els.timeCur.textContent = fmtTime(posMs);
-    if (duration) {
-      var pct = (posMs / duration) * 100;
-      els.barFill.style.width = Math.min(pct, 100) + '%';
-      els.barThumb.style.left = Math.min(pct, 100) + '%';
-    }
-    updateLyrics(posMs);
-  }
+function updatePosition(posMs) {
+if (isSeeking) return;
+els.timeCur.textContent = fmtTime(posMs);
+if (duration) {
+var pct = (posMs / duration) * 100;
+els.barFill.style.width = Math.min(pct, 100) + '%';
+els.barThumb.style.left = Math.min(pct, 100) + '%';
+// 剩余时间显示为负值
+els.timeDur.textContent = '-' + fmtTime(duration - posMs);
+}
+updateLyrics(posMs);
+}
 
-  function updateDuration(durMs) {
-    duration = durMs;
-    els.timeDur.textContent = fmtTime(durMs);
-    if (currentTrack) currentTrack.duration = durMs;
-  }
+function updateDuration(durMs) {
+duration = durMs;
+// 显示剩余时间为负值（新曲位置为 0，剩余 = 总时长）
+els.timeDur.textContent = '-' + fmtTime(durMs);
+if (currentTrack) currentTrack.duration = durMs;
+}
 
   function updateVolume(vol) {
     currentVolume = vol;

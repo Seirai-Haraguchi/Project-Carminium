@@ -285,11 +285,20 @@
 
   /**
    * 向主进程上报渲染进程内存状态。
+   * 同时查询主进程压力级别，若为 elevated/critical 则触发预清理。
    */
   function _reportToMain() {
     var stats = getStats();
     if (window.__electronAPI && window.__electronAPI.invoke) {
       window.__electronAPI.invoke('memory:report_renderer', JSON.stringify(stats)).catch(function () {});
+      // 轮询主进程压力级别，高压力时提前清理
+      window.__electronAPI.invoke('memory:get_pressure').then(function (level) {
+        if (level === 'critical') {
+          emergencyCleanup();
+        } else if (level === 'elevated') {
+          _cleanupCaches();
+        }
+      }).catch(function () {});
     }
   }
 

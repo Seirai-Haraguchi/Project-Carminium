@@ -44,6 +44,18 @@ const DEFAULTS = {
   compressor_enabled: false,
   vocal_enhance: false,
   guitar_friendly: false,
+  // Virtual Bass Enhancement (modern smartphone DSP pipeline)
+  vbe_enabled: false,
+  vbe_cutoff: 90,            // Speaker model HPF cutoff (50–300 Hz)
+  vbe_harm: 0.35,             // Bass harmonic mix λ (0.0–1.0)
+  vbe_sub: 0.15,              // Subharmonic mix (0.0–1.0)
+  vbe_body: 0.18,             // Mid-bass body mix (0.0–1.0)
+  vbe_reson: 0.25,            // Attack resonance mix (0.0–1.0)
+  vbe_dry: 1.0,               // Dry/main gain (0.0–1.0)
+  vbe_a2: 0.15,               // NLD x² coefficient (even harmonics)
+  vbe_a3: 0.85,               // NLD x³ coefficient (odd harmonics)
+  vbe_trans_drive: 2.0,       // Transient saturation drive (1.0–5.0)
+  vbe_reson_freq: 2200,        // Attack resonance center freq (1000–4000 Hz)
   library_auto_watch: true,          // 本地库文件夹 FileWatcher 自动刷新
   library_watch_poll_minutes: 10,    // 本地库轮询兜底间隔（0 = 关闭轮询）
   library_watch_debounce_ms: 3000,   // FileWatcher 事件去抖窗口

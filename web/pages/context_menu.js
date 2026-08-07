@@ -266,7 +266,7 @@
 
     let coverHtml = '';
     if (track.has_cover) {
-      coverHtml = `<img src="${window.coverUrl(track.id)}" alt="Cover">`;
+      coverHtml = `<img src="${window.coverUrl(track.id, 128)}" alt="Cover">`;
     } else {
       const bg = App.utils.hashColor(track.album || track.title);
       coverHtml = `<div class="cm-cover-placeholder" style="background:${bg}">${App.utils.initial(track.album || track.title)}</div>`;

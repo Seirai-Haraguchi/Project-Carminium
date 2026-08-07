@@ -805,8 +805,7 @@
       return;
     }
 
-    // 排除筛选不取消 A-Z 分组布局，仅搜索时取消分组（搜索结果按相关性平铺更直观）
-    const showGroup = !filterStr;
+    const showGroup = !filterStr && !_hasExclusions();
     const groups = showGroup ? _groupTracks(list) : [{ letter: '', items: list }];
 
     _flatList = [];

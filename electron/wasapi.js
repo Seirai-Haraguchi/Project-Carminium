@@ -16,10 +16,11 @@
 'use strict';
 
 const koffi = require('koffi');
-const { spawn, execSync, execFile } = require('child_process');
+const { execSync, execFile } = require('child_process');
 const { EventEmitter } = require('events');
 const fs = require('fs');
 const path = require('path');
+const { DecoderPool } = require('./decoder_pool');
 
 const SHARE_SHARED = 0;
 const SHARE_EXCLUSIVE = 1;
@@ -204,23 +205,19 @@ class NativeRenderer extends EventEmitter {
 
     this._currentFilePath = null;
 
-    this._ffmpegProc = null;
-    this._ffmpegFinished = false;
+    // 统一解码池管理所有 FFmpeg 子进程（最多 2 槽位：main + next）
+    this._decoder = null;
     this._ffmpegDataStarted = false;
-    // サンプル境界に揃っていない残りバイト
-    this._pendingBuf = Buffer.alloc(0);
 
     this._seekOffsetMs = 0;
+    // 暂停时记录的位置（恢复播放时从该处重新解码）
+    this._resumePositionMs = null;
 
-    // 次曲 FFmpeg
-    this._nextFfmpegProc = null;
-    this._nextFfmpegFinished = false;
-    this._nextPendingBuf = Buffer.alloc(0);
+    // 次曲メタデータ
     this._nextDurationMs = 0;
     this._nextFilePath = null;
-    // crossfade/gapless 完成后，next ffmpeg 被提升为 main ffmpeg
-    // 此时其 PCM 数据和 close 事件应路由到 'main' channel
-    this._nextPromoted = false;
+    // gapless 预加载完毕后标记（promoteNextToCurrent 使用）
+    this._nextReady = false;
 
     // Web Audio API 模式标志：当为 true 时，浏览器可解码的格式不启动 FFmpeg
     this._webAudioEnabled = false;
@@ -300,6 +297,13 @@ class NativeRenderer extends EventEmitter {
     console.log(`[wasapi] Initialized ${modeStr} mode: ` +
                 `${this._sampleRate}Hz, ${this._channels}ch, f32`);
 
+    // 配置统一解码池
+    const ff = _findFFmpeg();
+    if (ff) {
+      if (!this._decoder) this._decoder = new DecoderPool(ff);
+      this._decoder.configure(this._sampleRate, this._channels);
+    }
+
     return {
       sampleRate: this._sampleRate,
       channels: this._channels,
@@ -314,35 +318,43 @@ class NativeRenderer extends EventEmitter {
     if (!this._initialized) throw new Error('Renderer not initialized');
     if (!filePath) throw new Error('No file path');
 
-    const ff = _findFFmpeg();
-    if (!ff) throw new Error('ffmpeg not found (required for audio decoding)');
+    if (!this._decoder) throw new Error('ffmpeg not found (required for audio decoding)');
 
     this._currentFilePath = filePath;
-    this._webAudioBrowserDecode = false; // FFmpeg 解码路径
-    this._killFFmpeg();
-    this._killNextFfmpeg();
+    this._webAudioBrowserDecode = false;
+    this._decoder.stopSlot('main');
+    this._decoder.stopSlot('next');
     this._stopDrainTimer();
-    this._pendingBuf = Buffer.alloc(0);
-    this._nextPendingBuf = Buffer.alloc(0);
     this._nextFilePath = null;
     this._nextDurationMs = 0;
     this._seekOffsetMs = 0;
+    this._resumePositionMs = null;
     _f.ca_clear_buffer();
 
     this._durationMs = await this._probeDuration(filePath);
 
-    this._spawnFFmpeg(filePath, 0);
+    const _this = this;
+    this._ffmpegDataStarted = false;
+    this._decoder.start('main', filePath, 0,
+      /* onPcmData */ (fa) => {
+        if (!_this._ffmpegDataStarted) _this._ffmpegDataStarted = true;
+        if (_this.sendPcmToRenderer) _this.sendPcmToRenderer('main', fa);
+      },
+      /* onFinished */ () => {
+        if (_this.sendFfmpegState) _this.sendFfmpegState('main', true);
+      },
+      /* onError */ () => {
+        if (_this.sendFfmpegState) _this.sendFfmpegState('main', true);
+      }
+    );
 
-    // FFmpeg が最初の PCM データを出力したら即座に戻る
-    // （PCM は _onPcmData でレンダラーに送られ、_pendingStreamingPcm にバッファされる）
-    // 以前は _ffmpegFinished か 2s タイムアウトを待っていたが、
-    // これにより余分な PCM がバッファに蓄積し再生遅延の原因になっていた
     const maxWaitMs = 2000;
     const startT = Date.now();
 
     await new Promise((resolve) => {
       const check = () => {
-        if (this._ffmpegDataStarted || this._ffmpegFinished) { resolve(); return; }
+        if (this._ffmpegDataStarted) { resolve(); return; }
+        if (!this._decoder.isSlotActive('main')) { resolve(); return; }
         if (Date.now() - startT > maxWaitMs) { resolve(); return; }
         setTimeout(check, 20);
       };
@@ -353,40 +365,8 @@ class NativeRenderer extends EventEmitter {
   }
 
   _spawnFFmpeg(filePath, seekSec) {
-    const ff = _findFFmpeg();
-    if (!ff) return;
-
-    const args = [];
-    if (seekSec > 0) {
-      args.push('-ss', String(seekSec));
-    }
-    args.push(
-      '-i', filePath,
-      '-f', 'f32le',
-      '-ar', String(this._sampleRate),
-      '-ac', String(this._channels),
-      '-loglevel', 'quiet',
-      'pipe:1'
-    );
-
-    this._ffmpegFinished = false;
-    this._ffmpegDataStarted = false;
-    this._ffmpegProc = spawn(ff, args, { windowsHide: true });
-
-    this._ffmpegProc.stdout.on('data', (chunk) => this._onPcmData(chunk, 'main'));
-    this._ffmpegProc.stderr.on('data', () => { /* ignore */ });
-
-    this._ffmpegProc.on('close', () => {
-      this._ffmpegFinished = true;
-      this._ffmpegProc = null;
-      if (this.sendFfmpegState) this.sendFfmpegState('main', true);
-    });
-    this._ffmpegProc.on('error', (e) => {
-      console.error('[wasapi] ffmpeg error:', e.message);
-      this._ffmpegFinished = true;
-      this._ffmpegProc = null;
-      if (this.sendFfmpegState) this.sendFfmpegState('main', true);
-    });
+    // 已废弃：FFmpeg 子进程管理已收敛到 DecoderPool。
+    // 使用 this._decoder.start('main', ...) 替代。
   }
 
   async _probeDuration(filePath) {
@@ -412,41 +392,9 @@ class NativeRenderer extends EventEmitter {
   // ── PCM 受信 → レンダラーに転送 ──────────────────────────────────────────
 
   _onPcmData(chunk, channel) {
-    // next track 被提升为 current 后，其 PCM 数据路由到 'main' channel
-    if (channel === 'next' && this._nextPromoted) {
-      channel = 'main';
-    }
-
-    // 标记 FFmpeg 已开始产出数据（用于 playFile() 提前返回）
-    if (channel === 'main' && !this._ffmpegDataStarted) {
-      this._ffmpegDataStarted = true;
-    }
-
-    let buf = chunk;
-    const pendingBuf = channel === 'main' ? this._pendingBuf : this._nextPendingBuf;
-
-    if (pendingBuf.length > 0) {
-      buf = Buffer.concat([pendingBuf, chunk]);
-    }
-
-    const sampleBytes = 4;
-    const alignedLen = Math.floor(buf.length / sampleBytes) * sampleBytes;
-    const remainder = buf.length - alignedLen;
-
-    // 残りを保存
-    if (channel === 'main') {
-      this._pendingBuf = remainder > 0 ? buf.slice(alignedLen) : Buffer.alloc(0);
-    } else {
-      this._nextPendingBuf = remainder > 0 ? buf.slice(alignedLen) : Buffer.alloc(0);
-    }
-
-    if (alignedLen === 0) return;
-
-    // Float32Array ビューを作成してレンダラーに送信
-    const floatArray = new Float32Array(buf.buffer, buf.byteOffset, alignedLen / 4);
-
-    if (this.sendPcmToRenderer) {
-      this.sendPcmToRenderer(channel, new Float32Array(floatArray));
+    // DecoderPool 已将 PCM 字节对齐并转为 Float32Array，直接转发即可。
+    if (chunk instanceof Float32Array && this.sendPcmToRenderer) {
+      this.sendPcmToRenderer(channel, chunk);
     }
   }
 
@@ -502,17 +450,11 @@ class NativeRenderer extends EventEmitter {
   // FFmpeg 管道缓冲区满后会自然阻塞，不丢弃任何数据。
 
   pauseStdout(channel) {
-    const proc = channel === 'main' ? this._ffmpegProc : this._nextFfmpegProc;
-    if (proc && proc.stdout && !proc.stdout.isPaused()) {
-      try { proc.stdout.pause(); } catch (_) {}
-    }
+    if (this._decoder) this._decoder.pauseStdout(channel);
   }
 
   resumeStdout(channel) {
-    const proc = channel === 'main' ? this._ffmpegProc : this._nextFfmpegProc;
-    if (proc && proc.stdout && proc.stdout.isPaused()) {
-      try { proc.stdout.resume(); } catch (_) {}
-    }
+    if (this._decoder) this._decoder.resumeStdout(channel);
   }
 
   // ── 再生制御 ──────────────────────────────────────────────────────────────
@@ -572,8 +514,33 @@ class NativeRenderer extends EventEmitter {
     }
   }
 
+  /**
+   * 从指定位置（毫秒）重建 main 槽位解码进程。
+   * 暂停/后台释放进程后，恢复播放时调用。
+   * 已有活跃进程（如 seek 刚启动）则不重建。
+   */
+  _startFromPosition(positionMs) {
+    this._resumePositionMs = null;
+    if (!this._currentFilePath || this._webAudioBrowserDecode || !this._decoder) return;
+    if (this._decoder.isSlotActive('main')) return;
+    const seekSec = Math.max(0, (positionMs || 0) / 1000);
+    this._seekOffsetMs = Math.round(seekSec * 1000);
+    this._ffmpegDataStarted = false;
+    const _this = this;
+    this._decoder.start('main', this._currentFilePath, seekSec,
+      (fa) => {
+        if (!_this._ffmpegDataStarted) _this._ffmpegDataStarted = true;
+        if (_this.sendPcmToRenderer) _this.sendPcmToRenderer('main', fa);
+      },
+      () => { if (_this.sendFfmpegState) _this.sendFfmpegState('main', true); },
+      () => { if (_this.sendFfmpegState) _this.sendFfmpegState('main', true); }
+    );
+  }
+
   async play() {
     if (!this._initialized) throw new Error('Not initialized');
+    // 暂停时进程已释放，从记录的位置重新解码恢复
+    this._startFromPosition(this._resumePositionMs);
     // 先に状態を playing にして UI を即応させる。
     // DLL 側の実際の出力開始は pre-roll 完了後（位置は遅延補正で正しく表示される）。
     this._playing = true;
@@ -586,9 +553,37 @@ class NativeRenderer extends EventEmitter {
     if (!this._playing) return;
     this._cancelPreroll();
     _f.ca_stop();
+    // 记录暂停位置，供 play() 恢复时从该处重新解码
+    this._resumePositionMs = this._currentPositionMs();
+    // 终止 FFmpeg 子进程 → 释放其占用的内存
+    if (this._decoder) {
+      this._decoder.stopSlot('main');
+      this._decoder.stopSlot('next');
+    }
     this._playing = false;
     this._paused = true;
     this.emit('state_changed', 'paused');
+  }
+
+  /**
+   * 释放空闲解码进程（窗口失焦/后台时调用，真正释放内存）。
+   * 播放中不释放（会断音）；未播放时进程通常已在 pause() 释放，此处兜底。
+   */
+  suspendDecoders() {
+    if (this._playing) return;
+    if (this._decoder && (this._decoder.isSlotActive('main') || this._decoder.isSlotActive('next'))) {
+      this._resumePositionMs = this._currentPositionMs();
+      this._decoder.stopSlot('main');
+      this._decoder.stopSlot('next');
+    }
+  }
+
+  /**
+   * 窗口聚焦时调用。解码进程的重建由 play() 驱动（仅在恢复播放时创建），
+   * 聚焦本身不重建进程，避免暂停态下无谓占用内存。
+   */
+  resumeDecoders() {
+    /* no-op：进程重建由 play() 负责 */
   }
 
   async stop() {
@@ -596,9 +591,12 @@ class NativeRenderer extends EventEmitter {
     _f.ca_stop();
     this._playing = false;
     this._paused = false;
+    this._resumePositionMs = null;
     this._stopDrainTimer();
-    this._killFFmpeg();
-    this._killNextFfmpeg();
+    if (this._decoder) {
+      this._decoder.stopSlot('main');
+      this._decoder.stopSlot('next');
+    }
     this._nextFilePath = null;
     this._seekOffsetMs = 0;
     _f.ca_clear_buffer();
@@ -612,19 +610,24 @@ class NativeRenderer extends EventEmitter {
 
     this._cancelPreroll();
     _f.ca_stop();
-    this._killFFmpeg();
-    this._pendingBuf = Buffer.alloc(0);
+    if (this._decoder) this._decoder.stopSlot('main');
     _f.ca_clear_buffer();
     this._seekOffsetMs = Math.round(seekSec * 1000);
 
-    // Web Audio 模式：浏览器可解码格式不启动 FFmpeg
-    // AudioEngine 会处理 seek，DLL 只需清除缓冲区
-    if (this._currentFilePath && !this._webAudioBrowserDecode) {
-      this._spawnFFmpeg(this._currentFilePath, seekSec);
+    if (this._currentFilePath && !this._webAudioBrowserDecode && this._decoder) {
+      const _this = this;
+      this._ffmpegDataStarted = false;
+      this._decoder.start('main', this._currentFilePath, seekSec,
+        (fa) => {
+          if (!_this._ffmpegDataStarted) _this._ffmpegDataStarted = true;
+          if (_this.sendPcmToRenderer) _this.sendPcmToRenderer('main', fa);
+        },
+        () => { if (_this.sendFfmpegState) _this.sendFfmpegState('main', true); },
+        () => { if (_this.sendFfmpegState) _this.sendFfmpegState('main', true); }
+      );
     }
 
     if (wasPlaying) {
-      // 缓冲已清空，走 pre-roll 等水位回升后再起声，避免 seek 后欠载
       this._startWithPreroll();
     } else {
       this._paused = true;
@@ -659,20 +662,18 @@ class NativeRenderer extends EventEmitter {
     if (!filePath) throw new Error('No file path');
 
     this._currentFilePath = filePath;
-    this._killFFmpeg();
-    this._killNextFfmpeg();
+    if (this._decoder) {
+      this._decoder.stopSlot('main');
+      this._decoder.stopSlot('next');
+    }
     this._stopDrainTimer();
-    this._pendingBuf = Buffer.alloc(0);
-    this._nextPendingBuf = Buffer.alloc(0);
     this._nextFilePath = null;
     this._nextDurationMs = 0;
     this._seekOffsetMs = 0;
     _f.ca_clear_buffer();
 
-    // ffprobe で長さを取得（失敗しても 0 を返すだけ）
     this._durationMs = await this._probeDuration(filePath);
 
-    // FFmpeg は起動しない。Web Audio API 側でデコード＆再生。
     this._webAudioBrowserDecode = true;
     console.log('[wasapi] setupForBrowserDecode:', filePath, 'duration=', this._durationMs);
     return { durationMs: this._durationMs };
@@ -684,36 +685,45 @@ class NativeRenderer extends EventEmitter {
     if (!this._initialized) throw new Error('Renderer not initialized');
     if (!filePath) throw new Error('No file path');
 
-    // 支持调用方式：preloadNext(filePath, {skipFFmpeg})
     let skipFFmpeg = false;
     if (typeof seekMsOrOpts === 'object') {
       skipFFmpeg = !!seekMsOrOpts.skipFFmpeg;
     }
 
-    this._killNextFfmpeg();
-    this._nextPendingBuf = Buffer.alloc(0);
+    if (this._decoder) this._decoder.stopSlot('next');
     this._nextFilePath = filePath;
+    this._nextReady = false;
 
     this._nextDurationMs = await this._probeDuration(filePath);
 
-    // Web Audio 模式：浏览器可解码的格式不启动 FFmpeg
     if (skipFFmpeg) {
       console.log('[wasapi] preloadNext (skipFFmpeg):', filePath);
       return { durationMs: this._nextDurationMs };
     }
 
-    const ff = _findFFmpeg();
-    if (!ff) throw new Error('ffmpeg not found');
+    if (!this._decoder) throw new Error('ffmpeg not found');
 
-    this._spawnNextFfmpeg(filePath, 0);
+    const _this = this;
+    this._decoder.start('next', filePath, 0,
+      /* onPcmData */ (fa) => {
+        if (_this.sendPcmToRenderer) _this.sendPcmToRenderer('next', fa);
+      },
+      /* onFinished */ () => {
+        _this._nextReady = true;
+        if (_this.sendFfmpegState) _this.sendFfmpegState('next', true);
+      },
+      /* onError */ () => {
+        _this._nextReady = true;
+        if (_this.sendFfmpegState) _this.sendFfmpegState('next', true);
+      }
+    );
 
-    // 少し待ってデータが出始めたら返す
     const maxWaitMs = 2000;
     const startT = Date.now();
 
     await new Promise((resolve) => {
       const check = () => {
-        if (this._nextFfmpegFinished) { resolve(); return; }
+        if (this._nextReady || !this._decoder.isSlotActive('next')) { resolve(); return; }
         if (Date.now() - startT > maxWaitMs) { resolve(); return; }
         setTimeout(check, 20);
       };
@@ -738,24 +748,10 @@ class NativeRenderer extends EventEmitter {
    * - 元数据（filePath, durationMs）更新为新曲目
    */
   promoteNextToCurrent() {
-    if (!this._nextFilePath && !this._nextPromoted) {
+    if (!this._nextFilePath && !this._nextReady) {
       console.warn('[wasapi] promoteNextToCurrent: no next track to promote');
       return;
     }
-
-    // 杀死旧 main ffmpeg（通常已结束）
-    this._killFFmpeg();
-
-    // 把 next 的 pending 数据移到 main
-    this._pendingBuf = this._nextPendingBuf;
-    this._nextPendingBuf = Buffer.alloc(0);
-
-    // 把 next ffmpeg 进程变为 main
-    const proc = this._nextFfmpegProc;
-    this._ffmpegProc = proc;
-    this._ffmpegFinished = this._nextFfmpegFinished;
-    this._nextFfmpegProc = null;
-    this._nextFfmpegFinished = false;
 
     // 更新元数据
     this._currentFilePath = this._nextFilePath;
@@ -763,99 +759,48 @@ class NativeRenderer extends EventEmitter {
     this._seekOffsetMs = 0;
     this._nextFilePath = null;
     this._nextDurationMs = 0;
-    this._nextPromoted = false;
-    // 提升后的浏览器解码标志：无 FFmpeg 进程意味着次曲是浏览器解码的
-    this._webAudioBrowserDecode = !proc;
+    this._nextReady = false;
 
-    // 关键：将提升后的进程的事件监听器从 'next' 语义切换为 'main' 语义。
-    // 旧实现依赖 _nextPromoted 标志做运行时路由，但该标志会在下次
-    // _killNextFfmpeg() 时被重置为 false，导致 PCM 数据误入 'next' 通道、
-    // mainRing 枯竭后静音死锁。直接重新绑定监听器彻底消除该隐患。
-    if (proc) {
-      proc.stdout.removeAllListeners('data');
-      proc.stdout.on('data', (chunk) => this._onPcmData(chunk, 'main'));
-
-      proc.removeAllListeners('close');
-      proc.on('close', () => {
-        this._ffmpegFinished = true;
-        this._ffmpegProc = null;
-        if (this.sendFfmpegState) this.sendFfmpegState('main', true);
-      });
-
-      proc.removeAllListeners('error');
-      proc.on('error', (e) => {
-        console.error('[wasapi] ffmpeg error (promoted):', e.message);
-        this._ffmpegFinished = true;
-        this._ffmpegProc = null;
-        if (this.sendFfmpegState) this.sendFfmpegState('main', true);
-      });
+    if (this._decoder) {
+      const _this = this;
+      const promoted = this._decoder.promoteNextToMain(
+        /* onPcmData */ (fa) => {
+          if (_this.sendPcmToRenderer) _this.sendPcmToRenderer('main', fa);
+        },
+        /* onFinished */ () => {
+          if (_this.sendFfmpegState) _this.sendFfmpegState('main', true);
+        },
+        /* onError */ () => {
+          if (_this.sendFfmpegState) _this.sendFfmpegState('main', true);
+        }
+      );
+      this._webAudioBrowserDecode = !promoted;
+    } else {
+      this._webAudioBrowserDecode = true;
     }
 
     console.log('[wasapi] Promoted next to current:', this._currentFilePath,
-      'duration:', this._durationMs + 'ms',
-      'ffmpeg running:', !!this._ffmpegProc);
+      'duration:', this._durationMs + 'ms');
   }
 
   _spawnNextFfmpeg(filePath, seekSec = 0) {
-    const ff = _findFFmpeg();
-    if (!ff) return;
-
-    const args = [];
-    if (seekSec > 0) {
-      args.push('-ss', String(seekSec));
-    }
-    args.push(
-      '-i', filePath,
-      '-f', 'f32le',
-      '-ar', String(this._sampleRate),
-      '-ac', String(this._channels),
-      '-loglevel', 'quiet',
-      'pipe:1'
-    );
-
-    this._nextFfmpegFinished = false;
-    this._nextFfmpegProc = spawn(ff, args, { windowsHide: true });
-
-    this._nextFfmpegProc.stdout.on('data', (chunk) => this._onPcmData(chunk, 'next'));
-    this._nextFfmpegProc.stderr.on('data', () => { /* ignore */ });
-
-    this._nextFfmpegProc.on('close', () => {
-      this._nextFfmpegFinished = true;
-      this._nextFfmpegProc = null;
-      if (this._nextPromoted) {
-        // 已提升为 current，通知 main channel
-        this._ffmpegFinished = true;
-        if (this.sendFfmpegState) this.sendFfmpegState('main', true);
-      } else {
-        if (this.sendFfmpegState) this.sendFfmpegState('next', true);
-      }
-    });
-    this._nextFfmpegProc.on('error', (e) => {
-      console.error('[wasapi] next ffmpeg error:', e.message);
-      this._nextFfmpegFinished = true;
-      this._nextFfmpegProc = null;
-      if (this._nextPromoted) {
-        this._ffmpegFinished = true;
-        if (this.sendFfmpegState) this.sendFfmpegState('main', true);
-      } else {
-        if (this.sendFfmpegState) this.sendFfmpegState('next', true);
-      }
-    });
+    // 已废弃：使用 this._decoder.start('next', ...) 替代。
   }
 
   _killNextFfmpeg() {
-    this._nextPromoted = false;
-    if (this._nextFfmpegProc) {
-      try {
-        this._nextFfmpegProc.removeAllListeners('close');
-        this._nextFfmpegProc.removeAllListeners('error');
-        if (this._nextFfmpegProc.stdout) this._nextFfmpegProc.stdout.removeAllListeners('data');
-      } catch { /* ignore */ }
-      try { this._nextFfmpegProc.kill('SIGKILL'); } catch { /* ignore */ }
-      this._nextFfmpegProc = null;
-    }
-    this._nextFfmpegFinished = false;
-    this._nextPendingBuf = Buffer.alloc(0);
+    // 已废弃：使用 this._decoder.stopSlot('next') 替代。
+  }
+
+  _killFFmpeg() {
+    // 已废弃：使用 this._decoder.stopSlot('main') 替代。
+  }
+
+  /** 次曲プリロードをキャンセルする（キュー変更時に使用） */
+  cancelPreloadNext() {
+    if (this._decoder) this._decoder.stopSlot('next');
+    this._nextFilePath = null;
+    this._nextDurationMs = 0;
+    this._nextReady = false;
   }
 
   /**
@@ -874,6 +819,16 @@ class NativeRenderer extends EventEmitter {
     }
   }
 
+  _currentPositionMs() {
+    if (!this._initialized) return this._seekOffsetMs;
+    try {
+      const frames = _f.ca_get_consumed_frames();
+      return this._seekOffsetMs + Math.round(frames * 1000 / this._sampleRate);
+    } catch {
+      return this._seekOffsetMs;
+    }
+  }
+
   getRemainingMs() {
     const pos = this._currentPositionMs();
     return Math.max(0, this._durationMs - pos);
@@ -881,13 +836,6 @@ class NativeRenderer extends EventEmitter {
 
   hasNextPreloaded() {
     return !!this._nextFilePath;
-  }
-
-  /** 次曲プリロードをキャンセルする（キュー変更時に使用） */
-  cancelPreloadNext() {
-    this._killNextFfmpeg();
-    this._nextFilePath = null;
-    this._nextDurationMs = 0;
   }
 
   // ── 状態アクセサ ──────────────────────────────────────────────────────────
@@ -933,26 +881,13 @@ class NativeRenderer extends EventEmitter {
   get pitch() { return 1.0; }
   get rate() { return 1.0; }
 
-  _killFFmpeg() {
-    if (this._ffmpegProc) {
-      // 移除回调防止异步 close 事件覆盖后续 promoteNextToCurrent 的状态
-      try {
-        this._ffmpegProc.removeAllListeners('close');
-        this._ffmpegProc.removeAllListeners('error');
-        if (this._ffmpegProc.stdout) this._ffmpegProc.stdout.removeAllListeners('data');
-      } catch { /* ignore */ }
-      try { this._ffmpegProc.kill('SIGKILL'); } catch { /* ignore */ }
-      this._ffmpegProc = null;
-    }
-    this._ffmpegFinished = false;
-    this._pendingBuf = Buffer.alloc(0);
-  }
-
   async close() {
     this._cancelPreroll();
     this._stopDrainTimer();
-    this._killFFmpeg();
-    this._killNextFfmpeg();
+    if (this._decoder) {
+      this._decoder.stopSlot('main');
+      this._decoder.stopSlot('next');
+    }
     this._nextFilePath = null;
 
     if (this._initialized) {

@@ -1,13 +1,16 @@
 /**
- * Carminium — 设置页（单页连续布局）
+ * Carminium — 设置（普通页面，左右分栏）
  *
- * 所有分类自上而下依次排列，标题区不切换，滚动浏览全部设置项。
+ * 设置以普通页面形式呈现，填满页面容器：
+ * 左侧导航列出所有分类，右侧内容区显示当前分类的设置项。
+ * 由 App.navigate('settings') 触发，与其他页面一致。
  * 分类：
  *   1. 外观与视觉    — 主题、配色、歌词与文字
  *   2. 音频和库      — 输出设备、歌手分隔等
  *   3. 自动化与控制  — 启动行为、快捷键
  *   4. 实验性        — 实验性功能
- *   5. 关于          — 跳转独立关于页
+ *   5. 系统与内存    — 内存信息面板
+ *   6. 关于          — 在右栏内嵌渲染关于页内容
  */
 (function () {
   'use strict';
@@ -303,6 +306,16 @@
                 if (ae) ae.setGuitarFriendly(checked);
               },
             },
+            {
+              type: 'toggle',
+              bind: 'vbe_enabled',
+              label: _t('settings.vbe.label'),
+              sub: _t('settings.vbe.sub'),
+              onChange: function (checked) {
+                var ae = window.__audioEngine;
+                if (ae) ae.setVirtualBass(checked);
+              },
+            },
           ],
         },
         {
@@ -451,108 +464,130 @@
   ];
   }
 
-  // ── 渲染 ─────────────────────────────────────────────────────────────────
+  // ── 普通页面渲染 ─────────────────────────────────────────────────────────
+  // 设置以普通页面呈现：左侧导航 + 右侧内容，填满页面容器。
+  // 由 App.navigate('settings') 触发，与其他页面一致。
+  var _activeSectionId = 'appearance';
+
   page.render = function (container) {
+    // 清理上一次渲染的资源
+    if (_memoryRefreshTimer) {
+      clearInterval(_memoryRefreshTimer);
+      _memoryRefreshTimer = null;
+    }
     page.container = container;
-    _renderSinglePage();
+
+    _renderPageContent();
+
+    // 加载最新设置后重新绑定当前分类
+    App.utils.call('get_settings').then(function (res) {
+      if (!page.container || !page.container.querySelector('#settings-nav')) return;
+      _lastSettings = JSON.parse(res);
+      _bindActiveSection();
+    });
   };
 
-  // ── 单页连续布局 ─────────────────────────────────────────────────────────
-  // 所有分类自上而下依次渲染，不做选项卡切换。
-  function _renderSinglePage() {
-    var container = page.container;
-    container.innerHTML = '' +
-      '<div class="settings-single">' +
-        '<div class="page-sticky-header">' +
-          '<div class="page-header">' +
-            '<div class="page-header-left">' +
-              '<h1 class="page-title" data-i18n="page.settings.title">' + _t('page.settings.title') + '</h1>' +
-            '</div>' +
+  // 构建/重建页面内容（渲染时与语言切换时复用）
+  function _renderPageContent() {
+    if (!page.container) return;
+    page.container.innerHTML = '' +
+      '<div class="settings-page">' +
+        '<nav class="settings-nav" id="settings-nav">' +
+          '<div class="settings-nav-header">' +
+            '<span class="settings-nav-header-title" data-i18n="page.settings.title">' + _t('page.settings.title') + '</span>' +
           '</div>' +
-        '</div>' +
-        '<div class="settings-sections" id="settings-sections">' +
-          _renderAllSections() +
-        '</div>' +
+          _renderNavItems() +
+        '</nav>' +
+        '<div class="settings-content" id="settings-content"></div>' +
       '</div>';
 
-    _bindAllSections();
+    // 对动态插入的 DOM 应用 i18n
+    if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(page.container);
+
+    _bindNav();
+    _activateSection(_activeSectionId);
   }
 
-  function _renderAllSections() {
-    var sections = _buildSections();
-    return sections.map(function (section) {
-      return section.isPage ? _renderPageSection(section) : _renderSection(section);
+  function _renderNavItems() {
+    return _buildSections().map(function (section) {
+      return '' +
+        '<button class="settings-nav-item" type="button" data-section="' + section.id + '">' +
+          '<span class="material-symbols-rounded settings-nav-icon">' + (section.icon || 'tune') + '</span>' +
+          '<span class="settings-nav-label" data-i18n="' + section.titleKey + '">' + _t(section.titleKey) + '</span>' +
+        '</button>';
     }).join('');
   }
 
-  function _renderSectionHeader(section) {
-    return '' +
-      '<div class="settings-section-header" data-section="' + section.id + '">' +
-        '<h2 class="settings-section-title" data-i18n="' + section.titleKey + '">' + _t(section.titleKey) + '</h2>' +
-      '</div>';
+  function _bindNav() {
+    page.container.querySelectorAll('.settings-nav-item').forEach(function (item) {
+      item.addEventListener('click', function () {
+        _activateSection(this.dataset.section);
+      });
+    });
   }
 
-  function _renderSection(section) {
-    var bodyHtml = section.groups
+  function _findSection(id) {
+    var sections = _buildSections();
+    for (var i = 0; i < sections.length; i++) {
+      if (sections[i].id === id) return sections[i];
+    }
+    return null;
+  }
+
+  function _activateSection(id) {
+    var section = _findSection(id);
+    if (!section) return;
+
+    _activeSectionId = id;
+
+    // 导航高亮
+    page.container.querySelectorAll('.settings-nav-item').forEach(function (item) {
+      var active = item.dataset.section === id;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+
+    // 右侧内容区
+    var contentEl = page.container.querySelector('#settings-content');
+    if (!contentEl) return;
+
+    // 「关于」：在右栏内嵌渲染关于页内容（不跳转独立页面）
+    if (section.isPage) {
+      contentEl.innerHTML = '';
+      if (App.pages.about && App.pages.about.renderInto) {
+        App.pages.about.renderInto(contentEl);
+      } else if (App.pages.about && App.pages.about.render) {
+        App.pages.about.render(contentEl);
+      }
+      return;
+    }
+
+    contentEl.innerHTML = '' +
+      '<div class="settings-section" data-section="' + section.id + '">' +
+        '<div class="settings-section-body">' + _renderSectionBody(section) + '</div>' +
+      '</div>';
+
+    _bindActiveSection();
+  }
+
+  function _renderSectionBody(section) {
+    return section.groups
       ? section.groups.map(_renderGroup).join('')
       : (section.rows && section.rows.length
           ? section.rows.map(_renderRow).join('')
           : _renderEmptyHint());
-
-    return '' +
-      '<section class="settings-section" data-section="' + section.id + '">' +
-        _renderSectionHeader(section) +
-        '<div class="settings-section-body">' + bodyHtml + '</div>' +
-      '</section>';
   }
 
-  function _renderPageSection(section) {
-    var bodyHtml = '' +
-      '<div class="settings-row settings-row-link" data-navigate="' + section.id + '">' +
-        '<div>' +
-          '<p class="settings-row-label" data-i18n="settings.about.label">' + _t('settings.about.label') + '</p>' +
-          '<p class="settings-row-sub" data-i18n="settings.about.sub">' + _t('settings.about.sub') + '</p>' +
-        '</div>' +
-        '<span class="material-symbols-rounded settings-row-link-arrow">chevron_right</span>' +
-      '</div>';
-
-    return '' +
-      '<section class="settings-section" data-section="' + section.id + '">' +
-        _renderSectionHeader(section) +
-        '<div class="settings-section-body">' + bodyHtml + '</div>' +
-      '</section>';
-  }
-
-  // ── 事件绑定：一次性绑定所有分类 ───────────────────────────────────────
-  function _bindAllSections() {
-    // 先用缓存设置绑定，再用最新设置重新绑定
+  // 绑定当前分类的所有行（设置未加载时仅渲染占位，加载后由 get_settings 回调再次调用）
+  function _bindActiveSection() {
+    var section = _findSection(_activeSectionId);
+    if (!section || section.isPage) return;
     if (_lastSettings) {
-      _buildSections().forEach(function (section) {
-        if (section.isPage) return;
-        _bindSectionRows(section, _lastSettings);
-      });
+      _bindSectionRows(section, _lastSettings);
     }
-
-    // 关于页导航行
-    page.container.querySelectorAll('.settings-row-link[data-navigate]').forEach(function (row) {
-      row.addEventListener('click', function () {
-        var target = this.dataset.navigate;
-        if (App.navigate) App.navigate(target);
-      });
-    });
-
-    // 加载最新设置后重新绑定所有分类
-    App.utils.call('get_settings').then(function (res) {
-      var settings = JSON.parse(res);
-      _lastSettings = settings;
-      _buildSections().forEach(function (section) {
-        if (section.isPage) return;
-        _bindSectionRows(section, settings);
-      });
-    });
-
-    // ── 内存信息面板绑定 ──
-    _bindMemoryInfo();
+    if (section.id === 'system') {
+      _bindMemoryInfo();
+    }
   }
 
   // ── 内存信息面板 ─────────────────────────────────────────────────────────
@@ -566,10 +601,11 @@
     // 立即加载一次
     _refreshMemoryStats(statsEl);
 
-    // 定时刷新（每 5 秒）
+    // 定时刷新（每 5 秒）；分栏布局下切换分类会移除元素，需每次重新查询
     if (_memoryRefreshTimer) clearInterval(_memoryRefreshTimer);
     _memoryRefreshTimer = setInterval(function () {
-      _refreshMemoryStats(statsEl);
+      var el = page.container && page.container.querySelector('#memory-stats-display');
+      if (el) _refreshMemoryStats(el);
     }, 5000);
 
     // 清理按钮
@@ -589,19 +625,6 @@
           _refreshMemoryStats(statsEl);
         }, 500);
       });
-    }
-
-    // 页面离开时停止刷新
-    var origNavigate = App.navigate;
-    if (!App._memoryNavWrapped) {
-      App._memoryNavWrapped = true;
-      App.navigate = function () {
-        if (_memoryRefreshTimer) {
-          clearInterval(_memoryRefreshTimer);
-          _memoryRefreshTimer = null;
-        }
-        return origNavigate.apply(this, arguments);
-      };
     }
   }
 
@@ -1590,5 +1613,7 @@
       item.addEventListener('click', item._selectItemClickHandler);
     });
   }
+
+  // 语言切换时由 app.js 统一重新渲染当前页面，无需在此额外处理
 
 })();
