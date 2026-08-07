@@ -203,7 +203,7 @@ class SubsonicClient {
       u: this._username,
       v: this._apiVersion,
       c: CLIENT_NAME,
-      f: this._protocolMode === 'opensubsonic' ? 'openSubsonic' : 'json',
+      f: 'json',
     };
     if (this._usePlainPassword) {
       // 降级：使用明文密码（某些旧服务器不支持 token 认证）

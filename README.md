@@ -1,8 +1,5 @@
 # Project Carminium
 
-> Material Design 3 (M3) 桌面音乐播放器 — 本地 & Subsonic 双模式
-
-Carminium 是一款基于 Electron 的高保真桌面音乐播放器，采用 Google Material Design 3 设计语言，支持本地音乐库管理与 Subsonic/OpenSubsonic 流媒体协议。音频渲染使用 Zig + miniaudio 原生后端（Windows WASAPI / Linux PulseAudio），通过 FFmpeg 解码，SoundTouch 提供变速变调，实现低延迟、Gapless、AutoMix 混音等专业播放能力。
 
 ---
 

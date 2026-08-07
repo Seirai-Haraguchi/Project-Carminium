@@ -20,20 +20,41 @@
   var COVER_SIZE = 300;           // 统一缩放尺寸
   var COVER_QUALITY = 0.82;        // JPEG 压缩质量
   var PREFETCH_MARGIN = 10;        // 视口前后预加载数量
-  var COVER_POOL_MAX = 60;         // 最大缓存数量
+  var COVER_POOL_MAX = 40;         // 最大缓存数量（收紧，降低渲染进程内存）
   var PREFETCH_CONCURRENCY = 4;   // 并发预加载数量
 
   // ── 状态 ──────────────────────────────────────────────────────
 
-  var _blobCache = new Map();      // track_id → { url, timestamp, status }
+  var _blobCache = new Map();      // key(track_id + '\0' + size) → { url, timestamp, status }
   // status: 'ready' | 'loading' | 'error' | 'no-cover'
   var _colorCache = new Map();     // track_id → [[r,g,b], ...] (16 colors)
-  var _loadingQueue = new Set();   // 正在加载的 track_id
-  var _pendingCallbacks = {};     // track_id → [callbacks]
+  var _loadingQueue = new Set();   // 正在加载的 key
+  var _pendingCallbacks = {};     // key → [callbacks]
   var _maxPoolSize = COVER_POOL_MAX;
   var _observer = null;            // IntersectionObserver
   var _observedElements = new Map(); // element → track_id
   var _pinned = new Set();        // pin 的 track_id，不会被 cleanupStale / clear 清理
+  var _reportedColors = new Set(); // 已上报过色彩、无需重复上报的 track_id
+
+  /**
+   * 生成缓存键，将 track_id 与目标尺寸组合，使同一曲目不同尺寸各自缓存。
+   * size 缺省时回落到 COVER_SIZE（保证未显式指定尺寸的调用方行为不变）。
+   */
+  function _key(trackId, size) {
+    return String(trackId) + '\u0000' + (size || COVER_SIZE);
+  }
+
+  /**
+   * 判断某缓存键是否属于被 pin 的曲目（按 track_id 前缀匹配，
+   * 这样该曲目任意尺寸的封面都不会被清理）。
+   */
+  function _isPinned(key) {
+    var pinned = false;
+    _pinned.forEach(function (tid) {
+      if (key.indexOf(tid + '\u0000') === 0) pinned = true;
+    });
+    return pinned;
+  }
 
   // ── 工具函数 ──────────────────────────────────────────────────
 
@@ -64,7 +85,7 @@
       if (oldest.done) break;
       var key = oldest.value;
       // pin 的条目跳过（移到末尾保持，不淘汰）
-      if (_pinned.has(key)) {
+      if (_isPinned(key)) {
         var pinnedEntry = _blobCache.get(key);
         _blobCache.delete(key);
         _blobCache.set(key, pinnedEntry);
@@ -80,29 +101,34 @@
 
   /**
    * 将图片元素绘制到 canvas，缩放并压缩为 JPEG Blob。
+   * @param {HTMLImageElement} img
+   * @param {number|string} [size] 目标边长（px）；缺省回落到 COVER_SIZE。
+   *   不放大：当原图最长边小于目标尺寸时按原图尺寸输出，避免无谓占用更多内存。
    */
-  function _processImage(img) {
+  function _processImage(img, size) {
     return new Promise(function (resolve, reject) {
       try {
-        var canvas = document.createElement('canvas');
-        canvas.width = COVER_SIZE;
-        canvas.height = COVER_SIZE;
-        var ctx = canvas.getContext('2d', { willReadFrequently: false });
-
-        // cover 绘制
         var iw = img.naturalWidth || img.width;
         var ih = img.naturalHeight || img.height;
         if (iw === 0 || ih === 0) {
           reject(new Error('zero-size image'));
           return;
         }
-        // 居中裁剪
-        var scale = Math.max(COVER_SIZE / iw, COVER_SIZE / ih);
-        var sw = COVER_SIZE / scale;
-        var sh = COVER_SIZE / scale;
+        var target = size || COVER_SIZE;
+        // size 为 'max' 时按原图最长边输出（即原始最大分辨率）
+        var eff = (target === 'max') ? Math.max(iw, ih) : Math.min(target, Math.max(iw, ih));
+        var canvas = document.createElement('canvas');
+        canvas.width = eff;
+        canvas.height = eff;
+        var ctx = canvas.getContext('2d', { willReadFrequently: false });
+
+        // cover 绘制（居中裁剪为正方形）
+        var scale = Math.max(eff / iw, eff / ih);
+        var sw = eff / scale;
+        var sh = eff / scale;
         var sx = (iw - sw) / 2;
         var sy = (ih - sh) / 2;
-        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, COVER_SIZE, COVER_SIZE);
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, eff, eff);
 
         canvas.toBlob(function (blob) {
           if (blob) {
@@ -215,31 +241,33 @@
    * 加载单张封面图片，处理为 Blob URL 并缓存。
    * @param {string} trackId
    * @param {Function} callback  (url | null)
+   * @param {number|string} [size] 目标尺寸；缺省回落到 COVER_SIZE
    */
-  function _loadCover(trackId, callback) {
+  function _loadCover(trackId, callback, size) {
     if (!trackId) { callback(null); return; }
+    var key = _key(trackId, size);
 
     // 已缓存
-    var entry = _blobCache.get(trackId);
+    var entry = _blobCache.get(key);
     if (entry) {
       // LRU：移到末尾并刷新 timestamp（防止 cleanupStale 误删正在使用的封面）
       entry.timestamp = _now();
-      _blobCache.delete(trackId);
-      _blobCache.set(trackId, entry);
+      _blobCache.delete(key);
+      _blobCache.set(key, entry);
       callback(entry.status === 'ready' ? entry.url : null);
       return;
     }
 
     // 正在加载
-    if (_loadingQueue.has(trackId)) {
-      if (!_pendingCallbacks[trackId]) _pendingCallbacks[trackId] = [];
-      _pendingCallbacks[trackId].push(callback);
+    if (_loadingQueue.has(key)) {
+      if (!_pendingCallbacks[key]) _pendingCallbacks[key] = [];
+      _pendingCallbacks[key].push(callback);
       return;
     }
 
-    _loadingQueue.add(trackId);
-    if (!_pendingCallbacks[trackId]) _pendingCallbacks[trackId] = [];
-    _pendingCallbacks[trackId].push(callback);
+    _loadingQueue.add(key);
+    if (!_pendingCallbacks[key]) _pendingCallbacks[key] = [];
+    _pendingCallbacks[key].push(callback);
 
     // 预留缓存槽
     _evict();
@@ -248,48 +276,51 @@
     var img = new Image();
     img.crossOrigin = 'anonymous';
     img.loading = 'eager';
-    var url = window.coverUrl(trackId);
+    var url = window.coverUrl(trackId, size);
     var done = false;
 
     img.onload = function () {
       if (done) return;
       done = true;
-      _loadingQueue.delete(trackId);
+      _loadingQueue.delete(key);
 
-      // 处理为统一尺寸的 JPEG Blob
-      _processImage(img).then(function (blob) {
+      // 处理为指定尺寸的 JPEG Blob
+      _processImage(img, size).then(function (blob) {
         var blobUrl = URL.createObjectURL(blob);
-        _blobCache.set(trackId, { url: blobUrl, timestamp: _now(), status: 'ready' });
+        _blobCache.set(key, { url: blobUrl, timestamp: _now(), status: 'ready' });
 
-        // 提取 16 色并存入缓存（异步上报后端）
+        // 提取 16 色并存入缓存（色彩与尺寸无关，按 track_id 存储，仅上报一次）
         var colors = _extractColors(img);
         if (colors) {
           _colorCache.set(trackId, colors);
-          _reportColors(trackId, colors);
+          if (!_reportedColors.has(trackId)) {
+            _reportedColors.add(trackId);
+            _reportColors(trackId, colors);
+          }
         }
 
-        _flushCallbacks(trackId, blobUrl);
+        _flushCallbacks(key, blobUrl);
       }).catch(function () {
-        _blobCache.set(trackId, { url: null, timestamp: _now(), status: 'error' });
-        _flushCallbacks(trackId, null);
+        _blobCache.set(key, { url: null, timestamp: _now(), status: 'error' });
+        _flushCallbacks(key, null);
       });
     };
 
     img.onerror = function () {
       if (done) return;
       done = true;
-      _loadingQueue.delete(trackId);
-      _blobCache.set(trackId, { url: null, timestamp: _now(), status: 'no-cover' });
-      _flushCallbacks(trackId, null);
+      _loadingQueue.delete(key);
+      _blobCache.set(key, { url: null, timestamp: _now(), status: 'no-cover' });
+      _flushCallbacks(key, null);
     };
 
     img.src = url;
   }
 
-  function _flushCallbacks(trackId, url) {
-    var cbs = _pendingCallbacks[trackId];
+  function _flushCallbacks(key, url) {
+    var cbs = _pendingCallbacks[key];
     if (cbs) {
-      delete _pendingCallbacks[trackId];
+      delete _pendingCallbacks[key];
       cbs.forEach(function (cb) {
         try { cb(url); } catch (e) { /* ignore */ }
       });
@@ -314,13 +345,13 @@
    * @param {string} trackId
    * @returns {string|null}
    */
-  function getCached(trackId) {
-    var entry = _blobCache.get(trackId);
+  function getCached(trackId, size) {
+    var entry = _blobCache.get(_key(trackId, size));
     if (entry && entry.status === 'ready' && entry.url) {
       // LRU touch + 刷新 timestamp（防止 cleanupStale 误删正在使用的封面）
       entry.timestamp = _now();
-      _blobCache.delete(trackId);
-      _blobCache.set(trackId, entry);
+      _blobCache.delete(_key(trackId, size));
+      _blobCache.set(_key(trackId, size), entry);
       return entry.url;
     }
     return null;
@@ -330,21 +361,23 @@
    * 异步获取封面（从缓存或触发加载）。
    * @param {string} trackId
    * @param {Function} callback  (url | null)
+   * @param {number|string} [size] 目标尺寸；缺省回落到 COVER_SIZE
    */
-  function getCover(trackId, callback) {
-    _loadCover(trackId, callback);
+  function getCover(trackId, callback, size) {
+    _loadCover(trackId, callback, size);
   }
 
   /**
    * 预加载一组封面。
    * @param {string[]} trackIds
    */
-  function preload(trackIds) {
+  function preload(trackIds, size) {
     if (!trackIds || trackIds.length === 0) return;
     var toLoad = [];
     for (var i = 0; i < trackIds.length; i++) {
       var id = trackIds[i];
-      if (!_blobCache.has(id) && !_loadingQueue.has(id)) {
+      var key = _key(id, size);
+      if (!_blobCache.has(key) && !_loadingQueue.has(key)) {
         toLoad.push(id);
       }
     }
@@ -355,7 +388,7 @@
       var id = toLoad[idx++];
       _loadCover(id, function () {
         _next();
-      });
+      }, size);
     }
     for (var c = 0; c < PREFETCH_CONCURRENCY; c++) {
       _next();
@@ -375,8 +408,10 @@
       return;
     }
 
+    var size = opts.size;
+
     // 已缓存：直接设置
-    var cached = getCached(trackId);
+    var cached = getCached(trackId, size);
     if (cached) {
       imgEl.src = cached;
       return;
@@ -394,7 +429,7 @@
       } else {
         if (opts.onError) opts.onError();
       }
-    });
+    }, size);
   }
 
   /**
@@ -440,7 +475,7 @@
   function clear() {
     var pinnedEntries = [];
     _blobCache.forEach(function (entry, key) {
-      if (_pinned.has(key)) {
+      if (_isPinned(key)) {
         pinnedEntries.push({ key: key, entry: entry });
         return;
       }
@@ -485,7 +520,7 @@
     _blobCache.forEach(function (entry, key) {
       if (entry.status !== 'ready') return;
       // pin 的条目不清理（当前播放曲目等）
-      if (_pinned.has(key)) return;
+      if (_isPinned(key)) return;
       if (entry.url && (now - entry.timestamp) > STALE_THRESHOLD_MS) {
         try { URL.revokeObjectURL(entry.url); } catch (e) { /* ignore */ }
         _blobCache.delete(key);

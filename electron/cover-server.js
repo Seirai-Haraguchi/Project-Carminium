@@ -9,8 +9,11 @@
 'use strict';
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const crypto = require('crypto');
 
 const AUDIO_MIME_OVERRIDES = {
   '.mp3': 'audio/mpeg',
@@ -50,6 +53,69 @@ function videoMime(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (VIDEO_MIME_OVERRIDES[ext]) return VIDEO_MIME_OVERRIDES[ext];
   return 'video/mp4'; // fallback
+}
+
+// ── 封面尺寸缩放（按需；依赖 sharp，不可用时回退原始分辨率）──────────
+// 目的是按前端请求的 ?size=N 返回对应尺寸的 JPEG，避免下载/解码超大原图，
+// 从而显著降低内存与带宽占用。
+let _sharpModule = undefined;
+function _getSharp() {
+  if (_sharpModule === undefined) {
+    try {
+      _sharpModule = require('sharp');
+    } catch (e) {
+      _sharpModule = null;
+      console.warn('[cover-server] sharp 不可用，封面将按原始分辨率返回：', e && e.message);
+    }
+  }
+  return _sharpModule;
+}
+
+// 缩放结果缓存（按 track_id + 尺寸），避免对热门曲目重复解码
+const _resizeCache = new Map();
+const RESIZE_CACHE_MAX = 300;
+
+function _parseSizeFromUrl(reqUrl) {
+  try {
+    const u = new URL(reqUrl, 'http://127.0.0.1');
+    const s = u.searchParams.get('size');
+    return s || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function _resizeCover(buffer, keyId, sizeStr) {
+  if (!sizeStr || sizeStr === 'max' || sizeStr === 'original' || sizeStr === 'default') {
+    return buffer;
+  }
+  const n = parseInt(sizeStr, 10);
+  if (!isFinite(n) || n <= 0) return buffer;
+
+  const cacheKey = keyId + ':' + n;
+  const cached = _resizeCache.get(cacheKey);
+  if (cached) return cached;
+
+  const sharp = _getSharp();
+  if (!sharp) return buffer; // 无 sharp：回退原图
+
+  try {
+    const out = await sharp(buffer, { failOn: 'none' })
+      .resize(n, n, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 85, mozjpeg: true })
+      .toBuffer();
+    if (out && out.length > 0) {
+      if (_resizeCache.size >= RESIZE_CACHE_MAX) {
+        const first = _resizeCache.keys().next().value;
+        if (first !== undefined) _resizeCache.delete(first);
+      }
+      _resizeCache.set(cacheKey, out);
+      return out;
+    }
+  } catch (e) {
+    console.warn('[cover-server] 封面缩放失败:', keyId, e && e.message);
+  }
+  return buffer;
 }
 
 class CoverHTTPServer {
@@ -106,6 +172,9 @@ class CoverHTTPServer {
       } else if (pathname.startsWith('/subsonic/stream/')) {
         const raw = decodeURIComponent(pathname.slice('/subsonic/stream/'.length));
         this._handleSubsonicStream(req, res, raw, method);
+      } else if (pathname.startsWith('/artist-image/')) {
+        const name = decodeURIComponent(pathname.slice('/artist-image/'.length));
+        this._handleArtistImage(req, res, name, method);
       } else {
         this._sendError(res, 404);
       }
@@ -127,31 +196,50 @@ class CoverHTTPServer {
   // ── Cover ───────────────────────────────────────────────────────────────
 
   _handleCover(req, res, trackId, method) {
+    const size = _parseSizeFromUrl(req.url);
     const data = this._library.getCoverData(trackId);
     if (data) {
-      const headers = {
-        'Content-Type': 'image/jpeg',
-        'Content-Length': data.length,
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Access-Control-Allow-Origin': '*',
-      };
-      if (method === 'HEAD') {
-        this._sendHeaders(res, 200, headers);
-      } else {
-        this._sendHeaders(res, 200, headers);
-        res.end(data);
-      }
+      // 本地封面：按请求尺寸缩放后返回（sharp 不可用时回退原图）
+      this._sendResizedCover(req, res, trackId, data, size, method);
       return;
     }
     // 本地无封面：若为 Subsonic 曲目，代理到 Subsonic getCoverArt
     if (trackId.startsWith('s') && trackId.includes('_')) {
-      this._proxySubsonicCoverForTrack(req, res, trackId, method);
+      this._proxySubsonicCoverForTrack(req, res, trackId, method, size);
       return;
     }
     this._sendError(res, 404);
   }
 
-  async _proxySubsonicCoverForTrack(req, res, trackId, method) {
+  async _sendResizedCover(req, res, trackId, data, size, method) {
+    try {
+      const out = await _resizeCover(data, trackId, size);
+      const headers = {
+        'Content-Type': 'image/jpeg',
+        'Content-Length': out.length,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Access-Control-Allow-Origin': '*',
+      };
+      this._sendHeaders(res, 200, headers);
+      if (method !== 'HEAD') res.end(out);
+    } catch (e) {
+      // 兜底：直接返回原图
+      try {
+        const headers = {
+          'Content-Type': 'image/jpeg',
+          'Content-Length': data.length,
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Access-Control-Allow-Origin': '*',
+        };
+        this._sendHeaders(res, 200, headers);
+        if (method !== 'HEAD') res.end(data);
+      } catch (e2) {
+        this._sendError(res, 500);
+      }
+    }
+  }
+
+  async _proxySubsonicCoverForTrack(req, res, trackId, method, size) {
     const rest = trackId.slice(1); // 去掉前导 s
     const underscoreIdx = rest.indexOf('_');
     if (underscoreIdx < 0) {
@@ -176,8 +264,8 @@ class CoverHTTPServer {
       return;
     }
 
-    // 1) 本地缓存命中
-    const cached = this._library.readSubsonicCoverCache(serverId, coverId);
+    // 1) 本地缓存命中（按请求尺寸）
+    const cached = this._library.readSubsonicCoverCache(serverId, coverId, size);
     if (cached) {
       const headers = {
         'Content-Type': 'image/jpeg',
@@ -201,17 +289,19 @@ class CoverHTTPServer {
       return;
     }
 
+    const reqSize = (size && size !== 'max' && size !== 'original') ? parseInt(size, 10) : 300;
+
     try {
       const { proxyRequest } = require('./subsonic');
       const { body, contentType } = await proxyRequest(
         cfg.server_url, cfg.username, cfg.password,
-        'getCoverArt', { id: coverId, size: 300 },
+        'getCoverArt', { id: coverId, size: reqSize },
         cfg.protocol_mode || 'subsonic', 30.0
       );
 
-      // 3) 写入缓存
+      // 3) 写入缓存（按请求尺寸）
       if (body && (contentType || '').startsWith('image/')) {
-        this._library.writeSubsonicCoverCache(serverId, coverId, body);
+        this._library.writeSubsonicCoverCache(serverId, coverId, body, size);
       }
 
       const headers = {
@@ -441,12 +531,13 @@ class CoverHTTPServer {
       return;
     }
     const [serverId, coverId] = parsed;
-    this._proxySubsonicCover(req, res, serverId, coverId, method);
+    const size = _parseSizeFromUrl(req.url);
+    this._proxySubsonicCover(req, res, serverId, coverId, method, size);
   }
 
-  async _proxySubsonicCover(req, res, serverId, coverId, method) {
-    // 1) 本地缓存命中
-    const cached = this._library.readSubsonicCoverCache(serverId, coverId);
+  async _proxySubsonicCover(req, res, serverId, coverId, method, size) {
+    // 1) 本地缓存命中（按请求尺寸）
+    const cached = this._library.readSubsonicCoverCache(serverId, coverId, size);
     if (cached) {
       const headers = {
         'Content-Type': 'image/jpeg',
@@ -470,16 +561,18 @@ class CoverHTTPServer {
       return;
     }
 
+    const reqSize = (size && size !== 'max' && size !== 'original') ? parseInt(size, 10) : 300;
+
     try {
       const { proxyRequest } = require('./subsonic');
       const { body, contentType } = await proxyRequest(
         cfg.server_url, cfg.username, cfg.password,
-        'getCoverArt', { id: coverId, size: 300 },
+        'getCoverArt', { id: coverId, size: reqSize },
         cfg.protocol_mode || 'subsonic', 30.0
       );
 
       if (body && (contentType || '').startsWith('image/')) {
-        this._library.writeSubsonicCoverCache(serverId, coverId, body);
+        this._library.writeSubsonicCoverCache(serverId, coverId, body, size);
       }
 
       const headers = {
@@ -644,6 +737,248 @@ class CoverHTTPServer {
       proxyReq.destroy(new Error('timeout'));
     });
     proxyReq.end();
+  }
+
+  // ── 艺人头像（免 key 在线抓取 + 磁盘缓存）────────────────────────────
+  // 来源链（任一失败自动下探）：
+  //   1) iTunes Search（musicArtist，Apple CDN，覆盖好）
+  //   2) Deezer Search（artist → picture_xl 1000x1000，免 key）
+  //   3) TheAudioDB（公开测试 key 123 → strArtistThumb，免注册）
+  //   4) Wikipedia REST 摘要图（免 key，小众艺人兜底）
+  //   5) MusicBrainz → image 关系（古典/小众艺人终极兜底）
+  // 命中后缓存到 userData/artist_images，后续直接从磁盘返回。
+
+  _getArtistImageCacheDir() {
+    if (this._artistImgCacheDir) return this._artistImgCacheDir;
+    let base = null;
+    try {
+      const electron = require('electron');
+      if (electron && electron.app && electron.app.getPath) {
+        base = electron.app.getPath('userData');
+      }
+    } catch (e) { /* 测试环境无 electron */ }
+    if (!base) base = os.tmpdir();
+    const dir = path.join(base, 'carminium-artist-images');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { /* ignore */ }
+    this._artistImgCacheDir = dir;
+    return dir;
+  }
+
+  async _handleArtistImage(req, res, name, method) {
+    const norm = (name || '').trim();
+    if (!norm) { this._sendError(res, 400); return; }
+
+    const key = crypto.createHash('md5').update(norm.toLowerCase()).digest('hex');
+    const dir = this._getArtistImageCacheDir();
+    const cacheFile = path.join(dir, key + '.jpg');
+
+    if (!this._artistInflight) this._artistInflight = {};
+
+    // 1) 磁盘缓存命中
+    if (fs.existsSync(cacheFile)) {
+      try {
+        const data = fs.readFileSync(cacheFile);
+        this._sendImage(res, data, method);
+        return;
+      } catch (e) { /* 读取失败则重新抓取 */ }
+    }
+
+    // 并发去重：同一艺人同时只抓一次（后台预热与详情页请求共用）
+    if (this._artistInflight[key]) {
+      try {
+        const buf = await this._artistInflight[key];
+        if (buf) { this._sendImage(res, buf, method); return; }
+      } catch (e) { /* fallthrough → 404 */ }
+      this._sendError(res, 404);
+      return;
+    }
+
+    this._artistInflight[key] = (async () => {
+      let img = null;
+      try { img = await this._fetchArtistImage(norm); } catch (e) {
+        console.error('[artist-image] fetch failed:', e && e.message);
+      }
+      if (img && img.buffer && (img.contentType || '').startsWith('image/')) {
+        try { fs.writeFileSync(cacheFile, img.buffer); } catch (e) { /* ignore */ }
+        return img.buffer;
+      }
+      return null;
+    })();
+
+    try {
+      const buf = await this._artistInflight[key];
+      if (buf) { this._sendImage(res, buf, method); return; }
+    } catch (e) { /* ignore */ }
+    finally {
+      delete this._artistInflight[key];
+    }
+    this._sendError(res, 404);
+  }
+
+  async _fetchArtistImage(name, timeoutMs = 15000) {
+    const q = encodeURIComponent(name);
+
+    // 1) iTunes Search（musicArtist）→ 600x600（Apple CDN，覆盖好）
+    try {
+      const search = await this._httpJson(
+        'https://itunes.apple.com/search?entity=musicArtist&limit=1&term=' + q
+      );
+      if (search && search.results && search.results[0] && search.results[0].artworkUrl100) {
+        let art = search.results[0].artworkUrl100.replace(/100x100bb(\.\w+)?$/, '600x600bb$1');
+        const img = await this._httpGet(art, 0, timeoutMs);
+        if (img && img.contentType && img.contentType.startsWith('image/')) return img;
+      }
+    } catch (e) { /* 尝试下一来源 */ }
+
+    // 2) Deezer Search（artist）→ picture_xl 1000x1000（免 key）
+    try {
+      const dz = await this._httpJson('https://api.deezer.com/search/artist/?q=' + q + '&limit=1');
+      const art = dz && dz.data && dz.data[0] && (dz.data[0].picture_xl || dz.data[0].picture_big);
+      if (art) {
+        const img = await this._httpGet(art, 0, timeoutMs);
+        if (img && img.contentType && img.contentType.startsWith('image/')) return img;
+      }
+    } catch (e) { /* 尝试下一来源 */ }
+
+    // 3) TheAudioDB（公开测试 key 123，免注册）→ strArtistThumb
+    try {
+      const adb = await this._httpJson('https://www.theaudiodb.com/api/v1/json/123/search.php?s=' + q);
+      const art = adb && adb.artists && adb.artists[0] && adb.artists[0].strArtistThumb;
+      if (art) {
+        const img = await this._httpGet(art, 0, timeoutMs);
+        if (img && img.contentType && img.contentType.startsWith('image/')) return img;
+      }
+    } catch (e) { /* 尝试下一来源 */ }
+
+    // 4) Wikipedia REST 摘要图（兜底）
+    try {
+      const summary = await this._httpJson(
+        'https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(name)
+      );
+      if (summary && summary.thumbnail && summary.thumbnail.source) {
+        const img = await this._httpGet(summary.thumbnail.source, 0, timeoutMs);
+        if (img && img.contentType && img.contentType.startsWith('image/')) return img;
+      }
+    } catch (e) { /* 尝试下一来源 */ }
+
+    // 5) MusicBrainz → 直接 image 关系（古典/小众艺人终极兜底）
+    try {
+      const mb = await this._httpJson('https://musicbrainz.org/ws/2/artist/?query=artist:' + q + '&fmt=json');
+      const id = mb && mb.artists && mb.artists[0] && mb.artists[0].id;
+      if (id) {
+        const detail = await this._httpJson('https://musicbrainz.org/ws/2/artist/' + id + '?inc=url-rels&fmt=json');
+        const rel = detail && detail.relations && detail.relations.find(function (r) { return r.type === 'image'; });
+        const art = rel && rel.url && rel.url.resource;
+        if (art) {
+          const img = await this._httpGet(art, 0, timeoutMs);
+          if (img && img.contentType && img.contentType.startsWith('image/')) return img;
+        }
+      }
+    } catch (e) { /* 放弃 */ }
+
+    return null;
+  }
+
+  // ── 后台预热（本地库慢慢缓存）─────────────────────────────────────────────
+  // 由渲染进程在启动/库更新时调用：传入全部艺人名，主进程在后台以并发队列
+  // 逐个抓取并落盘。并发路数 = CPU 线程数（封顶 8）。已缓存或已入队的自动跳过，
+  // 因此可反复调用、幂等。
+  prefetchArtistImages(names) {
+    if (!Array.isArray(names) || names.length === 0) return { queued: 0 };
+    if (!this._prefetchSet) this._prefetchSet = new Set();
+    if (!this._prefetchQueue) this._prefetchQueue = [];
+    if (this._prefetchActive == null) this._prefetchActive = 0;
+
+    const dir = this._getArtistImageCacheDir();
+    let added = 0;
+    for (let i = 0; i < names.length; i++) {
+      const norm = (names[i] || '').trim();
+      if (!norm) continue;
+      const key = crypto.createHash('md5').update(norm.toLowerCase()).digest('hex');
+      if (this._prefetchSet.has(key)) continue;           // 本会话已处理/已入队
+      const cacheFile = path.join(dir, key + '.jpg');
+      if (fs.existsSync(cacheFile)) { this._prefetchSet.add(key); continue; }  // 已缓存
+      this._prefetchSet.add(key);
+      this._prefetchQueue.push({ name: norm, cacheFile: cacheFile });
+      added++;
+    }
+
+    if (added > 0) this._pumpPrefetch();
+    return { queued: added, pending: this._prefetchQueue.length, concurrency: this._prefetchConcurrency() };
+  }
+
+  // 并发路数：按 CPU 线程数决定，封顶 8（避免过多并发连接挤占前台）
+  _prefetchConcurrency() {
+    const threads = (typeof os.cpus === 'function' && os.cpus().length) || 1;
+    return Math.max(1, Math.min(threads, 8));
+  }
+
+  // 泵式并发：在并发上限内持续从队列领取任务；每个 worker 抓完一个后歇 1500ms 再领下一个
+  _pumpPrefetch() {
+    const N = this._prefetchConcurrency();
+    while (this._prefetchActive < N && this._prefetchQueue.length > 0) {
+      const item = this._prefetchQueue.shift();
+      this._prefetchActive++;
+      // 后台抓取用更短的每源超时（6s），整条链路最坏约 30s，避免单艺人在墙后长期占队列
+      this._fetchArtistImage(item.name, 6000)
+        .then((img) => {
+          if (img && img.buffer && (img.contentType || '').startsWith('image/')) {
+            try { fs.writeFileSync(item.cacheFile, img.buffer); } catch (e) { /* ignore */ }
+          }
+        })
+        .catch(() => { /* 抓取失败则跳过，留待下次启动重试 */ })
+        .then(() => {
+          this._prefetchActive--;
+          // 慢慢来：每个 worker 抓完一个后间隔 1500ms 再领下一个，不挤占前台网络/CPU
+          setTimeout(() => this._pumpPrefetch(), 1500);
+        });
+    }
+  }
+
+  _httpJson(urlStr) {
+    return this._httpGet(urlStr).then(({ buffer }) => JSON.parse(buffer.toString('utf-8')));
+  }
+
+  _httpGet(urlStr, redirects = 0, timeoutMs = 15000) {
+    return new Promise((resolve, reject) => {
+      if (redirects > 5) { reject(new Error('too many redirects')); return; }
+      const lib = urlStr.startsWith('https:') ? https : http;
+      const req = lib.get(urlStr, {
+        headers: { 'User-Agent': 'Carminium/1.0' },
+      }, (resp) => {
+        const status = resp.statusCode;
+        if (status >= 300 && status < 400 && resp.headers.location) {
+          resp.resume();
+          const next = new URL(resp.headers.location, urlStr).toString();
+          resolve(this._httpGet(next, redirects + 1));
+          return;
+        }
+        if (status !== 200) {
+          resp.resume();
+          reject(new Error('HTTP ' + status));
+          return;
+        }
+        const chunks = [];
+        resp.on('data', (c) => chunks.push(c));
+        resp.on('end', () => resolve({
+          buffer: Buffer.concat(chunks),
+          contentType: resp.headers['content-type'] || 'image/jpeg',
+        }));
+      });
+      req.on('error', reject);
+      req.setTimeout(timeoutMs, () => req.destroy(new Error('timeout')));
+    });
+  }
+
+  _sendImage(res, buffer, method, contentType = 'image/jpeg') {
+    const headers = {
+      'Content-Type': contentType,
+      'Content-Length': buffer.length,
+      'Cache-Control': 'public, max-age=86400',
+      'Access-Control-Allow-Origin': '*',
+    };
+    this._sendHeaders(res, 200, headers);
+    if (method !== 'HEAD') res.end(buffer);
   }
 }
 

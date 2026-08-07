@@ -8,7 +8,7 @@
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const electron = require('electron');
-const { app, BrowserWindow, nativeImage, shell, dialog } = electron;
+const { app, BrowserWindow, nativeImage, shell, dialog, nativeTheme } = electron;
 const path = require('path');
 const fs = require('fs');
 const { getInstance: getMemoryManager } = require('./memory_manager');
@@ -30,6 +30,27 @@ app.commandLine.appendSwitch('disable-features',
   'MediaSessionSegmentation');
 // app-user-model-id は AUMID 定数が定義された後に設定するため、
 // このブロックの直後（AUMID 定義後）で appendSwitch する。
+
+// ── 进程收敛标志 ─────────────────────────────────────────────────────────
+// 进程收敛通过以下方式实现：
+//   - DecoderPool 统一管理所有 FFmpeg 子进程
+//   - app.requestSingleInstanceLock() 单实例锁
+//   - MemoryManager 三级 RSS 管制（200/230/250MB）
+
+// ── Chromium 子进程抑制（保守）────────────────────────────────────────
+// 仅关闭确定不影响功能的后台服务。不碰 AudioServiceOutOfProcess
+// （否则音频处理回收到主进程，推高 RSS）。
+app.commandLine.appendSwitch('disable-background-networking');
+app.commandLine.appendSwitch('disable-component-update');
+app.commandLine.appendSwitch('disable-domain-reliability');
+app.commandLine.appendSwitch('disable-features',
+  'Translate,BackForwardCache'
+);
+
+// ── V8 堆内存限制 ─────────────────────────────────────────────────────
+// 主进程 V8 堆限制 128MB — 足够 Node.js 运行，同时强制 GC 更积极。
+// 渲染进程不受此限制（Chromium 自行管理）。
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=128');
 
 // ── 全局异常捕获 ─────────────────────────────────────────────────────────────
 process.on('uncaughtException', (err) => {
@@ -490,6 +511,49 @@ Write-Output $shortcutPath
   console.log('[main]   DisplayName:', APP_DISPLAY_NAME);
   console.log('[main]   IconUri:', iconPathForLog || '(none)');
   console.log('[main]   Icon format:', iconPathForLog && iconPathForLog.endsWith('.ico') ? 'ICO' : 'PNG');
+
+  // ── 任务栏按钮 / SMTC 图标随系统暗色模式切换 ──
+  // 上面注册的 IconUri 固定来自 icon.png（亮色）。系统主题变化时必须重生成对应主题的
+  // .ico 并更新注册表 IconUri，否则任务栏按钮与 SMTC 媒体控件图标都不会变
+  // （这两处读的是 AUMID 的 IconUri，与 win.setIcon 控制的窗口/Alt+Tab 图标无关）。
+  function _updateAumidIconIco(isDark) {
+    const appDataDir = process.env.APPDATA;
+    if (!appDataDir) return;
+    const stableDir = path.join(appDataDir, 'Carminium');
+    const stableIcoPath = path.join(stableDir, 'app-icon.ico');
+    const sourceName = isDark ? 'icon-dark.png' : 'icon.png';
+    const sourceIconPath = path.join(__dirname, '..', 'build', sourceName);
+    try {
+      if (!fs.existsSync(stableDir)) fs.mkdirSync(stableDir, { recursive: true });
+      if (!fs.existsSync(sourceIconPath)) {
+        console.warn('[main] Missing source icon for theme:', sourceIconPath);
+        return;
+      }
+      _generateIcoFromPngSync(sourceIconPath, stableIcoPath);
+      const regKey = 'HKCU\\Software\\Classes\\AppUserModelId\\' + AUMID;
+      _reg(['DELETE', regKey, '/v', 'IconUri', '/f']);
+      _reg(['ADD', regKey, '/v', 'IconUri', '/t', 'REG_SZ', '/d', stableIcoPath, '/f']);
+      if (_shell32) {
+        try {
+          const SHChangeNotify = _shell32.func(
+            'void SHChangeNotify(int32 wEventId, int32 uFlags, void *dwItem1, void *dwItem2)'
+          );
+          SHChangeNotify(0x08000000, 0x0000, null, null);
+        } catch (e) { /* ignore */ }
+      }
+      console.log('[main] AUMID IconUri updated to', isDark ? 'dark' : 'light', '->', stableIcoPath);
+    } catch (e) {
+      console.warn('[main] Failed to update AUMID IconUri:', e.message);
+    }
+  }
+
+  // 启动即按系统主题生成正确的 .ico（覆盖上面固定的亮色 icon.png）
+  _updateAumidIconIco(nativeTheme.shouldUseDarkColors);
+
+  // 系统主题变化时实时更新任务栏按钮 / SMTC 图标
+  nativeTheme.on('updated', () => {
+    _updateAumidIconIco(nativeTheme.shouldUseDarkColors);
+  });
 }
 
 // ── 单实例锁 ───────────────────────────────────────────────────────────────
@@ -524,15 +588,28 @@ function _getMainWindow() {
 
 // ── 创建主窗口 ─────────────────────────────────────────────────────────────
 
+/**
+ * 根据暗色模式加载对应的应用图标。
+ * 暗色模式下使用 icon-dark.png，亮色模式下使用 icon.png，
+ * 缺失时回退到另一套图标，保证始终有可用图标。
+ * @param {boolean} isDark
+ * @returns {Electron.NativeImage|null}
+ */
+function _loadAppIcon(isDark) {
+  const primary = isDark ? 'icon-dark.png' : 'icon.png';
+  const fallback = isDark ? 'icon.png' : 'icon-dark.png';
+  for (const name of [primary, fallback]) {
+    const iconPath = path.join(__dirname, '..', 'build', name);
+    try {
+      if (fs.existsSync(iconPath)) return nativeImage.createFromPath(iconPath);
+    } catch { /* 尝试下一套 */ }
+  }
+  return null;
+}
+
 function createMainWindow() {
-  // 加载应用图标
-  const iconPath = path.join(__dirname, '..', 'build', 'icon.png');
-  let appIcon = null;
-  try {
-    if (fs.existsSync(iconPath)) {
-      appIcon = nativeImage.createFromPath(iconPath);
-    }
-  } catch { /* fallback: no icon */ }
+  // 根据系统暗色模式加载对应的应用图标
+  const appIcon = _loadAppIcon(nativeTheme.shouldUseDarkColors);
 
   mainWindow = new BrowserWindow({
     width: 1152,
@@ -580,6 +657,18 @@ function createMainWindow() {
   // 全屏状态变化时通知渲染进程
   mainWindow.on('enter-full-screen', () => _pushFullscreenState(true));
   mainWindow.on('leave-full-screen', () => _pushFullscreenState(false));
+
+  // ── 窗口失焦/聚焦：冻结/解冻空闲资源 ──
+  // 失焦（后台运行）时：未播放则挂起 FFmpeg 子进程（播放中挂起会断音），
+  // 并通知渲染进程进入省电模式。聚焦时恢复 FFmpeg 并退出省电模式。
+  mainWindow.on('blur', () => {
+    if (wasapi && player && !player.isPlaying) wasapi.suspendDecoders();
+    mainWindow.webContents.send('bridge:event', 'app:visibility', 'background');
+  });
+  mainWindow.on('focus', () => {
+    if (wasapi) wasapi.resumeDecoders();
+    mainWindow.webContents.send('bridge:event', 'app:visibility', 'foreground');
+  });
 
   // 在外部浏览器打开链接
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -715,6 +804,15 @@ async function initializeApp() {
     createMainWindow();
     bridge.setMainWindow(mainWindow);
     smtc.setMainWindow(mainWindow);
+
+    // ── 任务栏/窗口图标随系统暗色模式实时变化 ──────────────────────────────
+    // 直接监听 nativeTheme（不依赖渲染进程）：即使应用主题设为「固定」亮/暗，
+    // 只要系统暗色模式切换，任务栏图标也跟着变（符合「按系统暗色模式自动变化」）。
+    nativeTheme.on('updated', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setIcon(_loadAppIcon(nativeTheme.shouldUseDarkColors));
+      }
+    });
 
     // ── 启动库自动刷新（本地 FileWatcher + 远程定期 re-sync）──
     bridge.startAutoRefresh();

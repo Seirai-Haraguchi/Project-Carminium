@@ -119,7 +119,7 @@ const CJK_PATTERN = /[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+/g;
 // ── 缓存 ──────────────────────────────────────────────────────────────────────
 
 const _cache = new Map();
-const CACHE_MAX = 8192;
+const CACHE_MAX = 4096;           // 收紧至 4096（原 8192），降低内存
 
 function convertKana(text) {
   const result = text.replace(KANA_PATTERN, (m) => KANA_MAP.get(m) || m);

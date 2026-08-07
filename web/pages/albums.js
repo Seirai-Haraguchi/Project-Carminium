@@ -278,7 +278,7 @@
 
         let coverHtml = '';
         if (album.cover_track_id) {
-          coverHtml = `<img src="${window.coverUrl(album.cover_track_id)}" alt="" loading="lazy">`;
+          coverHtml = `<img src="${window.coverUrl(album.cover_track_id, 512)}" alt="" loading="lazy">`;
         } else {
           const bg = App.utils.hashColor(album.album);
           coverHtml = `
@@ -309,9 +309,6 @@
     // 渲染专辑详情页
     container.innerHTML = `
       <div class="detail-header">
-        <button class="back-btn" id="btn-back" data-i18n-aria-label="albums.backToList" data-i18n-title="albums.backToList">
-          <span class="material-symbols-rounded">arrow_back</span>
-        </button>
         <div class="detail-cover" id="detail-cover">
           <div class="detail-cover-blur" id="detail-cover-blur"></div>
           <div class="detail-cover-shape s1"></div>
@@ -337,13 +334,7 @@
     // 对动态插入的 DOM 应用 i18n 翻译
     if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(container);
 
-    document.getElementById('btn-back').addEventListener('click', () => {
-      page.render(container);
-      if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(container);
-      App.scrollMemory.restore('albums');
-    });
-
-    const coverUrl = album.cover_track_id ? window.coverUrl(album.cover_track_id) : null;
+    const coverUrl = album.cover_track_id ? window.coverUrl(album.cover_track_id, 512) : null;
     const blurEl = document.getElementById('detail-cover-blur');
     const mainEl = document.getElementById('detail-cover-main');
     const shapes = document.querySelectorAll('.detail-cover-shape');

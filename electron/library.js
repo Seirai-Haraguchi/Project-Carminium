@@ -115,6 +115,8 @@ class MusicLibrary {
     this._db = require('better-sqlite3')(dbPath);
     this._db.pragma('journal_mode = WAL');
     this._db.pragma('foreign_keys = ON');
+    // 限制 SQLite 页面缓存（默认 2000 页 × 页大小，大库下可占 30MB+）
+    this._db.pragma('cache_size = -2000'); // -2000 = 2000 KB ≈ 2MB
     this._db.exec(CREATE_SQL);
     this._migrateSchema();
     this._closed = false;
@@ -1525,6 +1527,13 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     this._db.prepare("DELETE FROM playlists WHERE source='subsonic' AND server_id=?").run(sid);
   }
 
+  // 返回某服务器下已有远程歌单的 {id, remote_id} 列表，用于同步 diff
+  listRemotePlaylists(serverId) {
+    return this._db.prepare(
+      "SELECT id, remote_id FROM playlists WHERE source='subsonic' AND server_id=?"
+    ).all(parseInt(serverId, 10)) || [];
+  }
+
   getPlaylistRemoteInfo(playlistId) {
     return this._db.prepare(
       'SELECT id, name, source, server_id, remote_id, remote_changed FROM playlists WHERE id=?'
@@ -1670,7 +1679,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
        (id, path, folder_id, title, artist, album, album_artist,
         track_number, disc_number, year, duration_ms, file_size,
         has_cover, genre, added_at, source, server_id, subsonic_id, cover_id, suffix)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     );
     const updateStmt = this._db.prepare(
       `UPDATE tracks SET
@@ -1833,19 +1842,22 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return path.join(this._settings.dataDir, 'subsonic_covers');
   }
 
-  getSubsonicCoverCachePath(serverId, coverId) {
-    const safe = crypto.createHash('sha1').update(coverId, 'utf-8').digest('hex');
+  getSubsonicCoverCachePath(serverId, coverId, size) {
+    // size 不同时使用独立的缓存文件，避免不同尺寸互相覆盖；
+    // 不传 size 时保持原有哈希（向后兼容旧缓存）。
+    const s = (size && size !== 'max' && size !== 'original') ? (coverId + ':' + size) : coverId;
+    const safe = crypto.createHash('sha1').update(s, 'utf-8').digest('hex');
     return path.join(this._subsonicCoverCacheDir(), String(parseInt(serverId, 10)), `${safe}.bin`);
   }
 
-  readSubsonicCoverCache(serverId, coverId) {
-    const p = this.getSubsonicCoverCachePath(serverId, coverId);
+  readSubsonicCoverCache(serverId, coverId, size) {
+    const p = this.getSubsonicCoverCachePath(serverId, coverId, size);
     if (!fs.existsSync(p)) return null;
     try { return fs.readFileSync(p); } catch { return null; }
   }
 
-  writeSubsonicCoverCache(serverId, coverId, data) {
-    const p = this.getSubsonicCoverCachePath(serverId, coverId);
+  writeSubsonicCoverCache(serverId, coverId, data, size) {
+    const p = this.getSubsonicCoverCachePath(serverId, coverId, size);
     try {
       fs.mkdirSync(path.dirname(p), { recursive: true });
       fs.writeFileSync(p, data);

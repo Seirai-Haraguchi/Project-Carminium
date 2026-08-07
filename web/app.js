@@ -111,6 +111,17 @@
     });
   };
 
+  // 后台预热艺人头像本地缓存：把全部艺人名发给主进程，由它节流抓取并落盘。
+  // 已缓存/已入队的自动跳过，可反复调用、幂等。详情页打开时命中磁盘缓存即瞬间出图。
+  App.prefetchArtistImages = function () {
+    const list = (App.state && App.state.allArtists) || [];
+    if (!list.length) return;
+    const names = list.map(function (a) { return a && a.name; }).filter(Boolean);
+    if (names.length && window.__electronAPI && window.__electronAPI.invoke) {
+      window.__electronAPI.invoke('prefetch_artist_images', JSON.stringify(names)).catch(function () { /* ignore */ });
+    }
+  };
+
   // ── 1. 初始化 Bridge ──────────────────────────────────────────────────────
   // bridge.js 已在 HTML 中先于 app.js 加载，并定义了 App.backend Proxy 与
   // window.__bridge 事件分发器。此处仅需等待后端 API 就绪、初始化
@@ -214,6 +225,7 @@
         uiSync.on('library_updated', function (json) {
           // 刷新前端全量缓存，然后重渲染当前页
           App.refreshLibraryCache().then(function () {
+            App.prefetchArtistImages();   // 新艺人入队，后台慢慢预热本地头像缓存
             var _c = document.getElementById('page-container');
             if (App.state.currentPage === 'music') App.pages.music.render(_c);
             if (App.state.currentPage === 'your_mix' && App.pages.your_mix) App.pages.your_mix.render(_c);
@@ -311,6 +323,7 @@
         }
         // 先拉取全量缓存，再拉取播放状态，最后渲染首页（按当前模式进入对应默认页）
         App.refreshLibraryCache().then(function () {
+          App.prefetchArtistImages();   // 启动后后台慢慢预热本地艺人头像缓存
           return _fetchInitialState();
         }).then(function () {
           navigate('your_mix');
@@ -378,6 +391,34 @@
     }
   }
 
+  /**
+   * 监听 data-theme 变化，将当前主题（light/dark）通知主进程，
+   * 使窗口/任务栏图标随系统暗色模式（或手动主题覆盖）自动切换。
+   * 用 MutationObserver 统一覆盖所有修改 data-theme 的代码路径
+   * （系统主题实时变化、设置中的手动覆盖等）。
+   */
+  function _watchThemeForIconSync() {
+    var lastTheme = null;
+    function notify() {
+      var theme = document.documentElement.getAttribute('data-theme');
+      if (theme === lastTheme) return;
+      lastTheme = theme;
+      try {
+        if (window.__electronAPI && window.__electronAPI.invoke) {
+          window.__electronAPI.invoke('set_window_icon_theme', theme).catch(function () {});
+        }
+      } catch (e) { /* ignore */ }
+    }
+    notify(); // 同步初始主题
+    if (typeof MutationObserver !== 'undefined') {
+      var observer = new MutationObserver(notify);
+      observer.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['data-theme'],
+      });
+    }
+  }
+
   function _initTheme() {
     App.utils.call('get_settings').then(function (res) {
       const settings = JSON.parse(res);
@@ -428,6 +469,9 @@
         }
       });
     });
+
+    // 将主题同步到主进程，使窗口/任务栏图标随暗色模式自动变化
+    _watchThemeForIconSync();
   }
 
   /**
@@ -578,9 +622,42 @@
 
   // ── 3. 路由与导航 ────────────────────────────────────────────────────────
 
+  // 导航历史（供标题栏返回按钮使用）
+  App.navHistory = [];
+  App.navHistorySuppress = false;
+
+  // 返回上一页（供标题栏返回按钮调用）
+  App.goBack = function () {
+    if (App.navHistory.length > 1) {
+      App.navHistory.pop();
+      var prevPage = App.navHistory[App.navHistory.length - 1];
+      if (prevPage) {
+        App.navHistorySuppress = true;
+        navigate(prevPage);
+        App.navHistorySuppress = false;
+      }
+    } else {
+      navigate('your_mix');
+    }
+    if (App.titlebar && App.titlebar.updateBackButton) App.titlebar.updateBackButton();
+  };
+
   function navigate(pageId, params) {
+    // 记录导航历史
+    if (!App.navHistorySuppress) {
+      App.navHistory.push(pageId);
+      if (App.navHistory.length > 20) App.navHistory.shift();
+    }
+
     // 清除曲目多选状态
     if (App.selection) App.selection.clear();
+
+    // ── 设置页特殊布局：隐藏侧边栏 + 禁用侧边播放器 ──
+    if (pageId === 'settings') {
+      document.body.classList.add('settings-active');
+    } else {
+      document.body.classList.remove('settings-active');
+    }
 
     // ── 内存管理：触发页面导航清理 ──
     if (window.MemoryManager) {
@@ -601,8 +678,8 @@
     App.state.currentPage = pageId;
     App.state.currentPageParams = params;
 
-    // 触发动画；settings / about 使用内部平移动画，不再叠加 page-enter
-    const useInternalTransition = pageId === 'settings' || pageId === 'about';
+    // 触发动画；about 使用内部平移动画，不再叠加 page-enter
+    const useInternalTransition = pageId === 'about';
     container.classList.remove('page-enter');
     // void container.offsetWidth; // trigger reflow
     setTimeout(() => {
@@ -622,6 +699,9 @@
         container.classList.add('page-enter');
       }
     }, 10);
+
+    // 更新标题栏返回按钮状态
+    if (App.titlebar && App.titlebar.updateBackButton) App.titlebar.updateBackButton();
   }
 
   App.navigate = navigate;

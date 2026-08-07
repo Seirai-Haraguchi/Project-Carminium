@@ -18,7 +18,7 @@ container.innerHTML = `
         <div class="page-header">
           <div class="page-header-left">
             <h1 class="page-title" data-i18n="folders.title">媒体库</h1>
-            <p class="page-subtitle" id="folder-count" data-i18n="folders.hint">添加本地音乐文件夹以构建您的媒体库。</p>
+            <p class="page-subtitle" id="library-count" data-i18n="folders.hint">添加本地音乐文件夹以构建您的媒体库。</p>
           </div>
           <div class="page-actions">
             <button class="btn-filled" id="btn-add-folder">
@@ -31,23 +31,10 @@ container.innerHTML = `
         </div>
         <div class="search-bar">
           <span class="material-symbols-rounded">search</span>
-          <input type="text" id="folder-search" data-i18n-placeholder="folders.searchPlaceholder" placeholder="搜索本地文件夹路径…" data-i18n-aria-label="common.search" aria-label="搜索本地文件夹">
+          <input type="text" id="folder-search" data-i18n-placeholder="folders.searchPlaceholder" placeholder="搜索文件夹或流媒体库…" data-i18n-aria-label="common.search" aria-label="搜索">
         </div>
       </div>
-      <div class="library-section-header">
-        <h2 class="library-section-title">
-          <span class="material-symbols-rounded">folder</span><span data-i18n="folders.localFolders">本地文件夹</span>
-        </h2>
-        <p class="library-section-subtitle" id="local-folder-count"></p>
-      </div>
       <div class="folder-list" id="folder-list"></div>
-      <div class="library-section-header">
-        <h2 class="library-section-title">
-          <span class="material-symbols-rounded">cloud</span><span data-i18n="folders.streamingLibraries">流媒体库</span>
-        </h2>
-        <p class="library-section-subtitle" id="streaming-count"></p>
-      </div>
-      <div class="subsonic-section" id="subsonic-section"></div>
     `;
 
     const searchInput = document.getElementById('folder-search');
@@ -83,7 +70,7 @@ container.innerHTML = `
     });
 
     _loadFolders();
-    _renderSubsonicServers();
+    _renderList();
   };
 
   function _loadFolders() {
@@ -96,24 +83,34 @@ container.innerHTML = `
     const listEl = document.getElementById('folder-list');
     if (!listEl) return;
 
-    const list = filterStr ? allFolders.filter(f => {
-      return f.path && f.path.toLowerCase().includes(filterStr);
-    }) : allFolders;
+    const servers = (App.state && App.state.allSubsonicServers) ? App.state.allSubsonicServers : [];
 
-    const countEl = document.getElementById('folder-count');
-    const localCountEl = document.getElementById('local-folder-count');
+    // 本地文件夹 + 流媒体库混排（图标已区分类型），本地在前
+    let entries = [];
+    allFolders.forEach(f => entries.push({ kind: 'folder', data: f }));
+    servers.forEach(s => entries.push({ kind: 'server', data: s }));
+
+    if (filterStr) {
+      entries = entries.filter(e => {
+        if (e.kind === 'folder') {
+          return e.data.path && e.data.path.toLowerCase().includes(filterStr);
+        }
+        const s = e.data;
+        return (s.name && s.name.toLowerCase().includes(filterStr)) ||
+               (s.server_url && s.server_url.toLowerCase().includes(filterStr));
+      });
+    }
+
+    // 页副标题：合并计数（过滤时显示 命中/总数）
+    const countEl = document.getElementById('library-count');
+    const total = allFolders.length + servers.length;
     if (countEl) {
       countEl.textContent = filterStr
-        ? App.i18n.t('folders.filteredCount', { shown: list.length, total: allFolders.length })
-        : (allFolders.length === 0 ? App.i18n.t('folders.hint') : App.i18n.t('folders.folderCount', { count: allFolders.length }));
-    }
-    if (localCountEl) {
-      localCountEl.textContent = filterStr
-        ? App.i18n.t('folders.filteredShort', { shown: list.length, total: allFolders.length })
-        : App.i18n.t('folders.localFolderCount', { count: allFolders.length });
+        ? App.i18n.t('folders.filteredShort', { shown: entries.length, total: total })
+        : (total === 0 ? App.i18n.t('folders.hint') : App.i18n.t('folders.sourceCount', { count: total }));
     }
 
-    if (list.length === 0) {
+    if (entries.length === 0) {
       listEl.innerHTML = `
         <div class="empty-state">
           <span class="material-symbols-rounded empty-icon">folder_open</span>
@@ -125,53 +122,120 @@ container.innerHTML = `
 
     listEl.innerHTML = '';
     const frag = document.createDocumentFragment();
-
-    list.forEach(folder => {
-      const row = document.createElement('div');
-      row.className = 'folder-row';
-      
-      const scanDate = App.utils.formatDate(folder.last_scan);
-
-      row.innerHTML = `
-        <span class="material-symbols-rounded folder-icon">folder</span>
-        <div class="folder-info">
-          <p class="folder-path" title="${App.utils.esc(folder.path)}">${App.utils.esc(folder.path)}</p>
-          <p class="folder-meta">${App.i18n.t('music.trackCount', { count: folder.track_count })} · ${App.i18n.t('folders.lastScan', { date: scanDate })}</p>
-        </div>
-        <div class="folder-actions">
-          <button class="icon-btn btn-rescan" data-i18n-aria-label="folders.rescan" data-i18n-title="folders.rescan">
-            <span class="material-symbols-rounded">sync</span>
-          </button>
-          <button class="icon-btn btn-remove" data-i18n-aria-label="folders.remove" data-i18n-title="folders.removeFolder" style="color:var(--md-error)">
-            <span class="material-symbols-rounded">delete</span>
-          </button>
-        </div>
-      `;
-
-      row.querySelector('.btn-rescan').addEventListener('click', function () {
-        const btn = this;
-        const icon = btn.querySelector('.material-symbols-rounded');
-        icon.style.animation = 'pulse 1s infinite';
-        btn.disabled = true;
-        // rescan_folder 立即返回（扫描在后台线程执行），
-        // folders_updated 事件会在扫描完成后触发 onFoldersUpdated 刷新列表
-        App.utils.call('rescan_folder', folder.path).catch(function () {
-          icon.style.animation = '';
-          btn.disabled = false;
-        });
-      });
-
-      row.querySelector('.btn-remove').addEventListener('click', function () {
-        if (confirm(App.i18n.t('folders.removeConfirm', { path: folder.path }))) {
-          App.utils.call('remove_folder', folder.path).then(() => _loadFolders());
-        }
-      });
-
-      frag.appendChild(row);
+    entries.forEach(e => {
+      const row = e.kind === 'folder' ? _buildFolderRow(e.data) : _buildServerRow(e.data);
+      if (row) frag.appendChild(row);
     });
     listEl.appendChild(frag);
     // 对动态插入的 DOM 应用 i18n 翻译
     if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(listEl);
+  }
+
+  // 构建单个本地文件夹行（DOM 元素）
+  function _buildFolderRow(folder) {
+    const row = document.createElement('div');
+    row.className = 'folder-row';
+
+    const scanDate = App.utils.formatDate(folder.last_scan);
+    row.innerHTML = `
+      <span class="folder-icon-badge"><span class="material-symbols-rounded folder-icon">folder</span></span>
+      <div class="folder-info">
+        <p class="folder-path" title="${App.utils.esc(folder.path)}">${App.utils.esc(folder.path)}</p>
+        <div class="folder-meta">
+          <span class="folder-chip"><span class="material-symbols-rounded">music_note</span>${App.i18n.t('music.trackCount', { count: folder.track_count })}</span>
+          <span class="folder-chip"><span class="material-symbols-rounded">schedule</span>${App.i18n.t('folders.lastScan', { date: scanDate })}</span>
+        </div>
+      </div>
+      <div class="folder-actions">
+        <button class="icon-btn btn-rescan" data-i18n-aria-label="folders.rescan" data-i18n-title="folders.rescan">
+          <span class="material-symbols-rounded">sync</span>
+        </button>
+        <button class="icon-btn btn-remove" data-i18n-aria-label="folders.remove" data-i18n-title="folders.removeFolder" style="color:var(--md-error)">
+          <span class="material-symbols-rounded">delete</span>
+        </button>
+      </div>
+    `;
+
+    row.querySelector('.btn-rescan').addEventListener('click', function () {
+      const btn = this;
+      const icon = btn.querySelector('.material-symbols-rounded');
+      icon.style.animation = 'pulse 1s infinite';
+      btn.disabled = true;
+      App.utils.call('rescan_folder', folder.path).catch(function () {
+        icon.style.animation = '';
+        btn.disabled = false;
+      });
+    });
+    row.querySelector('.btn-remove').addEventListener('click', function () {
+      if (confirm(App.i18n.t('folders.removeConfirm', { path: folder.path }))) {
+        App.utils.call('remove_folder', folder.path).then(() => _loadFolders());
+      }
+    });
+    return row;
+  }
+
+  // 构建单个流媒体库（Subsonic 服务器）行（DOM 元素）
+  function _buildServerRow(srv) {
+    const row = document.createElement('div');
+    row.className = 'folder-row subsonic-server-row';
+    row.setAttribute('data-server-id', srv.id);
+
+    const lastSync = srv.last_sync ? App.utils.formatDate(srv.last_sync) : App.i18n.t('folders.notSynced');
+    const protocolLabel = srv.protocol_mode === 'opensubsonic' ? 'OpenSubsonic' : 'Subsonic';
+    const pending = _pendingSync[srv.id];
+    const isSyncing = !!pending;
+    const metaHtml = isSyncing
+      ? _formatSyncingMeta(pending.lastStats)
+      : `<span class="folder-chip folder-chip--url" title="${App.utils.esc(srv.server_url)}"><span class="material-symbols-rounded">language</span>${App.utils.esc(srv.server_url)}</span>`
+        + `<span class="folder-chip"><span class="material-symbols-rounded">music_note</span>${App.i18n.t('music.trackCount', { count: srv.track_count || 0 })}</span>`
+        + `<span class="folder-chip"><span class="material-symbols-rounded">api</span>${protocolLabel}</span>`
+        + `<span class="folder-chip"><span class="material-symbols-rounded">sync</span>${App.i18n.t('folders.lastSync', { date: lastSync })}</span>`;
+
+    row.innerHTML = `
+      <span class="folder-icon-badge folder-icon-badge--cloud"><span class="material-symbols-rounded folder-icon">cloud</span></span>
+      <div class="folder-info">
+        <p class="folder-path" title="${App.utils.esc(srv.name + ' — ' + srv.server_url)}">${App.utils.esc(srv.name)}</p>
+        <div class="folder-meta">${metaHtml}</div>
+      </div>
+      <div class="folder-actions">
+        <button class="icon-btn btn-subsonic-sync" data-server-id="${srv.id}" data-i18n-aria-label="folders.sync" data-i18n-title="folders.sync"${isSyncing ? ' disabled' : ''}>
+          <span class="material-symbols-rounded"${isSyncing ? ' style="animation:pulse 1s infinite"' : ''}>sync</span>
+        </button>
+        <button class="icon-btn btn-subsonic-edit" data-server-id="${srv.id}" data-i18n-aria-label="folders.edit" data-i18n-title="folders.editServer">
+          <span class="material-symbols-rounded">edit</span>
+        </button>
+        <button class="icon-btn btn-subsonic-remove" data-server-id="${srv.id}" data-i18n-aria-label="folders.remove" data-i18n-title="folders.remove" style="color:var(--md-error)">
+          <span class="material-symbols-rounded">delete</span>
+        </button>
+      </div>
+    `;
+
+    // 同步中：更新 _pendingSync 引用到新 DOM，后续 progress 事件能继续更新
+    if (isSyncing) {
+      pending.icon = row.querySelector('.btn-subsonic-sync .material-symbols-rounded');
+      pending.metaEl = row.querySelector('.folder-meta');
+    }
+
+    // 绑定事件
+    row.querySelector('.btn-subsonic-sync').addEventListener('click', function () {
+      if (this.disabled) return;
+      _startSyncWithOverlay(srv.id, srv.name);
+    });
+    row.querySelector('.btn-subsonic-edit').addEventListener('click', function () {
+      _promptEditSubsonic(srv);
+    });
+    row.querySelector('.btn-subsonic-remove').addEventListener('click', function () {
+      App.utils.confirmDialog({
+        title: App.i18n.t('folders.removeServerTitle'),
+        body: App.i18n.t('folders.removeServerBody', { name: srv.name }),
+        confirmText: App.i18n.t('folders.remove'),
+        cancelText: App.i18n.t('common.cancel'),
+      }).then(function (ok) {
+        if (ok) App.utils.call('remove_subsonic_server', srv.id);
+      });
+    });
+
+    return row;
   }
 
   // Handle signal push
@@ -185,104 +249,11 @@ container.innerHTML = `
 
   // ── Subsonic 服务器列表渲染 ───────────────────────────────────────────────
   page.onSubsonicServersUpdated = function (/* jsonStr */) {
-    if (document.getElementById('subsonic-section')) {
-      _renderSubsonicServers();
+    // 本地文件夹与流媒体库混排，服务器变化直接重渲染整张列表
+    if (document.getElementById('folder-list')) {
+      _renderList();
     }
   };
-
-  function _renderSubsonicServers() {
-    const sectionEl = document.getElementById('subsonic-section');
-    if (!sectionEl) return;
-    const servers = (App.state && App.state.allSubsonicServers) ? App.state.allSubsonicServers : [];
-
-    if (servers.length === 0) {
-      sectionEl.innerHTML = '';
-      return;
-    }
-
-    const streamingCountEl = document.getElementById('streaming-count');
-    if (streamingCountEl) {
-      streamingCountEl.textContent = App.i18n.t('folders.streamingCount', { count: servers.length });
-    }
-
-    sectionEl.innerHTML = `
-      <div class="subsonic-server-list" id="subsonic-server-list"></div>
-    `;
-
-    const listEl = document.getElementById('subsonic-server-list');
-    const frag = document.createDocumentFragment();
-    servers.forEach(srv => {
-      const row = document.createElement('div');
-      row.className = 'folder-row subsonic-server-row';
-      row.setAttribute('data-server-id', srv.id);
-      const lastSync = srv.last_sync ? App.utils.formatDate(srv.last_sync) : App.i18n.t('folders.notSynced');
-      const protocolLabel = srv.protocol_mode === 'opensubsonic' ? 'OpenSubsonic' : 'Subsonic';
-      const pending = _pendingSync[srv.id];
-      const isSyncing = !!pending;
-      const metaHtml = isSyncing
-        ? _formatSyncingMeta(pending.lastStats)
-        : `${App.utils.esc(srv.server_url)} · ${App.i18n.t('music.trackCount', { count: srv.track_count || 0 })}`
-          + ` · ${protocolLabel} · ${App.i18n.t('folders.lastSync', { date: lastSync })}`;
-      row.innerHTML = `
-        <span class="material-symbols-rounded folder-icon">cloud</span>
-        <div class="folder-info">
-          <p class="folder-path" title="${App.utils.esc(srv.name + ' — ' + srv.server_url)}">${App.utils.esc(srv.name)}</p>
-          <p class="folder-meta">${metaHtml}</p>
-        </div>
-        <div class="folder-actions">
-          <button class="icon-btn btn-subsonic-sync" data-server-id="${srv.id}" data-i18n-aria-label="folders.sync" data-i18n-title="folders.sync"${isSyncing ? ' disabled' : ''}>
-            <span class="material-symbols-rounded"${isSyncing ? ' style="animation:pulse 1s infinite"' : ''}>sync</span>
-          </button>
-          <button class="icon-btn btn-subsonic-edit" data-server-id="${srv.id}" data-i18n-aria-label="folders.edit" data-i18n-title="folders.editServer">
-            <span class="material-symbols-rounded">edit</span>
-          </button>
-          <button class="icon-btn btn-subsonic-remove" data-server-id="${srv.id}" data-i18n-aria-label="folders.remove" data-i18n-title="folders.remove" style="color:var(--md-error)">
-            <span class="material-symbols-rounded">delete</span>
-          </button>
-        </div>
-      `;
-      frag.appendChild(row);
-
-      // 同步中：更新 _pendingSync 引用到新 DOM，后续 progress 事件能继续更新
-      if (isSyncing) {
-        pending.icon = row.querySelector('.btn-subsonic-sync .material-symbols-rounded');
-        pending.metaEl = row.querySelector('.folder-meta');
-      }
-    });
-    listEl.appendChild(frag);
-    // 对动态插入的 DOM 应用 i18n 翻译
-    if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(listEl);
-
-    listEl.querySelectorAll('.btn-subsonic-sync').forEach(btn => {
-      btn.addEventListener('click', function () {
-        if (this.disabled) return;
-        const sid = parseInt(this.getAttribute('data-server-id'), 10);
-        _syncServer(sid, this);
-      });
-    });
-    listEl.querySelectorAll('.btn-subsonic-edit').forEach(btn => {
-      btn.addEventListener('click', function () {
-        const sid = parseInt(this.getAttribute('data-server-id'), 10);
-        const srv = servers.find(s => s.id === sid);
-        if (srv) _promptEditSubsonic(srv);
-      });
-    });
-    listEl.querySelectorAll('.btn-subsonic-remove').forEach(btn => {
-      btn.addEventListener('click', function () {
-        const sid = parseInt(this.getAttribute('data-server-id'), 10);
-        const srv = servers.find(s => s.id === sid);
-        const name = srv ? srv.name : '';
-        App.utils.confirmDialog({
-          title: App.i18n.t('folders.removeServerTitle'),
-          body: App.i18n.t('folders.removeServerBody', { name: name }),
-          confirmText: App.i18n.t('folders.remove'),
-          cancelText: App.i18n.t('common.cancel'),
-        }).then(function (ok) {
-          if (ok) App.utils.call('remove_subsonic_server', sid);
-        });
-      });
-    });
-  }
 
   // 构造同步中状态的 meta 行 HTML
   function _formatSyncingMeta(lastStats) {
@@ -290,15 +261,6 @@ container.innerHTML = `
       return '<span style="color:var(--md-primary)">' + App.i18n.t('folders.syncingBg') + '</span>';
     }
     return '<span style="color:var(--md-primary)">' + App.i18n.t('folders.syncingProgress', { tracks: lastStats.tracks || 0, albums: lastStats.albums || 0 }) + '</span>';
-  }
-
-  function _syncServer(serverId, btn) {
-    // 查找服务器名称
-    var servers = (App.state && App.state.allSubsonicServers) ? App.state.allSubsonicServers : [];
-    var srv = servers.find(function (s) { return s.id === serverId; });
-    var serverName = srv ? srv.name : '';
-    // 使用全屏遮罩展示同步进度
-    _startSyncWithOverlay(serverId, serverName);
   }
 
   // 当前正在等待同步结果的 server_id → {lastStats: {tracks, albums, artists} | null}
@@ -314,7 +276,7 @@ container.innerHTML = `
     if (!_pendingSync[data.server_id]) return;
     delete _pendingSync[data.server_id];
     // 重新渲染恢复正常显示（last_sync、track_count 由 subsonic_servers_changed 更新）
-    _renderSubsonicServers();
+    _renderList();
 
     if (data.ok) {
       var stats = data.stats || {};
@@ -674,7 +636,7 @@ container.innerHTML = `
             const errMsg = (data && data.error) ? data.error : App.i18n.t('folders.unknownError');
             alert(App.i18n.t('folders.connectFailed', { error: errMsg }));
             close();
-            _renderSubsonicServers();
+            _renderList();
           }
         });
       }).catch(function (err) {
@@ -782,8 +744,13 @@ container.innerHTML = `
       confirmBtn.disabled = true;
       // 密码留空时不更新密码字段
       App.utils.call('update_subsonic_server', srv.id, d.name, d.url, d.user, d.pass, d.protocol).then(function (res) {
-        close();
-        // subsonic_servers_changed 事件会自动刷新列表
+        // 保存成功提示，短暂反馈后关闭
+        confirmBtn.textContent = App.i18n.t('folders.saved');
+        confirmBtn.classList.add('cmd-dialog-btn--confirm');
+        setTimeout(function () {
+          close();
+          // subsonic_servers_changed 事件会自动刷新列表
+        }, 600);
       }).catch(function (err) {
         console.error('[subsonic] 更新服务器失败:', err);
         saving = false;
@@ -812,7 +779,7 @@ container.innerHTML = `
         if (data && data.ok) {
           const ver = data.version || '';
           const osFlag = data.openSubsonic ? ' (OpenSubsonic)' : '';
-          alert('连接成功\n服务器版本：' + ver + osFlag);
+          alert(App.i18n.t('folders.connectSuccess', { version: ver, osFlag: osFlag }));
           close();
         } else {
           const errMsg = (data && data.error) ? data.error : App.i18n.t('folders.unknownError');

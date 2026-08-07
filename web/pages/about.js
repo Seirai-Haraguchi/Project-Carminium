@@ -35,48 +35,11 @@
           '</div>' +
         '</div>' +
 
-        // ── 版本信息 ──
-        '<div class="settings-group">' +
-          '<div class="settings-group-header" data-i18n="about.versionInfo">版本信息</div>' +
-          '<div class="settings-row about-version-card" id="about-version-card">' +
-            '<div class="about-version-left">' +
-              '<img class="about-app-icon" src="logo.svg" alt="">' +
-              '<p class="settings-row-label">Carminium</p>' +
-            '</div>' +
-            '<div class="about-version-right">' +
-              '<span class="settings-row-sub" id="about-version-text" data-i18n="common.loading">加载中…</span>' +
-              CHEVRON_SVG +
-            '</div>' +
-          '</div>' +
-          '<div class="about-version-expander" id="about-version-expander">' +
-            '<div class="about-version-expander-inner">' +
-              '<p class="about-copyright">COPYRIGHT © 2025–2026 Seirai Haraguchi</p>' +
-              '<p class="about-license" data-i18n="about.license">本程序根据 GNU General Public License v3.0 获得许可</p>' +
-              '<div class="about-links">' +
-                '<a class="btn-filled" href="' + GITHUB_REPO + '" target="_blank" rel="noopener noreferrer">' +
-                  '<span data-i18n="about.githubRepo">GitHub 仓库</span>' +
-                  '<span class="material-symbols-rounded">open_in_new</span>' +
-                '</a>' +
-              '</div>' +
-            '</div>' +
-          '</div>' +
-        '</div>' +
-
-        // ── 操作 ──
-        '<div class="settings-group">' +
-          '<div class="settings-group-header" data-i18n="about.actions">操作</div>' +
-          '<div class="settings-row about-action-row" id="about-release">' +
-            '<div><p class="settings-row-label" data-i18n="about.viewRelease">查看 Release</p></div>' +
-            CHEVRON_SVG +
-          '</div>' +
-          '<div class="settings-row about-action-row" id="about-feedback">' +
-            '<div><p class="settings-row-label" data-i18n="about.feedback">问题反馈</p></div>' +
-            CHEVRON_SVG +
-          '</div>' +
-        '</div>' +
+        _renderAboutBody() +
       '</div>';
 
     _bindEvents(container);
+    _initLogoTheme(container);
     _loadAppInfo();
 
     // Apply i18n to dynamically created DOM
@@ -84,6 +47,66 @@
       App.i18n.applyToDOM(container);
     }
   };
+
+  // 内嵌渲染（在设置页右栏中显示，无页头/返回按钮）
+  page.renderInto = function (container) {
+    container.innerHTML =
+      '<div class="about-page about-page-inline">' +
+        _renderAboutBody() +
+      '</div>';
+
+    _bindEventsInline(container);
+    _initLogoTheme(container);
+    _loadAppInfo();
+
+    if (App.i18n && App.i18n.applyToDOM) {
+      App.i18n.applyToDOM(container);
+    }
+  };
+
+  // 生成关于页主体内容（版本信息 + 操作），供 render / renderInto 复用
+  function _renderAboutBody() {
+    return '' +
+      // ── 版本信息 ──
+      '<div class="settings-group">' +
+        '<div class="settings-group-header" data-i18n="about.versionInfo">版本信息</div>' +
+        '<div class="settings-row about-version-card" id="about-version-card">' +
+          '<div class="about-version-left">' +
+            '<img class="about-app-icon" src="logo.svg" alt="">' +
+            '<p class="settings-row-label">Carminium</p>' +
+          '</div>' +
+          '<div class="about-version-right">' +
+            '<span class="settings-row-sub" id="about-version-text" data-i18n="common.loading">加载中…</span>' +
+            CHEVRON_SVG +
+          '</div>' +
+        '</div>' +
+        '<div class="about-version-expander" id="about-version-expander">' +
+          '<div class="about-version-expander-inner">' +
+            '<p class="about-copyright">COPYRIGHT © 2025–2026 Seirai Haraguchi</p>' +
+            '<p class="about-license" data-i18n="about.license">本程序根据 GNU General Public License v3.0 获得许可</p>' +
+            '<div class="about-links">' +
+              '<a class="btn-filled" href="' + GITHUB_REPO + '" target="_blank" rel="noopener noreferrer">' +
+                '<span data-i18n="about.githubRepo">GitHub 仓库</span>' +
+                '<span class="material-symbols-rounded">open_in_new</span>' +
+              '</a>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+
+      // ── 操作 ──
+      '<div class="settings-group">' +
+        '<div class="settings-group-header" data-i18n="about.actions">操作</div>' +
+        '<div class="settings-row about-action-row" id="about-release">' +
+          '<div><p class="settings-row-label" data-i18n="about.viewRelease">查看 Release</p></div>' +
+          CHEVRON_SVG +
+        '</div>' +
+        '<div class="settings-row about-action-row" id="about-feedback">' +
+          '<div><p class="settings-row-label" data-i18n="about.feedback">问题反馈</p></div>' +
+          CHEVRON_SVG +
+        '</div>' +
+      '</div>';
+  }
 
   // ── 事件绑定 ─────────────────────────────────────────────────────────────────
   function _bindEvents(container) {
@@ -93,7 +116,7 @@
       backBtn.addEventListener('click', function () {
         var view = container.querySelector('.settings-view');
         function goBack() {
-          if (App.navigate) App.navigate('settings');
+          if (App.goBack) App.goBack();
         }
         if (!view) { goBack(); return; }
         view.classList.remove('settings-view-enter-right');
@@ -102,6 +125,38 @@
       });
     }
 
+    // 版本卡片：点击展开/收起
+    var versionCard = container.querySelector('#about-version-card');
+    var versionExpander = container.querySelector('#about-version-expander');
+    if (versionCard && versionExpander) {
+      versionCard.addEventListener('click', function () {
+        var isActive = versionExpander.classList.toggle('active');
+        versionCard.classList.toggle('expanded', isActive);
+      });
+    }
+
+    // 查看 Release
+    var release = container.querySelector('#about-release');
+    if (release) {
+      release.addEventListener('click', function () {
+        window.open(GITHUB_RELEASES, '_blank');
+      });
+    }
+
+    // 问题反馈
+    var feedback = container.querySelector('#about-feedback');
+    if (feedback) {
+      feedback.addEventListener('click', function () {
+        window.open(GITHUB_ISSUES, '_blank');
+      });
+    }
+
+    // Logo连击彩蛋
+    _initLogoEasterEgg(container);
+  }
+
+  // 内嵌渲染时的事件绑定（无返回按钮）
+  function _bindEventsInline(container) {
     // 版本卡片：点击展开/收起
     var versionCard = container.querySelector('#about-version-card');
     var versionExpander = container.querySelector('#about-version-expander');
@@ -146,6 +201,34 @@
         el.textContent = text;
       }
     });
+  }
+
+  // ── Logo 随主题（亮/暗）切换 ─────────────────────────────────────────────────
+  var _logoThemeObserver = null;
+
+  function _initLogoTheme(container) {
+    var logo = container.querySelector('.about-app-icon');
+    if (!logo) return;
+
+    // 离开上一页时断开旧观察者，避免泄漏
+    if (_logoThemeObserver) {
+      _logoThemeObserver.disconnect();
+      _logoThemeObserver = null;
+    }
+
+    function apply() {
+      var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      logo.src = isDark ? 'logo-dark.svg' : 'logo.svg';
+    }
+
+    apply(); // 立即应用当前主题
+    if (typeof MutationObserver !== 'undefined') {
+      _logoThemeObserver = new MutationObserver(apply);
+      _logoThemeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['data-theme'],
+      });
+    }
   }
 
   // ── Logo连击彩蛋：测试模式 ────────────────────────────────────────────────────

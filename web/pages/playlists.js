@@ -148,18 +148,15 @@ owner_email: params.owner_email || null,
     // 确定封面 URL
     let coverUrl = null;
     if (isRemote && playlist.cover_art_id && playlist.server_id && window.__coverBase) {
-      coverUrl = window.__coverBase + '/subsonic/cover/' + playlist.server_id + '/' + encodeURIComponent(playlist.cover_art_id);
+      coverUrl = window.__coverBase + '/subsonic/cover/' + playlist.server_id + '/' + encodeURIComponent(playlist.cover_art_id) + '?size=512';
     }
 
     // 始终使用英雄式布局
     container.innerHTML = `
       <div class="detail-header playlist-detail-header">
-        <button class="back-btn" id="btn-back" data-i18n-aria-label="common.back" data-i18n-title="common.back" aria-label="${App.i18n.t('common.back')}" title="${App.i18n.t('common.back')}">
-          <span class="material-symbols-rounded">arrow_back</span>
-        </button>
         <div class="detail-cover playlist-detail-cover">
           <div class="detail-cover-blur" id="pl-cover-blur"></div>
-          <div class="detail-cover-main" id="pl-cover-main" style="border-radius: 16px;"></div>
+          <div class="detail-cover-main" id="pl-cover-main"></div>
         </div>
         <div class="detail-cover-gradient"></div>
         <div class="detail-meta">
@@ -172,21 +169,21 @@ owner_email: params.owner_email || null,
               <span class="material-symbols-rounded">play_arrow</span>${App.i18n.t('playlist.play')}
             </button>
             ${isRemote ? `
-              <button class="detail-play-btn" id="btn-sync-playlist" title="${App.i18n.t('playlist.syncRemote')}" style="background: var(--md-surface-container); color: var(--md-on-surface);">
+              <button class="detail-play-btn tonal" id="btn-sync-playlist" title="${App.i18n.t('playlist.syncRemote')}">
                 <span class="material-symbols-rounded">sync</span>${App.i18n.t('playlist.sync')}
               </button>
             ` : `
-              <button class="detail-play-btn" id="btn-rename-playlist" title="${App.i18n.t('playlist.rename')}" style="background: var(--md-surface-container); color: var(--md-on-surface);">
+              <button class="detail-play-btn tonal" id="btn-rename-playlist" title="${App.i18n.t('playlist.rename')}">
                 <span class="material-symbols-rounded">edit</span>${App.i18n.t('playlist.rename')}
               </button>
-              <button class="detail-play-btn" id="btn-delete-playlist" title="${App.i18n.t('playlist.deleteTitle')}" style="background: var(--md-surface-container); color: var(--md-error);">
+              <button class="detail-play-btn tonal danger" id="btn-delete-playlist" title="${App.i18n.t('playlist.deleteTitle')}">
                 <span class="material-symbols-rounded">delete</span>${App.i18n.t('playlist.delete')}
               </button>
             `}
           </div>
         </div>
       </div>
-      <div class="playlist-search-wrapper" style="padding: 0 28px 12px;">
+      <div class="playlist-search-wrapper" style="padding: 0 12px 12px;">
         <div class="search-bar">
           <span class="material-symbols-rounded">search</span>
           <input type="text" id="playlist-search" data-i18n-placeholder="playlist.searchPlaceholder" placeholder="${App.i18n.t('playlist.searchPlaceholder')}" aria-label="${App.i18n.t('common.search')}">
@@ -205,7 +202,7 @@ owner_email: params.owner_email || null,
       if (blurEl) blurEl.style.backgroundImage = `url(${coverUrl})`;
       if (mainEl) {
         mainEl.style.backgroundImage = `url(${coverUrl})`;
-        mainEl.innerHTML = `<img src="${coverUrl}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:16px;" loading="lazy" onerror="this.style.display='none'">`;
+        mainEl.innerHTML = `<img src="${coverUrl}" alt="" style="width:100%;height:100%;object-fit:cover;" loading="lazy" onerror="this.style.display='none'">`;
       }
     } else {
       // 无封面：使用基于歌单名的渐变色占位符
@@ -216,10 +213,6 @@ owner_email: params.owner_email || null,
         mainEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:linear-gradient(135deg, rgba(255,255,255,0.15), rgba(0,0,0,0.15));"><span class="material-symbols-rounded" style="font-size:48px;color:rgba(255,255,255,0.8);">queue_music</span></div>';
       }
     }
-
-    document.getElementById('btn-back').addEventListener('click', function () {
-      App.navigate('music');
-    });
 
     const searchInput = document.getElementById('playlist-search');
     searchInput.value = searchText;
@@ -358,7 +351,7 @@ owner_email: params.owner_email || null,
       if (currentPlaylist && currentPlaylist.source !== 'subsonic') {
         const trackWithCover = tracks.find(t => t.has_cover);
         if (trackWithCover && window.coverUrl) {
-          const trackCoverUrl = window.coverUrl(trackWithCover.id);
+          const trackCoverUrl = window.coverUrl(trackWithCover.id, 512);
           const blurEl = document.getElementById('pl-cover-blur');
           const mainEl = document.getElementById('pl-cover-main');
           if (blurEl && !blurEl.querySelector('img')) {

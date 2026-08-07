@@ -69,6 +69,23 @@
       this._bassBoost = null;
       /** @type {boolean} 低音补偿是否启用 */
       this._bassEnabled = false;
+      /** @type {AudioWorkletNode|null} 虚拟低音增强 (VBE) 节点 */
+      this._vbeNode = null;
+      /** @type {boolean} VBE 是否启用 */
+      this._vbeEnabled = false;
+      /** @type {object} VBE 参数缓存 */
+      this._vbeParams = {
+        cutoffFrequency: 90,
+        harmGain: 0.35,
+        subGain: 0.15,
+        bodyGain: 0.18,
+        resonGain: 0.25,
+        dryGain: 1.0,
+        a2: 0.15,
+        a3: 0.85,
+        transDrive: 2.0,
+        resonFreq: 2200,
+      };
       /** @type {DynamicsCompressorNode|null} 压限器 */
       this._compressor = null;
       /** @type {boolean} 压限器是否启用 */
@@ -217,6 +234,7 @@
         await Promise.all([
           this._ctx.audioWorklet.addModule(workletBase + 'output-capture-processor.js'),
           this._ctx.audioWorklet.addModule(workletBase + 'streaming-pcm-processor.js'),
+          this._ctx.audioWorklet.addModule(workletBase + 'vbe-processor.js'),
         ]);
 
         this._outputNode = new AudioWorkletNode(this._ctx, 'output-capture-processor', {
@@ -241,6 +259,13 @@
           filter.gain.value = 0; // neutral
           this._eqBands.push(filter);
         }
+        // 虚拟低音增强 (VBE)：AudioWorklet 节点 — 心理声学低音增强
+        this._vbeNode = new AudioWorkletNode(this._ctx, 'vbe-processor', {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          inputChannelCount: [2],
+          outputChannelCount: [2],
+        });
         // 动态低音补偿：低架滤波器 @ 80Hz，+6dB 增益
         this._bassBoost = this._ctx.createBiquadFilter();
         this._bassBoost.type = 'lowshelf';
@@ -289,12 +314,14 @@
         this._limiter.attack.value = 0.001;   // 1ms 快速响应
         this._limiter.release.value = 0.05;   // 50ms 快速释放
         this._limiter.knee.value = 0;         // 硬拐点
-        // 连接效果链: effectsInput → EQ[0-15] → bassBoost → vocal → guitar → compressor → limiter → outputNode
+        // 连接效果链: effectsInput → EQ[0-15] → VBE → bassBoost → vocal → guitar → compressor → limiter → outputNode
         var prev = this._effectsInput;
         for (var i = 0; i < this._eqBands.length; i++) {
           prev.connect(this._eqBands[i]);
           prev = this._eqBands[i];
         }
+        prev.connect(this._vbeNode);
+        prev = this._vbeNode;
         prev.connect(this._bassBoost);
         prev = this._bassBoost;
         for (var i = 0; i < this._vocalFilters.length; i++) {
@@ -673,6 +700,9 @@
       this._disposeStreamingNode(this._currentStreamingNode, this._currentStreamingGain);
       this._disposeStreamingNode(this._nextStreamingNode, this._nextStreamingGain);
 
+      // VBE DSP 状态重置
+      if (this._vbeNode) this._vbeNode.port.postMessage({ type: 'reset' });
+
       this._pendingStreamingPcm = [];
       this._pendingNextStreamingPcm = [];
       this._nextStreamingPrimed = false;
@@ -767,6 +797,8 @@
       // ── Streaming 模式 ──
       if (!this._currentBuffer && this._currentStreamingNode) {
         this._currentStreamingNode.port.postMessage({ type: 'clear' });
+        // VBE DSP 状态重置（防止 seek 后的瞬态伪影）
+        if (this._vbeNode) this._vbeNode.port.postMessage({ type: 'reset' });
         this._seekOffsetMs = positionMs;
         this._streamingConsumedFrames = 0;
         this._sourceStartCtxTime = this._ctx.currentTime;
@@ -790,6 +822,9 @@
       this._safeDisconnect(this._currentGain);
       this._currentSource = null;
       this._currentGain = null;
+
+      // VBE DSP 状态重置（防止 seek 后的瞬态伪影）
+      if (this._vbeNode) this._vbeNode.port.postMessage({ type: 'reset' });
 
       this._seekOffsetMs = positionMs;
       const gen = ++this._generation;
@@ -1660,11 +1695,72 @@
       // 吉他友好
       this._guitarEnabled = !!settings.guitar_friendly;
       this._applyGuitarFilters();
+      // 虚拟低音增强 (VBE)
+      this._vbeEnabled = !!settings.vbe_enabled;
+      if (settings.vbe_cutoff !== undefined)
+        this._vbeParams.cutoffFrequency = settings.vbe_cutoff;
+      if (settings.vbe_harm !== undefined)
+        this._vbeParams.harmGain = settings.vbe_harm;
+      if (settings.vbe_sub !== undefined)
+        this._vbeParams.subGain = settings.vbe_sub;
+      if (settings.vbe_body !== undefined)
+        this._vbeParams.bodyGain = settings.vbe_body;
+      if (settings.vbe_reson !== undefined)
+        this._vbeParams.resonGain = settings.vbe_reson;
+      if (settings.vbe_dry !== undefined)
+        this._vbeParams.dryGain = settings.vbe_dry;
+      if (settings.vbe_a2 !== undefined)
+        this._vbeParams.a2 = settings.vbe_a2;
+      if (settings.vbe_a3 !== undefined)
+        this._vbeParams.a3 = settings.vbe_a3;
+      if (settings.vbe_trans_drive !== undefined)
+        this._vbeParams.transDrive = settings.vbe_trans_drive;
+      if (settings.vbe_reson_freq !== undefined)
+        this._vbeParams.resonFreq = settings.vbe_reson_freq;
+      this._sendVbeParams();
       // 增益补偿
       this._updateEffectsGain();
       console.log('[AudioEngine] Audio effects applied: eq=' + this._eqEnabled +
         ', bass=' + this._bassEnabled + ', comp=' + this._compressorEnabled +
-        ', vocal=' + this._vocalEnabled + ', guitar=' + this._guitarEnabled);
+        ', vocal=' + this._vocalEnabled + ', guitar=' + this._guitarEnabled +
+        ', vbe=' + this._vbeEnabled);
+    }
+
+    /**
+     * 发送 VBE 参数到 AudioWorklet 处理器。
+     */
+    _sendVbeParams() {
+      if (!this._vbeNode) return;
+      this._vbeNode.port.postMessage({
+        type: 'params',
+        params: Object.assign({ enabled: this._vbeEnabled }, this._vbeParams),
+      });
+    }
+
+    /**
+     * 设置虚拟低音增强 (VBE) 启用状态。
+     * 启用时通过 NLD 谐波生成在小型扬声器上创造低音感知。
+     */
+    setVirtualBass(enabled) {
+      this._vbeEnabled = !!enabled;
+      if (this._vbeNode) {
+        this._vbeNode.port.postMessage({ type: 'enabled', value: this._vbeEnabled });
+      }
+      this._updateEffectsGain();
+    }
+
+    /**
+     * 设置 VBE 单个参数。
+     * @param {string} name  参数名
+     * @param {number} value 参数值
+     */
+    setVbeParam(name, value) {
+      if (!this._vbeParams.hasOwnProperty(name)) return;
+      this._vbeParams[name] = value;
+      if (this._vbeNode) {
+        this._vbeNode.port.postMessage({ type: 'param', name: name, value: value });
+      }
+      this._updateEffectsGain();
     }
 
     /**
@@ -1756,6 +1852,11 @@
       // 吉他友好正增益
       if (this._guitarEnabled) {
         maxBoost += 4; // 咬合感 +4dB
+      }
+      // VBE 谐波增益补偿（harmGain 的 dB 值）
+      if (this._vbeEnabled) {
+        var harmDb = 20 * Math.log10(this._vbeParams.harmGain || 0.35);
+        maxBoost += Math.max(0, harmDb + 14); // 归一化到 ~0dB 基准
       }
       // dB 转线性增益：gain = 10^(-maxBoost/20)
       var gainLin = Math.pow(10, -maxBoost / 20);

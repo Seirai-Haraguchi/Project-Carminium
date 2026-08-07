@@ -7,7 +7,7 @@
 'use strict';
 
 const { EventEmitter } = require('events');
-const { ipcMain, dialog, app, shell, BrowserWindow, net } = require('electron');
+const { ipcMain, dialog, app, shell, BrowserWindow, net, nativeImage } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -569,6 +569,21 @@ class Bridge extends EventEmitter {
     ipcMain.handle('get_cover_base_url', () => this._coverServer.baseUrl);
     ipcMain.handle('get_media_base_url', () => this._coverServer.mediaBaseUrl);
 
+    // ── 艺人头像后台预热（本地库慢慢缓存）──
+    // 渲染进程传入全部艺人名（JSON 数组），主进程以节流队列逐个抓取并落盘。
+    // 立即返回（不等待整条队列），抓取在后台异步进行。
+    ipcMain.handle('prefetch_artist_images', (_e, namesJson) => {
+      try {
+        const names = JSON.parse(namesJson || '[]');
+        if (this._coverServer && typeof this._coverServer.prefetchArtistImages === 'function') {
+          return this._coverServer.prefetchArtistImages(names);
+        }
+        return { queued: 0, error: 'cover server unavailable' };
+      } catch (e) {
+        return { queued: 0, error: e && e.message };
+      }
+    });
+
     // ── Video Background: 查找同名视频文件 ──
     /**
      * 查找与指定音轨同名的视频文件（MV / 短视频背景）。
@@ -1063,6 +1078,21 @@ class Bridge extends EventEmitter {
       const win = BrowserWindow.fromWebContents(e.sender);
       if (win && !win.isDestroyed()) win.close();
     });
+    // 根据当前主题（亮/暗）同步窗口图标，使任务栏/Alt-Tab 图标随系统暗色模式变化
+    ipcMain.handle('set_window_icon_theme', (_e, theme) => {
+      const win = this._mainWindow;
+      if (!win || win.isDestroyed()) return;
+      const isDark = theme === 'dark';
+      const names = isDark ? ['icon-dark.png', 'icon.png'] : ['icon.png', 'icon-dark.png'];
+      let img = null;
+      for (const name of names) {
+        const iconPath = path.join(__dirname, '..', 'build', name);
+        try {
+          if (fs.existsSync(iconPath)) { img = nativeImage.createFromPath(iconPath); break; }
+        } catch { /* 尝试下一套 */ }
+      }
+      if (img) win.setIcon(img);
+    });
     ipcMain.handle('toggle_fullscreen', () => {
       if (this._mainWindow && !this._mainWindow.isDestroyed()) {
         this._mainWindow.setFullScreen(!this._mainWindow.isFullScreen());
@@ -1317,6 +1347,62 @@ class Bridge extends EventEmitter {
         this._emitSubsonicServersChanged();
         this._emitLibraryUpdated();
         this._emit('subsonic_sync_result', _dump({ ok: true, server_id: serverId, stats }));
+
+        // ── 同步远程歌单 ──────────────────────────────────────────────
+        // 常规同步只处理 artist/album/track，歌单需额外拉取并持久化。
+        // 作为后台任务运行，不阻塞 cover prefetch / finally 清理。
+        setImmediate(async () => {
+          try {
+            const { subsonicTrackId } = require('./library');
+            const playlists = await client.getPlaylists();
+            const serverPLIds = new Set();
+            if (playlists && playlists.length > 0) {
+              for (const pl of playlists) {
+                try {
+                  const remotePL = await client.getPlaylist(pl.id);
+                  if (!remotePL || !remotePL.tracks) continue;
+                  serverPLIds.add(String(pl.id));
+
+                  const existing = this._lib.findRemotePlaylist(serverId, pl.id);
+                  let playlist;
+                  if (existing) {
+                    this._lib.updateRemotePlaylist(existing.id, remotePL.name, remotePL.changed, remotePL.cover_art_id, remotePL.owner);
+                    playlist = existing;
+                  } else {
+                    playlist = this._lib.importRemotePlaylist(serverId, pl.id, remotePL.name, remotePL.changed, remotePL.cover_art_id, remotePL.owner);
+                  }
+
+                  this._lib.upsertSubsonicTracksBatch(serverId, remotePL.tracks);
+                  const trackIds = remotePL.tracks.map((track) => subsonicTrackId(serverId, track.id));
+                  this._lib.replacePlaylistTracks(playlist.id, trackIds);
+
+                  if (remotePL.owner) {
+                    client.getUser(remotePL.owner).then((user) => {
+                      if (user && user.email) {
+                        try { this._lib.updatePlaylistOwnerEmail(playlist.id, user.email); } catch { /* ignore */ }
+                      }
+                    }).catch(() => {});
+                  }
+                } catch (e) {
+                  stats.warnings.push('歌单同步失败(' + pl.id + '): ' + (e && e.message ? e.message : e));
+                }
+              }
+            }
+
+            // 清理服务器上已不存在的远程歌单
+            const localPLs = this._lib.listRemotePlaylists(serverId);
+            for (const lp of localPLs) {
+              if (!serverPLIds.has(String(lp.remote_id))) {
+                try { this._lib.deletePlaylist(lp.id); } catch { /* ignore */ }
+              }
+            }
+
+            this._emitPlaylistsChanged();
+          } catch (e) {
+            // playlist sync failure is non-fatal — server and track data are already updated
+            console.warn('[subsonic] 远程歌单同步失败:', e);
+          }
+        });
 
         // 后台预缓存封面
         if (pendingCovers.length > 0) {
