@@ -287,7 +287,7 @@
 
 /* ── 4. Shape & Motion ────────────────────────────────────── */
 :root {
-  --ui-font: 'Roboto', 'Google Sans Flex', 'Google Sans', 'Noto Sans SC', 'Noto Sans', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --ui-font: 'Roboto', 'Google Sans Flex', 'Google Sans', 'Noto Sans SC', 'Noto Sans', 'Segoe UI Variable', 'Segoe UI', system-ui, 'Noto Color Emoji', sans-serif;
 
   --shape-xs:   4px;
   --shape-sm:   8px;
@@ -3589,6 +3589,33 @@ padding: 0;
   position: absolute;
   inset: 0;
   border-radius: inherit;
+}
+
+/* 滚轮/触屏调节播放速率时的浮层提示 */
+.np-cover-rate {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.85);
+  padding: 8px 18px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--md-primary) 22%, rgba(0, 0, 0, 0.5));
+  backdrop-filter: blur(16px) saturate(1.6);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+  z-index: 3;
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  transition: opacity 0.25s ease, transform 0.25s cubic-bezier(0.3, 1.4, 0.44, 1);
+}
+.np-cover-rate.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
 }
 
 /* 加载指示器（Subsonic 等网络音频加载时显示） */
@@ -7030,3 +7057,220 @@ body.gamepad-connected .now-playing-pane:not(.fullscreen) .np-gamepad-hints {
   letter-spacing: 0.2px;
 }
 
+/* ============================================================
+   Onboarding — 新手引导
+   渲染到 #page-container 内，与设置页共用同一套布局规则和组件类。
+   完全复用 settings-row / settings-group-header / toggle /
+   md-dropdown / btn-* 组件，不使用任何独立样式类。
+   标题栏和窗口三大键始终可见。
+   ============================================================ */
+
+/* ── 布局：与 settings-active 一致，保留标题栏 ──────────────── */
+body.onboarding-active .nav-drawer { display: none; }
+body.onboarding-active .app-root {
+  grid-template-columns: 0 1fr;
+  grid-template-rows: 36px 1fr;
+}
+body.onboarding-active .app-shell {
+  grid-template-columns: 1fr 0;
+}
+body.onboarding-active .now-playing-pane { display: none; }
+body.onboarding-active .content-pane { padding-bottom: 0; }
+body.onboarding-active .mini-player { display: none; }
+body.onboarding-active .mini-btn-expand { display: none; }
+body.onboarding-active.np-fullscreen .title-bar { position: relative; }
+body.onboarding-active.np-fullscreen .title-bar-left { display: flex; }
+
+/* 新手引导阶段：标题栏仅保留 logo + 三大键 */
+body.onboarding-active .title-bar-back { display: none; }
+body.onboarding-active .title-bar-title-wrap { display: none; }
+body.onboarding-active .title-bar-center { display: none !important; }
+body.onboarding-active .title-bar-settings { display: none; }
+
+/* ── 页面容器（与 .settings-page 相同的 absolute fill） ────── */
+.onboarding-page {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--md-background);
+  overflow: hidden;
+}
+
+/* ── M3 线性进度指示器 ─────────────────────────────────────── */
+.onboarding-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 28px 0;
+  flex-shrink: 0;
+}
+.onboarding-progress-dot {
+  flex: 1;
+  height: 4px;
+  border-radius: var(--shape-full);
+  background: var(--md-surface-container-highest);
+  transition: background var(--motion-medium) var(--ease-standard),
+              height var(--motion-short) var(--ease-standard);
+}
+.onboarding-progress-dot.done { background: var(--md-primary); }
+.onboarding-progress-dot.current { background: var(--md-primary); height: 6px; }
+
+/* ── 页面头部 ──────────────────────────────────────────────── */
+.onboarding-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 16px 28px 8px;
+  gap: 16px;
+  flex-shrink: 0;
+}
+.onboarding-header-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  min-width: 0;
+}
+.onboarding-header-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: var(--shape-full);
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+  font-size: 22px;
+}
+.onboarding-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-top: 2px;
+}
+.onboarding-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--md-primary);
+  margin-bottom: 2px;
+}
+.onboarding-title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  color: var(--md-on-surface);
+  line-height: 1.2;
+}
+.onboarding-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--md-on-surface-variant);
+  margin-top: 2px;
+  line-height: 1.5;
+}
+
+/* ── 内容滚动区 ────────────────────────────────────────────── */
+.onboarding-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0 0;
+  min-height: 0;
+}
+.onboarding-content {
+  padding-bottom: 24px;
+}
+.onboarding-content--enter {
+  animation: onboarding-fade-in var(--motion-medium) var(--ease-decel);
+}
+@keyframes onboarding-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── 底部操作栏 ────────────────────────────────────────────── */
+.onboarding-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 28px;
+  border-top: 1px solid var(--md-outline-variant);
+  background: var(--md-surface-container-lowest);
+  flex-shrink: 0;
+}
+.onboarding-actions-left,
+.onboarding-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── 步骤 1：欢迎页 — 五语言打字特效 ──────────────────────── */
+.onboarding-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 100%;
+  padding: 40px 28px;
+}
+.onboarding-display {
+  margin: 0;
+  font-size: clamp(36px, 6vw, 56px);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.5px;
+  color: var(--md-on-surface);
+}
+.ob-typing-cursor {
+  display: inline-block;
+  width: 3px;
+  height: 0.9em;
+  margin-left: 4px;
+  background: var(--md-primary);
+  vertical-align: text-bottom;
+  animation: ob-blink 0.8s steps(1) infinite;
+}
+@keyframes ob-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* ── 库扫描旋转动画 ────────────────────────────────────────── */
+.ob-library-spin { animation: pulse 1.4s ease-in-out infinite; color: var(--md-primary) !important; opacity: 1 !important; }
+
+/* ── 语言列表国旗 ──────────────────────────────────────────── */
+.ob-lang-flag {
+  font-size: 26px;
+  line-height: 1;
+  /* 强制使用 Noto Color Emoji 渲染国旗 emoji（Windows Segoe UI Emoji 不支持国旗） */
+  font-family: 'Noto Color Emoji', 'Material Symbols Rounded', sans-serif;
+}
+
+/* ── 响应式 ────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .onboarding-progress { padding: 10px 16px 0; }
+  .onboarding-header { padding: 12px 16px 8px; }
+  .onboarding-actions { padding: 12px 16px; }
+  .onboarding-title { font-size: 24px; }
+  .onboarding-display { font-size: clamp(28px, 7vw, 36px); }
+  .onboarding-header-icon { width: 36px; height: 36px; font-size: 20px; }
+}
+
+/* ── Settings: action row (re-run onboarding button) ────────── */
+.settings-row-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.settings-action-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}

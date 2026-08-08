@@ -233,7 +233,9 @@ let _lastKnownPositionMs = 0;
   function _beatGetPrecisePosition() {
     var engine = App.audioEngine;
     if (!engine || !engine._ctx) return _beatLocalBasePos;
-    var elapsed = (engine._ctx.currentTime - _beatLocalBaseTime) * 1000;
+    var rate = (engine._currentSource && engine._currentSource.playbackRate)
+      ? engine._currentSource.playbackRate.value : 1.0;
+    var elapsed = (engine._ctx.currentTime - _beatLocalBaseTime) * 1000 * rate;
     return _beatLocalBasePos + elapsed;
   }
 
@@ -512,6 +514,75 @@ let _lastKnownPositionMs = 0;
     }
   }
 
+  // ── 封面滚轮/触屏调节播放速率（变速变调）──
+  var _coverRate = 1.0;
+  var _rateBadgeTimer = null;
+
+  function _showRateBadge(rate) {
+    var badge = document.getElementById('np-cover-rate');
+    if (!badge) return;
+    badge.textContent = String(Math.round(rate * 100) / 100) + '×';
+    badge.classList.add('show');
+    if (_rateBadgeTimer) clearTimeout(_rateBadgeTimer);
+    _rateBadgeTimer = setTimeout(function () {
+      badge.classList.remove('show');
+    }, rate === 1.0 ? 800 : 1500);
+  }
+
+  function _adjustCoverRate(delta) {
+    var next = Math.max(0.5, Math.min(2.0, Math.round((_coverRate + delta) * 100) / 100));
+    if (Math.abs(next - _coverRate) < 0.001) {
+      _showRateBadge(next);
+      return;
+    }
+    _coverRate = next;
+    // 立即应用到音频引擎（无需等待 IPC 往返）
+    var engine = App.audioEngine;
+    if (engine) engine.setUserRate(next);
+    // 同步主进程状态（禁用/恢复 AutoMix·Gapless）
+    App.backend.set_rate(next);
+    _showRateBadge(next);
+  }
+
+  function _initCoverRateControl() {
+    var cover = els.cover;
+    if (!cover) return;
+
+    // 鼠标滚轮：上滚加速、下滚减速；按住 Shift 微调
+    cover.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      var step = e.shiftKey ? 0.01 : 0.05;
+      _adjustCoverRate(e.deltaY < 0 ? step : -step);
+    }, { passive: false });
+
+    // 触屏：上滑加速、下滑减速（累计位移达到阈值即调整一档）
+    var touchY = 0, accum = 0;
+    var TOUCH_THRESHOLD = 24;
+    cover.addEventListener('touchstart', function (e) {
+      if (e.touches.length === 1) { touchY = e.touches[0].clientY; accum = 0; }
+    }, { passive: true });
+    cover.addEventListener('touchmove', function (e) {
+      if (e.touches.length !== 1) return;
+      e.preventDefault();
+      var dy = touchY - e.touches[0].clientY;
+      touchY = e.touches[0].clientY;
+      accum += dy;
+      while (accum >= TOUCH_THRESHOLD) { _adjustCoverRate(0.05); accum -= TOUCH_THRESHOLD; }
+      while (accum <= -TOUCH_THRESHOLD) { _adjustCoverRate(-0.05); accum += TOUCH_THRESHOLD; }
+    }, { passive: false });
+
+    // 双击封面回到原速
+    cover.addEventListener('dblclick', function () {
+      if (_coverRate !== 1.0) {
+        _coverRate = 1.0;
+        var engine = App.audioEngine;
+        if (engine) engine.setUserRate(1.0);
+        App.backend.set_rate(1.0);
+        _showRateBadge(1.0);
+      }
+    });
+  }
+
   np.init = function () {
     _loadLyricFontSettings();
 
@@ -521,6 +592,8 @@ let _lastKnownPositionMs = 0;
       _videoBg = new window.VideoBackground(bgEl);
       _videoBg.setEnabled(_videoBgEnabled);
     }
+    // 封面滚轮/触屏调节播放速率
+    _initCoverRateControl();
     // 播放/暂停
     els.btnPlay.addEventListener('click', function () {
       if (App.state.playbackState === 'playing') {

@@ -326,7 +326,15 @@
           App.prefetchArtistImages();   // 启动后后台慢慢预热本地艺人头像缓存
           return _fetchInitialState();
         }).then(function () {
-          navigate('your_mix');
+          // 首次启动：未完成新手引导时进入引导流程，否则直接进入主界面
+          App.utils.call('get_settings').then(function (res) {
+            var settings = null;
+            try { settings = JSON.parse(res); } catch (e) { /* ignore */ }
+            if (App.onboarding && App.onboarding.checkAndStart && settings && App.onboarding.checkAndStart(settings)) {
+              return;  // 引导完成后会自行 navigate('your_mix')
+            }
+            navigate('your_mix');
+          }).catch(function () { navigate('your_mix'); });
         }).catch(function (err) {
           console.error('[app] 初始化失败:', err);
           _showFatalError(App.i18n ? App.i18n.t('error.initFailed', { message: (err && err.message ? err.message : String(err)) }) : ('初始化失败：' + (err && err.message ? err.message : String(err))));
@@ -1358,6 +1366,9 @@
             break;
           case 'set_crossfade_duration':
             _audioEngine.setCrossfadeDuration(cmd.ms);
+            break;
+          case 'set_rate':
+            _audioEngine.setUserRate(cmd.value);
             break;
           case 'set_next_info':
             // 次曲信息：filePath + durationMs + forceStreaming

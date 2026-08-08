@@ -436,6 +436,23 @@
             },
           ],
         },
+        {
+          titleKey: 'settings.group.setup',
+          rows: [
+            {
+              type: 'action',
+              label: _t('settings.onboarding.label'),
+              sub: _t('settings.onboarding.sub'),
+              buttonText: _t('settings.onboarding.action'),
+              buttonIcon: 'rocket_launch',
+              onAction: function () {
+                if (App.onboarding && App.onboarding.restart) {
+                  App.onboarding.restart();
+                }
+              },
+            },
+          ],
+        },
       ],
     },
     {
@@ -900,6 +917,20 @@
         </div>
       `;
     }
+    if (row.type === 'action') {
+      return `
+        <div class="settings-row settings-row-action" data-bind="${row.bind || '_action'}">
+          <div>
+            <p class="settings-row-label">${row.label}</p>
+            <p class="settings-row-sub">${row.sub || ''}</p>
+          </div>
+          <button class="btn-outlined settings-action-btn" type="button" data-action-key="${row.bind || '_action'}">
+            <span class="material-symbols-rounded">${row.buttonIcon || 'play_arrow'}</span>
+            <span>${row.buttonText || ''}</span>
+          </button>
+        </div>
+      `;
+    }
     return '';
   }
 
@@ -971,6 +1002,13 @@
         _bindSliderRow(row, settings[row.bind]);
       } else if (row.type === 'eq') {
         _bindEqRow(row, settings[row.bind] || []);
+      } else if (row.type === 'action') {
+        const btn = document.querySelector(`.settings-action-btn[data-action-key="${row.bind || '_action'}"]`);
+        if (btn && row.onAction) {
+          btn.removeEventListener('click', btn._actionHandler);
+          btn._actionHandler = function () { row.onAction(); };
+          btn.addEventListener('click', btn._actionHandler);
+        }
       }
     });
 

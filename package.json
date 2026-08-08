@@ -1,9 +1,13 @@
 {
   "name": "Carminium",
-  "version": "0.5.71",
+  "version": "0.6.3-1.20260808",
   "description": "Carminium",
   "main": "electron/main.js",
-  "author": "Seirai Haraguchi",
+  "author": {
+    "name": "Seirai Haraguchi",
+    "email": "chihuyou90@gmail.com"
+  },
+  "homepage": "https://gitlab.com/Seirai-Haraguchi/carminium/",
   "license": "LGPL-3.0-or-later",
   "scripts": {
     "postinstall": "electron-builder install-app-deps",
@@ -11,19 +15,11 @@
     "dev": "node scripts/start-electron.js . --dev",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "install:win": "npm install && npm run rebuild",
-    "install:linux": "npm install && npm run rebuild",
     "build:native": "cd native && zig build copy -Doptimize=ReleaseFast",
-    "build:native:linux": "cd native && zig build copy -Doptimize=ReleaseFast -Dtarget=x86_64-linux-gnu",
-    "build:native:all": "npm run build:native && npm run build:native:linux",
-    "build": "electron-builder --win",
-    "build:dir": "electron-builder --win --dir",
-    "build:portable": "electron-builder --win portable",
-    "build:all": "npm run build:native && npm run rebuild && npm run build",
-    "build:linux": "electron-builder --linux",
-    "build:linux-deb": "electron-builder --linux deb",
-    "build:linux-portable": "electron-builder --linux AppImage",
-    "build:linux-all": "electron-builder --linux deb AppImage",
-    "build:cross-win-linux": "electron-builder --win portable --linux deb AppImage"
+    "build": "node scripts/sync-version.js && electron-builder --win",
+    "build:dir": "node scripts/sync-version.js && electron-builder --win --dir",
+    "build:portable": "node scripts/sync-version.js && electron-builder --win portable",
+    "build:all": "npm run build:native && npm run rebuild && npm run build"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -92,65 +88,6 @@
         "electron/bin/ffprobe.exe"
       ]
     },
-    "linux": {
-      "target": [
-        {
-          "target": "deb",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "AppImage",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "category": "Audio;Music;Player;AudioVideo",
-      "vendor": "Yunofactory",
-      "synopsis": "Carminium — マテリアルデザイン音楽プレイヤー",
-      "description": "マテリアルデザイン（M3）に準拠した高機能デスクトップ音楽プレイヤー。ローカルと Subsonic の両方に対応。",
-      "files": [
-        "electron/bin/linux/**/*",
-        "electron/bin/carminium_audio.so",
-        "electron/bin/ffmpeg",
-        "electron/bin/ffprobe"
-      ],
-      "asarUnpack": [
-        "node_modules/better-sqlite3/**/*",
-        "node_modules/koffi/**/*",
-        "node_modules/@koromix/koffi-linux-x64/**/*",
-        "node_modules/sharp/**/*",
-        "node_modules/@img/sharp-linux-x64-gnu/**/*",
-        "node_modules/@img/sharp-linux-x64-musl/**/*",
-        "electron/bin/linux/**/*",
-        "electron/bin/carminium_audio.so",
-        "electron/bin/ffmpeg",
-        "electron/bin/ffprobe"
-      ]
-    },
-    "deb": {
-      "artifactName": "${productName}-${version}-linux-amd64.deb",
-      "compression": "xz",
-      "depends": [
-        "libasound2",
-        "libpulse0",
-        "libgtk-3-0",
-        "libnss3",
-        "libxss1",
-        "libxtst6",
-        "libatspi2.0-0",
-        "libdrm2",
-        "libgbm1"
-      ],
-      "priority": "optional",
-      "packageCategory": "sound"
-    },
-    "appImage": {
-      "artifactName": "${productName}-${version}-linux-x86_64.AppImage"
-    },
-    "electronDist": "node_modules/electron/dist",
     "portable": {
       "artifactName": "${productName}-${version}-portable.exe"
     },
@@ -160,8 +97,6 @@
       "node_modules/@koromix/**/*",
       "node_modules/sharp/**/*",
       "node_modules/@img/sharp-win32-x64/**/*",
-      "node_modules/@img/sharp-linux-x64-gnu/**/*",
-      "node_modules/@img/sharp-linux-x64-musl/**/*",
       "electron/bin/**/*"
     ]
   }

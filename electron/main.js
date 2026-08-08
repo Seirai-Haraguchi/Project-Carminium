@@ -47,6 +47,21 @@ app.commandLine.appendSwitch('disable-features',
   'Translate,BackForwardCache'
 );
 
+// ── 子进程名称说明 ────────────────────────────────────────────────────────
+// Windows 任务管理器中每个进程的"名称"列来自 PE 可执行文件的文件名本身，
+// Chromium/Electron 不提供命令行开关来覆盖子进程的显示名称。
+//
+// Electron 的子进程（GPU/Renderer/Utility/Plugin 等）由主进程通过
+// electron.exe 自身派生，因此它们在任务管理器中的文件名列始终为 "Electron"
+//（开发模式）或便携 exe 的基础名（打包模式）。
+//
+// 要改变这一行为，唯一可靠的方式是在打包时重命名 electron.exe：
+//   electron-builder 的 portable 输出会自动将 exe 重命名为 artifactName
+//   （如 "Project Carminium-x.x.x-portable.exe"），此时主进程和所有子进程
+//   都会使用该文件名作为进程名。
+//
+// 开发模式下无法避免显示 "Electron"，这是正常的。
+
 // ── V8 堆内存限制 ─────────────────────────────────────────────────────
 // 主进程 V8 堆限制 128MB — 足够 Node.js 运行，同时强制 GC 更积极。
 // 渲染进程不受此限制（Chromium 自行管理）。
@@ -434,11 +449,161 @@ Write-Output $shortcutPath
   } catch { /* ignore */ }
 
   // ── 3. 注册当前 AUMID 的显示名称和图标 ──
+  // Windows 任务管理器通过以下注册表项来识别和折叠同一应用的多个进程：
+  //   - DisplayName:   应用显示名称
+  //   - IconResource:  任务管理器中显示的图标（格式："可执行文件路径,图标索引"）
+  //   - IconUri:       SMTC / 任务栏使用的图标 URI
+  //   - TaskManagerAppId: 显式声明此 AUMID 对应的任务管理器分组 ID
+  //   - CustomDestList: 跳转列表（Jump List）存储位置
+  //
+  // 关键点：
+  //   IconResource 必须指向实际的可执行文件（如 electron.exe 或便携版 .exe），
+  //   而不是 .ico/.png 文件。Windows 会从该 PE 文件中提取图标资源。
+  //   如果 IconResource 缺失或指向不存在的文件，任务管理器将无法正确折叠子进程。
   const regKey = `HKCU\\Software\\Classes\\AppUserModelId\\${AUMID}`;
 
   const dnResult = _reg(['ADD', regKey, '/v', 'DisplayName', '/t', 'REG_SZ', '/d', APP_DISPLAY_NAME, '/f']);
   if (dnResult.ok) {
     console.log('[main] AUMID DisplayName registered:', APP_DISPLAY_NAME);
+  }
+
+  // ── IconResource：任务管理器进程分组的关键 ──
+  // 格式为 "exe路径,图标索引"。Windows Shell 用它来：
+  //   1. 在任务管理器中显示应用图标
+  //   2. 将所有具有相同 AUMID 的进程折叠到同一个条目下
+  //
+  // ⚠️ 重要：Portable 模式下 exe 被解压到临时目录（如 Temp\...），每次路径不同。
+  // 如果 IconResource 指向临时路径，下次运行时路径失效，任务管理器无法分组。
+  // 解决方案：找到解压后的实际 electron.exe 并复制到稳定路径（%APPDATA%\Carminium\app.exe）。
+  const iconExePath = process.execPath || '';
+  let iconResourceValue = null;
+  let iconResourceSource = 'direct';
+
+  if (iconExePath) {
+    // 检测是否为 portable 模式（exe 在 Temp 目录中）
+    const isPortable = iconExePath.toLowerCase().includes('\\temp\\') ||
+                       iconExePath.toLowerCase().includes('\\tmp\\');
+
+    if (isPortable && appDataDir) {
+      // Portable 模式：找到解压后的实际 electron.exe
+      // electron-builder portable 会将内容解压到临时目录，结构如下：
+      //   Temp\xxx\  ← 临时目录（process.execPath 指向这里的 stub exe）
+      //   Temp\xxx\app.exe  ← 实际的 electron.exe（重命名后的）
+      // 我们需要找到这个实际的 exe，而不是自解压 stub
+      let actualExePath = iconExePath;
+      const exeDir = path.dirname(iconExePath);
+
+      // 尝试找到同目录下的实际应用 exe（非 stub）
+      // electron-builder portable 的 stub 通常很小（<1MB），而实际 exe 较大（>100MB）
+      try {
+        const stubStat = fs.statSync(iconExePath);
+        if (stubStat.size < 5 * 1024 * 1024) { // 小于 5MB 认为是 stub
+          // 查找同目录下最大的 .exe 文件（实际 electron.exe）
+          const entries = fs.readdirSync(exeDir);
+          let largestExe = null;
+          let largestSize = 0;
+          for (const entry of entries) {
+            if (entry.toLowerCase().endsWith('.exe')) {
+              const entryPath = path.join(exeDir, entry);
+              try {
+                const stat = fs.statSync(entryPath);
+                if (stat.isFile() && stat.size > largestSize) {
+                  largestSize = stat.size;
+                  largestExe = entryPath;
+                }
+              } catch { /* ignore */ }
+            }
+          }
+          if (largestExe && largestExe !== iconExePath) {
+            actualExePath = largestExe;
+            console.log('[main] Found actual exe in portable temp dir:', actualExePath, 'size:', largestSize);
+          }
+        }
+      } catch (e) {
+        console.warn('[main] Failed to find actual exe in portable dir:', e.message);
+      }
+
+      // 将实际 exe 复制到稳定路径
+      const stableExeDir = path.join(appDataDir, 'Carminium');
+      const stableExePath = path.join(stableExeDir, 'Carminium.exe');
+
+      try {
+        if (!fs.existsSync(stableExeDir)) {
+          fs.mkdirSync(stableExeDir, { recursive: true });
+        }
+        // 复制 exe（如果文件不存在或大小不同）
+        let needCopy = true;
+        if (fs.existsSync(stableExePath)) {
+          const srcStat = fs.statSync(actualExePath);
+          const dstStat = fs.statSync(stableExePath);
+          needCopy = srcStat.size !== dstStat.size || srcStat.mtime.getTime() !== dstStat.mtime.getTime();
+        }
+        if (needCopy) {
+          fs.copyFileSync(actualExePath, stableExePath);
+          console.log('[main] Copied portable exe to stable path:', stableExePath);
+        }
+        iconResourceValue = `${stableExePath},0`;
+        iconResourceSource = 'stable-copy';
+      } catch (e) {
+        console.warn('[main] Failed to copy exe to stable path:', e.message);
+        // 回退到直接使用实际 exe 路径（至少当前会话有效）
+        iconResourceValue = `${actualExePath},0`;
+      }
+    } else {
+      // 开发模式或已安装模式：直接使用 exe 路径
+      iconResourceValue = `${iconExePath},0`;
+    }
+
+    if (iconResourceValue) {
+      _reg(['DELETE', regKey, '/v', 'IconResource', '/f']);
+      const irResult = _reg(['ADD', regKey, '/v', 'IconResource', '/t', 'REG_SZ', '/d', iconResourceValue, '/f']);
+      if (irResult.ok) {
+        console.log('[main] AUMID IconResource registered (' + iconResourceSource + '):', iconResourceValue);
+      } else {
+        console.warn('[main] AUMID IconResource registration FAILED');
+      }
+    }
+  } else {
+    console.warn('[main] No execPath available — IconResource will not be set');
+  }
+
+  // ── TaskManagerAppId：显式指定任务管理器分组标识 ──
+  // 此值告诉 Windows 任务管理器："将所有带有此 AppUserModelID 的进程归为一组"。
+  // 虽然通常 AUMID 本身就足够，但某些 Windows 版本（特别是 Win10 1809+ 和 Win11）
+  // 在 Electron 多进程架构下需要此项才能正确折叠 GPU/Renderer/Utility 子进程。
+  _reg(['DELETE', regKey, '/v', 'TaskManagerAppId', '/f']);
+  const tmaResult = _reg(['ADD', regKey, '/v', 'TaskManagerAppId', '/t', 'REG_SZ', '/d', AUMID, '/f']);
+  if (tmaResult.ok) {
+    console.log('[main] AUMID TaskManagerAppId registered:', AUMID);
+  } else {
+    console.warn('[main] AUMID TaskManagerAppId registration FAILED');
+  }
+
+  // ── CustomDestList：跳转列表存储路径 ──
+  // 声明后 Windows 会在指定路径创建 Automatic Destinations (.autorel) 文件，
+  // 用于最近文档列表和 pinned 项目。同时帮助 Shell 正确关联进程。
+  const appDataLocal = process.env.LOCALAPPDATA;
+  if (appDataLocal) {
+    const destListDir = path.join(appDataLocal, 'Microsoft', 'Windows', 'Recent', 'CustomDestinations');
+    // 使用 AUMID 的哈希作为文件名（与 Windows Shell 约定一致）
+    let destListFile = '';
+    try {
+      // 简单哈希：取 AUMID 各字符 code 的总和作为 16 进制字符串
+      let hash = 0;
+      for (let i = 0; i < AUMID.length; i++) {
+        hash = ((hash << 5) - hash + AUMID.charCodeAt(i)) | 0;
+      }
+      destListFile = Math.abs(hash).toString(16).padStart(8, '0') + '.autorel';
+    } catch { /* fallback */ }
+    if (destListFile) {
+      const customDestListValue = path.join(destListDir, destListFile);
+      _reg(['DELETE', regKey, '/v', 'CustomDestList', '/f']);
+      const cdlResult = _reg(['ADD', regKey, '/v', 'CustomDestList', '/t', 'REG_SZ', '/d', customDestListValue, '/f']);
+      if (cdlResult.ok) {
+        console.log('[main] AUMID CustomDestList registered:', customDestListValue);
+      }
+      // 不打印 FAILED 日志——非关键功能
+    }
   }
 
   if (iconUriValue) {
@@ -509,6 +674,8 @@ Write-Output $shortcutPath
   console.log('[main] === AUMID registration complete ===');
   console.log('[main]   AUMID:', AUMID);
   console.log('[main]   DisplayName:', APP_DISPLAY_NAME);
+  console.log('[main]   IconResource:', iconResourceValue || '(none)');
+  console.log('[main]   TaskManagerAppId:', AUMID);
   console.log('[main]   IconUri:', iconPathForLog || '(none)');
   console.log('[main]   Icon format:', iconPathForLog && iconPathForLog.endsWith('.ico') ? 'ICO' : 'PNG');
 
