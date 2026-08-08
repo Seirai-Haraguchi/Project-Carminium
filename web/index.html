@@ -12,6 +12,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght,GRAD@8..48,100..700,-200..150&display=swap">
+  <!-- Noto Color Emoji：补充 Windows 缺失的彩色 emoji（含国旗）渲染 -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -194,6 +196,7 @@
             <div class="np-cover" id="np-cover">
               <span class="np-cover-placeholder material-symbols-rounded" id="np-cover-icon">music_note</span>
               <img id="np-cover-img" src="" alt="专辑封面" style="display:none">
+              <div class="np-cover-rate" id="np-cover-rate"></div>
             </div>
           </div>
 
@@ -527,6 +530,9 @@
 
   <!-- 虚拟滚动：大列表/网格只渲染可见项，避免 5000+ DOM 节点内存爆炸 -->
   <script src="virtual_list.js"></script>
+
+  <!-- 新手引导（首次启动时呈现，须在 app.js 之前加载） -->
+  <script src="onboarding.js"></script>
 
   <!-- Main app (last) -->
   <script src="app.js"></script>

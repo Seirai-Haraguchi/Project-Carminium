@@ -44,6 +44,7 @@ const DEFAULTS = {
   compressor_enabled: false,
   vocal_enhance: false,
   guitar_friendly: false,
+  onboarding_complete: false,   // 新手引导是否已完成
   // Virtual Bass Enhancement (modern smartphone DSP pipeline)
   vbe_enabled: false,
   vbe_cutoff: 90,            // Speaker model HPF cutoff (50–300 Hz)

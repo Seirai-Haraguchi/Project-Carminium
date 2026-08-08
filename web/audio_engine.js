@@ -171,6 +171,8 @@
       this._crossfadePendingSince = 0;
       /** @type {number} crossfade 期间的调速比率（0 = 无调速，>0 = 实际比率） */
       this._tempoAdjustActive = 0;
+      /** @type {number} 用户调节的播放速率（变速变调），1.0 = 原速。仅 Buffer 模式生效 */
+      this._userRate = 1.0;
 
       // ── 预调度无缝切换 ──
       /** @type {AudioBufferSourceNode|null} 预调度的 gapless 下一曲源 */
@@ -659,6 +661,11 @@
       const offsetSec = (offsetMs || 0) / 1000;
       source.start(0, offsetSec);
 
+      // 用户调节的播放速率（变速变调）
+      if (this._userRate !== 1.0) {
+        source.playbackRate.value = this._userRate;
+      }
+
       if (isMain) {
         this._currentSource = source;
         this._currentGain = gain;
@@ -683,6 +690,32 @@
 
       return { source, gain };
     }
+
+    /**
+     * 设置用户调节的播放速率（变速变调）。
+     * 立即应用到当前播放的 Buffer source；切歌时通过 _createAndStartSource 继承。
+     * Streaming 模式（AudioWorkletNode）不支持 playbackRate，仅记录状态。
+     * @param {number} rate 0.5 ~ 2.0，1.0 = 原速
+     */
+    setUserRate(rate) {
+      rate = Math.max(0.5, Math.min(2.0, parseFloat(rate) || 1.0));
+      if (this._ctx && this._currentSource && this._currentSource.playbackRate) {
+        // 变速前用旧 rate 快照当前真实位置，重新校准基准，避免积分误差
+        var oldRate = this._currentSource.playbackRate.value;
+        var elapsedSec = this._ctx.currentTime - this._sourceStartCtxTime;
+        this._seekOffsetMs += elapsedSec * 1000 * oldRate;
+        this._sourceStartCtxTime = this._ctx.currentTime;
+        var pr = this._currentSource.playbackRate;
+        pr.cancelScheduledValues(this._ctx.currentTime);
+        pr.setValueAtTime(rate, this._ctx.currentTime);
+        // 立即上报校准后的位置，让 UI 同步而非等下一个 250ms tick
+        if (this.onPositionTick) this.onPositionTick(this.getCurrentPositionMs());
+      }
+      this._userRate = rate;
+    }
+
+    /** @returns {number} 当前用户播放速率 */
+    get userRate() { return this._userRate; }
 
     // ── 停止 / 暂停 / 恢复 ──────────────────────────────────────────────────
 
@@ -1611,7 +1644,9 @@
       // Buffer 模式
       if (this._ctx) {
         var elapsedSec = this._ctx.currentTime - this._sourceStartCtxTime;
-        var posMs2 = this._seekOffsetMs + elapsedSec * 1000;
+        var rate = (this._currentSource && this._currentSource.playbackRate)
+          ? this._currentSource.playbackRate.value : 1.0;
+        var posMs2 = this._seekOffsetMs + elapsedSec * 1000 * rate;
         return Math.max(0, posMs2 - totalLatency);
       }
 

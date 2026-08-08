@@ -73,6 +73,11 @@ container.innerHTML = `
     _renderList();
   };
 
+  // 暴露添加流媒体库对话框，供新手引导等外部入口复用
+  page.promptAddSubsonic = function () {
+    _promptAddSubsonic();
+  };
+
   function _loadFolders() {
     // 从前端缓存读取（启动时已拉取，folders_updated 时刷新）
     allFolders = (App.state && App.state.allFolders) ? App.state.allFolders : [];

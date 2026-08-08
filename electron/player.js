@@ -1004,11 +1004,13 @@ class MusicPlayer extends EventEmitter {
     if (this._gaplessEnabled) {
       this.emit('audio_control', JSON.stringify({ action: 'set_gapless', enabled: !stActive }));
     }
+    // 通知渲染进程应用变速变调（AudioBufferSourceNode.playbackRate）
+    this.emit('audio_control', JSON.stringify({ action: 'set_rate', value: this._rate }));
   }
 
   get tempo() { return this._renderer ? this._renderer.tempo : 1.0; }
   get pitch() { return this._renderer ? this._renderer.pitch : 1.0; }
-  get rate() { return this._renderer ? this._renderer.rate : 1.0; }
+  get rate() { return this._rate; }
 
   /** 是否正在播放（供 main.js 冻结判定使用） */
   get isPlaying() { return this._fe_state === 'playing'; }
