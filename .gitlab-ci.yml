@@ -45,9 +45,9 @@ prepare:version:
     - VERSION=$(jq -r '.version' version.json)
     - CODENAME=$(jq -r '.codename' version.json)
     - TAG="v${VERSION}"
-    - echo "版本号 : ${VERSION}"
-    - echo "代号   : ${CODENAME}"
-    - echo "目标 tag : ${TAG}"
+    - 'echo "版本号: ${VERSION}"'
+    - 'echo "代号: ${CODENAME}"'
+    - 'echo "目标 tag: ${TAG}"'
     - git fetch --tags
     - |
       if git rev-parse "$TAG" >/dev/null 2>&1; then
