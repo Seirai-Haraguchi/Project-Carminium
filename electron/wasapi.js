@@ -1,14 +1,14 @@
 /**
  * Carminium — ネイティブオーディオレンダラー (Zig + miniaudio)
  *
- * native/carminium_audio.zig が生成したネイティブライブラリ（Windows: .dll / Linux: .so）
- * を koffi 経由で呼び出す。
- * ネイティブ側は miniaudio（Windows: WASAPI / Linux: PulseAudio または ALSA）で直接出力。
+ * native/carminium_audio.zig が生成したネイティブライブラリ
+ * （Windows: .dll / Linux: .so / macOS: .dylib）を koffi 経由で呼び出す。
+ * ネイティブ側は miniaudio（Windows: WASAPI / Linux: PulseAudio または ALSA / macOS: CoreAudio）で直接出力。
  *
  * アーキテクチャ:
  *   FFmpeg (デコード) → IPC → Renderer (Web Audio API 合成)
  *                                         ↓
- *   Renderer (合成済み PCM) → IPC → ca_push_pcm() → native.so/.dll → オーディオデバイス
+ *   Renderer (合成済み PCM) → IPC → ca_push_pcm() → native.so/.dll/.dylib → オーディオデバイス
  *
  * このモジュールは FFmpeg のデコードと miniaudio への PCM 出力のみを担当する。
  * Gapless/AutoMix/音量の合成はすべてレンダラー側の Web Audio API で行われる。
@@ -27,8 +27,9 @@ const SHARE_EXCLUSIVE = 1;
 
 // プラットフォーム別ファイル名・サブディレクトリ
 const IS_WIN = process.platform === 'win32';
-const PLATFORM_SUBDIR = IS_WIN ? 'win32' : (process.platform === 'linux' ? 'linux' : process.platform);
-const LIB_NAME = IS_WIN ? 'carminium_audio.dll' : 'carminium_audio.so';
+const IS_MAC = process.platform === 'darwin';
+const PLATFORM_SUBDIR = IS_WIN ? 'win32' : (process.platform === 'linux' ? 'linux' : (IS_MAC ? 'darwin' : process.platform));
+const LIB_NAME = IS_WIN ? 'carminium_audio.dll' : (IS_MAC ? 'carminium_audio.dylib' : 'carminium_audio.so');
 const FFMPEG_NAME = IS_WIN ? 'ffmpeg.exe' : 'ffmpeg';
 const FFPROBE_NAME = IS_WIN ? 'ffprobe.exe' : 'ffprobe';
 

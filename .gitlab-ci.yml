@@ -1,0 +1,222 @@
+# =============================================================================
+# Carminium — GitLab CI/CD
+#
+# 流程：手动触发（GitLab UI → Run pipeline）→ 读取 version.json 生成 tag
+#       → 双平台并行构建 → 上传安装包到包仓库 → 创建 Release 并附加产物
+#
+# 前置准备：
+#   1. 在 项目 → Settings → CI/CD → Variables 添加：
+#      - CI_PUSH_TOKEN：具备 write_repository 权限的项目访问令牌（用于创建 tag）
+#   2. Runner：Windows 与 Linux 均使用 GitLab SaaS 共享 Runner，无需自托管
+#      - Linux ：image: node:22-bookworm（CI 内下载 Zig + apt 装依赖）
+#      - Windows：tag = saas-windows-medium-amd64
+#                 预装：VS 2022 Build Tools（含 C++ workload/vctools）、Node.js、
+#                        Python 3、Git、Chocolatey、7-Zip
+#                 CI 在 before_script 中额外下载 Zig。
+#   3. Zig 版本由变量 ZIG_VERSION 控制，默认 0.16.0
+# =============================================================================
+
+stages:
+  - prepare
+  - build
+  - release
+
+workflow:
+  rules:
+    # 仅允许手动触发（GitLab UI → Run pipeline）
+    # prepare 推送 tag 引发的 tag pipeline 会被此规则过滤，避免重复构建
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+variables:
+  GIT_DEPTH: "0"
+  # 检出 LFS 文件（ffmpeg/ffprobe 二进制）
+  GIT_LFS_SKIP_SMUDGE: "0"
+  ZIG_VERSION: "0.16.0"
+  PACKAGE_NAME: "carminium"
+
+# -----------------------------------------------------------------------------
+# prepare：读取 version.json，创建并推送 tag，导出版本号变量
+# -----------------------------------------------------------------------------
+prepare:version:
+  stage: prepare
+  image: node:22-bookworm
+  script:
+    - apt-get update -qq && apt-get install -y -qq git jq
+    - VERSION=$(jq -r '.version' version.json)
+    - CODENAME=$(jq -r '.codename' version.json)
+    - TAG="v${VERSION}"
+    - echo "版本号 : ${VERSION}"
+    - echo "代号   : ${CODENAME}"
+    - echo "目标 tag : ${TAG}"
+    - git fetch --tags
+    - |
+      if git rev-parse "$TAG" >/dev/null 2>&1; then
+        echo "tag ${TAG} 已存在，跳过创建"
+      else
+        if [ -z "$CI_PUSH_TOKEN" ]; then
+          echo "错误：未设置 CI_PUSH_TOKEN 变量，无法创建 tag" >&2
+          exit 1
+        fi
+        echo "创建并推送 tag ${TAG}"
+        git config user.email "gitlab-ci@example.com"
+        git config user.name "GitLab CI"
+        git tag "$TAG" "$CI_COMMIT_SHA"
+        git push "https://oauth2:${CI_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "$TAG"
+      fi
+    - echo "VERSION=${VERSION}" > build.env
+    - echo "CODENAME=${CODENAME}" >> build.env
+    - echo "TAG=${TAG}" >> build.env
+  artifacts:
+    reports:
+      dotenv: build.env
+
+# -----------------------------------------------------------------------------
+# build:windows — Windows 便携版（GitLab SaaS：saas-windows-medium-amd64）
+# 预装：VS 2022 Build Tools（含 C++ workload）、Node.js、Python 3、Chocolatey、7-Zip
+# 额外安装：Zig
+# -----------------------------------------------------------------------------
+build:windows:
+  stage: build
+  tags:
+    - saas-windows-medium-amd64
+  needs:
+    - prepare:version
+  before_script:
+    - |
+      $ErrorActionPreference = "Stop"
+      # 下载并解包 Zig（CI 未预装），加入 PATH
+      $zipUrl = "https://ziglang.org/download/$env:ZIG_VERSION/zig-windows-x86_64-$env:ZIG_VERSION.zip"
+      $zipPath = "$env:TEMP\zig.zip"
+      $extractDir = "C:\zig"
+      Write-Host "下载 Zig ${env:ZIG_VERSION}: $zipUrl"
+      curl.exe --fail --retry 3 -L -o $zipPath $zipUrl
+      if (!(Test-Path $extractDir)) { New-Item -ItemType Directory -Path $extractDir -Force | Out-Null }
+      7z x -y -o"$extractDir" $zipPath | Out-Null
+      $zigBin = (Get-ChildItem "$extractDir\zig-*\zig.exe" | Select-Object -First 1).FullName
+      $zigDir = Split-Path $zigBin -Parent
+      $env:PATH = "$zigDir;$env:PATH"
+      zig version
+      # 让 npm / node-gyp 能找到 MSVC 编译器
+      $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+      if (Test-Path $vsWhere) {
+        $vsPath = & $vsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        if ($vsPath) {
+          $importMsDev = Join-Path $vsPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+          if (Test-Path $importMsDev) {
+            Import-Module $importMsDev
+            Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64" | Out-Null
+            Write-Host "已初始化 VS DevShell 环境 (MSVC x64)"
+          }
+        }
+      }
+  script:
+    - |
+      $ErrorActionPreference = "Stop"
+      node scripts\sync-version.js
+      # 编译原生音频库 (Zig → carminium_audio.dll)
+      Push-Location native
+      zig build copy -Doptimize=ReleaseFast
+      Pop-Location
+      # 安装依赖（postinstall 自动执行 electron-builder install-app-deps）
+      npm ci
+      # 打包 Windows 便携版
+      npx electron-builder --win
+      # 重命名并上传到包仓库
+      $art = (Get-ChildItem dist-electron\*.exe | Select-Object -First 1).FullName
+      $dest = "Carminium-$env:VERSION-windows-x64.exe"
+      Copy-Item $art $dest
+      $url = "$env:CI_API_V4_URL/projects/$env:CI_PROJECT_ID/packages/generic/$env:PACKAGE_NAME/$env:VERSION/$dest"
+      curl.exe --header "JOB-TOKEN: $env:CI_JOB_TOKEN" --upload-file $dest $url
+      Write-Host "已上传: $url"
+  artifacts:
+    paths:
+      - Carminium-*.exe
+    expire_in: 1 week
+
+# -----------------------------------------------------------------------------
+# build:linux — Linux deb + AppImage（GitLab SaaS 共享 Runner）
+# -----------------------------------------------------------------------------
+build:linux:
+  stage: build
+  image: node:22-bookworm
+  needs:
+    - prepare:version
+  before_script:
+    - apt-get update -qq
+    - >
+      apt-get install -y -qq
+      build-essential python3 pkg-config jq xz-utils curl unzip
+      libasound2-dev libpulse-dev
+      libgtk-3-0 libnss3 libxss1 libxtst6 libatspi2.0-0 libdrm2 libgbm1
+    # 安装 Zig
+    - |
+      curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
+      tar -xf /tmp/zig.tar.xz -C /tmp
+      ln -s "/tmp/zig-linux-x86_64-${ZIG_VERSION}/zig" /usr/local/bin/zig
+      zig version
+  script:
+    - node scripts/sync-version.js
+    # 编译原生音频库 (Zig → carminium_audio.so)
+    - cd native && zig build copy -Doptimize=ReleaseFast && cd ..
+    # 安装依赖
+    - npm ci
+    # 打包 Linux deb + AppImage
+    - npx electron-builder --linux
+    # 重命名并上传产物
+    - |
+      for f in dist-electron/*.deb dist-electron/*.AppImage; do
+        [ -e "$f" ] || continue
+        ext="${f##*.}"
+        dest="Carminium-${VERSION}-linux-x64.${ext}"
+        cp "$f" "$dest"
+        url="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${PACKAGE_NAME}/${VERSION}/${dest}"
+        curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "$dest" "$url"
+        echo "已上传: $url"
+      done
+  artifacts:
+    paths:
+      - Carminium-*.deb
+      - Carminium-*.AppImage
+    expire_in: 1 week
+
+# -----------------------------------------------------------------------------
+# release：创建 GitLab Release 并附加双平台安装包链接
+# -----------------------------------------------------------------------------
+release:package:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs:
+    - prepare:version
+    - build:windows
+    - build:linux
+  script:
+    - echo "为 ${TAG} 创建 Release（Carminium ${VERSION} / ${CODENAME}）"
+  release:
+    tag_name: $TAG
+    name: "Carminium $VERSION ($CODENAME)"
+    description: |
+      # Carminium $VERSION — $CODENAME
+
+      版本号：$VERSION
+      代号：$CODENAME
+
+      ## 下载
+
+      - **Windows**：下载 `Carminium-$VERSION-windows-x64.exe`（便携版，免安装）
+      - **Linux**：下载 `.deb`（Debian/Ubuntu）或 `.AppImage`（通用便携版）
+
+      > 产物托管于项目包仓库，Release 链接可直接下载。
+    assets:
+      links:
+        - name: "Windows 便携版 (x64)"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE_NAME/$VERSION/Carminium-$VERSION-windows-x64.exe"
+          filepath: "/Carminium-$VERSION-windows-x64.exe"
+          link_type: package
+        - name: "Linux deb (x64)"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE_NAME/$VERSION/Carminium-$VERSION-linux-x64.deb"
+          filepath: "/Carminium-$VERSION-linux-x64.deb"
+          link_type: package
+        - name: "Linux AppImage (x64)"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE_NAME/$VERSION/Carminium-$VERSION-linux-x64.AppImage"
+          filepath: "/Carminium-$VERSION-linux-x64.AppImage"
+          link_type: package

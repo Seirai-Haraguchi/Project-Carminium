@@ -16,9 +16,11 @@
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "install:win": "npm install && npm run rebuild",
     "build:native": "cd native && zig build copy -Doptimize=ReleaseFast",
+    "build:native:linux": "cd native && zig build copy -Doptimize=ReleaseFast -Dtarget=x86_64-linux-gnu",
     "build": "node scripts/sync-version.js && electron-builder --win",
     "build:dir": "node scripts/sync-version.js && electron-builder --win --dir",
     "build:portable": "node scripts/sync-version.js && electron-builder --win portable",
+    "build:linux": "node scripts/sync-version.js && electron-builder --linux",
     "build:all": "npm run build:native && npm run rebuild && npm run build"
   },
   "engines": {
@@ -91,12 +93,60 @@
     "portable": {
       "artifactName": "${productName}-${version}-portable.exe"
     },
+    "linux": {
+      "target": [
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "AudioVideo",
+      "maintainer": "Seirai Haraguchi <chihuyou90@gmail.com>",
+      "files": [
+        "electron/bin/linux/**/*",
+        "electron/bin/carminium_audio.so",
+        "electron/bin/ffmpeg",
+        "electron/bin/ffprobe"
+      ],
+      "asarUnpack": [
+        "node_modules/better-sqlite3/**/*",
+        "node_modules/koffi/**/*",
+        "node_modules/@koromix/koffi-linux-x64/**/*",
+        "node_modules/sharp/**/*",
+        "node_modules/@img/sharp-linux-x64/**/*",
+        "electron/bin/linux/**/*",
+        "electron/bin/carminium_audio.so",
+        "electron/bin/ffmpeg",
+        "electron/bin/ffprobe"
+      ]
+    },
+    "deb": {
+      "artifactName": "${productName}-${version}-${arch}.deb",
+      "depends": [
+        "libgtk-3-0",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "libasound2",
+        "libpulse0"
+      ]
+    },
+    "AppImage": {
+      "artifactName": "${productName}-${version}-${arch}.AppImage"
+    },
     "asarUnpack": [
       "node_modules/better-sqlite3/**/*",
       "node_modules/koffi/**/*",
       "node_modules/@koromix/**/*",
       "node_modules/sharp/**/*",
-      "node_modules/@img/sharp-win32-x64/**/*",
       "electron/bin/**/*"
     ]
   }
