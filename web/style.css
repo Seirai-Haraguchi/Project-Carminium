@@ -3459,6 +3459,10 @@ padding: 0;
   align-items: stretch;
   gap: 2px;
   height: 40px;
+  transition: gap var(--motion-medium) var(--ease-standard);
+}
+.split-button:has(.split-btn-dropdown.active) {
+  gap: 8px;
 }
 .split-btn-main,
 .split-btn-dropdown {
@@ -3472,18 +3476,25 @@ padding: 0;
   font-family: inherit;
   font-size: 14px;
   font-weight: 500;
-  transition: background var(--motion-short) var(--ease-standard);
+  transition: background var(--motion-short) var(--ease-standard),
+              border-radius var(--motion-medium) var(--ease-standard);
 }
 .split-btn-main {
   gap: 8px;
   padding: 0 20px 0 16px;
-  border-radius: 9999px 4px 4px 9999px;
+  border-radius: 20px 4px 4px 20px;
+}
+.split-button:has(.split-btn-dropdown.active) .split-btn-main {
+  border-radius: 20px 12px 12px 20px;
 }
 .split-btn-dropdown {
   width: 40px;
   padding: 0;
   flex-shrink: 0;
-  border-radius: 4px 9999px 9999px 4px;
+  border-radius: 4px 20px 20px 4px;
+}
+.split-btn-dropdown.active {
+  border-radius: 20px;
 }
 .split-btn-main:hover,
 .split-btn-dropdown:hover {
@@ -3498,6 +3509,10 @@ padding: 0;
 }
 .split-btn-dropdown .material-symbols-rounded {
   font-size: 20px;
+  transition: transform var(--motion-medium) var(--ease-standard);
+}
+.split-btn-dropdown.active .material-symbols-rounded {
+  transform: rotate(-180deg);
 }
 .split-btn-text {
   white-space: nowrap;
@@ -3839,76 +3854,75 @@ padding: 0;
 .np-secondary-controls {
   display: flex;
   align-items: stretch;
-  background: var(--md-surface-container-low);
-  border-radius: var(--shape-full);
-  padding: 6px;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
   margin: 0 20px 12px;
-  gap: 6px;
+  gap: 2px;
+  overflow: visible;
   flex-shrink: 0;
   min-height: 0;
 }
 
-.np-secondary-btn {
+/* 分段按钮：细微间距，独立圆角，选中状态变为完整胶囊 */
+.np-secondary-controls > button {
   flex: 1;
-  height: 40px;
-  border-radius: 14px;
-  background: var(--md-surface-container);
-  color: var(--md-on-surface-variant);
-  transition: border-radius var(--motion-short) var(--ease-standard),
-              background var(--motion-short) var(--ease-standard),
-              color var(--motion-short) var(--ease-standard);
-}
-.np-secondary-btn:hover {
+  height: 44px;
+  border: none;
+  border-radius: var(--shape-sm);
   background: var(--md-surface-container-high);
   color: var(--md-on-surface);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--motion-short) var(--ease-standard),
+              color var(--motion-short) var(--ease-standard),
+              border-radius var(--motion-short) var(--ease-standard);
 }
-.np-secondary-btn.active {
-  color: var(--md-on-secondary-container);
+
+/* 首尾保持外侧完全圆角 */
+.np-secondary-controls > button:first-child {
+  border-radius: 22px var(--shape-sm) var(--shape-sm) 22px;
+}
+.np-secondary-controls > button:last-child {
+  border-radius: var(--shape-sm) 22px 22px var(--shape-sm);
+}
+
+/* 交互状态：Hover */
+.np-secondary-controls > button:hover {
+  background: var(--md-surface-container-highest);
+  color: var(--md-on-surface);
+}
+
+/* 交互状态：Active（选中状态变成完全胶囊，高优先级覆盖首尾圆角） */
+.np-secondary-controls > button.active {
   border-radius: var(--shape-full);
+  color: var(--md-on-secondary-container);
   background: var(--md-secondary-container);
 }
-.np-secondary-btn .material-symbols-rounded { font-size: 20px; }
+.np-secondary-controls > button.active:hover {
+  background: color-mix(in srgb, var(--md-on-surface) 8%, var(--md-secondary-container));
+}
 
-.np-secondary-btn.liked {
-  color: var(--md-on-error-container);
+/* 交互状态：Liked */
+.np-secondary-controls > button.liked {
   border-radius: var(--shape-full);
+  color: var(--md-on-error-container);
   background: var(--md-error-container);
 }
-.np-secondary-btn.liked .material-symbols-rounded {
-  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+.np-secondary-controls > button.liked:hover {
+  background: color-mix(in srgb, var(--md-on-surface) 8%, var(--md-error-container));
 }
 
-/* 正在播放页 — 音频模式切换按钮（excl/shrd 文字状态） */
-.np-audio-mode-btn {
+.np-secondary-controls > button .material-symbols-rounded { font-size: 20px; }
+
+/* 音频模式特殊修饰 */
+.np-secondary-controls > .np-audio-mode-btn {
   flex: 0 0 auto;
-  height: 40px;
   min-width: 56px;
   padding: 0 14px;
-  border: none;
-  border-radius: 14px;
-  background: var(--md-surface-container);
-  color: var(--md-on-surface-variant);
-  font-family: inherit;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.5px;
-  cursor: pointer;
-  transition: border-radius var(--motion-short) var(--ease-standard),
-              background var(--motion-short) var(--ease-standard),
-              color var(--motion-short) var(--ease-standard);
-}
-.np-audio-mode-btn:hover {
-  background: var(--md-surface-container-high);
-  color: var(--md-on-surface);
-}
-.np-audio-mode-btn.active {
-  color: var(--md-on-primary-container);
-  background: var(--md-primary-container);
-  border-radius: var(--shape-full);
-}
-.np-audio-mode-btn.active:hover {
-  background: var(--md-primary-container);
-  color: var(--md-on-primary-container);
 }
 .np-audio-mode-label {
   display: inline-block;
