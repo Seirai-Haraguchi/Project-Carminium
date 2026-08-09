@@ -1,6 +1,6 @@
-# 🎵 Project Carminium
+# Project Carminium
 
-> 一款为桌面打造的高品质本地音乐播放器 —— 原生音频引擎、逐字歌词、Material Design 3 界面。
+
 
 ![Light Theme](docs/screenshots/music_light.png)
 *浅色主题 — 侧边导航 + 电台页面*
