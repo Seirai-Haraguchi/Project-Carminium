@@ -49,7 +49,7 @@
 | 🎨 动态主题 | Material Design 3，从专辑封面自动提取主题色 |
 | 🌙 深色/浅色主题 | 完整的明暗双套界面 |
 | 🌍 多语言 | 简体中文、繁體中文、日本語、English、Русский |
-| 📻 Subsonic 远程流媒体 | 接入你的 NAS 或远程音乐服务器 |
+| 📻 Subsonic 远程流媒体 | 接入你的远程音乐服务器 |
 | 💬 Windows 歌词集成 | 任务栏媒体控件 + 控制中心歌词显示 |
 | ⌨️ 全局快捷键 | 播放/暂停、上下曲、音量、收藏、静音，全局生效 |
 | 🎮 手柄支持 | 游戏手柄按键映射播放控制 |
@@ -60,7 +60,7 @@
 - **WASAPI 独占模式** — 独占访问音频设备，获得比特完美（bit-perfect）输出。
 - **Gapless 无缝播放** — 曲目间零间隙切换，听专辑和现场录音不再有尴尬的停顿。
 - **智能混音** — 基于曲目能量分析的自动交叉淡入淡出，过渡自然不突兀。
-- **变速不变调** — SoundTouch 实时调整播放速度（tempo）、音高（pitch）和速率（rate）。
+- **变速变调** — SoundTouch 实时调整播放速度（tempo）、音高（pitch）和速率（rate）。
 
 ### 音乐库
 
@@ -91,7 +91,7 @@
 
 ### 下载
 
-前往 [Releases](https://github.com/Seirai-Haraguchi/Project-Carminium/releases) 页面获取最新版本便携版 `.exe`，解压即用，无需安装。
+前往 [发布](https://github.com/Seirai-Haraguchi/Project-Carminium/releases) 页面获取最新版本便携版 `.exe`，解压即用，无需安装。
 
 ---
 
