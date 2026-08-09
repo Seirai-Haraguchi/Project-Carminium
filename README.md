@@ -1,63 +1,103 @@
-# Project Carminium
+# 🎵 Project Carminium
 
+> 一款为桌面打造的高品质本地音乐播放器 —— 原生音频引擎、逐字歌词、Material Design 3 界面。
+
+![Light Theme](docs/screenshots/music_light.png)
+*浅色主题 — 侧边导航 + 电台页面*
+
+![Dark Theme](docs/screenshots/radio_dark.png)
+*深色主题*
 
 ---
 
 ## 目录
 
-- [功能特性](#功能特性)
-- [技术架构](#技术架构)
-- [环境要求](#环境要求)
-- [快速开始（一次跑通）](#快速开始一次跑通)
-- [项目结构](#项目结构)
-- [npm 脚本参考](#npm-脚本参考)
-- [原生音频模块编译](#原生音频模块编译)
-- [FFmpeg / FFprobe 二进制](#ffmpeg--ffprobe-二进制)
-- [开发模式说明](#开发模式说明)
-- [生产构建](#生产构建)
-- [常见问题排查](#常见问题排查)
-- [许可证](#许可证)
+- [🎧 普通用户](#-普通用户)
+  - [功能一览](#功能一览)
+  - [播放核心](#播放核心)
+  - [音乐库](#音乐库)
+  - [歌词体验](#歌词体验)
+  - [界面与交互](#界面与交互)
+  - [系统融合](#系统融合)
+  - [下载](#下载)
+- [⚙️ 技术用户](#️-技术用户)
+  - [技术架构](#技术架构)
+  - [技术栈](#技术栈)
+  - [环境要求](#环境要求)
+  - [快速开始（一次跑通）](#快速开始一次跑通)
+  - [项目结构](#项目结构)
+  - [npm 脚本参考](#npm-脚本参考)
+  - [原生音频模块编译](#原生音频模块编译)
+  - [FFmpeg / FFprobe 二进制](#ffmpeg--ffprobe-二进制)
+  - [开发模式说明](#开发模式说明)
+  - [生产构建](#生产构建)
+  - [常见问题排查](#常见问题排查)
+  - [许可证](#许可证)
 
 ---
 
-## 功能特性
+## 🎧 普通用户
+
+### 功能一览
+
+| 功能 | 说明 |
+|------|------|
+| 🎵 本地音乐播放 | 支持 MP3、FLAC、OGG、WAV、M4A、AAC、Opus、WMA 等主流格式 |
+| 🔊 原生音频输出 | 绕过浏览器音频栈，WASAPI 独占模式直通声卡，比特完美输出 |
+| ✨ 无缝播放 | 曲目间零间隙切换，智能交叉淡入淡出 |
+| 🎤 逐字歌词 | 多平台搜索（网易云 / QQ 音乐 / lrclib），逐字高亮同步滚动 |
+| 🎨 动态主题 | Material Design 3，从专辑封面自动提取主题色 |
+| 🌙 深色/浅色主题 | 完整的明暗双套界面 |
+| 🌍 多语言 | 简体中文、繁體中文、日本語、English、Русский |
+| 📻 Subsonic 远程流媒体 | 接入你的 NAS 或远程音乐服务器 |
+| 💬 Windows 歌词集成 | 任务栏媒体控件 + 控制中心歌词显示 |
+| ⌨️ 全局快捷键 | 播放/暂停、上下曲、音量、收藏、静音，全局生效 |
+| 🎮 手柄支持 | 游戏手柄按键映射播放控制 |
 
 ### 播放核心
-- **原生音频输出** — Zig + miniaudio 直接驱动 WASAPI（Windows）/ PulseAudio（Linux），绕过 Chromium 音频栈
-- **WASAPI 独占模式** — 支持独占模式直通音频设备，获得比特完美输出
-- **Gapless 无缝播放** — 曲目间零间隙切换
-- ** 智能混音** — 基于曲目能量分析的交叉淡入淡出
-- **SoundTouch 变速变调** — 实时 tempo / pitch / rate 调整
-- **FFmpeg 解码** — 支持 MP3、FLAC、OGG、WAV、M4A、AAC、Opus、WMA 等格式
+
+- **原生音频引擎** — Zig + miniaudio 直接驱动 WASAPI（Windows）/ PulseAudio（Linux），不经过 Chromium 音频栈，延迟更低、音质更好。
+- **WASAPI 独占模式** — 独占访问音频设备，获得比特完美（bit-perfect）输出。
+- **Gapless 无缝播放** — 曲目间零间隙切换，听专辑和现场录音不再有尴尬的停顿。
+- **智能混音** — 基于曲目能量分析的自动交叉淡入淡出，过渡自然不突兀。
+- **变速不变调** — SoundTouch 实时调整播放速度（tempo）、音高（pitch）和速率（rate）。
 
 ### 音乐库
-- **本地库** — SQLite (better-sqlite3) 存储元数据，music-metadata 解析标签
-- **FileWatcher 实时监控** — 增量扫描，自动检测文件增删改
-- **Subsonic / OpenSubsonic** — 远程流媒体服务器集成，本地缓存数据库
-- **封面艺术** — 内嵌 HTTP 封面服务器，支持 Range 请求
 
-### 歌词
-- **多平台歌词搜索** — 网易云音乐、QQ 音乐、lrclib、AMLLDB
-- **逐行歌词同步** — 支持翻译歌词、罗马音
-- **歌词样式自定义** — 渐进模糊、居中对齐、字体大小
+- **本地扫描** — 添加文件夹后自动扫描，支持增量更新，文件变动实时响应。
+- **丰富格式** — MP3、FLAC、OGG、WAV、M4A、AAC、Opus、WMA 等全覆盖。
+- **Subsonic / OpenSubsonic** — 连接你的 NAS 或远程服务器，流式播放云端音乐库，支持本地缓存。
 
-### 界面
-- **Material Design 3** — 动态取色（Monet），从专辑封面或系统壁纸提取主题色
-- **多语言** — 简体中文、繁體中文、日本語、English、Русский
-- **GSAP 动画** — 流畅的页面过渡与交互反馈
-- **视频背景** — 支持视频作为播放页背景
-- **悬浮歌词窗** — 独立歌词悬浮窗
-- **自定义标题栏** — 无边框窗口 + 自绘标题栏
+### 歌词体验
 
-### 系统集成
-- **Windows SMTC** — 系统媒体传输控制（任务栏媒体控件、控制中心歌词）
-- **AUMID 注册** — 正确注册应用标识，避免 SMTC 显示"未知应用"
-- **全局快捷键** — 播放/暂停、上下曲、音量、收藏、静音
-- **游戏手柄支持** — 手柄按键映射播放控制
+- **多源搜索** — 自动从网易云音乐、QQ 音乐、lrclib、AMLLDB 搜索歌词。
+- **逐字同步** — 逐字高亮跟随播放进度，支持翻译歌词和罗马音显示。
+- **样式自定义** — 渐进模糊效果、居中对齐、字体大小可调。
+- **悬浮歌词窗** — 独立悬浮窗口，不遮挡主界面。
+
+### 界面与交互
+
+- **Material Design 3** — Google 最新设计语言，动态取色（Monet）从专辑封面或系统壁纸提取主题色。
+- **流畅动画** — GSAP 驱动的页面过渡与交互动效。
+- **视频背景** — 支持视频作为播放页背景，沉浸感拉满。
+- **自定义标题栏** — 无边框窗口 + 自绘标题栏，视觉统一。
+- **5 种语言** — 简体中文、繁體中文、日本語、English、Русский，一键切换。
+
+### 系统融合
+
+- **Windows SMTC** — 任务栏媒体控件直接操控播放，系统控制中心显示歌曲信息与歌词。
+- **全局快捷键** — 即使窗口在后台，也能用快捷键控制播放。
+- **游戏手柄** — 支持手柄按键映射，躺椅上也能切歌。
+
+### 下载
+
+前往 [Releases](https://github.com/Seirai-Haraguchi/Project-Carminium/releases) 页面获取最新版本便携版 `.exe`，解压即用，无需安装。
 
 ---
 
-## 技术架构
+## ⚙️ 技术用户
+
+### 技术架构
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -71,7 +111,7 @@
 │  ┌──────────┐  ┌──────────┐       │   ┌──────────────┐     │
 │  │  SMTC    │  │  Bridge  │◄──────┘   │  Subsonic    │     │
 │  │ (IPC)    │  │  (IPC)   │           │  (API Client)│     │
-│  └──────────┘  └────┬─────┘           └──────────────┘     │
+│  └──────────┘  └─────┬─────┘           └──────────────┘     │
 │                      │                                       │
 │                ┌─────▼─────┐                                 │
 │                │  WASAPI   │  koffi FFI → carminium_audio.dll│
@@ -91,7 +131,7 @@
 
 | 层级 | 技术 |
 |------|------|
-| 框架 | Electron 31 (Chromium 126 / Node.js 20) |
+| 框架 | Electron 43 (Chromium ≥126 / Node.js ≥22) |
 | 前端 | 原生 HTML/CSS/JS（无构建步骤，直接加载） |
 | 动画 | GSAP 3.15 |
 | 数据库 | better-sqlite3 (SQLite) |
@@ -104,18 +144,18 @@
 
 ---
 
-## 环境要求
+### 环境要求
 
-### 必需工具
+#### 必需工具
 
 | 工具 | 版本要求 | 说明 |
 |------|----------|------|
-| **Node.js** | ≥ 20.x（推荐 20 LTS 或 22 LTS） | Electron 31 内置 Node.js 20 ABI |
+| **Node.js** | ≥ 22.x（推荐 22 LTS） | Electron 43 内置 Node.js ABI |
 | **npm** | ≥ 10.x | 随 Node.js 安装 |
 | **Git** | 任意最新版本 | 克隆仓库 |
 | **Zig** | 0.16.0 | 编译原生音频模块 `carminium_audio.dll` |
 
-### Windows 额外依赖
+#### Windows 额外依赖
 
 原生 Node 模块（better-sqlite3、sharp）编译需要以下工具：
 
@@ -126,7 +166,7 @@
 
 > 安装 Visual Studio Build Tools 时，务必在安装器中勾选 **「使用 C++ 的桌面开发」(Desktop development with C++)** 工作负载。这会安装 MSVC 编译器、Windows SDK 等 node-gyp 所需的组件。
 
-### Linux 额外依赖
+#### Linux 额外依赖
 
 ```bash
 # Debian/Ubuntu
@@ -137,22 +177,22 @@ sudo apt install -y build-essential python3 pkg-config \
 
 ---
 
-## 快速开始（一次跑通）
+### 快速开始（一次跑通）
 
 以下步骤从零开始，按照顺序执行即可在本地启动开发环境。
 
-### 第 1 步：安装 Node.js
+#### 第 1 步：安装 Node.js
 
-访问 [Node.js 官网](https://nodejs.org/) 下载并安装 **LTS 版本**（≥ 20.x）。
+访问 [Node.js 官网](https://nodejs.org/) 下载并安装 **LTS 版本**（≥ 22.x）。
 
 验证安装：
 
 ```powershell
-node --version   # 应输出 v20.x.x 或更高
+node --version   # 应输出 v22.x.x 或更高
 npm --version    # 应输出 10.x.x 或更高
 ```
 
-### 第 2 步：安装 Visual Studio Build Tools（仅 Windows）
+#### 第 2 步：安装 Visual Studio Build Tools（仅 Windows）
 
 1. 下载 [Visual Studio Build Tools 2022](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 2. 运行安装器，勾选 **「使用 C++ 的桌面开发」**
@@ -161,7 +201,7 @@ npm --version    # 应输出 10.x.x 或更高
    - Windows 11 SDK（或 Windows 10 SDK）
 4. 同时安装 [Python 3](https://www.python.org/downloads/)（勾选 Add to PATH）
 
-### 第 3 步：安装 Zig
+#### 第 3 步：安装 Zig
 
 1. 访问 [Zig 官网](https://ziglang.org/download/) 下载 **0.16.0** 版本
 2. 解压到任意目录（如 `C:\zig`）
@@ -173,14 +213,14 @@ npm --version    # 应输出 10.x.x 或更高
 zig version    # 应输出 0.16.0
 ```
 
-### 第 4 步：克隆仓库
+#### 第 4 步：克隆仓库
 
 ```powershell
-git clone <仓库地址> carminium
+git clone https://github.com/Seirai-Haraguchi/Project-Carminium.git carminium
 cd carminium
 ```
 
-### 第 5 步：安装 npm 依赖
+#### 第 5 步：安装 npm 依赖
 
 ```powershell
 npm install
@@ -192,7 +232,7 @@ npm install
 
 > **如果 `npm install` 报错**，通常是因为 Visual Studio Build Tools 未正确安装。请确认第 2 步已完成。
 
-### 第 6 步：重建原生模块
+#### 第 6 步：重建原生模块
 
 Electron 使用自己的 Node.js ABI，需要为 Electron 重新编译原生模块（better-sqlite3）：
 
@@ -200,9 +240,9 @@ Electron 使用自己的 Node.js ABI，需要为 Electron 重新编译原生模�
 npm run rebuild
 ```
 
-此命令执行 `electron-rebuild -f -w better-sqlite3`，强制为 Electron 31 的 ABI 重新编译 better-sqlite3。
+此命令执行 `electron-rebuild -f -w better-sqlite3`，强制为 Electron 的 ABI 重新编译 better-sqlite3。
 
-### 第 7 步：编译原生音频模块
+#### 第 7 步：编译原生音频模块
 
 ```powershell
 npm run build:native
@@ -210,7 +250,7 @@ npm run build:native
 
 此命令执行 `cd native && zig build copy -Doptimize=ReleaseFast`，编译 Zig 源码 + miniaudio C 源码，生成 `carminium_audio.dll` 并复制到 `electron/bin/win32/` 目录。
 
-### 第 8 步：确认 FFmpeg / FFprobe 二进制
+#### 第 8 步：确认 FFmpeg / FFprobe 二进制
 
 项目需要 FFmpeg 和 FFprobe 二进制文件放在 `electron/bin/` 目录下。检查是否已存在：
 
@@ -227,7 +267,7 @@ dir electron\bin\ffprobe.exe
 
 > Linux 用户：`sudo apt install ffmpeg`，然后创建符号链接或复制到 `electron/bin/`。
 
-### 第 9 步：启动开发模式
+#### 第 9 步：启动开发模式
 
 ```powershell
 npm run dev
@@ -237,12 +277,12 @@ npm run dev
 
 ---
 
-## 一键安装（Windows）
+### 一键安装（Windows）
 
 如果已安装好所有前置工具（Node.js、Zig、VS Build Tools、Python），可以快速执行：
 
 ```powershell
-git clone <仓库地址> carminium
+git clone https://github.com/Seirai-Haraguchi/Project-Carminium.git carminium
 cd carminium
 npm run install:win
 npm run build:native
@@ -253,7 +293,7 @@ npm run dev
 
 ---
 
-## 项目结构
+### 项目结构
 
 ```
 carminium/
@@ -333,6 +373,7 @@ carminium/
 │   ├── start-electron.js      # Electron 启动器（清理环境变量）
 │   └── diagnose-smtc.js       # SMTC 诊断工具
 │
+├── docs/screenshots/          # 截图资源
 ├── build/                     # 构建资源
 │   ├── icon.png               # 应用图标（PNG 源）
 │   └── icon-512.png           # 高分辨率图标
@@ -346,7 +387,7 @@ carminium/
 
 ---
 
-## npm 脚本参考
+### npm 脚本参考
 
 | 命令 | 说明 |
 |------|------|
@@ -370,11 +411,11 @@ carminium/
 
 ---
 
-## 原生音频模块编译
+### 原生音频模块编译
 
 原生音频模块 `carminium_audio.dll`（Windows）/ `carminium_audio.so`（Linux）是 Carminium 的核心音频渲染后端，由 Zig + miniaudio + SoundTouch 编译而成。
 
-### 构建流程
+#### 构建流程
 
 ```powershell
 # Windows 原生构建
@@ -389,7 +430,7 @@ npm run build:native
 4. 生成 `carminium_audio.dll`
 5. 复制到 `electron/bin/win32/carminium_audio.dll`
 
-### DLL 查找路径
+#### DLL 查找路径
 
 `wasapi.js` 按以下顺序查找原生库：
 
@@ -397,14 +438,14 @@ npm run build:native
 2. `electron/bin/carminium_audio.dll`（兼容旧结构）
 3. `native/zig-out/bin/carminium_audio.dll`（开发构建输出）
 
-### 手动构建（不通过 npm）
+#### 手动构建（不通过 npm）
 
 ```powershell
 cd native
 zig build copy -Doptimize=ReleaseFast
 ```
 
-### Linux 交叉编译（在 Windows 上）
+#### Linux 交叉编译（在 Windows 上）
 
 ```powershell
 npm run build:native:linux
@@ -413,11 +454,11 @@ npm run build:native:linux
 
 ---
 
-## FFmpeg / FFprobe 二进制
+### FFmpeg / FFprobe 二进制
 
 Carminium 使用 FFmpeg 子进程进行音频解码，使用 FFprobe 探测媒体信息。这两个二进制文件不包含在 Git 仓库中，需要手动放置。
 
-### Windows
+#### Windows
 
 1. 下载 FFmpeg Windows 构建：[gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 或 [BtbN](https://github.com/BtbN/FFmpeg-Builds/releases)
 2. 提取 `ffmpeg.exe` 和 `ffprobe.exe`
@@ -428,7 +469,7 @@ electron/bin/ffmpeg.exe
 electron/bin/ffprobe.exe
 ```
 
-### Linux
+#### Linux
 
 ```bash
 # 安装系统包
@@ -443,7 +484,7 @@ ln -s $(which ffprobe) electron/bin/ffprobe
 
 ---
 
-## 开发模式说明
+### 开发模式说明
 
 ```powershell
 npm run dev
@@ -456,7 +497,7 @@ npm run dev
 - 数据库存储在 `%APPDATA%\Carminium\library.db`
 - 封面 HTTP 服务器监听 `127.0.0.1` 随机端口
 
-### 设置数据位置
+#### 设置数据位置
 
 | 平台 | 路径 |
 |------|------|
@@ -468,7 +509,7 @@ npm run dev
 - `library.db` — SQLite 音乐库数据库
 - `app-icon.ico` — 自动生成的 ICO 图标（SMTC 用）
 
-### 开发调试技巧
+#### 开发调试技巧
 
 - **DevTools Console** — 查看 IPC 通信、Bridge 事件、音频引擎日志
 - **主进程日志** — 终端输出（AUMID 注册、原生库加载、FFmpeg 进程等）
@@ -478,9 +519,9 @@ npm run dev
 
 ---
 
-## 生产构建
+### 生产构建
 
-### Windows 便携版
+#### Windows 便携版
 
 ```powershell
 # 完整构建（推荐）
@@ -492,7 +533,7 @@ npm run build
 # 输出: dist-electron/Project Carminium-<version>-portable.exe
 ```
 
-### 构建目录（用于测试）
+#### 构建目录（用于测试）
 
 ```powershell
 npm run build:dir
@@ -500,7 +541,7 @@ npm run build:dir
 # 可直接运行 win-unpacked/Project Carminium.exe
 ```
 
-### Linux 构建
+#### Linux 构建
 
 ```powershell
 # deb + AppImage
@@ -513,7 +554,7 @@ npm run build:linux-deb
 npm run build:linux-portable
 ```
 
-### 构建配置
+#### 构建配置
 
 构建配置在 `package.json` 的 `"build"` 字段中：
 
@@ -526,7 +567,7 @@ npm run build:linux-portable
 
 ---
 
-## 常见问题排查
+### 常见问题排查
 
 ### 1. `npm install` 失败
 
@@ -550,7 +591,7 @@ npm run build:linux-portable
 - 确认 Electron 版本：`npx electron --version`
 - 手动指定 Electron 版本重建：
   ```powershell
-  npx electron-rebuild -f -w better-sqlite3 --version=31.7.7
+  npx electron-rebuild -f -w better-sqlite3 --version=43.2.0
   ```
 
 ### 3. `npm run build:native` 失败
@@ -613,20 +654,12 @@ PowerShell 旧版本不支持 `&&` 运算符。使用 `;` 分隔命令，或升�
 
 | 项目 | 值 |
 |------|-----|
-| 版本 | 0.5.3.1-20260802 |
-| 构建号 | 11 |
+| 版本 | 0.6.3-1.20260808 |
 | 代号 | Shiroko |
 | 许可证 | LGPL-3.0-or-later |
 | 作者 | Seirai Haraguchi |
 
-版本信息定义在 `version.json` 中：
-```json
-{
-  "version": "0.5.3.1-20260802",
-  "build": 11,
-  "codename": "Shiroko"
-}
-```
+版本信息定义在 `version.json` 中。
 
 ---
 
