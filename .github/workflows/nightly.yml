@@ -6,11 +6,6 @@ on:
     - cron: '0 16 * * *'
   workflow_dispatch:
 
-env:
-  # BtbN/FFmpeg-Builds 下载地址
-  FFMPEG_WIN_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip
-  FFMPEG_LINUX_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux-amd64-gpl.tar.xz
-
 jobs:
   # ─────────────────────────────────────────────
   # 1. 更新版本号日期并提交
@@ -85,8 +80,11 @@ jobs:
       - name: Download ffmpeg/ffprobe (Windows)
         shell: pwsh
         run: |
-          Write-Host "Downloading ffmpeg for Windows..."
-          Invoke-WebRequest -Uri $env:FFMPEG_WIN_URL -OutFile ffmpeg.zip -MaximumRedirection 5
+          Write-Host "Fetching BtbN/FFmpeg-Builds latest release..."
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest" -Headers @{ "User-Agent" = "CI" }
+          $asset = $release.assets | Where-Object { $_.name -match "win64-gpl\.zip$" -and $_.name -notmatch "shared" } | Select-Object -First 1
+          Write-Host "Downloading $($asset.name) ($([math]::Round($asset.size / 1MB, 1)) MB)..."
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile ffmpeg.zip
           Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-temp -Force
           $binDir = Get-ChildItem ffmpeg-temp -Directory | Select-Object -First 1
           Copy-Item "$($binDir.FullName)\bin\ffmpeg.exe" electron\bin\win32\ffmpeg.exe -Force
@@ -146,12 +144,17 @@ jobs:
 
       - name: Download ffmpeg/ffprobe (Linux)
         run: |
-          echo "Downloading ffmpeg for Linux..."
-          curl -L -o ffmpeg.tar.xz "$FFMPEG_LINUX_URL"
+          echo "Fetching BtbN/FFmpeg-Builds latest release..."
+          FFMPEG_URL=$(curl -s https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest \
+            | jq -r '.assets[] | select(.name | endswith("linux64-gpl.tar.xz")) | .browser_download_url' \
+            | head -1)
+          echo "Downloading $FFMPEG_URL..."
+          curl -L -o ffmpeg.tar.xz "$FFMPEG_URL"
+          DIR=$(tar tf ffmpeg.tar.xz | head -1 | cut -d/ -f1)
           tar xf ffmpeg.tar.xz
-          cp ffmpeg-master-latest-linux-amd64-gpl/bin/ffmpeg  electron/bin/linux/ffmpeg
-          cp ffmpeg-master-latest-linux-amd64-gpl/bin/ffprobe electron/bin/linux/ffprobe
-          rm -rf ffmpeg-master-latest-linux-amd64-gpl ffmpeg.tar.xz
+          cp "$DIR/bin/ffmpeg"  electron/bin/linux/ffmpeg
+          cp "$DIR/bin/ffprobe" electron/bin/linux/ffprobe
+          rm -rf "$DIR" ffmpeg.tar.xz
           echo "ffmpeg installed:"; electron/bin/linux/ffprobe -version | head -1
 
       - name: Build native library (Zig)
