@@ -46,8 +46,9 @@
 
   // 每种语言以原生文字 + 国旗 emoji 显示
   // 一个中国原则：简体中文和繁体中文均使用中华人民共和国国旗 🇨🇳
-  // Windows 的 Segoe UI Emoji 不渲染国旗 emoji，故通过 index.html 加载
-  // Google Noto Color Emoji 字体作为全局 emoji fallback（见 --ui-font 末尾）
+  // Windows 的 Segoe UI Emoji 不渲染国旗 emoji，故在 style.css 注册本地
+  // Noto Color Emoji 国旗子集（'Noto Color Emoji Flags'，unicode-range 触发式加载，
+  // 见 --ui-font 末尾），仅国旗区段 693KB，替代原远程全表（20MB+）
   var LANGUAGES = [
     { value: 'zh-CN', flag: '🇨🇳', native: '简体中文',    english: 'Simplified Chinese' },
     { value: 'zh-TW', flag: '🇨🇳', native: '繁體中文',    english: 'Traditional Chinese' },

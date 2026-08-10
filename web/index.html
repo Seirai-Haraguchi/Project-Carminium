@@ -5,15 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Project Carminium</title>
   <meta name="description" content="Carminium — 本地音乐播放器">
-  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-  <meta http-equiv="Pragma" content="no-cache">
-  <meta http-equiv="Expires" content="0">
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght,GRAD@8..48,100..700,-200..150&display=swap">
-  <!-- Noto Color Emoji：补充 Windows 缺失的彩色 emoji（含国旗）渲染 -->
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap">
+  <!-- 字体全部自托管（见 style.css @font-face）：
+       - Material Symbols Rounded / Roboto / Noto Sans* → web/fonts/ 本地子集
+       - Google Sans Flex → 本地 latin 子集（style.css 内 @font-face + unicode-range）
+       - Noto Color Emoji → 仅国旗区段本地子集（unicode-range 触发式加载，平时零开销）-->
   <link rel="stylesheet" href="style.css">
 </head>
 <body>

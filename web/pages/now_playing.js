@@ -408,17 +408,21 @@ let _lastKnownPositionMs = 0;
     });
   }
 
-  // ── 背景模糊源降采样（参考 folia-major 的 FluidBackground） ──
+  // ── 背景模糊源：降采样 + 滤镜一次性烘焙（参考 folia-major 的 FluidBackground） ──
   // 96px 高斯模糊会抹掉一切小于模糊半径的细节，因此 ≤384px 的模糊源与全尺寸原图
-  // 模糊后视觉完全等同；但小图的纹理上传是单 tile 的，可彻底消除大封面首次合成时
-  // 的网格光栅闪烁，并让静态烘焙滤镜的光栅化成本大幅下降。离屏解码不触碰屏幕。
+  // 模糊后视觉完全等同。滤镜（blur/saturate/brightness）在构建期用 canvas ctx.filter
+  // 一次性烘进位图，CSS 侧不再保留任何运行时 filter —— 合成层只是普通图片 quad，
+  // 彻底消除全屏模糊的光栅/纹理中间缓冲（渲染进程与 GPU 进程双端收益）。
   var BG_BLUR_SOURCE_MAX = 384;
+  // 烘焙模糊半径：384px 源图上的 16px ≈ 全屏 80~110px 的视觉效果（随放大等比缩放），
+  // 远大于任何封面细节尺度，视觉与运行时 blur(96px) 不可区分。
+  var BG_BAKE_BLUR = 16;
   var BG_BLUR_CACHE_LIMIT = 24;
-  var _bgBlurSourceCache = new Map(); // 封面 URL → 降采样 dataURL（LRU）
+  var _bgBlurSourceCache = new Map(); // 封面 URL → { base, surge } 烘焙 dataURL 对（LRU）
 
   /**
-   * 构建降采样模糊源。resolve 值：
-   *   dataURL/原 URL — 可用作背景图；null — 封面加载失败（调用方回退纯色）。
+   * 构建降采样 + 烘焙滤镜的背景图源（基底/涌动两个变体）。resolve 值：
+   *   { base, surge } — 可用作背景图的 dataURL/原 URL；null — 封面加载失败（调用方回退纯色）。
    */
   function _buildBgBlurSource(url) {
     var cached = _bgBlurSourceCache.get(url);
@@ -431,28 +435,44 @@ let _lastKnownPositionMs = 0;
         try {
           var nw = img.naturalWidth || img.width;
           var nh = img.naturalHeight || img.height;
-          if (!nw || !nh) { resolve(url); return; }
+          if (!nw || !nh) { resolve({ base: url, surge: url }); return; }
           var scale = Math.min(1, BG_BLUR_SOURCE_MAX / Math.max(nw, nh));
-          // 原图已足够小：无需降采样，直接用原 URL
-          if (scale >= 1) { resolve(url); return; }
-          var canvas = document.createElement('canvas');
-          canvas.width = Math.max(1, Math.round(nw * scale));
-          canvas.height = Math.max(1, Math.round(nh * scale));
-          var ctx = canvas.getContext('2d');
-          if (!ctx) { resolve(url); return; }
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'high';
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          var dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+          var w = Math.max(1, Math.round(nw * scale));
+          var h = Math.max(1, Math.round(nh * scale));
+          // 先降采样到源画布（无滤镜）
+          var src = document.createElement('canvas');
+          src.width = w;
+          src.height = h;
+          var sctx = src.getContext('2d');
+          if (!sctx) { resolve({ base: url, surge: url }); return; }
+          sctx.imageSmoothingEnabled = true;
+          sctx.imageSmoothingQuality = 'high';
+          sctx.drawImage(img, 0, 0, w, h);
+          // 烘焙：以 3σ 过扫描绘制源图，使模糊边缘采样来自图像自身而非透明黑，
+          // 消除烘焙模糊的边缘渗出（配合 CSS 侧收窄的 inset 过扫描）。
+          var pad = Math.ceil(BG_BAKE_BLUR * 3);
+          function bake(filter) {
+            var c = document.createElement('canvas');
+            c.width = w;
+            c.height = h;
+            var ctx = c.getContext('2d');
+            if (!ctx) return null;
+            ctx.filter = filter;
+            ctx.drawImage(src, -pad, -pad, w + pad * 2, h + pad * 2);
+            return c.toDataURL('image/jpeg', 0.82);
+          }
+          var base = bake('blur(' + BG_BAKE_BLUR + 'px) saturate(1.6) brightness(1.05)');
+          var surge = bake('blur(' + BG_BAKE_BLUR + 'px) saturate(2.5) brightness(1.28)');
+          var result = (base && surge) ? { base: base, surge: surge } : { base: url, surge: url };
           // LRU：超限逐出最旧条目
           if (_bgBlurSourceCache.size >= BG_BLUR_CACHE_LIMIT) {
             _bgBlurSourceCache.delete(_bgBlurSourceCache.keys().next().value);
           }
-          _bgBlurSourceCache.set(url, dataUrl);
-          resolve(dataUrl);
+          _bgBlurSourceCache.set(url, result);
+          resolve(result);
         } catch (e) {
           // canvas 被污染等情况：回退原 URL
-          resolve(url);
+          resolve({ base: url, surge: url });
         }
       };
       img.onerror = function () { resolve(null); };
@@ -464,7 +484,28 @@ let _lastKnownPositionMs = 0;
   // url      封面图地址（有封面时）
   // fallback 无封面时使用的纯色（哈希色）；两者皆空表示无曲目，淡出全部封面层
   // 结构：包装层（opacity 交叉淡入淡出）内叠「基底 + 涌动」两个静态烘焙滤镜层，
-  // 封面图通过 --cover-image / --cover-color CSS 变量一次性下发，滤镜永不重光栅。
+  // 封面图通过 --cover-image-base / --cover-image-surge / --cover-color CSS 变量
+  // 一次性下发；滤镜已在 _buildBgBlurSource 中烘进位图，CSS 侧零运行时 filter。
+  // 交叉淡入过渡期间临时挂 will-change（.fading），过渡结束即移除，
+  // 避免两个全屏包装层常年各占一个独立合成层（过渡本身会自动临时提升，
+  // 但显式挂接可消除首帧提升抖动；结束后移除释放合成层内存）。
+  var _bgFadeClearTimer = null;
+  function _markBgFading(next, prev) {
+    if (_bgFadeClearTimer) { clearTimeout(_bgFadeClearTimer); _bgFadeClearTimer = null; }
+    next.classList.add('fading');
+    prev.classList.add('fading');
+    var done = function () {
+      next.classList.remove('fading');
+      prev.classList.remove('fading');
+      next.removeEventListener('transitionend', onEnd);
+      if (_bgFadeClearTimer) { clearTimeout(_bgFadeClearTimer); _bgFadeClearTimer = null; }
+    };
+    var onEnd = function (e) { if (e.propertyName === 'opacity') done(); };
+    next.addEventListener('transitionend', onEnd);
+    // 安全兜底：transitionend 丢失（如过渡被打断）时 1.8s 后强制清理
+    _bgFadeClearTimer = setTimeout(done, 1800);
+  }
+
   function _setBgCover(url, fallbackColor) {
     if (!els.bgCoverA || !els.bgCoverB) return;
     var gen = ++_bgGen;
@@ -474,26 +515,30 @@ let _lastKnownPositionMs = 0;
     function reveal() {
       // 已有更新的曲目请求，丢弃这次过期的加载结果
       if (gen !== _bgGen) return;
+      _markBgFading(next, prev);
       next.classList.add('active');
       prev.classList.remove('active');
       _bgActiveA = !_bgActiveA;
     }
 
     if (url) {
-      // 先离屏构建降采样模糊源（含解码），完成后再切换，避免背景空白闪烁
-      _buildBgBlurSource(url).then(function (bgUrl) {
+      // 先离屏构建降采样+烘焙滤镜的背景源（含解码），完成后再切换，避免背景空白闪烁
+      _buildBgBlurSource(url).then(function (bgUrls) {
         if (gen !== _bgGen) return;
-        if (bgUrl) {
-          next.style.setProperty('--cover-image', 'url("' + bgUrl + '")');
+        if (bgUrls) {
+          next.style.setProperty('--cover-image-base', 'url("' + bgUrls.base + '")');
+          next.style.setProperty('--cover-image-surge', 'url("' + bgUrls.surge + '")');
           next.style.removeProperty('--cover-color');
         } else {
-          next.style.removeProperty('--cover-image');
+          next.style.removeProperty('--cover-image-base');
+          next.style.removeProperty('--cover-image-surge');
           next.style.setProperty('--cover-color', fallbackColor || 'var(--md-surface-container-low)');
         }
         reveal();
       });
     } else if (fallbackColor) {
-      next.style.removeProperty('--cover-image');
+      next.style.removeProperty('--cover-image-base');
+      next.style.removeProperty('--cover-image-surge');
       next.style.setProperty('--cover-color', fallbackColor);
       reveal();
     } else {
@@ -1130,11 +1175,15 @@ let _lastKnownPositionMs = 0;
           App.state.currentDominantRgb = null;
           _setBgCover(null, App.utils.hashColor(track.album || track.title));
         };
-        App.utils.loadCover(els.coverImg, track.id, 'max');
+        // 封面 UI 最大显示 ~400px CSS（×2 DPR = 800px 封顶）：
+        // 不再用 'max' 拉全尺寸原图（3000px 封面解码即 36MB），800px 视觉无损
+        App.utils.loadCover(els.coverImg, track.id, 800);
       }
       els.coverImg.style.display = '';
       els.coverIcon.style.display = 'none';
-      _setBgCover(window.coverUrl ? window.coverUrl(track.id, 'max') : null, null);
+      // 背景模糊源最终降到 ≤384px 烘焙，直接向服务器要 384px，
+      // 避免为取模糊源而下载/解码全尺寸封面
+      _setBgCover(window.coverUrl ? window.coverUrl(track.id, 384) : null, null);
     } else {
       els.coverImg.style.display = 'none';
       els.coverIcon.style.display = '';
@@ -2148,6 +2197,9 @@ let _lastKnownPositionMs = 0;
       for (var j = 0; j < lines.length; j++) {
         lines[j].classList.remove('active', 'past');
         if (j < idx) lines[j].classList.add('past');
+        // will-change 收窄：仅激活行 ±2 行挂合成层提示（np-near），
+        // 其余行静态不提升，fullscreen 可见行多时显著减少合成层常驻内存
+        lines[j].classList.toggle('np-near', j >= idx - 2 && j <= idx + 2);
       }
       if (lines[idx]) lines[idx].classList.add('active');
 

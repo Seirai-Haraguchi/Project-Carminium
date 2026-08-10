@@ -307,7 +307,9 @@
     _onResize: function () {
       if (!this._active) return;
       var rect = this._bg.getBoundingClientRect();
-      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      // DPR 封顶 1：背景视频之上有遮罩/噪点层且人眼对背景动态无像素级敏感度，
+      // 高 DPR（4K/缩放屏）下全屏 canvas 后备缓冲可达数十 MB，封顶后视觉不可分辨
+      var dpr = 1;
       var w = Math.floor(rect.width * dpr);
       var h = Math.floor(rect.height * dpr);
       if (w > 0 && h > 0) {

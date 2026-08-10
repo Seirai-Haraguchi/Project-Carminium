@@ -1,0 +1,217 @@
+name: Nightly Build & Prerelease
+
+on:
+  schedule:
+    # 每天 UTC 16:00 运行（北京时间次日 00:00）
+    - cron: '0 16 * * *'
+  workflow_dispatch:
+
+jobs:
+  # ─────────────────────────────────────────────
+  # 1. 更新版本号日期并提交
+  # ─────────────────────────────────────────────
+  update-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.update.outputs.version }}
+      date: ${{ steps.update.outputs.date }}
+      changed: ${{ steps.update.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Update version date & sync
+        id: update
+        run: |
+          # 更新 version.json 中的日期 (UTC+8 北京时间)
+          node -e "
+            const fs = require('fs');
+            const now = new Date();
+            const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+            const dateStr = utc8.getFullYear().toString() +
+              String(utc8.getMonth() + 1).padStart(2, '0') +
+              String(utc8.getDate()).padStart(2, '0');
+            const data = JSON.parse(fs.readFileSync('version.json', 'utf-8'));
+            const oldVersion = data.version;
+            const prefix = oldVersion.replace(/-\d+$/, '');
+            data.version = prefix + '-' + dateStr;
+            fs.writeFileSync('version.json', JSON.stringify(data, null, 2) + '\n', 'utf-8');
+            console.log('Updated: ' + oldVersion + ' -> ' + data.version);
+          "
+
+          # 同步到 package.json (semver 格式)
+          node scripts/sync-version.js
+
+          # 输出版本信息
+          VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('version.json','utf-8')).version)")
+          DATE=$(node -e "console.log(JSON.parse(require('fs').readFileSync('version.json','utf-8')).version.match(/(\d{8})$/)[1])")
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "date=${DATE}" >> "$GITHUB_OUTPUT"
+
+          # 提交并推送
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version.json package.json
+
+          if git diff --staged --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No changes to commit"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git commit -m "chore(nightly): update version date to ${VERSION}"
+            git push
+          fi
+
+  # ─────────────────────────────────────────────
+  # 2. Windows 构建
+  # ─────────────────────────────────────────────
+  build-windows:
+    needs: update-version
+    if: needs.update-version.outputs.changed == 'true'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.14.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build native library (Zig)
+        working-directory: native
+        run: zig build copy copy-legacy -Doptimize=ReleaseFast
+
+      - name: Rebuild native addons
+        run: npm run rebuild
+
+      - name: Build Electron app (portable)
+        run: npm run build:portable
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: dist-electron/*.exe
+          retention-days: 7
+
+  # ─────────────────────────────────────────────
+  # 3. Linux 构建
+  # ─────────────────────────────────────────────
+  build-linux:
+    needs: update-version
+    if: needs.update-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.14.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build native library (Zig)
+        working-directory: native
+        run: zig build copy copy-legacy -Doptimize=ReleaseFast
+
+      - name: Rebuild native addons
+        run: npm run rebuild
+
+      - name: Build Electron app (deb + AppImage)
+        run: npm run build:linux
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: |
+            dist-electron/*.deb
+            dist-electron/*.AppImage
+          retention-days: 7
+
+  # ─────────────────────────────────────────────
+  # 4. 创建 GitHub Prerelease
+  # ─────────────────────────────────────────────
+  release:
+    needs: [update-version, build-windows, build-linux]
+    if: needs.update-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-artifacts
+          path: artifacts
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-artifacts
+          path: artifacts
+
+      - name: List artifacts
+        run: ls -lh artifacts/
+
+      - name: Create prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly-${{ needs.update-version.outputs.date }}
+          name: Nightly ${{ needs.update-version.outputs.version }}
+          prerelease: true
+          body: |
+            ## Nightly Build
+
+            **版本:** `${{ needs.update-version.outputs.version }}`
+            **构建日期:** `${{ needs.update-version.outputs.date }}`
+
+            > ⚠️ 这是自动构建的 nightly 版本，可能不稳定。
+
+            ### 下载
+            - **Windows:** `portable .exe` — 免安装便携版
+            - **Linux:** `.deb` — Debian/Ubuntu 安装包
+            - **Linux:** `.AppImage` — 免安装直接运行
+          files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup old nightly releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 删除 7 天前的 nightly releases，仅保留最近 7 天
+          CUTOFF=$(date -d "7 days ago" +%Y%m%d)
+          echo "Cleaning up nightly releases older than ${CUTOFF}"
+          gh release list --limit 100 | grep 'Nightly' | while IFS= read -r line; do
+            TAG=$(echo "$line" | awk '{print $1}')
+            TAG_DATE=$(echo "$TAG" | grep -oP '\d{8}')
+            if [ -n "$TAG_DATE" ] && [ "$TAG_DATE" -lt "$CUTOFF" ]; then
+              echo "Deleting old nightly release: ${TAG}"
+              gh release delete "$TAG" --yes --cleanup-tag
+            fi
+          done

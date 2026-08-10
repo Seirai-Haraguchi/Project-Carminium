@@ -63,6 +63,10 @@ function _getSharp() {
   if (_sharpModule === undefined) {
     try {
       _sharpModule = require('sharp');
+      // libvips 默认操作缓存可达 ~50MB（驻留主进程 RSS），封面缩放是低频小图操作，
+      // 收紧缓存并串行化并发，换取常驻内存大幅下降，功能与输出质量不受影响
+      _sharpModule.cache({ memory: 8, files: 0, items: 30 });
+      _sharpModule.concurrency(1);
     } catch (e) {
       _sharpModule = null;
       console.warn('[cover-server] sharp 不可用，封面将按原始分辨率返回：', e && e.message);
@@ -72,8 +76,9 @@ function _getSharp() {
 }
 
 // 缩放结果缓存（按 track_id + 尺寸），避免对热门曲目重复解码
+// 2026-08：从 300 降至 80，每张缩略图 ~10-50KB，80 张 ≈ 0.8-4MB
 const _resizeCache = new Map();
-const RESIZE_CACHE_MAX = 300;
+const RESIZE_CACHE_MAX = 80;
 
 function _parseSizeFromUrl(reqUrl) {
   try {
@@ -141,6 +146,11 @@ class CoverHTTPServer {
       this._server.close();
       this._server = null;
     }
+  }
+
+  /** 清空封面缩放缓存（内存压力时调用） */
+  clearResizeCache() {
+    _resizeCache.clear();
   }
 
   get baseUrl() {
@@ -217,7 +227,9 @@ class CoverHTTPServer {
       const headers = {
         'Content-Type': 'image/jpeg',
         'Content-Length': out.length,
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        // 封面按 trackId+size 寻址且内容稳定：允许 Chromium HTTP 缓存命中，
+        // 避免同一封面跨页面/跨会话反复拉取与解码（no-store 会强制每次全量重取）
+        'Cache-Control': 'private, max-age=300',
         'Access-Control-Allow-Origin': '*',
       };
       this._sendHeaders(res, 200, headers);
@@ -228,7 +240,7 @@ class CoverHTTPServer {
         const headers = {
           'Content-Type': 'image/jpeg',
           'Content-Length': data.length,
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Cache-Control': 'private, max-age=300',
           'Access-Control-Allow-Origin': '*',
         };
         this._sendHeaders(res, 200, headers);

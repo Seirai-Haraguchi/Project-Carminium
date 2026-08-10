@@ -130,14 +130,17 @@ class MusicLibrary {
     //
     // 策略：
     //   1. 磁盘缓存（dataDir/cover_cache/<sha1(trackId)>.jpg）— 持久化，跨重启有效
-    //   2. 内存 LRU（最近访问的 50 张，约 1.5MB）— 加速热数据，避免反复读磁盘
+    //   2. 内存 LRU（最近访问的 20 张）— 加速热数据，避免反复读磁盘
+    //
+    // 2026-08：内存上限从 50 降至 20。FLAC 等格式的内嵌封面可达 1-5MB/张，
+    // 50 张最坏情况占 50-250MB 主进程 RSS。20 张 + 磁盘缓存已足够覆盖热数据。
     //
     // 流程：
     //   - 请求 → 内存命中？返回
     //   - 内存未命中 → 磁盘缓存命中？读磁盘 + 提升到内存 → 返回
     //   - 磁盘未命中 → 读音频文件 + 提取 → 写磁盘 + 写内存 → 返回
     this._coverDataCache = new Map();  // track_id → Buffer（内存热缓存）
-    this._coverDataCacheMax = 50;       // 内存上限（每张 ~30KB，50 张 ≈ 1.5MB）
+    this._coverDataCacheMax = 20;       // 内存上限（收紧，大库下防止 RSS 激增）
     this._coverCacheDir = path.join(settings.dataDir, 'cover_cache');
     try {
       fs.mkdirSync(this._coverCacheDir, { recursive: true });

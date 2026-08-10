@@ -57,7 +57,7 @@ class Bridge extends EventEmitter {
     }
 
     // ── 接入主进程内存管理器 ──
-    // 注册定时清理回调：每 60s 检查 AnalysisCache 是否需要 flush
+    // 注册定时清理回高与紧急清理回调
     try {
       const { getInstance: getMemoryManager } = require('./memory_manager');
       const memMgr = getMemoryManager();
@@ -68,6 +68,23 @@ class Bridge extends EventEmitter {
             console.warn('[bridge] AnalysisCache flush during cleanup failed:', e.message);
           }
         }
+      });
+      // 紧急清理：清空封面缩放缓存 + 封面原始数据缓存 + 轨道 JSON 缓存
+      // 这些缓存均有磁盘后备，清空后仅性能略降（重新读磁盘/重新序列化），不影响功能
+      memMgr.onEmergencyCleanup(() => {
+        // cover-server 的缩放结果缓存
+        if (this._coverServer && typeof this._coverServer.clearResizeCache === 'function') {
+          try { this._coverServer.clearResizeCache(); } catch (e) { /* ignore */ }
+        }
+        // library 的封面原始数据缓存
+        if (this._lib && this._lib._coverDataCache) {
+          try { this._lib._coverDataCache.clear(); } catch (e) { /* ignore */ }
+        }
+        // 轨道 JSON 缓存（大库下可达 5-20MB）
+        this._allTracksJson = null;
+        this._allTracksJsonDirty = true;
+        this._foldersJson = null;
+        this._foldersJsonDirty = true;
       });
     } catch (e) {
       console.warn('[bridge] Memory manager integration failed:', e.message);
@@ -188,16 +205,14 @@ class Bridge extends EventEmitter {
   // ── Audio PCM 中継メソッド ────────────────────────────────────────────
 
   _sendAudioPcm(channel, float32Array) {
-    // Float32Array を ArrayBuffer として送信（IPC で structured clone される）
-    const ab = float32Array.buffer.slice(
-      float32Array.byteOffset,
-      float32Array.byteOffset + float32Array.byteLength
-    );
+    // Float32Array 视图直接发送：structured clone 只序列化视图的字节范围，
+    // 无需 buffer.slice 再做一次全量拷贝（44.1kHz 立体声 f32 ≈ 352KB/s 的持续流量，
+    // 每次省一次拷贝可显著降低主进程 external/arrayBuffers 的分配churn）。
     const ipcChannel = channel === 'main' ? 'audio_pcm_main' : 'audio_pcm_next';
     // PCM データは主窗口にのみ送信（浮動窗口は音声データを使用せず、
     // 不要な IPC 転送と structured clone によるメモリ無駄遣いを避ける）
     if (this._mainWindow && !this._mainWindow.isDestroyed()) {
-      this._mainWindow.webContents.send(ipcChannel, ab);
+      this._mainWindow.webContents.send(ipcChannel, float32Array);
     }
   }
 
