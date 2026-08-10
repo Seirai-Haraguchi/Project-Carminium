@@ -100,7 +100,7 @@ jobs:
         run: npx @electron/rebuild -f -w better-sqlite3
 
       - name: Build Electron app (portable)
-        run: npx electron-builder --win portable
+        run: npx electron-builder --win portable --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -165,7 +165,7 @@ jobs:
         run: npx @electron/rebuild -f -w better-sqlite3
 
       - name: Build Electron app (deb + AppImage)
-        run: npx electron-builder --linux
+        run: npx electron-builder --linux --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
