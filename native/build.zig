@@ -85,7 +85,7 @@ pub fn build(b: *std.Build) void {
     // macOS:   electron/bin/darwin/carminium_audio.dylib（lib プレフィックスなし）
     const dest_subdir = if (is_windows) "win32" else if (is_linux) "linux" else if (is_macos) "darwin" else "other";
     const dest_file = if (is_windows) "carminium_audio.dll" else if (is_linux) "carminium_audio.so" else if (is_macos) "carminium_audio.dylib" else "carminium_audio.unknown";
-    const dest_rel = "../../electron/bin/" ++ dest_subdir ++ "/" ++ dest_file;
+    const dest_rel = b.fmt("../../electron/bin/{s}/{s}", .{ dest_subdir, dest_file });
     const copy_lib = b.addInstallBinFile(lib.getEmittedBin(), dest_rel);
     copy_step.dependOn(&copy_lib.step);
     copy_step.dependOn(&lib.step);
