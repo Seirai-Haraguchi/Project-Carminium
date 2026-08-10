@@ -59,7 +59,8 @@ jobs:
   # ─────────────────────────────────────────────
   build-windows:
     needs: update-version
-    if: needs.update-version.outputs.changed == 'true'
+    # 定时触发：仅版本变更时构建；手动触发：始终构建
+    if: needs.update-version.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -115,7 +116,8 @@ jobs:
   # ─────────────────────────────────────────────
   build-linux:
     needs: update-version
-    if: needs.update-version.outputs.changed == 'true'
+    # 定时触发：仅版本变更时构建；手动触发：始终构建
+    if: needs.update-version.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -176,7 +178,7 @@ jobs:
   # ─────────────────────────────────────────────
   release:
     needs: [update-version, build-windows, build-linux]
-    if: needs.update-version.outputs.changed == 'true'
+    if: needs.update-version.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -196,12 +198,14 @@ jobs:
       - name: List artifacts
         run: ls -lh artifacts/
 
-      - name: Create prerelease
+      - name: Create or update prerelease
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly-${{ needs.update-version.outputs.date }}
           name: Nightly ${{ needs.update-version.outputs.version }}
           prerelease: true
+          make_latest: 'false'
+          allowUpdates: true
           body: |
             ## Nightly Build
 
