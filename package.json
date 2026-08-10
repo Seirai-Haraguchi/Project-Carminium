@@ -138,7 +138,7 @@
         "libpulse0"
       ]
     },
-    "AppImage": {
+    "appImage": {
       "artifactName": "${productName}-${version}-${arch}.AppImage"
     },
     "asarUnpack": [
