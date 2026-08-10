@@ -465,10 +465,37 @@
       id: 'system',
       titleKey: 'settings.section.system',
       icon: 'memory',
-      rows: [
+      groups: [
         {
-          type: 'memory_info',
-          bind: '_memory_info',
+          titleKey: 'settings.group.memoryOpt',
+          rows: [
+            {
+              type: 'select',
+              bind: 'memory_optimization',
+              label: _t('settings.memoryOpt.label'),
+              sub: _t('settings.memoryOpt.sub'),
+              options: [
+                { value: 'off', label: _t('settings.memoryOpt.off') },
+                { value: 'normal', label: _t('settings.memoryOpt.normal') },
+                { value: 'aggressive', label: _t('settings.memoryOpt.aggressive') },
+              ],
+              onApply: function (val) {
+                _promptRestart(
+                  _t('settings.memoryOpt.restartTitle'),
+                  _t('settings.memoryOpt.restartBody')
+                );
+              },
+            },
+          ],
+        },
+        {
+          titleKey: 'settings.group.memoryInfo',
+          rows: [
+            {
+              type: 'memory_info',
+              bind: '_memory_info',
+            },
+          ],
         },
       ],
     },
@@ -763,7 +790,7 @@
             '<p class="settings-row-sub">加载中…</p>' +
           '</div>' +
           '<button class="md-text-btn settings-memory-cleanup-btn" id="memory-cleanup-btn" type="button">' +
-            '<span class="material-symbols-rounded">cleanup</span>' +
+            '<span class="material-symbols-rounded">cleaning_services</span>' +
             '<span>立即清理</span>' +
           '</button>' +
         '</div>';

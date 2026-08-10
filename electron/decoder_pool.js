@@ -75,8 +75,10 @@ class DecoderPool {
       const alignedLen = Math.floor(buf.length / sampleBytes) * sampleBytes;
       pendingBuf.buf = alignedLen < buf.length ? buf.slice(alignedLen) : Buffer.alloc(0);
       if (alignedLen > 0) {
-        const fa = new Float32Array(buf.buffer, buf.byteOffset, alignedLen / 4);
-        onPcmData(new Float32Array(fa));
+        // 零拷贝：直接派发 Buffer 上的 Float32 视图，不再 new Float32Array(fa) 复制。
+        // 下游 webContents.send 在调用时同步完成 structured-clone 序列化（仅视图
+        // 字节范围），发送后视图即随 chunk 释放，无生命周期风险。
+        onPcmData(new Float32Array(buf.buffer, buf.byteOffset, alignedLen / 4));
       }
     };
 
@@ -138,8 +140,8 @@ class DecoderPool {
       const alignedLen = Math.floor(buf.length / sampleBytes) * sampleBytes;
       nextSlot.pendingBuf.buf = alignedLen < buf.length ? buf.slice(alignedLen) : Buffer.alloc(0);
       if (alignedLen > 0) {
-        const fa = new Float32Array(buf.buffer, buf.byteOffset, alignedLen / 4);
-        onPcmData(new Float32Array(fa));
+        // 零拷贝视图派发（同 start() 的 onData）
+        onPcmData(new Float32Array(buf.buffer, buf.byteOffset, alignedLen / 4));
       }
     });
 

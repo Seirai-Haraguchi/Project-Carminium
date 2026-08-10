@@ -22,6 +22,19 @@
   font-weight: 400;
   src: url(fonts/noto-sans.woff2) format('woff2');
 }
+/* Noto Color Emoji 国旗子集（本地）：仅覆盖区域指示符区段。
+   Windows 的 Segoe UI Emoji 无国旗字形（显示为字母组合），此字体补齐；
+   unicode-range 保证仅当内容真的出现国旗字符时才触发加载，平时零开销。
+   其余 emoji 走系统彩色 emoji（Segoe UI Emoji）回退，与全局加载
+   Noto Color Emoji 全表（解码后 20MB+）的观感一致。 */
+@font-face {
+  font-family: 'Noto Color Emoji Flags';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(fonts/noto-color-emoji-flags.woff2) format('woff2');
+  unicode-range: U+1F1E6-1F1FF;
+}
 
 /* ── Roboto（内置） ───────────────────────────────────────── */
 @font-face {
@@ -29,77 +42,77 @@
   font-style: normal;
   font-weight: 100;
   font-display: swap;
-  src: url(fonts/Roboto-Thin.ttf) format('truetype');
+  src: url(fonts/Roboto-Thin.woff2) format('woff2');
 }
 @font-face {
   font-family: 'Roboto';
   font-style: italic;
   font-weight: 100;
   font-display: swap;
-  src: url(fonts/Roboto-ThinItalic.ttf) format('truetype');
+  src: url(fonts/Roboto-ThinItalic.woff2) format('woff2');
 }
 @font-face {
   font-family: 'Roboto';
   font-style: normal;
   font-weight: 300;
   font-display: swap;
-  src: url(fonts/Roboto-Light.ttf) format('truetype');
+  src: url(fonts/Roboto-Light.woff2) format('woff2');
 }
 @font-face {
   font-family: 'Roboto';
   font-style: italic;
   font-weight: 300;
   font-display: swap;
-  src: url(fonts/Roboto-LightItalic.ttf) format('truetype');
+  src: url(fonts/Roboto-LightItalic.woff2) format('woff2');
 }
 @font-face {
   font-family: 'Roboto';
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url(fonts/Roboto-Regular.ttf) format('truetype');
+  src: url(fonts/Roboto-Regular.woff2) format('woff2');
 }
 @font-face {
   font-family: 'Roboto';
   font-style: italic;
   font-weight: 400;
   font-display: swap;
-  src: url(fonts/Roboto-Italic.ttf) format('truetype');
+  src: url(fonts/Roboto-Italic.woff2) format('woff2');
 }
 @font-face {
   font-family: 'Roboto';
   font-style: normal;
   font-weight: 500;
   font-display: swap;
-  src: url(fonts/Roboto-Medium.ttf) format('truetype');
+  src: url(fonts/Roboto-Medium.woff2) format('woff2');
 }
 @font-face {
   font-family: 'Roboto';
   font-style: italic;
   font-weight: 500;
   font-display: swap;
-  src: url(fonts/Roboto-MediumItalic.ttf) format('truetype');
+  src: url(fonts/Roboto-MediumItalic.woff2) format('woff2');
 }
 @font-face {
   font-family: 'Roboto';
   font-style: normal;
   font-weight: 700;
   font-display: swap;
-  src: url(fonts/Roboto-Bold.ttf) format('truetype');
+  src: url(fonts/Roboto-Bold.woff2) format('woff2');
 }
 @font-face {
   font-family: 'Roboto';
   font-style: italic;
   font-weight: 700;
   font-display: swap;
-  src: url(fonts/Roboto-BoldItalic.ttf) format('truetype');
+  src: url(fonts/Roboto-BoldItalic.woff2) format('woff2');
 }
 @font-face {
   font-family: 'Roboto';
   font-style: italic;
   font-weight: 900;
   font-display: swap;
-  src: url(fonts/Roboto-BlackItalic.ttf) format('truetype');
+  src: url(fonts/Roboto-BlackItalic.woff2) format('woff2');
 }
 
 /* ── Roboto Condensed（内置） ────────────────────────────── */
@@ -108,35 +121,35 @@
   font-style: normal;
   font-weight: 300;
   font-display: swap;
-  src: url(fonts/RobotoCondensed-Light.ttf) format('truetype');
+  src: url(fonts/RobotoCondensed-Light.woff2) format('woff2');
 }
 @font-face {
   font-family: 'Roboto Condensed';
   font-style: italic;
   font-weight: 300;
   font-display: swap;
-  src: url(fonts/RobotoCondensed-LightItalic.ttf) format('truetype');
+  src: url(fonts/RobotoCondensed-LightItalic.woff2) format('woff2');
 }
 @font-face {
   font-family: 'Roboto Condensed';
   font-style: italic;
   font-weight: 400;
   font-display: swap;
-  src: url(fonts/RobotoCondensed-Italic.ttf) format('truetype');
+  src: url(fonts/RobotoCondensed-Italic.woff2) format('woff2');
 }
 @font-face {
   font-family: 'Roboto Condensed';
   font-style: normal;
   font-weight: 700;
   font-display: swap;
-  src: url(fonts/RobotoCondensed-Bold.ttf) format('truetype');
+  src: url(fonts/RobotoCondensed-Bold.woff2) format('woff2');
 }
 @font-face {
   font-family: 'Roboto Condensed';
   font-style: italic;
   font-weight: 700;
   font-display: swap;
-  src: url(fonts/RobotoCondensed-BoldItalic.ttf) format('truetype');
+  src: url(fonts/RobotoCondensed-BoldItalic.woff2) format('woff2');
 }
 
 /* ── 1. Material Symbols ──────────────────────────────────── */
@@ -287,7 +300,10 @@
 
 /* ── 4. Shape & Motion ────────────────────────────────────── */
 :root {
-  --ui-font: 'Roboto', 'Google Sans Flex', 'Google Sans', 'Noto Sans SC', 'Noto Sans', 'Segoe UI Variable', 'Segoe UI', system-ui, 'Noto Color Emoji', sans-serif;
+  /* 'Google Sans Flex' 原远程链接一直 400（轴参数非法），从未真正加载，已移除；
+     'Noto Color Emoji Flags' 为本地国旗子集（unicode-range 触发式加载），
+     其余 emoji 由系统彩色 emoji 字体回退（Windows: Segoe UI Emoji）。 */
+  --ui-font: 'Roboto', 'Google Sans Flex', 'Google Sans', 'Noto Sans SC', 'Noto Sans', 'Segoe UI Variable', 'Segoe UI', system-ui, 'Noto Color Emoji Flags', sans-serif;
 
   --shape-xs:   4px;
   --shape-sm:   8px;
@@ -1601,15 +1617,16 @@ overflow-y: auto;
 }
 
 /* ── 19a. 正在播放 — 模糊封面氛围背景 ─────────────────────── */
-/* 三层叠加：模糊封面（双层烘焙滤镜 + 交叉淡入淡出）+ 噪点颗粒 + Material You 遮罩
+/* 三层叠加：模糊封面（双层烘焙位图 + 交叉淡入淡出）+ 噪点颗粒 + Material You 遮罩
    仅在全窗口视图（.fullscreen）下显示
 
-   性能设计（参考 folia-major 的 FluidBackground）：
-   1. 模糊源图在 JS 侧降采样至 ≤384px：96px 模糊会抹平一切小于模糊半径的细节，
-      小图与全尺寸原图模糊后视觉完全等同，但纹理上传为单 tile，
-      彻底消除大封面的网格光栅闪烁，烘焙光栅化成本也大幅下降。
-   2. 所有滤镜（blur/saturate/brightness）静态烘焙在内层，永不逐帧修改；
-      鼓点动态只通过 transform 与 opacity（合成器属性，跳过重光栅）表达。
+   性能设计（参考 folia-major 的 FluidBackground，2026-08 烘焙化改造）：
+   1. 模糊源图在 JS 侧降采样至 ≤384px，且 blur/saturate/brightness 已用
+      canvas ctx.filter 一次性烘进位图（_buildBgBlurSource）：96px 级模糊抹平一切
+      小于模糊半径的细节，烘焙小图放大后与全尺寸原图运行时模糊视觉完全等同，
+      但合成层只是普通图片 quad —— 无运行时 filter、无全屏模糊中间缓冲，
+      渲染进程与 GPU 进程双端各省数十至上百 MB 光栅/纹理内存。
+   2. 鼓点动态只通过 transform 与 opacity（合成器属性，跳过重光栅）表达。
    3. 流体感来自基底层与涌动层的反向错动漂移（纯 transform 关键帧动画）。 */
 .np-bg {
   position: absolute;
@@ -1637,47 +1654,56 @@ overflow-y: auto;
   100% { transform: translate3d(-2%, 1.8%, 0) scale(1.06); }
 }
 
-/* 交叉淡入淡出包装层：只动 opacity（合成器属性），滤镜烘焙在内层。
-   inset 过扫描用于裁掉模糊边缘的透明渗出（替代旧的 scale(1.28)）。 */
+/* 交叉淡入淡出包装层：只动 opacity（合成器属性），滤镜已烘焙进位图。
+   inset 过扫描用于容纳漂移动画的位移/缩放余量（烘焙模糊无边缘透明渗出，
+   过扫描从 -14% 收窄到 -8%，直接缩小全屏合成层纹理面积）。
+   will-change 不常驻：仅在 1.4s 交叉淡入期间由 JS 挂 .fading（见 now_playing.js），
+   避免两个全屏包装层常年独占合成层。 */
 .np-bg-cover {
   position: absolute;
-  inset: -14%;
+  inset: -8%;
   opacity: 0;
   transition: opacity 1.4s var(--ease-decel);
+}
+.np-bg-cover.fading {
   will-change: opacity;
 }
 .np-bg-cover.active {
   opacity: 0.85;
 }
 
-/* 基底 / 涌动层：共用封面图（--cover-image 由 JS 设置在包装层上） */
+/* 基底 / 涌动层：滤镜已分别烘焙进 --cover-image-base / --cover-image-surge
+   两张 ≤384px 位图（JS 在 _buildBgBlurSource 中一次性生成），此处只是普通
+   背景图 quad —— 无运行时 filter、无模糊中间缓冲，光栅/纹理开销与纯色层同级。 */
 .np-bg-cover-base,
 .np-bg-cover-surge {
   position: absolute;
   inset: 0;
-  background-image: var(--cover-image, none);
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
   transform: translateZ(0);
 }
 
-/* 基底氛围层：静态烘焙滤镜，一次光栅化后稳定复用；
-   慢速漂移动画（纯 transform，合成器驱动）提供流体主运动 */
+/* 基底氛围层：烘焙滤镜位图，一次上传后稳定复用；
+   慢速漂移动画（纯 transform，合成器驱动）提供流体主运动。
+   无 will-change：infinite transform 动画运行期间 Chromium 自动提升，
+   暂停（.paused）时自动降级释放合成层。 */
 .np-bg-cover-base {
+  background-image: var(--cover-image-base, none);
   background-color: var(--cover-color, var(--md-surface-container-low));
-  filter: blur(96px) saturate(1.6) brightness(1.05);
   animation: np-bg-drift 36s ease-in-out infinite alternate;
-  will-change: transform;
 }
 
 /* 涌动层：高饱和 + 高亮的烘焙副本，opacity 由频谱能量驱动（--beat-surge）。
-   与容器漂移反向错动，双层滑动形成流体感，全程零重光栅。 */
+   与容器漂移反向错动，双层滑动形成流体感，全程零重光栅。
+   will-change 仅保留 opacity（beat-surge 由 JS 逐帧驱动，需常驻合成层避免逐帧重绘）；
+   transform 由 infinite 动画自动提升，无需列入。 */
 .np-bg-cover-surge {
-  filter: blur(96px) saturate(2.5) brightness(1.28);
+  background-image: var(--cover-image-surge, none);
   opacity: var(--beat-surge, 0);
   animation: np-bg-surge-drift 27s ease-in-out infinite alternate;
-  will-change: opacity, transform;
+  will-change: opacity;
 }
 
 @keyframes np-bg-surge-drift {
@@ -2576,13 +2602,23 @@ padding: 0;
   width: 100%;
   word-break: break-word;
   /* line 本身从不设置 transform（逐字动画在 .np-lyrics-char 上），故不列入
-     will-change / transition，避免每行被无谓提升为合成层浪费 GPU 内存
-     （fullscreen 下可见行数多，收益显著）。 */
-  will-change: opacity, filter;
+     transition，避免每行被无谓提升为合成层浪费 GPU 内存。
+     will-change 也不再常驻：仅激活行 ±2 行由 JS 挂 .np-near（见 _updateLyrics），
+     fullscreen 下可见行数多，常驻合成层从 ~15 个降到 ≤5 个。 */
   transition:
     opacity 0.42s cubic-bezier(0.2, 0, 0, 1),
     color 0.42s cubic-bezier(0.2, 0, 0, 1),
     filter 0.36s cubic-bezier(0.2, 0, 0, 1);
+  /* 屏外行跳过样式/布局/绘制（DOM 保留，querySelector/offsetTop 等全部照常工作）：
+     数千节点的逐字歌词 DOM 只渲染可见窗口附近的行。
+     contain-intrinsic-height 的 auto 关键字记住已渲染行的真实高度，
+     未渲染行按 42px 估算（16px 字 ×1.6 行高 + padding 的典型值），滚动条稳定。 */
+  content-visibility: auto;
+  contain-intrinsic-height: auto 42px;
+}
+/* 仅激活行附近保留合成层提升提示（激活行高亮/逐字/渐进模糊的频繁变化需要） */
+.np-lyrics-line.np-near {
+  will-change: opacity, filter;
 }
 
 /* 渐进模糊模式：由 JS 根据行距离设置 inline filter，
@@ -4346,7 +4382,8 @@ select.cmd-text-field__input + .cmd-text-field__label {
 .np-queue-remove {
   opacity: 0.45;
   transition: opacity var(--motion-short) var(--ease-standard), transform 0.2s cubic-bezier(0.2, 0, 0, 1);
-  will-change: transform;
+  /* 不挂 will-change：长队列下每个移除按钮一个常驻合成层纯属浪费，
+     hover 过渡期间 Chromium 会自动临时提升 */
 }
 .np-queue-item:hover .np-queue-remove { opacity: 1; }
 
@@ -7263,8 +7300,8 @@ body.onboarding-active .title-bar-settings { display: none; }
 .ob-lang-flag {
   font-size: 26px;
   line-height: 1;
-  /* 强制使用 Noto Color Emoji 渲染国旗 emoji（Windows Segoe UI Emoji 不支持国旗） */
-  font-family: 'Noto Color Emoji', 'Material Symbols Rounded', sans-serif;
+  /* 强制使用本地 Noto Color Emoji 国旗子集渲染国旗（Windows Segoe UI Emoji 不支持国旗） */
+  font-family: 'Noto Color Emoji Flags', 'Material Symbols Rounded', sans-serif;
 }
 
 /* ── 响应式 ────────────────────────────────────────────────── */

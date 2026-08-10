@@ -2004,8 +2004,17 @@
      * 推送当前曲目 FFmpeg PCM 到 StreamingPCMWorklet。
      */
     pushStreamingPcm(float32Array) {
-      var ab = new ArrayBuffer(float32Array.byteLength);
-      new Float32Array(ab).set(float32Array);
+      // 零拷贝：IPC 反序列化产生的 buffer 为精确大小且本消息独占，
+      // 直接作为 transferable 转给 worklet（转移后原视图失效，无其他持有者）。
+      // 仅当视图未完整覆盖底层 buffer 时回退为拷贝（防御性路径，正常不会走到）。
+      var ab;
+      if (float32Array.byteOffset === 0 && float32Array.buffer &&
+          float32Array.buffer.byteLength === float32Array.byteLength) {
+        ab = float32Array.buffer;
+      } else {
+        ab = new ArrayBuffer(float32Array.byteLength);
+        new Float32Array(ab).set(float32Array);
+      }
 
       if (!this._currentStreamingNode) {
         // 内存保护：限制待处理 PCM 缓冲区大小，防止 FFmpeg 产出快于 worklet 创建时无限增长
@@ -2052,8 +2061,15 @@
      * 如果延迟 crossfade 待触发且这是第一块数据，启动 crossfade。
      */
     pushNextPcm(float32Array) {
-      var ab = new ArrayBuffer(float32Array.byteLength);
-      new Float32Array(ab).set(float32Array);
+      // 零拷贝 transferable（同 pushStreamingPcm）
+      var ab;
+      if (float32Array.byteOffset === 0 && float32Array.buffer &&
+          float32Array.buffer.byteLength === float32Array.byteLength) {
+        ab = float32Array.buffer;
+      } else {
+        ab = new ArrayBuffer(float32Array.byteLength);
+        new Float32Array(ab).set(float32Array);
+      }
 
       if (!this._nextStreamingNode) {
         // Node 尚未创建，缓冲数据

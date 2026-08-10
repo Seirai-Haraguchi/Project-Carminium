@@ -45,6 +45,11 @@ const DEFAULTS = {
   vocal_enhance: false,
   guitar_friendly: false,
   onboarding_complete: false,   // 新手引导是否已完成
+  // 内存优化等级: 'off' | 'normal' | 'aggressive'
+  //   off       — 不做任何 Chromium 内存优化
+  //   normal    — 常规优化（默认）：关闭无用后台服务，限制渲染进程数，适度裁剪 features
+  //   aggressive — 激进优化：normal 全部 + no-sandbox + low-end-device-mode + 大量 disable-features + V8 堆 96MB
+  memory_optimization: 'normal',
   // Virtual Bass Enhancement (modern smartphone DSP pipeline)
   vbe_enabled: false,
   vbe_cutoff: 90,            // Speaker model HPF cutoff (50–300 Hz)

@@ -1,31 +1,44 @@
 /**
  * Carminium — 主进程严格内存管理器
  *
- * 升级要点（v2）：
+ * 升级要点（v3 — 2026-08 内存压缩）：
  *   - 监控指标从 V8 heap 切换为总进程 RSS（含 native/buffer/子进程）
- *   - 三级渐进式管制：SOFT(200MB) → HARD(230MB) → CRITICAL(250MB)
- *   - 内存压力升高时自动缩短监控间隔（30s → 15s → 5s）
+ *   - 三级渐进式管制：SOFT(150MB) → HARD(200MB) → CRITICAL(260MB)
+ *   - 内存压力升高时自动缩短监控间隔（20s → 10s → 5s）
  *   - 紧急模式：级联清理所有缓存模块 + 强制 GC + 渲染进程通知
+ *   - GPU 进程独立运行，主进程 RSS 不含 GPU 侧分配
+ *   - 目标总 RSS（主+GPU+渲染+工具）~350-400MB
  *
  * 设计约束：
  *   - 所有功能不阻塞音频播放关键路径
  *   - IPC 接口向后兼容现有渲染进程调用
- *   - 低开销：正常状态下 30s 监控周期
+ *   - 低开销：正常状态下 20s 监控周期
  */
 'use strict';
 
 const { ipcMain } = require('electron');
 
-// ── 内存管制阈值（按总进程 RSS）──
-const RSS_SOFT_MB = 150;       // 软限制：触发 GC + 通知渲染进程整理
-const RSS_HARD_MB = 180;       // 硬限制：紧急缓存清理 + 强制 GC
-const RSS_CRITICAL_MB = 200;   // 临界限制：级联清理 + 拒绝新分配
+// ── 内存管制阈值（按优化等级和总进程 RSS）──
+// GPU 进程独立运行，主进程 RSS 不含 GPU 侧分配。
+// 阈值根据 memory_optimization 设置等级动态调整：
+//   off       — SOFT=300, HARD=400, CRITICAL=500（宽松，不限制 V8 堆/不关沙箱）
+//   normal    — SOFT=200, HARD=280, CRITICAL=350（适度）
+//   aggressive — SOFT=150, HARD=200, CRITICAL=260（激进，已关沙箱+V8 堆 96MB）
+const _THRESHOLDS = {
+  off:        { soft: 300, hard: 400, critical: 500 },
+  normal:     { soft: 200, hard: 280, critical: 350 },
+  aggressive: { soft: 150, hard: 200, critical: 260 },
+};
+
+let RSS_SOFT_MB = 200;
+let RSS_HARD_MB = 280;
+let RSS_CRITICAL_MB = 350;
 
 // ── 监控间隔（按压力级别自适应）──
-const MONITOR_NORMAL_MS = 30_000;
-const MONITOR_ELEVATED_MS = 15_000;
+const MONITOR_NORMAL_MS = 20_000;
+const MONITOR_ELEVATED_MS = 10_000;
 const MONITOR_CRITICAL_MS = 5_000;
-const CLEANUP_INTERVAL_MS = 45_000;
+const CLEANUP_INTERVAL_MS = 30_000;
 const RENDERER_REPORT_TIMEOUT_MS = 90_000; // 渲染进程超时未上报则标记为 stale
 
 // ── MemoryManager ──────────────────────────────────────────────────────────
@@ -81,7 +94,7 @@ class MemoryManager {
       this._ipcRegistered = true;
     }
 
-    console.log('[MemoryManager] Strict mode started —',
+    console.log('[MemoryManager] Strict mode v3 started —',
       'soft:', RSS_SOFT_MB + 'MB, hard:', RSS_HARD_MB + 'MB, critical:', RSS_CRITICAL_MB + 'MB,',
       'gc:', this._gc ? 'available' : 'not available');
   }
@@ -251,6 +264,19 @@ class MemoryManager {
   /** 注册紧急清理回调（在 CRITICAL 级别触发） */
   onEmergencyCleanup(callback) {
     if (typeof callback === 'function') this._emergencyCallbacks.push(callback);
+  }
+
+  /**
+   * 根据内存优化等级设置阈值
+   * @param {string} level — 'off' | 'normal' | 'aggressive'
+   */
+  setOptimizationLevel(level) {
+    const t = _THRESHOLDS[level] || _THRESHOLDS.normal;
+    RSS_SOFT_MB = t.soft;
+    RSS_HARD_MB = t.hard;
+    RSS_CRITICAL_MB = t.critical;
+    console.log('[MemoryManager] Thresholds updated for level:', level,
+      '— soft:', RSS_SOFT_MB + 'MB, hard:', RSS_HARD_MB + 'MB, critical:', RSS_CRITICAL_MB + 'MB');
   }
 
   // ── 内存状态查询 ──────────────────────────────────────────────────────

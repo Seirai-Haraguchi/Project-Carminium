@@ -336,13 +336,11 @@ carminium/
 │   ├── style.css              # 全局样式（M3 设计系统）
 │   ├── app.js                 # 应用入口
 │   ├── audio_engine.js        # Web Audio API 引擎（合成/Gapless/Crossfade）
-│   ├── audio_mixer.js         # 音频混音器
 │   ├── audio_buffer_cache.js  # 音频缓冲区缓存
 │   ├── bridge.js              # 前端 IPC Bridge 客户端
 │   ├── cover_cache.js         # 封面缓存
 │   ├── format_detector.js     # 音频格式检测
 │   ├── gamepad.js             # 游戏手柄输入
-│   ├── gsap.min.js            # GSAP 动画库
 │   ├── i18n.js                # 国际化（5 种语言）
 │   ├── memory_manager.js      # 渲染进程内存管理
 │   ├── titlebar.js            # 自定义标题栏逻辑
@@ -670,5 +668,4 @@ PowerShell 旧版本不支持 `&&` 运算符。使用 `;` 分隔命令，或升�
 第三方组件许可证：
 - [miniaudio](https://github.com/mackron/miniaudio) — MIT / Public Domain
 - [SoundTouch](https://gitlab.com/soundtouch/soundtouch) — LGPL-2.1
-- [GSAP](https://greensock.com/gsap/) — GreenSock Standard License
 - [FFmpeg](https://ffmpeg.org/) — LGPL-2.1+ / GPL-2.0+（取决于构建配置）

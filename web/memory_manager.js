@@ -21,9 +21,9 @@
 
   // ── 常量 ──────────────────────────────────────────────────────────────
 
-  var CLEANUP_INTERVAL_MS = 45_000;   // 清理周期
-  var REPORT_INTERVAL_MS = 60_000;    // 上报周期
-  var BLOB_MAX_AGE_MS = 5 * 60_000;   // Blob URL 最大存活时间（5 分钟）
+  var CLEANUP_INTERVAL_MS = 30_000;   // 清理周期（从 45s 降至 30s）
+  var REPORT_INTERVAL_MS = 45_000;    // 上报周期（从 60s 降至 45s）
+  var BLOB_MAX_AGE_MS = 3 * 60_000;   // Blob URL 最大存活时间（从 5 分钟降至 3 分钟）
   var LISTENER_WARN_THRESHOLD = 500;   // 单元素监听器告警阈值
 
   // ── 状态 ──────────────────────────────────────────────────────────────
@@ -176,10 +176,10 @@
     // AudioBufferCache：在内存压力下缩减
     if (window.__audioEngine && window.__audioEngine._cache) {
       var stats = window.__audioEngine._cache.stats;
-      if (stats && stats.bytes > 60 * 1024 * 1024) {
-        // 超过 60MB 时缩减到 40MB，释放旧 AudioBuffer
+      if (stats && stats.bytes > 40 * 1024 * 1024) {
+        // 超过 40MB 时缩减到 25MB，释放旧 AudioBuffer（2026-08：从 60/40 降至 40/25）
         try {
-          window.__audioEngine._cache.shrinkTo(40 * 1024 * 1024);
+          window.__audioEngine._cache.shrinkTo(25 * 1024 * 1024);
           results.audioBufferCache = 'shrunk';
         } catch (e) { /* ignore */ }
       }

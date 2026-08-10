@@ -26,46 +26,356 @@ const { getInstance: getMemoryManager } = require('./memory_manager');
 // 注意: app.whenReady() より前に appendSwitch すること。
 app.commandLine.appendSwitch('enable-features',
   'HardwareMediaKeyHandling,MediaSessionService');
-app.commandLine.appendSwitch('disable-features',
-  'MediaSessionSegmentation');
-// app-user-model-id は AUMID 定数が定義された後に設定するため、
-// このブロックの直後（AUMID 定義後）で appendSwitch する。
 
-// ── 进程收敛标志 ─────────────────────────────────────────────────────────
-// 进程收敛通过以下方式实现：
-//   - DecoderPool 统一管理所有 FFmpeg 子进程
-//   - app.requestSingleInstanceLock() 单实例锁
-//   - MemoryManager 三级 RSS 管制（200/230/250MB）
+// ── 内存优化等级（在 app ready 之前从设置文件读取）──────────────────────────
+// 三级优化：off（关闭）/ normal（常规，默认）/ aggressive（激进）
+// Chromium 命令行开关必须在 app.whenReady() 之前设置，因此直接从磁盘读取
+// settings.json，不走 AppSettings 类（它在 initializeApp 中才初始化）。
+function _readMemOptLevel() {
+  try {
+    const os = require('os');
+    const appdata = process.env.APPDATA || os.homedir();
+    const settingsPath = path.join(appdata, 'Carminium', 'settings.json');
+    if (fs.existsSync(settingsPath)) {
+      const raw = fs.readFileSync(settingsPath, 'utf-8');
+      const data = JSON.parse(raw);
+      const lvl = data.memory_optimization;
+      if (lvl === 'off' || lvl === 'normal' || lvl === 'aggressive') return lvl;
+    }
+  } catch (_) {}
+  return 'normal'; // 默认常规优化
+}
+const _memOptLevel = _readMemOptLevel();
+console.log('[main] Memory optimization level:', _memOptLevel);
 
-// ── Chromium 子进程抑制（保守）────────────────────────────────────────
-// 仅关闭确定不影响功能的后台服务。不碰 AudioServiceOutOfProcess
-// （否则音频处理回收到主进程，推高 RSS）。
-app.commandLine.appendSwitch('disable-background-networking');
-app.commandLine.appendSwitch('disable-component-update');
-app.commandLine.appendSwitch('disable-domain-reliability');
-app.commandLine.appendSwitch('disable-features',
-  'Translate,BackForwardCache'
-);
+// ── disable-features 列表定义 ──────────────────────────────────────────────
+// 分为两批：normal（安全，VSCode 级别）和 aggressive（激进，额外裁剪）
 
-// ── 子进程名称说明 ────────────────────────────────────────────────────────
-// Windows 任务管理器中每个进程的"名称"列来自 PE 可执行文件的文件名本身，
-// Chromium/Electron 不提供命令行开关来覆盖子进程的显示名称。
-//
-// Electron 的子进程（GPU/Renderer/Utility/Plugin 等）由主进程通过
-// electron.exe 自身派生，因此它们在任务管理器中的文件名列始终为 "Electron"
-//（开发模式）或便携 exe 的基础名（打包模式）。
-//
-// 要改变这一行为，唯一可靠的方式是在打包时重命名 electron.exe：
-//   electron-builder 的 portable 输出会自动将 exe 重命名为 artifactName
-//   （如 "Project Carminium-x.x.x-portable.exe"），此时主进程和所有子进程
-//   都会使用该文件名作为进程名。
-//
-// 开发模式下无法避免显示 "Electron"，这是正常的。
+// normal 级别：本应用确定不需要的后台服务和 Web API（约 80 项）
+const _DISABLE_FEATURES_NORMAL = [
+  'MediaSessionSegmentation',       // 避免 24H2 会话分裂导致未注册 AUMID
+  'Translate',
+  'MediaRouter',                    // Cast 投屏发现服务
+  'OptimizationHints',
+  'AutofillServerCommunication',
+  'SpeechRecognitionOnDevice',
+  'VoiceTranscription',
+  'SitePerProcess',                 // 站点隔离：单源 file://，关闭安全
+  'IsolateOrigins',
+  'SpareRenderer',                  // 不预建备用渲染进程
+  'RendererCodeIntegrity',
+  'SharedDictionary',
+  'CompressionDictionaryTransport',
+  'PrivacySandbox',
+  'FirstPartySets',
+  'CookieDeprecationLabel',
+  'FileSystemAccess',
+  'WebBluetooth',
+  'WebUSB',
+  'WebHID',
+  'WebMIDI',
+  'Serial',
+  'WebNFC',
+  'Vulkan',
+  'HeavyAdPrivacy',
+  'SkiaGraphite',
+  'Canvas2DLayers',
+  'WebRtc',
+  'WebCodecs',
+  'WebLocks',
+  'WebShare',
+  'IdleDetection',
+  'KeyboardLock',
+  'Presentation',
+  'RemotePlayback',
+  'PaymentRequest',
+  'WebOTP',
+  'SmsReceiver',
+  'ContentIndex',
+  'BackgroundSync',
+  'BackgroundFetch',
+  'PeriodicBackgroundSync',
+  'SharedWorker',
+  'Notifications',
+  'DesktopPWAs',
+  'IsolatedWebApps',
+  'WebAppStartup',
+  'WebAppLinkHandling',
+  'ChromeWhatsNewUI',
+  'ReaderMode',
+  'PreloadMediaEngagementData',
+  'MediaEngagementBypassAutoplayPolicies',
+  'NoStatePrefetch',
+  'LoadingPredictor',
+  'OptimizationGuidePredictionModels',
+  'OptimizationGuidePushNotifications',
+  'PageInfoAboutThisSite',
+  'TextFragmentAnchor',
+  'ScrollToTextFragment',
+  'IntentPicker',
+  'HatsOff',
+  'CaptivePortal',
+  'NetworkTimeService',
+  'SafeBrowsing',
+  'PasswordManager',
+  'Autofill',
+  'PushMessaging',
+  'SendTabToSelf',
+  'TabRestore',
+  'LinkPreview',
+  'FormPrediction',
+  'FillingAssistance',
+  'ExportTaggedPDF',
+  'ExpectCT',
+  'CertificateTransparency',
+  'TrustTokens',
+  'Reporting',
+  'DocumentReport',
+  'MediaDrm',
+  'UserMediaCaptureAllOrigins',
+  'GpuMemoryBufferVideoPipeline',
+  'PictureInPicture',
+  'DocumentPictureInPicture',
+  'ContactsPicker',
+  'InstalledApp',
+  'WebAppProvider',
+  'WebAppInstallService',
+  'WebAppDatabase',
+].join(',');
 
-// ── V8 堆内存限制 ─────────────────────────────────────────────────────
-// 主进程 V8 堆限制 128MB — 足够 Node.js 运行，同时强制 GC 更积极。
-// 渲染进程不受此限制（Chromium 自行管理）。
-app.commandLine.appendSwitch('js-flags', '--max-old-space-size=128');
+// aggressive 级别：在 normal 基础上追加裁剪（隐私/广告/UI/实验性 API 等）
+const _DISABLE_FEATURES_AGGRESSIVE = [
+  // 第三批：隐私/广告/测量 API
+  'FedCm',
+  'ConversionMeasurement',
+  'Fledge',
+  'AdInterestGroupAPI',
+  'TopicsApi',
+  'ThirdPartyStoragePartitioning',
+  'ThirdPartyCookies',
+  'SharedStorage',
+  'SharedHeaders',
+  'StorageAccessAPI',
+  'PrivateAggregationApi',
+  'PrivateNetworkAccessSendPreflights',
+  'PrivateNetworkAccessRespectPreflight',
+  'DragDropCrossOriginIframe',
+  'CrossOriginOpenerPolicyAccessReporting',
+  'CrossOriginAccessChecks',
+  'CookieControlsRedescription',
+  'RelatedSiteSet',
+  // 第四批：Web API
+  'WebGPU',
+  'WebNN',
+  'SanitizerAPI',
+  'ViewTransition',
+  'SpellCheck',
+  'DigitalGoods',
+  'ClickToCall',
+  'Tts',
+  'GenericSensor',
+  'GenericSensorExtraClasses',
+  'CdmDocumentStorage',
+  'ScreenTime',
+  'DeviceTrust',
+  'AppBoundEncryption',
+  'BluetoothPairingPermission',
+  'ClientHintsDeviceModel',
+  'AutoWebThemeColor',
+  'DataUrlInCssRegistration',
+  'DecodeJxl',
+  'DeprecateUnload',
+  'BeforeunloadEventV8',
+  'DelayAsyncScriptExecution',
+  'Prerender2',
+  'PrerenderSinglePageAppNavigation',
+  'SpeculationRules',
+  'OptimizationGuide',
+  'PreviewsOptHints',
+  'ServiceWorkerImportedScriptBypassMainResourceCache',
+  'SetIdleStatus',
+  'ShareBundle',
+  'SelfReportingApi',
+  'StaleCacheValidity',
+  'Snippets',
+  'SystemAnimations',
+  'CompositedSelectionBounds',
+  'FluentScrollbar',
+  'TabletMode',
+  'V8VmFuture',
+  // 第五批：Chrome UI / 功能
+  'SidePanel',
+  'SideSearch',
+  'TabGroups',
+  'TabHoverCards',
+  'PinnedTab',
+  'ChromeTips',
+  'AhsFeedbackDialog',
+  'HideOldFeedbackSurvey',
+  'ProfilePicker',
+  'IncognitoBrandConsistencyForDesktopShowsIncognito',
+  'IncognitoDownloads',
+  'Suggest',
+  'SuggestDialog',
+  'NtpCustomize',
+  'Instant',
+  'WebFeed',
+  'ShoppingInsightsApi',
+  'LensStub',
+  'ContextualSearch',
+  'SearchAdditionalParams',
+  'SearchInCjk',
+  'SyncInvalidations',
+  'DropSync',
+  'ExtensionContentVerification',
+  'ExtensionForceInstall',
+  'ManagedExtensions',
+  'StrictExtensionIsolation',
+  'ManagedConfiguration',
+  'PdfPluginProxy',
+  'PdfOcr',
+  'PdfXfa',
+  'PdfPluginSave',
+  'PdfPluginUnresponsiveTimeout',
+  'AlwaysOpenPdfExternally',
+  'PreferHtmlOverPdf',
+  'LongScreenshot',
+  'Screenshot',
+  'DebugHistory',
+  'CriticalPathPersistedTrace',
+  'AsyncStackFramesForInspector',
+  'V8InspectorDeepStack',
+  'ConsolidatedSiteStorageReset',
+  'ContentSettingsAPI',
+  'SiteData',
+  'SiteDetails',
+  'SiteEngagement',
+  'SiteSettings',
+  'SiteSettingsDataModel',
+  'TopChromeUI',
+  'ZeroCopyRasterizer',
+  'GpuMemoryBufferVideoFramePool',
+].join(',');
+
+// 内存优化 enable-features（安全，normal 和 aggressive 都启用）
+const _ENABLE_FEATURES_MEM = [
+  'MemoryStoragePressureTracking',
+  'LowEffortMemoryPressure',
+  'TabFreezing',
+  'CalculateNativeWinOcclusion',
+  'ReduceAcceptLanguage',
+  'BackForwardCache',
+  'CompositeBGColorAfterPaint',
+  'ReduceImageSize',
+  'LazyFrameLoading',
+  'LazyImageLoading',
+  'CompositingOptimizations',
+  'SkipOOMKill',
+  'PartiallySkipEarlyMainResourceLoading',
+  'MemoryCachePruning',
+  'ReduceViewportIntersectionCheck',
+  'FreezeBackgroundTabs',
+  'ProcessSharingForCFM',
+  'UnfreezableFeatureGate',
+  'WebAudioGaplessPlaybackOptimization',
+].join(',');
+
+// ── 按等级应用 Chromium 开关 ────────────────────────────────────────────────
+if (_memOptLevel === 'off') {
+  // off：仅 SMTC 必需的 disable-features
+  app.commandLine.appendSwitch('disable-features', 'MediaSessionSegmentation');
+
+} else {
+  // ── normal 和 aggressive 共有的基础开关 ──
+  // 关闭本应用不需要的 Chromium 内置后台服务（借鉴 VSCode 策略）
+  app.commandLine.appendSwitch('disable-background-networking');
+  app.commandLine.appendSwitch('disable-component-update');
+  app.commandLine.appendSwitch('disable-domain-reliability');
+  app.commandLine.appendSwitch('disable-extensions');
+  app.commandLine.appendSwitch('disable-plugins');
+  app.commandLine.appendSwitch('disable-sync');
+  app.commandLine.appendSwitch('disable-default-apps');
+  app.commandLine.appendSwitch('disable-hang-monitor');
+  app.commandLine.appendSwitch('disable-client-side-phishing-detection');
+  app.commandLine.appendSwitch('disable-print-preview');
+  app.commandLine.appendSwitch('disable-prompt-on-repost');
+  app.commandLine.appendSwitch('disable-breakpad');
+  app.commandLine.appendSwitch('disable-notifications');
+  app.commandLine.appendSwitch('disable-presentation-api');
+  app.commandLine.appendSwitch('disable-remote-playback');
+  app.commandLine.appendSwitch('disable-speech-api');
+  app.commandLine.appendSwitch('renderer-process-limit', '1');
+  app.commandLine.appendSwitch('disable-gpu-watchdog');
+  // HTTP 磁盘/媒体缓存封顶 8MB
+  app.commandLine.appendSwitch('disk-cache-size', String(8 * 1024 * 1024));
+  app.commandLine.appendSwitch('media-cache-size', String(8 * 1024 * 1024));
+
+  // disable-features：normal 用基础列表，aggressive 追加激进列表
+  if (_memOptLevel === 'aggressive') {
+    app.commandLine.appendSwitch('disable-features',
+      _DISABLE_FEATURES_NORMAL + ',' + _DISABLE_FEATURES_AGGRESSIVE);
+  } else {
+    app.commandLine.appendSwitch('disable-features', _DISABLE_FEATURES_NORMAL);
+  }
+
+  // enable-features：内存优化特性
+  app.commandLine.appendSwitch('enable-features', _ENABLE_FEATURES_MEM);
+
+  if (_memOptLevel === 'aggressive') {
+    // ── aggressive 独有开关 ──
+    // GPU / 渲染管线裁剪（本应用是 Canvas2D 音乐播放器，不需要 WebGL/WebGPU/颜色管理）
+    // --disable-gpu：彻底关闭 GPU 硬件加速，强制软件渲染。
+    // 消除 GPU 进程的 D3D11 渲染管线（着色器编译、纹理分配、合成器线程等），
+    // 省约 30-80MB。Canvas2D 软件渲染对本音乐播放器完全够用。
+    app.commandLine.appendSwitch('disable-gpu');
+    app.commandLine.appendSwitch('disable-color-correct-rendering');
+    app.commandLine.appendSwitch('force-color-profile', 'srgb');
+    app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+    app.commandLine.appendSwitch('disable-gpu-driver-bug-workarounds');
+    app.commandLine.appendSwitch('disable-accelerated-video-decode');
+    app.commandLine.appendSwitch('disable-accelerated-mjpeg-decode');
+    app.commandLine.appendSwitch('disable-webgl-image-chromium');
+    app.commandLine.appendSwitch('disable-2d-canvas-image-chromium');
+    app.commandLine.appendSwitch('disable-frame-rate-overlay');
+
+    // GPU 沙箱 + 渲染进程沙箱裁剪
+    app.commandLine.appendSwitch('disable-gpu-sandbox');
+    app.commandLine.appendSwitch('no-sandbox');
+
+    // Chromium 低内存模式（最强力的单开关，触发一整套内部优化策略）
+    app.commandLine.appendSwitch('enable-low-end-device-mode');
+  }
+}
+
+// ── GPU 进程合并（默认关闭）───────────────────────────────────────────────
+// 将 GPU 进程并入浏览器进程可省掉独立 GPU 进程基线（~30-60MB），但 Windows 上
+// --in-process-gpu + 无边框自绘标题栏（frame:false）+ 某些 GPU 驱动组合会
+// 偶发白屏/画面不刷新，因此默认关闭。
+// 需要时可设置环境变量 CARMINIUM_IN_PROCESS_GPU=1 开启并实测稳定性。
+if (process.env.CARMINIUM_IN_PROCESS_GPU === '1') {
+  app.commandLine.appendSwitch('in-process-gpu');
+  console.log('[main] in-process-gpu enabled');
+}
+
+// ── V8 堆内存限制 + GC 策略优化（按等级）─────────────────────────────────
+// v8.setFlagsFromString 只作用于当前（主进程）V8 实例，不影响渲染进程/GPU 进程。
+if (_memOptLevel === 'aggressive') {
+  // aggressive：96MB 堆 + GC 优化标志
+  require('v8').setFlagsFromString(
+    '--max-old-space-size=96 ' +
+    '--max-semi-space-size=8 ' +
+    '--gc-global ' +
+    '--stress-incremental-marking ' +
+    '--reuse-registers'
+  );
+} else if (_memOptLevel === 'normal') {
+  // normal：128MB 堆，不加激进 GC 标志
+  require('v8').setFlagsFromString('--max-old-space-size=128');
+}
+// off：不限制 V8 堆，使用 Chromium 默认
+
+// 导出等级供 memory_manager 使用
+app._memOptLevel = _memOptLevel;
 
 // ── 全局异常捕获 ─────────────────────────────────────────────────────────────
 process.on('uncaughtException', (err) => {
@@ -918,6 +1228,8 @@ async function initializeApp() {
   try {
     // ── 启动主进程内存管理器 ──
     const memMgr = getMemoryManager();
+    // 根据内存优化等级设置阈值（与启动时读取的 _memOptLevel 一致）
+    memMgr.setOptimizationLevel(_memOptLevel);
     memMgr.start();
 
     const { AppSettings } = require('./settings');

@@ -50,7 +50,11 @@ contextBridge.exposeInMainWorld('__electronAPI', {
    * @returns {function} 取消监听函数
    */
   onAudioPcmMain: (callback) => {
-    const handler = (_e, data) => callback(new Float32Array(data));
+    // 主进程现在直接发送 Float32Array 视图（structured clone 保留 TypedArray 类型）；
+    // 兼容旧的 ArrayBuffer 形式（视图包装，零拷贝）
+    const handler = (_e, data) => callback(
+      data instanceof Float32Array ? data : new Float32Array(data)
+    );
     ipcRenderer.on('audio_pcm_main', handler);
     return () => ipcRenderer.removeListener('audio_pcm_main', handler);
   },
@@ -61,7 +65,9 @@ contextBridge.exposeInMainWorld('__electronAPI', {
    * @returns {function} 取消监听函数
    */
   onAudioPcmNext: (callback) => {
-    const handler = (_e, data) => callback(new Float32Array(data));
+    const handler = (_e, data) => callback(
+      data instanceof Float32Array ? data : new Float32Array(data)
+    );
     ipcRenderer.on('audio_pcm_next', handler);
     return () => ipcRenderer.removeListener('audio_pcm_next', handler);
   },

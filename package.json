@@ -1,6 +1,6 @@
 {
   "name": "Carminium",
-  "version": "0.6.3-1.20260808",
+  "version": "0.6.6-1.20260809",
   "description": "Carminium",
   "main": "electron/main.js",
   "author": {
@@ -33,7 +33,6 @@
   },
   "dependencies": {
     "better-sqlite3": "^13.0.2",
-    "gsap": "3.15.0",
     "koffi": "^3.1.4",
     "music-metadata": "^11.14.0",
     "pinyin-pro": "^3.28.2",
