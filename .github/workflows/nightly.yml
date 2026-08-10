@@ -6,6 +6,11 @@ on:
     - cron: '0 16 * * *'
   workflow_dispatch:
 
+env:
+  # BtbN/FFmpeg-Builds 下载地址
+  FFMPEG_WIN_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip
+  FFMPEG_LINUX_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux-amd64-gpl.tar.xz
+
 jobs:
   # ─────────────────────────────────────────────
   # 1. 更新版本号日期并提交
@@ -21,8 +26,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          lfs: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -61,8 +64,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          lfs: true
 
       - name: Setup Zig
         uses: goto-bus-stop/setup-zig@v2
@@ -79,6 +80,18 @@ jobs:
 
       - name: Update version locally
         run: node scripts/update-nightly-version.js
+
+      - name: Download ffmpeg/ffprobe (Windows)
+        shell: pwsh
+        run: |
+          Write-Host "Downloading ffmpeg for Windows..."
+          Invoke-WebRequest -Uri $env:FFMPEG_WIN_URL -OutFile ffmpeg.zip -MaximumRedirection 5
+          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-temp -Force
+          $binDir = Get-ChildItem ffmpeg-temp -Directory | Select-Object -First 1
+          Copy-Item "$($binDir.FullName)\bin\ffmpeg.exe" electron\bin\win32\ffmpeg.exe -Force
+          Copy-Item "$($binDir.FullName)\bin\ffprobe.exe" electron\bin\win32\ffprobe.exe -Force
+          Remove-Item -Recurse ffmpeg-temp, ffmpeg.zip -Force
+          Write-Host "ffmpeg installed:"; electron\bin\win32\ffprobe.exe -version | Select-Object -First 1
 
       - name: Build native library (Zig)
         working-directory: native
@@ -107,8 +120,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          lfs: true
 
       - name: Install system dependencies
         run: |
@@ -130,6 +141,16 @@ jobs:
 
       - name: Update version locally
         run: node scripts/update-nightly-version.js
+
+      - name: Download ffmpeg/ffprobe (Linux)
+        run: |
+          echo "Downloading ffmpeg for Linux..."
+          curl -L -o ffmpeg.tar.xz "$FFMPEG_LINUX_URL"
+          tar xf ffmpeg.tar.xz
+          cp ffmpeg-master-latest-linux-amd64-gpl/bin/ffmpeg  electron/bin/linux/ffmpeg
+          cp ffmpeg-master-latest-linux-amd64-gpl/bin/ffprobe electron/bin/linux/ffprobe
+          rm -rf ffmpeg-master-latest-linux-amd64-gpl ffmpeg.tar.xz
+          echo "ffmpeg installed:"; electron/bin/linux/ffprobe -version | head -1
 
       - name: Build native library (Zig)
         working-directory: native
