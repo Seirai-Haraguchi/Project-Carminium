@@ -19,9 +19,9 @@
 
   var COVER_SIZE = 300;           // 统一缩放尺寸
   var COVER_QUALITY = 0.82;        // JPEG 压缩质量
-  var PREFETCH_MARGIN = 10;        // 视口前后预加载数量
-  var COVER_POOL_MAX = 24;         // 最大缓存数量（限制可回收封面 Blob 常驻内存）
-  var PREFETCH_CONCURRENCY = 4;   // 并发预加载数量
+  var PREFETCH_MARGIN = 6;         // 视口前后预加载数量
+  var COVER_POOL_MAX = 20;         // 最大缓存数量（限制可回收封面 Blob 常驻内存）
+  var PREFETCH_CONCURRENCY = 3;    // 并发预加载数量
 
   // ── 状态 ──────────────────────────────────────────────────────
 
@@ -34,6 +34,7 @@
   var _observer = null;            // IntersectionObserver
   var _observedElements = new Map(); // element → track_id
   var _pinned = new Set();        // pin 的 track_id，不会被 cleanupStale / clear 清理
+  var _visible = new Set();       // 当前虚拟列表活动范围，优先保留
   var _reportedColors = new Set(); // 已上报过色彩、无需重复上报的 track_id
 
   /**
@@ -54,6 +55,11 @@
       if (key.indexOf(tid + '\u0000') === 0) pinned = true;
     });
     return pinned;
+  }
+
+  function _isVisible(key) {
+    var sep = key.indexOf('\u0000');
+    return sep >= 0 && _visible.has(key.substring(0, sep));
   }
 
   // ── 工具函数 ──────────────────────────────────────────────────
@@ -85,10 +91,17 @@
       if (oldest.done) break;
       var key = oldest.value;
       // pin 的条目跳过（移到末尾保持，不淘汰）
-      if (_isPinned(key)) {
+      if (_isPinned(key) || _isVisible(key)) {
         var pinnedEntry = _blobCache.get(key);
         _blobCache.delete(key);
         _blobCache.set(key, pinnedEntry);
+        // If every entry is protected, allow the pool to exceed its soft
+        // target rather than looping forever or evicting visible artwork.
+        var hasEvictable = false;
+        _blobCache.forEach(function (candidate, candidateKey) {
+          if (!_isPinned(candidateKey) && !_isVisible(candidateKey)) hasEvictable = true;
+        });
+        if (!hasEvictable) break;
         continue;
       }
       var entry = _blobCache.get(key);
@@ -409,6 +422,7 @@
     }
 
     var size = opts.size;
+    imgEl.dataset.coverCache = '1';
 
     // 已缓存：直接设置
     var cached = getCached(trackId, size);
@@ -430,6 +444,52 @@
         if (opts.onError) opts.onError();
       }
     }, size);
+  }
+
+  /**
+   * Update the active range of a virtual list. Visible rows are protected;
+   * only a small directional window is prefetched. The on-disk cover cache
+   * remains untouched when memory entries are evicted.
+   */
+  function updateViewport(items, startIndex, endIndex, direction, size) {
+    var nextVisible = new Set();
+    var start = Math.max(0, startIndex || 0);
+    var end = Math.min(items ? items.length : 0, endIndex || 0);
+    for (var i = start; i < end; i++) {
+      var item = items[i];
+      var id = item && item.track && item.track.id;
+      if (id) {
+        nextVisible.add(String(id));
+      }
+    }
+    _visible = nextVisible;
+
+    var prefetchIds = [];
+    var before = direction < 0 ? PREFETCH_MARGIN : 3;
+    var after = direction > 0 ? PREFETCH_MARGIN : 3;
+    var preStart = Math.max(0, start - before);
+    var preEnd = Math.min(items ? items.length : 0, end + after);
+    for (var j = preStart; j < preEnd; j++) {
+      var preItem = items[j];
+      var preId = preItem && preItem.track && preItem.track.id;
+      if (preId && !nextVisible.has(String(preId))) prefetchIds.push(preId);
+    }
+    preload(prefetchIds, size);
+  }
+
+  /** Release decoded image references held by a recycled virtual-list node. */
+  function releaseElement(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll('img[data-cover-cache]').forEach(function (img) {
+      img.onload = null;
+      img.onerror = null;
+      img.removeAttribute('src');
+      delete img.dataset.loading;
+    });
+  }
+
+  function clearViewport() {
+    _visible.clear();
   }
 
   /**
@@ -475,7 +535,7 @@
   function clear() {
     var pinnedEntries = [];
     _blobCache.forEach(function (entry, key) {
-      if (_isPinned(key)) {
+      if (_isPinned(key) || _isVisible(key)) {
         pinnedEntries.push({ key: key, entry: entry });
         return;
       }
@@ -520,7 +580,7 @@
     _blobCache.forEach(function (entry, key) {
       if (entry.status !== 'ready') return;
       // pin 的条目不清理（当前播放曲目等）
-      if (_isPinned(key)) return;
+      if (_isPinned(key) || _isVisible(key)) return;
       if (entry.url && (now - entry.timestamp) > STALE_THRESHOLD_MS) {
         try { URL.revokeObjectURL(entry.url); } catch (e) { /* ignore */ }
         _blobCache.delete(key);
@@ -554,6 +614,7 @@
       maxPool: _maxPoolSize,
       colorCache: _colorCache.size,
       pinned: _pinned.size,
+      visible: _visible.size,
     };
   }
 
@@ -608,6 +669,9 @@
     getStatus: getStatus,
     pin: pin,
     unpin: unpin,
+    updateViewport: updateViewport,
+    releaseElement: releaseElement,
+    clearViewport: clearViewport,
   };
 
   if (document.readyState === 'loading') {
