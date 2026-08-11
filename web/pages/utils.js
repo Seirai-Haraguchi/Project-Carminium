@@ -1256,8 +1256,9 @@
 
   // ── 歌词滚动动画 ──────────────────────────────────────────────────────────
   // 目标：快速、自然、行与行之间陆续跟进的"拉行"感。
-  // - animateLyricsScroll：rAF 自定义缓动滚动，轻度过冲产生弹性，
-  //   时长随距离缩放，比原生 behavior:'smooth' 更快、起步更利落。
+  // - animateLyricsScroll：rAF 自定义缓动滚动，只有很轻的过冲收尾，
+  //   保留 Apple Music 风格的柔和弹性，同时避免明显的来回弹跳。
+  //   若传入歌词行间隔，动画时长随间隔增加而增加，短句更快跟进。
   // - cascadeLyricLines：按与激活行的距离设置递增 transition-delay，
   //   让各行状态变化（透明度/颜色/模糊）以激活行为中心向外波纹式扩散，
   //   形成"一行跟着一行"的级联感。纯 CSS 延迟，无 reflow / 无位移硬切。
@@ -1268,8 +1269,9 @@
    * 弹性滚动歌词容器到目标位置（替代原生 behavior:'smooth'）
    * @param {HTMLElement} wrapEl  滚动容器
    * @param {number} targetTop    目标 scrollTop
+   * @param {number} [lineGapMs]  当前行与上一行的时间间隔（毫秒）
    */
-  utils.animateLyricsScroll = function (wrapEl, targetTop) {
+  utils.animateLyricsScroll = function (wrapEl, targetTop, lineGapMs) {
     if (!wrapEl) return;
     utils.cancelLyricsScroll(wrapEl);
 
@@ -1278,10 +1280,15 @@
     if (Math.abs(dist) < 2) { wrapEl.scrollTop = targetTop; return; }
 
     var absDist = Math.abs(dist);
-    // 短距离约 300ms，长距离封顶 480ms
-    var dur = Math.min(300 + absDist * 0.18, 480);
-    // 轻度过冲：easeOutBack，c1 越大回弹越明显；大距离收敛避免大幅弹跳
-    var c1 = absDist > 300 ? 1.0 : 1.25;
+    // 没有歌词时间信息时按滚动距离兜底，同样限制在 50~175ms。
+    var dur = Math.max(50, Math.min(175, 50 + absDist * 0.25));
+    if (typeof lineGapMs === 'number' && isFinite(lineGapMs)) {
+      // 50~175ms：歌词间隔越小，滚动越快；长间隔保留舒缓的跟随感。
+      dur = Math.max(50, Math.min(175, 50 + Math.max(0, lineGapMs) * 0.1));
+    }
+    // 可感知但克制的过冲：距离越大过冲越小，避免长距离跳动。
+    // 相比原来的 1.0 / 1.25，峰值回弹约为 1.3%~2.2%。
+    var c1 = absDist > 300 ? 0.60 : 0.78;
     var c3 = c1 + 1;
     var t0 = performance.now();
 
@@ -1323,8 +1330,18 @@
       line = lines[i];
       if (line.classList.contains('np-lyrics-static')) continue;
       d = Math.abs(i - activeIdx);
-      // 近处行几乎立刻过渡，远处行递增延迟，封顶 120ms 保持紧凑
-      line.style.transitionDelay = Math.min(d * 16, 120) + 'ms';
+      // 近处行几乎立刻过渡，远处行递增延迟，封顶 90ms 保持紧凑
+      var delay = Math.min(d * 18, 90);
+      line.style.transitionDelay = delay + 'ms';
+      line.style.setProperty('--lyrics-lift-delay', delay + 'ms');
+
+      // 只对当前行附近触发上提，避免长歌词列表每次切行都创建大量动画。
+      line.classList.remove('np-lyrics-lift');
+      if (d <= 3) {
+        // 强制读取一次布局，确保同一行再次切换时动画能够重新开始。
+        void line.offsetWidth;
+        line.classList.add('np-lyrics-lift');
+      }
     }
   };
 

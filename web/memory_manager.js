@@ -25,6 +25,9 @@
   var REPORT_INTERVAL_MS = 45_000;    // 上报周期（从 60s 降至 45s）
   var BLOB_MAX_AGE_MS = 3 * 60_000;   // Blob URL 最大存活时间（从 5 分钟降至 3 分钟）
   var LISTENER_WARN_THRESHOLD = 500;   // 单元素监听器告警阈值
+  var AUDIO_CACHE_TRIM_BYTES = 12 * 1024 * 1024;
+  var RENDERER_HEAP_SOFT_MB = 160;
+  var RENDERER_HEAP_HARD_MB = 220;
 
   // ── 状态 ──────────────────────────────────────────────────────────────
 
@@ -167,22 +170,48 @@
    */
   function _cleanupCaches() {
     var results = {};
+    var heapUsedMB = 0;
+    if (performance.memory && performance.memory.usedJSHeapSize) {
+      heapUsedMB = performance.memory.usedJSHeapSize / (1024 * 1024);
+    }
+    var rendererUnderPressure = heapUsedMB >= RENDERER_HEAP_SOFT_MB;
+    var rendererHardPressure = heapUsedMB >= RENDERER_HEAP_HARD_MB;
 
     // CoverCache：清理超期 Blob URL
     if (window.CoverCache && window.CoverCache.cleanupStale) {
       try { results.coverCache = window.CoverCache.cleanupStale(); } catch (e) { /* ignore */ }
     }
+    // JS 堆压力升高时，清除可重新加载的非 pinned 封面；当前封面由
+    // CoverCache 自己的 pinned 机制保留，不影响正在显示的画面。
+    if (rendererHardPressure && window.CoverCache && window.CoverCache.clear) {
+      try {
+        window.CoverCache.clear();
+        results.coverCachePressure = 'cleared-unpinned';
+      } catch (e) { /* ignore */ }
+    }
 
     // AudioBufferCache：在内存压力下缩减
     if (window.__audioEngine && window.__audioEngine._cache) {
       var stats = window.__audioEngine._cache.stats;
-      if (stats && stats.bytes > 40 * 1024 * 1024) {
-        // 超过 40MB 时缩减到 25MB，释放旧 AudioBuffer（2026-08：从 60/40 降至 40/25）
+      if (stats && (stats.bytes > AUDIO_CACHE_TRIM_BYTES || rendererUnderPressure)) {
+        // 保留少量热数据；AudioBuffer 可随时从源文件重新解码。
         try {
-          window.__audioEngine._cache.shrinkTo(25 * 1024 * 1024);
+          window.__audioEngine._cache.shrinkTo(
+            rendererHardPressure ? 8 * 1024 * 1024 : AUDIO_CACHE_TRIM_BYTES
+          );
           results.audioBufferCache = 'shrunk';
         } catch (e) { /* ignore */ }
       }
+    }
+
+    // 模糊背景源是可重新生成的 dataURL 缓存。清空 Map 不会改变当前 CSS
+    // 已引用的图像，只会让后续曲目按需重新生成，避免堆压力持续累积。
+    if (rendererHardPressure && window.App && window.App.nowPlaying &&
+        window.App.nowPlaying.clearBackgroundBlurCache) {
+      try {
+        window.App.nowPlaying.clearBackgroundBlurCache();
+        results.backgroundBlurCache = 'cleared';
+      } catch (e) { /* ignore */ }
     }
 
     // 清理超期 Blob URL
@@ -370,6 +399,11 @@
           window.__audioEngine._cache.set(currentPath, window.__audioEngine._currentBuffer);
         }
       } catch (e) { /* ignore */ }
+    }
+
+    if (window.App && window.App.nowPlaying &&
+        window.App.nowPlaying.clearBackgroundBlurCache) {
+      try { window.App.nowPlaying.clearBackgroundBlurCache(); } catch (e) { /* ignore */ }
     }
 
     // 清理所有追踪的 Blob URL

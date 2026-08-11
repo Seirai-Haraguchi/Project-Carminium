@@ -51,7 +51,9 @@
     var canvas = document.createElement('canvas');
     canvas.className = 'np-bg-video';
     this._canvas = canvas;
-    this._ctx = canvas.getContext('2d');
+    // The canvas is always covered by an opaque video frame or the black
+    // background. Avoid allocating an alpha channel for the compositor.
+    this._ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
 
     // ── 半透明遮罩 ──
     var overlay = document.createElement('div');
@@ -69,6 +71,8 @@
     this._songDurationMs = 0;
     this._isPlaying = false;
     this._rafId = null;
+    this._videoFrameCallbackId = null;
+    this._useVideoFrameCallback = typeof video.requestVideoFrameCallback === 'function';
     this._gen = 0;              // 异步代次，防止竞态
     this._currentVideoUrl = null;
 
@@ -144,6 +148,10 @@
       this._videoType = null;
       this._currentVideoUrl = null;
       this._bg.classList.remove('video-active');
+      // Release the full-screen canvas backing store after the video layer is
+      // hidden. The next metadata callback restores the actual size before it
+      // becomes visible again.
+      this._releaseCanvasSurface();
       this._stopRender();
     },
 
@@ -157,6 +165,7 @@
 
       var visible = this._isVisible();
       if (this._isPlaying && visible) {
+        this._restoreCanvasSurface();
         var p = this._video.play();
         if (p && typeof p.then === 'function') {
           p.catch(function () { /* autoplay 被阻止，忽略 */ });
@@ -165,6 +174,7 @@
       } else {
         this._video.pause();
         this._stopRender();
+        if (!visible) this._releaseCanvasSurface();
       }
     },
 
@@ -202,6 +212,7 @@
       if (!this._active) return;
       var visible = this._isVisible();
       if (visible && this._isPlaying) {
+        this._restoreCanvasSurface();
         var p = this._video.play();
         if (p && typeof p.then === 'function') {
           p.catch(function () { /* ignore */ });
@@ -210,6 +221,7 @@
       } else {
         this._video.pause();
         this._stopRender();
+        if (!visible) this._releaseCanvasSurface();
       }
     },
 
@@ -318,12 +330,24 @@
       }
     },
 
+    _releaseCanvasSurface: function () {
+      if (this._canvas.width !== 1 || this._canvas.height !== 1) {
+        this._canvas.width = 1;
+        this._canvas.height = 1;
+      }
+    },
+
+    _restoreCanvasSurface: function () {
+      if (this._active) this._onResize();
+    },
+
     /**
      * Canvas 逐帧渲染循环：以 object-fit:cover 方式绘制视频帧。
      */
     _render: function () {
       if (!this._active || !this._isPlaying) {
         this._rafId = null;
+        this._videoFrameCallbackId = null;
         return;
       }
 
@@ -347,18 +371,32 @@
         }
       }
 
-      this._rafId = requestAnimationFrame(this._render);
+      if (this._useVideoFrameCallback) {
+        this._videoFrameCallbackId = video.requestVideoFrameCallback(this._render);
+      } else {
+        this._rafId = requestAnimationFrame(this._render);
+      }
     },
 
     _startRender: function () {
-      if (this._rafId !== null) return;
-      this._rafId = requestAnimationFrame(this._render);
+      if (this._rafId !== null || this._videoFrameCallbackId !== null) return;
+      if (this._useVideoFrameCallback) {
+        this._videoFrameCallbackId = this._video.requestVideoFrameCallback(this._render);
+      } else {
+        this._rafId = requestAnimationFrame(this._render);
+      }
     },
 
     _stopRender: function () {
       if (this._rafId !== null) {
         cancelAnimationFrame(this._rafId);
         this._rafId = null;
+      }
+      if (this._videoFrameCallbackId !== null) {
+        if (typeof this._video.cancelVideoFrameCallback === 'function') {
+          this._video.cancelVideoFrameCallback(this._videoFrameCallbackId);
+        }
+        this._videoFrameCallbackId = null;
       }
     },
   };

@@ -130,9 +130,11 @@ let _lastKnownPositionMs = 0;
   const IL_EXIT_FADE = 375;         // 收尾淡出时长
   let interludes = [];              // {start, end, nextStart, lineIdx, el, wrap, dots}
   let _activeInterlude = null;
-  let _interludeExiting = false;    // 收起动画进行中：抑制即时滚动，等收起后再居中校正
+  let _interludeExiting = false;    // 收起动画进行中：CSS 布局与同步滚动正在衔接
   let _interludeExitEl = null;      // 正在收起的间奏元素（用于监听 transitionend）
-  let _interludeScrollTimer = 0;    // 收起后居中校正的兜底定时器
+  let _interludeExitHeight = 0;     // 收起前的间奏高度，用于计算收起后的歌词位置
+  let _interludeExitLineTop = null; // 收起前目标歌词行的 offsetTop
+  let _interludeScrollTimer = 0;    // 收起过程状态清理的兜底定时器
   let _ilRafId = 0;                 // 间奏动画独立 RAF（与 position tick 解耦，60fps）
   let lyricFontSettings = {
     lyrics_font: "",
@@ -417,8 +419,14 @@ let _lastKnownPositionMs = 0;
   // 烘焙模糊半径：384px 源图上的 16px ≈ 全屏 80~110px 的视觉效果（随放大等比缩放），
   // 远大于任何封面细节尺度，视觉与运行时 blur(96px) 不可区分。
   var BG_BAKE_BLUR = 16;
-  var BG_BLUR_CACHE_LIMIT = 24;
+  var BG_BLUR_CACHE_LIMIT = 8; // dataURL 双层背景缓存，限制可回收图像内存
   var _bgBlurSourceCache = new Map(); // 封面 URL → { base, surge } 烘焙 dataURL 对（LRU）
+
+  // 仅清理可重新生成的缓存；当前已应用到 CSS 的 dataURL 仍由样式引用，
+  // 因而清空此 Map 不会改变当前画面。
+  function _clearBgBlurSourceCache() {
+    _bgBlurSourceCache.clear();
+  }
 
   /**
    * 构建降采样 + 烘焙滤镜的背景图源（基底/涌动两个变体）。resolve 值：
@@ -1317,6 +1325,8 @@ let _lastKnownPositionMs = 0;
     _activeInterlude = null;
     _interludeExiting = false;
     _interludeExitEl = null;
+    _interludeExitHeight = 0;
+    _interludeExitLineTop = null;
     if (_interludeScrollTimer) { clearTimeout(_interludeScrollTimer); _interludeScrollTimer = 0; }
     _stopInterludeRaf();
     _clearWordAnim();
@@ -2022,7 +2032,8 @@ let _lastKnownPositionMs = 0;
     var pane = document.getElementById('now-playing-pane');
     var factor = (pane && pane.classList.contains('fullscreen')) ? 0.23 : 0.22;
     var target = il.el.offsetTop - els.lyricsWrap.clientHeight * factor + il.el.clientHeight / 2;
-    App.utils.animateLyricsScroll(els.lyricsWrap, target);
+    // 间奏本身没有激活歌词行，用间奏到下一句的时间跨度控制进入速度。
+    App.utils.animateLyricsScroll(els.lyricsWrap, target, il.nextStart - il.start);
   }
 
   function _ilEaseOutExpo(p) {
@@ -2116,22 +2127,37 @@ let _lastKnownPositionMs = 0;
   }
 
   /** 居中滚动到某行（激活行统一的滚动入口） */
-  function _doActivationScroll(lineEl) {
+  function _doActivationScroll(lineEl, lineIdx, prevIdx, lineTopOverride) {
     if (!lineEl) return;
     var pane = document.getElementById('now-playing-pane');
     var factor = (pane && pane.classList.contains('fullscreen')) ? 0.23 : 0.22;
-    var target = lineEl.offsetTop - els.lyricsWrap.clientHeight * factor + lineEl.clientHeight / 2;
-    App.utils.animateLyricsScroll(els.lyricsWrap, target);
+    var lineTop = typeof lineTopOverride === 'number' ? lineTopOverride : lineEl.offsetTop;
+    var target = lineTop - els.lyricsWrap.clientHeight * factor + lineEl.clientHeight / 2;
+    var lineGapMs = null;
+    if (lineIdx >= 0 && lyricsData[lineIdx]) {
+      // 正常播放使用上一句；seek/间奏重置索引时回退到数据中的上一行。
+      var fromIdx = prevIdx >= 0 && lyricsData[prevIdx] ? prevIdx : lineIdx - 1;
+      if (fromIdx >= 0 && lyricsData[fromIdx]) {
+        lineGapMs = Math.abs(lyricsData[lineIdx].time - lyricsData[fromIdx].time);
+      }
+    }
+    App.utils.animateLyricsScroll(els.lyricsWrap, target, lineGapMs);
   }
 
   /**
-   * 间奏收起期间：下一行"上移"由 CSS 收起动画本身完成（即平移），
-   * 此处把滚动校正推迟到收起结束之后，用收起后正确的 offsetTop 做一次居中，
-   * 避免在 grid-template-rows 布局动画进行中又跑 JS 滚动去抢同一批元素 → 顿卡。
+   * 间奏收起期间：CSS 布局收起与 JS 滚动校正同帧启动，
+   * 目标位置使用收起前的 offsetTop 减去间奏高度计算，确保两段位移合成一条连续曲线。
+   * transitionend 只负责清理退出状态，不再在收起结束后追加第二段滚动。
    */
-  function _schedulePostCollapseScroll(lineEl) {
+  function _schedulePostCollapseScroll(lineEl, lineIdx, prevIdx) {
     var el = _interludeExitEl;
-    if (!el) { _doActivationScroll(lineEl); return; }
+    if (!el) { _doActivationScroll(lineEl, lineIdx, prevIdx); return; }
+
+    var finalLineTop = typeof _interludeExitLineTop === 'number'
+      ? _interludeExitLineTop - _interludeExitHeight
+      : null;
+    _doActivationScroll(lineEl, lineIdx, prevIdx, finalLineTop);
+
     var done = false;
     var run = function () {
       if (done) return;
@@ -2139,14 +2165,15 @@ let _lastKnownPositionMs = 0;
       if (_interludeScrollTimer) { clearTimeout(_interludeScrollTimer); _interludeScrollTimer = 0; }
       _interludeExiting = false;
       _interludeExitEl = null;
-      _doActivationScroll(lineEl);
+      _interludeExitHeight = 0;
+      _interludeExitLineTop = null;
     };
     el.addEventListener('transitionend', function (e) {
       if (e.target === el && e.propertyName === 'grid-template-rows') run();
     }, { once: true });
     // 兜底：reduced-motion / 元素被快速移除导致 transitionend 不触发时仍校正
     if (_interludeScrollTimer) clearTimeout(_interludeScrollTimer);
-    _interludeScrollTimer = setTimeout(run, 420);
+    _interludeScrollTimer = setTimeout(run, 240);
   }
 
   function _updateLyrics(posMs) {
@@ -2180,6 +2207,8 @@ let _lastKnownPositionMs = 0;
     if (_activeInterlude) {
       _stopInterludeRaf();
       _interludeExitEl = _activeInterlude.el;
+      _interludeExitHeight = _interludeExitEl.offsetHeight;
+      _interludeExitLineTop = lines[idx] ? lines[idx].offsetTop : null;
       _exitInterlude(_activeInterlude);
       _interludeExiting = true;
       _activeInterlude = null;
@@ -2213,10 +2242,10 @@ let _lastKnownPositionMs = 0;
       var activeLine = lines[idx];
       if (activeLine) {
         if (_interludeExiting) {
-          // 间奏刚结束：平移由收起动画完成，等收起结束再居中校正（避免与布局动画打架）
-          _schedulePostCollapseScroll(activeLine);
+          // 间奏刚结束：布局收起与滚动校正同步启动，保持为一段连续过渡
+          _schedulePostCollapseScroll(activeLine, idx, prevLyricsIdx);
         } else {
-          _doActivationScroll(activeLine);
+          _doActivationScroll(activeLine, idx, prevLyricsIdx);
         }
       }
     }
@@ -3564,6 +3593,10 @@ function _updateLyricsSourceBadge() {
         }
       }
     }
+  };
+
+  np.clearBackgroundBlurCache = function () {
+    _clearBgBlurSourceCache();
   };
 
   // ── デフォルト復元ビュー設定変更 ─────────────────────────────────────────

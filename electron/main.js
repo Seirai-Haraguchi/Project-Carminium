@@ -34,8 +34,17 @@ app.commandLine.appendSwitch('enable-features',
 function _readMemOptLevel() {
   try {
     const os = require('os');
-    const appdata = process.env.APPDATA || os.homedir();
-    const settingsPath = path.join(appdata, 'Carminium', 'settings.json');
+    // 平台标准配置目录（app ready 前无法使用 app.getPath）
+    let configDir;
+    if (process.platform === 'win32') {
+      configDir = path.join(process.env.APPDATA || os.homedir(), 'Carminium');
+    } else if (process.platform === 'darwin') {
+      configDir = path.join(os.homedir(), 'Library', 'Application Support', 'Carminium');
+    } else {
+      // Linux: XDG_CONFIG_HOME or ~/.config
+      configDir = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'Carminium');
+    }
+    const settingsPath = path.join(configDir, 'settings.json');
     if (fs.existsSync(settingsPath)) {
       const raw = fs.readFileSync(settingsPath, 'utf-8');
       const data = JSON.parse(raw);

@@ -262,10 +262,12 @@ class NativeRenderer extends EventEmitter {
   }
 
   async init(opts = {}) {
-    if (!_loadDll()) throw new Error('carminium_audio.dll not loaded');
+    if (!_loadDll()) throw new Error('carminium_audio native library not loaded: ' + LIB_NAME);
     if (this._initialized) await this.close();
 
-    const shareMode = opts.shareMode === SHARE_EXCLUSIVE ? SHARE_EXCLUSIVE : SHARE_SHARED;
+    // Linux/macOS: PulseAudio/ALSA/CoreAudio don't support WASAPI exclusive mode.
+    // Force shared mode on non-Windows; ignore the shareMode option.
+    const shareMode = (IS_WIN && opts.shareMode === SHARE_EXCLUSIVE) ? SHARE_EXCLUSIVE : SHARE_SHARED;
     const deviceIndex = opts.deviceIndex != null ? opts.deviceIndex : -1;
     const sampleRate = opts.sampleRate || 0;
     const channels = opts.channels || 2;

@@ -29,7 +29,7 @@
   function _t(key) { return window.App && App.i18n ? App.i18n.t(key) : key; }
 
   function _buildSections() {
-    return [
+    var sections = [
     {
       id: 'appearance',
       titleKey: 'settings.section.appearance',
@@ -230,18 +230,6 @@
                 _t('settings.wasapiNotice.item3'),
                 _t('settings.wasapiNotice.item4'),
               ],
-            },
-            {
-              type: 'select',
-              bind: 'audio_api',
-              label: _t('settings.audioApi.label'),
-              sub: _t('settings.audioApi.sub'),
-              options: [
-                { value: 'wasapi', label: 'WASAPI' },
-                { value: 'directsound', label: 'DirectSound' },
-                { value: 'waveout', label: 'WaveOut' },
-              ],
-              onApply: function (val) { _promptRestart(_t('settings.restartTitle'), _t('settings.restartBody')); },
             },
             {
               type: 'device_select',
@@ -506,6 +494,179 @@
       isPage: true,
     },
   ];
+
+    // 调试选项卡（仅当 localStorage 中有标记时显示）
+    if (_isDebugMode()) {
+      sections.push(_buildDebugSection());
+    }
+
+    return sections;
+  }
+
+  // ── 调试选项卡 ─────────────────────────────────────────────────────────
+  function _isDebugMode() {
+    try { return sessionStorage.getItem('carminium_debug') === '1'; } catch (e) { return false; }
+  }
+
+  function _buildDebugSection() {
+    var platform = (window.__electronAPI && window.__electronAPI.platform) || 'unknown';
+
+    return {
+      id: 'debug',
+      titleKey: 'settings.section.debug',
+      icon: 'bug_report',
+      groups: [
+        {
+          titleKey: 'settings.debug.group.platform',
+          rows: [
+            {
+              type: 'action',
+              bind: '_debug_show_platform',
+              label: _t('settings.debug.showPlatform'),
+              sub: _t('settings.debug.showPlatformSub'),
+              buttonText: _t('settings.debug.showBtn'),
+              buttonIcon: 'info',
+              onAction: function () {
+                App.utils.call('get_app_info').then(function (res) {
+                  var info = JSON.parse(res);
+                  var d = info.diagnostic || {};
+                  alert([
+                    'Platform: ' + d.platform,
+                    'Arch: ' + d.arch,
+                    'Electron: ' + d.electron_version,
+                    'Chrome: ' + d.chrome_version,
+                    'Node: ' + d.node_version,
+                    'App Version: ' + info.version,
+                    'Codename: ' + (info.codename || 'N/A'),
+                  ].join('\n'));
+                });
+              },
+            },
+            {
+              type: 'action',
+              bind: '_debug_toggle_traffic',
+              label: _t('settings.debug.toggleTraffic'),
+              sub: _t('settings.debug.toggleTrafficSub'),
+              buttonText: _t('settings.debug.toggleBtn'),
+              buttonIcon: 'traffic',
+              onAction: function () {
+                document.body.classList.toggle('platform-non-win');
+                App.utils.toast(document.body.classList.contains('platform-non-win')
+                  ? _t('settings.debug.trafficOn')
+                  : _t('settings.debug.trafficOff'));
+              },
+            },
+          ],
+        },
+        {
+          titleKey: 'settings.debug.group.dialogs',
+          rows: [
+            {
+              type: 'action',
+              bind: '_debug_test_confirm',
+              label: _t('settings.debug.testConfirm'),
+              sub: _t('settings.debug.testConfirmSub'),
+              buttonText: _t('settings.debug.testBtn'),
+              buttonIcon: 'help',
+              onAction: function () {
+                App.utils.confirmDialog({
+                  title: _t('settings.debug.testConfirm'),
+                  body: _t('settings.debug.testConfirmBody'),
+                  confirmText: _t('common.confirm'),
+                  cancelText: _t('common.cancel'),
+                }).then(function (ok) {
+                  App.utils.toast(ok ? 'Confirmed' : 'Cancelled');
+                });
+              },
+            },
+            {
+              type: 'action',
+              bind: '_debug_test_toast',
+              label: _t('settings.debug.testToast'),
+              sub: _t('settings.debug.testToastSub'),
+              buttonText: _t('settings.debug.testBtn'),
+              buttonIcon: 'notifications',
+              onAction: function () {
+                App.utils.toast('Toast test - ' + new Date().toLocaleTimeString());
+              },
+            },
+            {
+              type: 'action',
+              bind: '_debug_test_alert',
+              label: _t('settings.debug.testAlert'),
+              sub: _t('settings.debug.testAlertSub'),
+              buttonText: _t('settings.debug.testBtn'),
+              buttonIcon: 'warning',
+              onAction: function () {
+                alert(_t('settings.debug.testAlertBody'));
+              },
+            },
+          ],
+        },
+        {
+          titleKey: 'settings.debug.group.system',
+          rows: [
+            {
+              type: 'action',
+              bind: '_debug_ipc_devices',
+              label: _t('settings.debug.listDevices'),
+              sub: _t('settings.debug.listDevicesSub'),
+              buttonText: _t('settings.debug.showBtn'),
+              buttonIcon: 'speaker',
+              onAction: function () {
+                App.utils.call('get_audio_devices').then(function (res) {
+                  var devices = JSON.parse(res || '[]');
+                  if (!devices.length) { App.utils.toast('No devices'); return; }
+                  alert(devices.map(function (d) {
+                    return (d.name || d.id) + (d.index != null ? ' [index=' + d.index + ']' : '');
+                  }).join('\n'));
+                });
+              },
+            },
+            {
+              type: 'action',
+              bind: '_debug_ipc_settings',
+              label: _t('settings.debug.dumpSettings'),
+              sub: _t('settings.debug.dumpSettingsSub'),
+              buttonText: _t('settings.debug.showBtn'),
+              buttonIcon: 'settings',
+              onAction: function () {
+                App.utils.call('get_settings').then(function (res) {
+                  alert(JSON.stringify(JSON.parse(res), null, 2));
+                });
+              },
+            },
+            {
+              type: 'action',
+              bind: '_debug_reload',
+              label: _t('settings.debug.reloadPage'),
+              sub: _t('settings.debug.reloadPageSub'),
+              buttonText: _t('settings.debug.reloadBtn'),
+              buttonIcon: 'refresh',
+              onAction: function () { window.location.reload(); },
+            },
+          ],
+        },
+        {
+          titleKey: 'settings.debug.group.controls',
+          rows: [
+            {
+              type: 'action',
+              bind: '_debug_lock',
+              label: _t('settings.debug.lockDebug'),
+              sub: _t('settings.debug.lockDebugSub'),
+              buttonText: _t('settings.debug.lockBtn'),
+              buttonIcon: 'lock',
+              onAction: function () {
+                try { sessionStorage.removeItem('carminium_debug'); } catch (e) {}
+                App.utils.toast(_t('settings.debug.lockedMsg'));
+                setTimeout(function () { window.location.reload(); }, 1000);
+              },
+            },
+          ],
+        },
+      ],
+    };
   }
 
   // ── 普通页面渲染 ─────────────────────────────────────────────────────────
@@ -1053,12 +1214,23 @@
     _applyWasapiExclusive(checked);
   };
 
+  // 暴露分类切换，供 about.js 彩蛋跳转使用
+  page.activateSection = function (id) {
+    if (page.container) {
+      _renderPageContent();
+      _activateSection(id);
+    } else if (App.navigate) {
+      App.navigate('settings');
+      setTimeout(function () { _activateSection(id); }, 200);
+    }
+  };
+
   function _applyWasapiExclusive(checked) {
     var notice = document.querySelector('.settings-notice[data-show-when="wasapi_exclusive"]');
     if (notice) notice.style.display = checked ? '' : 'none';
 
     // 独占模式下禁用音频 API 选择和输出设备选择（AutoMix 始终可用）
-    var disabledBinds = ['audio_api', 'audio_output_device'];
+    var disabledBinds = ['audio_output_device'];
     disabledBinds.forEach(function (b) {
       var row = document.querySelector('.settings-row[data-bind="' + b + '"]');
       if (!row) return;
@@ -1077,7 +1249,7 @@
     });
   }
 
-  // ── 重启提示（用于 audio_api 等需重启生效的设置）────────────────────────
+  // ── 重启提示（用于需重启生效的设置）────────────────────────
   function _promptRestart(title, body) {
     App.utils.confirmDialog({
       title: title,

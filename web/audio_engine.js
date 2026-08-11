@@ -501,6 +501,11 @@
     _disposeStreamingNode(node, gain) {
       if (node) {
         try { node.port.postMessage({ type: 'clear' }); } catch (_) {}
+        // Drop the main-thread message closure and close the channel after
+        // the node is disconnected. This prevents disposed per-track
+        // worklets from retaining the AudioEngine through port handlers.
+        try { node.port.onmessage = null; } catch (_) {}
+        try { node.port.close(); } catch (_) {}
         try { node.disconnect(); } catch (_) {}
       }
       if (gain) {
@@ -778,6 +783,18 @@
 
       this._isPlaying = false;
       this._isPaused = false;
+
+      // Keep the warm cache useful, but release older decoded buffers promptly
+      // after playback stops instead of waiting for the periodic memory pass.
+      this._cache.shrinkTo(16 * 1024 * 1024);
+
+      // The output worklet and analyser are connected to the destination for
+      // the lifetime of the engine.  Suspend the context after detaching all
+      // sources so the render thread does not keep processing silence between
+      // tracks.  _resumeContext() resumes it on the next play/seek operation.
+      if (this._ctx && this._ctx.state === 'running') {
+        this._ctx.suspend();
+      }
     }
 
     pause() {
@@ -1050,10 +1067,11 @@
         );
       }
 
-      // 智能调速：crossfade 期间以调速播放，过渡完成后线性渐回原速
+      // 智能调速：crossfade 期间以调速播放，过渡完成后线性渐回用户设定速率。
+      // 速率变化发生在 fade-in 期间，避免 incoming track 突然变调。
       var tempoAdjust = this._getTempoAdjust();
       if (tempoAdjust !== 1.0) {
-        nextSrc.playbackRate.value = tempoAdjust;
+        nextSrc.playbackRate.value = this._userRate * tempoAdjust;
         this._tempoAdjustActive = tempoAdjust;
         console.log('[AudioEngine] Tempo adjust (crossfade):', tempoAdjust.toFixed(4),
           '(cur=' + (this._transitionPlan ? this._transitionPlan.bpmCurrent : '?') +
@@ -1112,10 +1130,10 @@
         );
       }
 
-      // 智能调速：crossfade 期间以调速播放，过渡完成后线性渐回原速
+      // 智能调速：crossfade 期间以调速播放，过渡完成后线性渐回用户设定速率。
       var tempoAdjust = this._getTempoAdjust();
       if (tempoAdjust !== 1.0) {
-        nextSrc.playbackRate.value = tempoAdjust;
+        nextSrc.playbackRate.value = this._userRate * tempoAdjust;
         this._tempoAdjustActive = tempoAdjust;
         console.log('[AudioEngine] Tempo adjust (crossfade):', tempoAdjust.toFixed(4),
           '(cur=' + (this._transitionPlan ? this._transitionPlan.bpmCurrent : '?') +
@@ -1292,12 +1310,12 @@
         this._seekOffsetMs = nextOffset;
       } else if (hadNextBuffer) {
         // Buffer：source 在 nextOffset 处启动，播放了 cfMs
-        // 如果有调速，实际消费的音频时长 = cfMs * tempoAdj
-        if (tempoAdj > 0 && tempoAdj !== 1.0) {
-          this._seekOffsetMs = nextOffset + Math.round(cfMs * tempoAdj);
-        } else {
-          this._seekOffsetMs = nextOffset + cfMs;
-        }
+        // Account for both the user's rate and the temporary BPM correction;
+        // otherwise a user-selected rate would make the promoted position
+        // drift at every transition.
+        var effectiveRate = this._userRate *
+          (tempoAdj > 0 ? tempoAdj : 1.0);
+        this._seekOffsetMs = nextOffset + Math.round(cfMs * effectiveRate);
       } else {
         // 回退
         this._seekOffsetMs = cfMs;
@@ -1320,6 +1338,12 @@
       this._pendingNextStreamingPcm = [];
       this._nextStreamingPrimed = false;
 
+      // Snapshot transition tuning before clearing the plan.  The ramp-back
+      // below still needs the adaptive ramp duration after promotion.
+      var transitionPlan = this._transitionPlan;
+      var tempoRampMs = transitionPlan && transitionPlan.tempoRampMs > 0
+        ? transitionPlan.tempoRampMs : 3000;
+
       // 清除过渡方案（下一曲需要新方案）
       this._transitionPlan = null;
       this._cachedCrossfadeCurves = null;
@@ -1328,13 +1352,13 @@
       // crossfade 期间下一曲以 tempoAdj 速率播放，现在已提升为当前曲。
       // 用线性渐变在 3 秒内缓慢回到 1.0，避免突变感。
       if (tempoAdj > 0 && tempoAdj !== 1.0 && this._currentSource && this._currentSource.playbackRate) {
-        var rampSec = 3.0;
+        var rampSec = Math.max(1.8, Math.min(4.0, tempoRampMs / 1000));
         var pr = this._currentSource.playbackRate;
         var rampStart = this._ctx.currentTime;
         pr.cancelScheduledValues(rampStart);
-        pr.setValueAtTime(tempoAdj, rampStart);
-        pr.linearRampToValueAtTime(1.0, rampStart + rampSec);
-        console.log('[AudioEngine] Tempo ramp-back:', tempoAdj.toFixed(4), '→ 1.0 over', rampSec, 's');
+        pr.setValueAtTime(this._userRate * tempoAdj, rampStart);
+        pr.linearRampToValueAtTime(this._userRate, rampStart + rampSec);
+        console.log('[AudioEngine] Tempo ramp-back:', tempoAdj.toFixed(4), '→ user rate over', rampSec, 's');
       }
       this._tempoAdjustActive = 0;
 
@@ -1952,7 +1976,8 @@
 
     /**
      * 获取 BPM 匹配的速率调整比率。
-     * 如果两曲 BPM 在可调范围内（15% 以内），返回 nextBpm/curBpm 比率。
+     * 如果两曲 BPM 在可调范围内（15% 以内），返回 curBpm/nextBpm
+     * 作为 incoming track 的播放速率修正。
      * 下一曲以此速率播放，拍子与当前曲对齐。
      * @returns {number} playbackRate（1.0 = 不调整）
      */
@@ -2375,6 +2400,7 @@
     _safeStopSource(source) {
       if (!source) return;
       try { source.stop(); } catch (_) {}
+      try { source.onended = null; } catch (_) {}
       try { source.disconnect(); } catch (_) {}
     }
 

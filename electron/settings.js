@@ -1,6 +1,9 @@
 /**
  * Carminium — 应用设置持久化
- * 将设置存储为 JSON 文件，位于 %APPDATA%/Carminium/settings.json
+ * 将设置存储为 JSON 文件，位于平台标准配置目录：
+ *   Windows: %APPDATA%/Carminium/settings.json
+ *   Linux:   ~/.config/Carminium/settings.json  (XDG_CONFIG_HOME)
+ *   macOS:   ~/Library/Application Support/Carminium/settings.json
  */
 'use strict';
 
@@ -15,7 +18,6 @@ const DEFAULTS = {
   theme: 'system',    // "light" | "dark" | "system"
   music_folders: [],
   playback_state: {}, // { track_id, position_ms, was_playing }
-  audio_api: 'wasapi',
   audio_output_device: '',
   wasapi_exclusive: false,
   automix: false,
@@ -80,8 +82,27 @@ const DEFAULTS = {
 
 class AppSettings {
   constructor() {
-    const appdata = process.env.APPDATA || os.homedir();
-    this._dir = path.join(appdata, 'Carminium');
+    // 优先使用 Electron 的 app.getPath('userData')（跨平台标准路径）
+    // 若 app 模块不可用（理论上不会发生），则回退到平台手动计算
+    let baseDir;
+    try {
+      const { app } = require('electron');
+      if (app && app.getPath) {
+        baseDir = app.getPath('userData');
+      }
+    } catch { /* electron not available yet */ }
+    if (!baseDir) {
+      // 手动回退：遵循各平台规范
+      if (process.platform === 'win32') {
+        baseDir = path.join(process.env.APPDATA || os.homedir(), 'Carminium');
+      } else if (process.platform === 'darwin') {
+        baseDir = path.join(os.homedir(), 'Library', 'Application Support', 'Carminium');
+      } else {
+        // Linux: XDG_CONFIG_HOME or ~/.config
+        baseDir = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'Carminium');
+      }
+    }
+    this._dir = baseDir;
     this._path = path.join(this._dir, 'settings.json');
     try {
       fs.mkdirSync(this._dir, { recursive: true });

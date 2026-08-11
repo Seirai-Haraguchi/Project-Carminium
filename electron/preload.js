@@ -174,6 +174,12 @@ contextBridge.exposeInMainWorld('__electronAPI', {
    * 判断是否运行在 Electron 环境中。
    */
   isElectron: true,
+
+  /**
+   * 当前操作系统平台（'win32' | 'linux' | 'darwin'）。
+   * 用于前端按平台条件渲染 UI 元素。
+   */
+  platform: process.platform,
 });
 
 // ── 兼容层说明 ───────────────────────────────────────────────────────────

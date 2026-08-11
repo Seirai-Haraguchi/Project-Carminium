@@ -231,10 +231,9 @@
     }
   }
 
-  // ── Logo连击彩蛋：测试模式 ────────────────────────────────────────────────────
+  // ── Logo连击彩蛋：解锁调试选项卡 ────────────────────────────────────────────
   var _logoClickCount = 0;
   var _logoClickTimer = null;
-  var _testModeActive = false;
 
   function _initLogoEasterEgg(container) {
     var logo = container.querySelector('.about-app-icon');
@@ -243,8 +242,6 @@
     logo.addEventListener('click', function (e) {
       e.stopPropagation(); // 防止触发版本卡片展开
 
-      if (_testModeActive) return;
-
       _logoClickCount++;
 
       // 重置计时器
@@ -252,79 +249,42 @@
         clearTimeout(_logoClickTimer);
       }
 
-      // 5秒内没有继续点击则重置计数
+      // 3秒内没有继续点击则重置计数
       _logoClickTimer = setTimeout(function () {
         _logoClickCount = 0;
-      }, 5000);
+      }, 3000);
 
-      // 连击15次触发测试模式
-      if (_logoClickCount >= 15) {
+      // 连击 7 次解锁调试选项卡
+      var threshold = 7;
+      if (_logoClickCount >= threshold) {
         _logoClickCount = 0;
         clearTimeout(_logoClickTimer);
-        _enterTestMode(container);
+        _unlockDebugMode(container);
       }
     });
   }
 
-  function _enterTestMode(container) {
-    _testModeActive = true;
+  function _unlockDebugMode(container) {
+    // 持久化标记
+    try { sessionStorage.setItem('carminium_debug', '1'); } catch (e) { /* ignore */ }
 
-    // 创建测试遮罩
-    var overlay = document.createElement('div');
-    overlay.id = 'about-test-overlay';
-    overlay.className = 'about-test-overlay';
-    overlay.innerHTML =
-      '<div class="about-test-card">' +
-        '<div class="about-test-header">' +
-          '<span class="material-symbols-rounded about-test-icon">bug_report</span>' +
-          '<h3 class="about-test-title" data-i18n="about.testModeActivated">测试模式已激活</h3>' +
-        '</div>' +
-        '<p class="about-test-desc" data-i18n="about.testModeDesc">5秒后自动关闭并返回正常页面</p>' +
-        '<div class="about-test-progress">' +
-          '<div class="about-test-progress-bar"></div>' +
-        '</div>' +
-        '<button class="about-test-close" id="about-test-close" data-i18n="about.testModeClose">立即关闭</button>' +
-      '</div>';
-
-    container.appendChild(overlay);
-
-    // 强制重绘以触发过渡动画
-    overlay.offsetHeight;
-    overlay.classList.add('active');
-
-    // 进度条动画
-    var progressBar = overlay.querySelector('.about-test-progress-bar');
-    if (progressBar) {
-      progressBar.style.animation = 'about-test-progress 5s linear forwards';
+    // Toast 提示
+    if (App.utils && App.utils.toast) {
+      App.utils.toast(App.i18n ? App.i18n.t('about.debugUnlocked') : 'Debug mode unlocked');
     }
 
-    // 5秒后自动关闭
-    var autoCloseTimer = setTimeout(function () {
-      _exitTestMode(container);
-    }, 5000);
-
-    // 立即关闭按钮
-    var closeBtn = overlay.querySelector('#about-test-close');
-    if (closeBtn) {
-      closeBtn.addEventListener('click', function () {
-        clearTimeout(autoCloseTimer);
-        _exitTestMode(container);
-      });
-    }
-  }
-
-  function _exitTestMode(container) {
-    var overlay = container.querySelector('#about-test-overlay');
-    if (!overlay) return;
-
-    overlay.classList.remove('active');
-
+    // 自动跳转到设置页调试选项卡
     setTimeout(function () {
-      if (overlay && overlay.parentNode) {
-        overlay.parentNode.removeChild(overlay);
+      if (App.navigate) {
+        App.navigate('settings');
+        // 等待设置页渲染后切换到 debug 分类
+        setTimeout(function () {
+          if (App.pages && App.pages.settings && App.pages.settings.activateSection) {
+            App.pages.settings.activateSection('debug');
+          }
+        }, 200);
       }
-      _testModeActive = false;
-    }, 300);
+    }, 800);
   }
 
 })();

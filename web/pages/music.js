@@ -708,8 +708,19 @@
     });
   };
 
+  // Release the virtual-list wrapper objects before a library refresh. The
+  // shared track array is repopulated by App.refreshLibraryCache(), and the
+  // visible page is rendered again after that completes.
+  page.releaseLibraryViewMemory = function () {
+    if (_vl) { _vl.destroy(); _vl = null; }
+    _flatList = [];
+    _renderedTracks = [];
+  };
+
   function _sortTracks(list) {
-    const sorted = list.slice();
+    // Callers already own a filtered/copy array. Sorting it in place avoids
+    // retaining a second full reference array for large libraries.
+    const sorted = list;
     switch (sortMode) {
       case 'az':
         sorted.sort((a, b) => App.utils.itemSortKey(a, 'sort_key', 'title').localeCompare(App.utils.itemSortKey(b, 'sort_key', 'title')));
@@ -806,17 +817,21 @@
     }
 
     const showGroup = !filterStr && !_hasExclusions();
-    const groups = showGroup ? _groupTracks(list) : [{ letter: '', items: list }];
 
     _flatList = [];
     _renderedTracks = list;
     let counter = 0;
-    groups.forEach(group => {
-      if (showGroup) _flatList.push({ type: 'header', letter: group.letter });
-      group.items.forEach(track => {
-        counter++;
-        _flatList.push({ type: 'row', track: track, displayNum: counter });
-      });
+    let previousGroupKey = null;
+    list.forEach(function (track) {
+      if (showGroup) {
+        const groupKey = _getGroupKey(track);
+        if (groupKey !== previousGroupKey) {
+          _flatList.push({ type: 'header', letter: groupKey });
+          previousGroupKey = groupKey;
+        }
+      }
+      counter++;
+      _flatList.push({ type: 'row', track: track, displayNum: counter });
     });
 
     if (_vl) { _vl.destroy(); _vl = null; }

@@ -20,7 +20,7 @@
   var COVER_SIZE = 300;           // 统一缩放尺寸
   var COVER_QUALITY = 0.82;        // JPEG 压缩质量
   var PREFETCH_MARGIN = 10;        // 视口前后预加载数量
-  var COVER_POOL_MAX = 40;         // 最大缓存数量（收紧，降低渲染进程内存）
+  var COVER_POOL_MAX = 24;         // 最大缓存数量（限制可回收封面 Blob 常驻内存）
   var PREFETCH_CONCURRENCY = 4;   // 并发预加载数量
 
   // ── 状态 ──────────────────────────────────────────────────────
@@ -535,6 +535,10 @@
         var k = iter.next().value;
         if (k === undefined) break;
         _colorCache.delete(k);
+        // Allow the per-track reporting guard to be collected together with
+        // the color entry. Otherwise this Set grows for the lifetime of the
+        // renderer even though the color cache itself is bounded.
+        _reportedColors.delete(k);
       }
     }
     return cleaned;

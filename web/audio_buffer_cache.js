@@ -10,7 +10,7 @@
 (function () {
   'use strict';
 
-  const DEFAULT_MAX_BYTES = 40 * 1024 * 1024; // 40MB（收紧，降低渲染进程内存）
+  const DEFAULT_MAX_BYTES = 24 * 1024 * 1024; // 24MB（限制解码音频常驻内存）
 
   class AudioBufferCache {
     /**

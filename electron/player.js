@@ -11,6 +11,9 @@
 const { EventEmitter } = require('events');
 const { SHARE_SHARED, SHARE_EXCLUSIVE } = require('./wasapi');
 
+// WASAPI 独占モードは Windows 専用。Linux (PulseAudio/ALSA) / macOS (CoreAudio) では無効。
+const IS_WIN = process.platform === 'win32';
+
 class MusicPlayer extends EventEmitter {
   constructor(settings = null, library = null, renderer = null) {
     super();
@@ -27,7 +30,8 @@ class MusicPlayer extends EventEmitter {
     this._fe_volume = 80;
 
     // 排他モードフラグ（設定から復元）
-    this._exclusive = settings ? !!settings.get('wasapi_exclusive', false) : false;
+    // Linux/macOS では WASAPI 独占モードが存在しないため常に false
+    this._exclusive = IS_WIN && settings ? !!settings.get('wasapi_exclusive', false) : false;
 
     // _playNative の同時実行抑制用トークン（monotonic）
     this._nativePlayToken = 0;
@@ -1184,6 +1188,11 @@ class MusicPlayer extends EventEmitter {
    * - トラック再読み込み失敗時に true を返すと UI が誤ったモードを表示する。
    */
   async setExclusiveMode(enabled) {
+    // Linux/macOS では独占モードをサポートしない（WASAPI 専用機能）
+    if (!IS_WIN && enabled) {
+      console.warn('[player] Exclusive mode is not supported on this platform');
+      return false;
+    }
     if (!this._renderer && enabled) {
       console.warn('[player] Native renderer not available');
       return false;
