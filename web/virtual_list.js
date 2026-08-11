@@ -55,6 +55,8 @@
       this._itemHeight = opts.itemHeight || 56;
       this._bufferSize = opts.bufferSize != null ? opts.bufferSize : 10;
       this._renderItem = opts.renderItem;
+      this._onRangeChange = opts.onRangeChange || null;
+      this._onRecycle = opts.onRecycle || null;
       this._getHeight = opts.getHeight;
       this._estimatedItemHeight = opts.estimatedItemHeight || this._itemHeight;
 
@@ -86,6 +88,7 @@
       this._scrollTop = this._scrollContainer.scrollTop || 0;
       this._lastStartIndex = -1;
       this._lastEndIndex = -1;
+      this._lastRenderedScrollTop = this._scrollTop;
       this._rafPending = false;
 
       // 绑定事件：监听外部滚动容器的 scroll 事件
@@ -264,12 +267,16 @@
       }
       this._lastStartIndex = startIndex;
       this._lastEndIndex = endIndex;
+      var direction = this._scrollTop > this._lastRenderedScrollTop ? 1 :
+        (this._scrollTop < this._lastRenderedScrollTop ? -1 : 0);
+      this._lastRenderedScrollTop = this._scrollTop;
 
       // ── 回收不在新范围内的活动节点 ──
       var newActive = [];
       for (var i = 0; i < this._activeNodes.length; i++) {
         var node = this._activeNodes[i];
         if (node.index < startIndex || node.index >= endIndex) {
+          if (this._onRecycle) this._onRecycle(node.el);
           this._pool.push(node.el);
           if (node.el.parentNode) node.el.parentNode.removeChild(node.el);
         } else {
@@ -277,6 +284,9 @@
         }
       }
       this._activeNodes = newActive;
+      if (this._onRangeChange) {
+        this._onRangeChange(this._items, startIndex, endIndex, direction);
+      }
 
       // ── 创建/更新范围内的节点 ──
       // 收集已占用的 index
@@ -328,6 +338,7 @@
     _recycleAll() {
       for (var i = 0; i < this._activeNodes.length; i++) {
         var node = this._activeNodes[i];
+        if (this._onRecycle) this._onRecycle(node.el);
         this._pool.push(node.el);
         if (node.el.parentNode) node.el.parentNode.removeChild(node.el);
       }

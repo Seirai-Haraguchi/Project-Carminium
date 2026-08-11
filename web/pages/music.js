@@ -713,6 +713,9 @@
   // visible page is rendered again after that completes.
   page.releaseLibraryViewMemory = function () {
     if (_vl) { _vl.destroy(); _vl = null; }
+    if (window.CoverCache && window.CoverCache.clearViewport) {
+      window.CoverCache.clearViewport();
+    }
     _flatList = [];
     _renderedTracks = [];
   };
@@ -850,6 +853,16 @@
       estimatedItemHeight: ROW_HEIGHT,
       getHeight: function (item) { return item.type === 'header' ? HEADER_HEIGHT : ROW_HEIGHT; },
       bufferSize: 8,
+      onRangeChange: function (items, startIndex, endIndex, direction) {
+        if (window.CoverCache && window.CoverCache.updateViewport) {
+          window.CoverCache.updateViewport(items, startIndex, endIndex, direction, 128);
+        }
+      },
+      onRecycle: function (el) {
+        if (window.CoverCache && window.CoverCache.releaseElement) {
+          window.CoverCache.releaseElement(el);
+        }
+      },
       renderItem: function (item, index, el) {
         if (item.type === 'header') {
           el.className = 'az-section-header vl-item';

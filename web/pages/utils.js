@@ -93,7 +93,11 @@
   utils.loadCover = function (imgEl, trackId, size) {
     if (window.CoverCache) {
       var cached = window.CoverCache.getCached(trackId, size);
-      if (cached) { imgEl.src = cached; return; }
+      if (cached) {
+        imgEl.dataset.coverCache = '1';
+        imgEl.src = cached;
+        return;
+      }
       window.CoverCache.attachImage(imgEl, trackId, {
         size: size,
         onError: function () { imgEl.removeAttribute('src'); },
