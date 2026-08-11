@@ -11,9 +11,9 @@
   window.App.pages.about = page;
 
   // GitHub 仓库地址
-  var GITHUB_REPO = 'https://github.com/koenaki-seirai/carminium';
-  var GITHUB_ISSUES = 'https://github.com/koenaki-seirai/carminium/issues';
-  var GITHUB_RELEASES = 'https://github.com/koenaki-seirai/carminium/releases';
+  var GITHUB_REPO = 'https://github.com/Seirai-Haraguchi/Project-Carminium';
+  var GITHUB_ISSUES = 'https://github.com/Seirai-Haraguchi/Project-Carminium/issues';
+  var GITHUB_RELEASES = 'https://github.com/Seirai-Haraguchi/Project-Carminium/releases';
 
   // ── Chevron SVG ─────────────────────────────────────────────────────────────
   var CHEVRON_SVG = '<svg class="about-chevron" viewBox="0 0 24 24" width="20" height="20">' +
