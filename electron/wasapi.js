@@ -65,7 +65,11 @@ function _loadDll() {
   }
   let libPath = null;
   for (const c of candidates) {
-    if (fs.existsSync(c)) { libPath = _resolveRealPath(c); break; }
+    // electron-builder unpacks native assets next to app.asar. Resolve the
+    // real path before checking existence; app.asar/electron/... itself is
+    // only a virtual path and therefore does not exist on disk.
+    const realPath = _resolveRealPath(c);
+    if (fs.existsSync(realPath)) { libPath = realPath; break; }
   }
   if (!libPath) {
     console.error('[wasapi] Native library not found:', LIB_NAME, '. Searched:', candidates);
@@ -117,9 +121,11 @@ let _ffmpegPath = null, _ffprobePath = null;
 function _findFFmpeg() {
   if (_ffmpegPath !== null) return _ffmpegPath;
   const bundled = path.join(__dirname, 'bin', PLATFORM_SUBDIR, FFMPEG_NAME);
-  if (fs.existsSync(bundled)) { _ffmpegPath = _resolveRealPath(bundled); return _ffmpegPath; }
+  const bundledReal = _resolveRealPath(bundled);
+  if (fs.existsSync(bundledReal)) { _ffmpegPath = bundledReal; return _ffmpegPath; }
   const bundledFlat = path.join(__dirname, 'bin', FFMPEG_NAME);
-  if (fs.existsSync(bundledFlat)) { _ffmpegPath = _resolveRealPath(bundledFlat); return _ffmpegPath; }
+  const bundledFlatReal = _resolveRealPath(bundledFlat);
+  if (fs.existsSync(bundledFlatReal)) { _ffmpegPath = bundledFlatReal; return _ffmpegPath; }
   const devBin = path.join(__dirname, '..', 'bin', PLATFORM_SUBDIR, FFMPEG_NAME);
   if (fs.existsSync(devBin)) { _ffmpegPath = _resolveRealPath(devBin); return _ffmpegPath; }
   const devBinFlat = path.join(__dirname, '..', 'bin', FFMPEG_NAME);
@@ -155,9 +161,11 @@ function _findFFmpeg() {
 function _findFFprobe() {
   if (_ffprobePath !== null) return _ffprobePath;
   const bundled = path.join(__dirname, 'bin', PLATFORM_SUBDIR, FFPROBE_NAME);
-  if (fs.existsSync(bundled)) { _ffprobePath = _resolveRealPath(bundled); return _ffprobePath; }
+  const bundledReal = _resolveRealPath(bundled);
+  if (fs.existsSync(bundledReal)) { _ffprobePath = bundledReal; return _ffprobePath; }
   const bundledFlat = path.join(__dirname, 'bin', FFPROBE_NAME);
-  if (fs.existsSync(bundledFlat)) { _ffprobePath = _resolveRealPath(bundledFlat); return _ffprobePath; }
+  const bundledFlatReal = _resolveRealPath(bundledFlat);
+  if (fs.existsSync(bundledFlatReal)) { _ffprobePath = bundledFlatReal; return _ffprobePath; }
   const devBin = path.join(__dirname, '..', 'bin', PLATFORM_SUBDIR, FFPROBE_NAME);
   if (fs.existsSync(devBin)) { _ffprobePath = _resolveRealPath(devBin); return _ffprobePath; }
   const devBinFlat = path.join(__dirname, '..', 'bin', FFPROBE_NAME);
