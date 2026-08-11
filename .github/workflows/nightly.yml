@@ -56,6 +56,14 @@ jobs:
     needs: update-version
     # 定时触发：仅版本变更时构建；手动触发：始终构建
     if: needs.update-version.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            zig-target: x86_64-windows-gnu
+          - arch: arm64
+            zig-target: aarch64-windows-gnu
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -72,7 +80,7 @@ jobs:
           node-version: '22'
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --include=optional --cpu=${{ matrix.arch }}
 
       - name: Update version locally
         run: node scripts/update-nightly-version.js
@@ -82,7 +90,9 @@ jobs:
         run: |
           Write-Host "Fetching BtbN/FFmpeg-Builds latest release..."
           $release = Invoke-RestMethod -Uri "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest" -Headers @{ "User-Agent" = "CI" }
-          $asset = $release.assets | Where-Object { $_.name -match "win64-gpl\.zip$" -and $_.name -notmatch "shared" } | Select-Object -First 1
+          $pattern = if ('${{ matrix.arch }}' -eq 'arm64') { 'winarm64-gpl\.zip$' } else { 'win64-gpl\.zip$' }
+          $asset = $release.assets | Where-Object { $_.name -match $pattern -and $_.name -notmatch "shared" } | Select-Object -First 1
+          if (-not $asset) { throw "No FFmpeg asset found for ${{ matrix.arch }}" }
           Write-Host "Downloading $($asset.name) ($([math]::Round($asset.size / 1MB, 1)) MB)..."
           Invoke-WebRequest -Uri $asset.browser_download_url -OutFile ffmpeg.zip
           Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-temp -Force
@@ -94,18 +104,27 @@ jobs:
 
       - name: Build native library (Zig)
         working-directory: native
-        run: zig build copy copy-legacy -Doptimize=ReleaseFast
+        run: zig build copy copy-legacy -Doptimize=ReleaseFast -Dtarget=${{ matrix.zig-target }}
 
       - name: Rebuild native addons
-        run: npx @electron/rebuild -f -w better-sqlite3
+        run: npx @electron/rebuild -f -w better-sqlite3 --arch ${{ matrix.arch }}
 
       - name: Build Electron app (portable)
-        run: npx electron-builder --win portable --publish never
+        run: npx electron-builder --win portable --${{ matrix.arch }} --publish never
+
+      - name: Rename artifact with architecture
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $source = Get-ChildItem dist-electron\*.exe | Select-Object -First 1
+          $destination = "dist-electron\Carminium-$version-windows-${{ matrix.arch }}.exe"
+          Move-Item $source.FullName $destination -Force
+          Write-Host "Created $destination"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-artifacts
+          name: windows-${{ matrix.arch }}-artifacts
           path: dist-electron/*.exe
           retention-days: 7
 
@@ -189,7 +208,8 @@ jobs:
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
-          name: windows-artifacts
+          pattern: windows-*-artifacts
+          merge-multiple: true
           path: artifacts
 
       - name: Download Linux artifacts

@@ -20,7 +20,7 @@
     "build": "node scripts/sync-version.js && electron-builder --win",
     "build:dir": "node scripts/sync-version.js && electron-builder --win --dir",
     "build:portable": "node scripts/sync-version.js && electron-builder --win portable",
-    "build:linux": "node scripts/sync-version.js && electron-builder --linux",
+    "build:linux": "node scripts/sync-version.js && npm run build:native:linux && electron-builder --linux",
     "build:all": "npm run build:native && npm run rebuild && npm run build"
   },
   "engines": {
@@ -81,8 +81,10 @@
         "node_modules/better-sqlite3/**/*",
         "node_modules/koffi/**/*",
         "node_modules/@koromix/koffi-win32-x64/**/*",
+        "node_modules/@koromix/koffi-win32-arm64/**/*",
         "node_modules/sharp/**/*",
         "node_modules/@img/sharp-win32-x64/**/*",
+        "node_modules/@img/sharp-win32-arm64/**/*",
         "electron/bin/win32/**/*",
         "electron/bin/carminium_audio.dll",
         "electron/bin/ffmpeg.exe",
