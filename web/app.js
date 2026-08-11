@@ -96,17 +96,32 @@
 
   App.refreshLibraryCache = function () {
     return Promise.all([
-      App.utils.call('get_library'),
-      App.utils.call('get_albums'),
-      App.utils.call('get_artists'),
-      App.utils.call('get_folders'),
-      App.utils.call('get_subsonic_servers'),
+      // Parse at the IPC boundary so the large raw JSON string can be
+      // released as soon as its corresponding result is consumed, instead
+      // of retaining all raw payloads while the other responses parse.
+      App.utils.call('get_library').then(function (raw) { return JSON.parse(raw); }),
+      App.utils.call('get_albums').then(function (raw) { return JSON.parse(raw); }),
+      App.utils.call('get_artists').then(function (raw) { return JSON.parse(raw); }),
+      App.utils.call('get_folders').then(function (raw) { return JSON.parse(raw); }),
+      App.utils.call('get_subsonic_servers').then(function (raw) { return JSON.parse(raw); }),
     ]).then(function (results) {
-      App.state.allTracks = JSON.parse(results[0]);
-      App.state.allAlbums = JSON.parse(results[1]);
-      App.state.allArtists = JSON.parse(results[2]);
-      App.state.allFolders = JSON.parse(results[3]);
-      App.state.allSubsonicServers = JSON.parse(results[4]);
+      function replaceArrayInPlace(key, next) {
+        var current = App.state[key];
+        if (Array.isArray(current) && Array.isArray(next) && current !== next) {
+          current.length = 0;
+          for (var i = 0; i < next.length; i++) current.push(next[i]);
+          // Keep page modules pointing at the same live array, while allowing
+          // the parsed response array to be collected after this callback.
+          App.state[key] = current;
+        } else {
+          App.state[key] = next;
+        }
+      }
+      replaceArrayInPlace('allTracks', results[0]);
+      replaceArrayInPlace('allAlbums', results[1]);
+      replaceArrayInPlace('allArtists', results[2]);
+      replaceArrayInPlace('allFolders', results[3]);
+      replaceArrayInPlace('allSubsonicServers', results[4]);
       return App.state;
     });
   };
@@ -224,6 +239,9 @@
 
         uiSync.on('library_updated', function (json) {
           // 刷新前端全量缓存，然后重渲染当前页
+          if (App.pages.music && App.pages.music.releaseLibraryViewMemory) {
+            App.pages.music.releaseLibraryViewMemory();
+          }
           App.refreshLibraryCache().then(function () {
             App.prefetchArtistImages();   // 新艺人入队，后台慢慢预热本地头像缓存
             var _c = document.getElementById('page-container');
@@ -234,6 +252,9 @@
           });
         });
         uiSync.on('folders_updated', function (json) {
+          if (App.pages.music && App.pages.music.releaseLibraryViewMemory) {
+            App.pages.music.releaseLibraryViewMemory();
+          }
           App.refreshLibraryCache().then(function () {
             if (App.pages.folders.onFoldersUpdated) {
               App.pages.folders.onFoldersUpdated(json);
@@ -1481,6 +1502,7 @@
     if (!_trackAnalyzer) return;
     // Subsonic 流媒体不支持频谱分析，跳过
     if (filePath && (filePath.indexOf('http://') === 0 || filePath.indexOf('https://') === 0)) {
+      ++_currentAnalysisToken;
       _currentTrackAnalysis = null;
       _maybeComputePlan();
       return;
@@ -1517,6 +1539,7 @@
     if (!_trackAnalyzer) return;
     // Subsonic 流媒体不支持频谱分析，跳过
     if (filePath && (filePath.indexOf('http://') === 0 || filePath.indexOf('https://') === 0)) {
+      ++_nextAnalysisToken;
       _nextTrackAnalysis = null;
       _maybeComputePlan();
       return;

@@ -15,7 +15,8 @@ class StreamingPCMProcessor extends AudioWorkletProcessor {
     super();
 
     // 环形缓冲区：~4 秒 stereo（44100 × 2 × 4 = 352800 samples）
-    this._buf = new Float32Array(352800);
+    this._initialCapacity = 352800;
+    this._buf = new Float32Array(this._initialCapacity);
     this._writePos = 0;
     this._readPos = 0;
     this._ended = false;
@@ -51,7 +52,14 @@ class StreamingPCMProcessor extends AudioWorkletProcessor {
         break;
       }
       case 'clear': {
-        this._readPos = this._writePos;
+        // A long pause or a slow consumer can temporarily grow the ring.
+        // Reset the backing store as well as the cursors so a reused worklet
+        // does not retain that peak allocation for the next track.
+        if (this._buf.length > this._initialCapacity) {
+          this._buf = new Float32Array(this._initialCapacity);
+        }
+        this._readPos = 0;
+        this._writePos = 0;
         this._ended = false;
         this._consumedFrames = 0;
         this._baseline = 0;

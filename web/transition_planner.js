@@ -116,6 +116,14 @@
     var best = scoredCandidates[0];
 
     var transitionStart = best.candidate.positionMs;
+
+    // Snap the transition point before deriving dependent timings.  This
+    // keeps the crossfade length and next-track offset consistent with the
+    // actual beat-aligned start point.
+    if (cur.beatGridMs && cur.beatGridMs.length > 0) {
+      transitionStart = this._alignToBeat(transitionStart, cur.beatGridMs, cur.beatIntervalMs);
+    }
+
     var crossfadeDuration = this._computeCrossfadeDuration(
       transitionStart, curDuration, nextIntroEnd, nextDuration,
       cur.bpm, nxt.bpm, bpmMatch, fallbackDuration
@@ -126,10 +134,7 @@
       nextIntroEnd, crossfadeDuration, nextDuration, nxt, bpmMatch
     );
 
-    // ── 7. 节拍对齐调整（如果可行）──
-    if (cur.beatGridMs && cur.beatGridMs.length > 0) {
-      transitionStart = this._alignToBeat(transitionStart, cur.beatGridMs, cur.beatIntervalMs);
-    }
+    // ── 7. 下一曲节拍对齐（如果可行）──
     if (nextStartOffset > 0 && nxt.beatGridMs && nxt.beatGridMs.length > 0) {
       nextStartOffset = this._alignToBeat(nextStartOffset, nxt.beatGridMs, nxt.beatIntervalMs);
     }
@@ -154,6 +159,7 @@
       bpmMatchRatio: bpmMatch.ratio,
       bpmMatched: bpmMatch.matched,
       bpmTempoAdjust: bpmMatch.tempoAdjust,
+      tempoRampMs: bpmMatch.tempoRampMs,
       curOutroStartMs: Math.round(outroStart),
       curClimaxMs: Math.round(curClimax),
       nextIntroEndMs: Math.round(nextIntroEnd),
@@ -200,6 +206,7 @@
       bpmMatchRatio: 1.0,
       bpmMatched: false,
       bpmTempoAdjust: 1.0,
+      tempoRampMs: 0,
       curOutroStartMs: isCurrent ? Math.round(outroStart) : 0,
       curClimaxMs: isCurrent ? Math.round(climax) : 0,
       nextIntroEndMs: !isCurrent ? this._getIntroEnd(merged, duration) : 0,
@@ -224,6 +231,7 @@
       bpmMatchRatio: 1.0,
       bpmMatched: false,
       bpmTempoAdjust: 1.0,
+      tempoRampMs: 0,
       curOutroStartMs: 0,
       curClimaxMs: 0,
       nextIntroEndMs: 0,
@@ -573,32 +581,48 @@
    */
   TransitionPlanner.prototype._computeBpmMatch = function (curBpm, nextBpm) {
     if (!curBpm || !nextBpm || curBpm <= 0 || nextBpm <= 0) {
-      return { ratio: 1.0, matched: false, tempoAdjust: 0 };
+      return { ratio: 1.0, matched: false, tempoAdjust: 0, tempoRampMs: 0 };
     }
 
+    // Playback rate is applied to the incoming track.  To make its BPM
+    // follow the current track, the incoming track must use cur/next (not
+    // next/cur).  Keep ratio as a normalized musical BPM ratio for scoring.
     var ratio = nextBpm / curBpm;
-    var matched = Math.abs(ratio - 1.0) <= BPM_MATCH_THRESHOLD;
+    var normalizedRatio = ratio;
+    var matched = Math.abs(normalizedRatio - 1.0) <= BPM_MATCH_THRESHOLD;
 
     // 检查倍数关系（120 vs 60 = 2x）
     if (!matched) {
       var doubleRatio = ratio > 1 ? ratio / 2 : ratio * 2;
       if (Math.abs(doubleRatio - 1.0) <= BPM_MATCH_THRESHOLD) {
         matched = true;
-        ratio = doubleRatio; // 使用归一化的比率
+        normalizedRatio = doubleRatio; // 使用归一化的比率
       }
     }
 
     // 计算可用的速率调整
     var tempoAdjust = 0;
     if (!matched) {
-      var deviation = Math.abs(ratio - 1.0);
+      var deviation = Math.abs(normalizedRatio - 1.0);
       if (deviation <= BPM_TEMPO_ADJUST_THRESHOLD) {
-        // 可以通过微调速率匹配
-        tempoAdjust = ratio;
+        // 可以通过微调速率匹配。对 incoming track 使用 cur/next。
+        tempoAdjust = curBpm / nextBpm;
       }
     }
 
-    return { ratio: ratio, matched: matched, tempoAdjust: tempoAdjust };
+    // A longer ramp is less noticeable for larger corrections.  The audio
+    // engine uses this only for the rate handoff; it does not alter samples.
+    var correction = tempoAdjust > 0 ? Math.abs(tempoAdjust - 1.0) : 0;
+    var tempoRampMs = correction > 0
+      ? Math.round(1800 + Math.min(2200, correction * 14000))
+      : 0;
+
+    return {
+      ratio: normalizedRatio,
+      matched: matched,
+      tempoAdjust: tempoAdjust,
+      tempoRampMs: tempoRampMs,
+    };
   };
 
   // ── 节拍对齐 ──────────────────────────────────────────────────────────────

@@ -54,6 +54,11 @@
 
   function TrackAnalyzer(audioEngine) {
     this._audioEngine = audioEngine;
+    // decodeAudioData cannot be cancelled once started.  Keep only one
+    // analysis in flight so rapid track changes cannot retain several full
+    // AudioBuffers in the renderer at the same time.
+    this._analysisActive = false;
+    this._analysisQueue = [];
   }
 
   // ── 公共 API ──────────────────────────────────────────────────────────────
@@ -92,26 +97,50 @@
     if (!track || !resolvedPath) return Promise.resolve(null);
     if (!this.isAnalyzable(resolvedPath)) return Promise.resolve(null);
 
-    // 超时保护
-    var timeoutId = null;
-    var timedOut = false;
-    var timeoutPromise = new Promise(function (resolve) {
-      timeoutId = setTimeout(function () {
-        timedOut = true;
-        console.warn('[TrackAnalyzer] Analysis timeout for:', track.title);
-        resolve(null);
-      }, ANALYSIS_TIMEOUT_MS);
+    return new Promise(function (resolve) {
+      // App-level generation tokens already reject stale results.  Matching
+      // that policy here prevents stale queued work from ever decoding.
+      while (self._analysisQueue.length > 0) {
+        var stale = self._analysisQueue.shift();
+        stale.resolve(null);
+      }
+      self._analysisQueue.push({ track: track, resolvedPath: resolvedPath, resolve: resolve });
+      self._drainAnalysisQueue();
     });
+  };
 
-    var analysisPromise = self._doAnalyze(track, resolvedPath);
+  TrackAnalyzer.prototype._drainAnalysisQueue = function () {
+    var self = this;
+    if (self._analysisActive || self._analysisQueue.length === 0) return;
 
-    return Promise.race([analysisPromise, timeoutPromise]).then(function (result) {
-      if (timeoutId) clearTimeout(timeoutId);
-      return result;
+    var request = self._analysisQueue.pop();
+    self._analysisActive = true;
+
+    var timeoutId = setTimeout(function () {
+      // The decode is still active, so the queue remains blocked until the
+      // underlying promise settles.  This avoids starting another large
+      // AudioBuffer while a timed-out one is still retained by Chromium.
+      request.resolve(null);
+      console.warn('[TrackAnalyzer] Analysis timeout for:', request.track.title);
+    }, ANALYSIS_TIMEOUT_MS);
+    var settled = false;
+
+    // Start on a promise turn so a synchronous defensive failure also goes
+    // through the normal cleanup path below.
+    Promise.resolve().then(function () {
+      return self._doAnalyze(request.track, request.resolvedPath);
+    }).then(function (result) {
+      if (!settled) request.resolve(result);
     }).catch(function (e) {
-      if (timeoutId) clearTimeout(timeoutId);
-      console.error('[TrackAnalyzer] Analysis failed:', track.title, e.message);
-      return null;
+      if (!settled) {
+        console.error('[TrackAnalyzer] Analysis failed:', request.track.title, e.message);
+        request.resolve(null);
+      }
+    }).then(function () {
+      settled = true;
+      clearTimeout(timeoutId);
+      self._analysisActive = false;
+      self._drainAnalysisQueue();
     });
   };
 
@@ -391,16 +420,20 @@
         }
       }
 
-      var maxLag = bestLag;
-      var maxScore = scores[bestLag];
+      // Keep the selected lag separate from the search range.  The previous
+      // implementation overwrote maxLag with bestLag, which made the
+      // double-lag check impossible and made half/double-time correction
+      // depend on whichever candidate happened to win the biased search.
+      var selectedLag = bestLag;
+      var maxScore = scores[selectedLag];
 
       // 倍频/半频校正
-      var halfLag = Math.round(maxLag / 2);
-      var doubleLag = maxLag * 2;
+      var halfLag = Math.round(selectedLag / 2);
+      var doubleLag = selectedLag * 2;
 
       // doubleLag（半频 = BPM/2）
       if (doubleLag <= maxLag && scores[doubleLag] > maxScore * 0.85) {
-        maxLag = doubleLag;
+        selectedLag = doubleLag;
         maxScore = scores[doubleLag];
       }
 
@@ -408,12 +441,12 @@
       if (halfLag >= minLag && scores[halfLag] > maxScore * 0.75) {
         var halfBpm = Math.round(60000 / (halfLag * windowMs));
         if (halfBpm >= BPM_MIN && halfBpm <= BPM_MAX) {
-          maxLag = halfLag;
+          selectedLag = halfLag;
           maxScore = scores[halfLag];
         }
       }
 
-      var bpm = Math.round(60000 / (maxLag * windowMs));
+      var bpm = Math.round(60000 / (selectedLag * windowMs));
       if (bpm < BPM_MIN || bpm > BPM_MAX) {
         while (bpm < BPM_MIN) bpm *= 2;
         while (bpm > BPM_MAX) bpm = Math.round(bpm / 2);

@@ -29,8 +29,24 @@ class AnalysisCache {
     this._saveTimer = null;
     this._dirty = false;
 
-    const appdata = process.env.APPDATA || os.homedir();
-    this._dir = path.join(appdata, 'Carminium');
+    // プラットフォーム標準の構成ディレクトリを使用
+    let configDir;
+    try {
+      const { app } = require('electron');
+      if (app && app.getPath) {
+        configDir = app.getPath('userData');
+      }
+    } catch { /* electron not available */ }
+    if (!configDir) {
+      if (process.platform === 'win32') {
+        configDir = path.join(process.env.APPDATA || os.homedir(), 'Carminium');
+      } else if (process.platform === 'darwin') {
+        configDir = path.join(os.homedir(), 'Library', 'Application Support', 'Carminium');
+      } else {
+        configDir = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'Carminium');
+      }
+    }
+    this._dir = configDir;
     this._path = path.join(this._dir, 'track_analysis.json');
 
     try {

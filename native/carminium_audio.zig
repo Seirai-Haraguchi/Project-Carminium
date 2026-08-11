@@ -19,7 +19,10 @@ const c = @cImport({
 
 // ── 定数 ────────────────────────────────────────────────────────────────────
 
-const RING_SIZE: u64 = 8 * 1024 * 1024;
+// 4MB = roughly 11.9 seconds of 44.1kHz stereo f32 audio. This keeps a wide
+// margin over the 800ms pre-roll target while avoiding a large always-resident
+// DLL buffer.
+const RING_SIZE: u64 = 4 * 1024 * 1024;
 const RING_MASK: u64 = RING_SIZE - 1;
 
 // ── 共有モード定数 ──────────────────────────────────────────────────────────
@@ -41,7 +44,7 @@ var g_sample_rate: u32 = 0;
 var g_channels: u16 = 0;
 var g_bytes_per_frame: u32 = 0;
 
-var g_ring: [RING_SIZE]u8 = undefined;
+var g_ring: ?[]u8 = null;
 var g_ring_w: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 var g_ring_r: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
@@ -80,6 +83,7 @@ fn dataCallback(
 }
 
 fn readRingToF32Direct(out: [*]f32, max_frames: u32) u32 {
+    const ring = g_ring orelse return 0;
     const bytes_per_frame = g_bytes_per_frame;
     const want_bytes = @as(u64, max_frames) * bytes_per_frame;
 
@@ -97,7 +101,7 @@ fn readRingToF32Direct(out: [*]f32, max_frames: u32) u32 {
         const chunk = @min(to_read_bytes - read, RING_SIZE - @as(u64, pos));
         @memcpy(
             dst[read .. read + @as(usize, @intCast(chunk))],
-            g_ring[pos .. pos + @as(usize, @intCast(chunk))],
+            ring[pos .. pos + @as(usize, @intCast(chunk))],
         );
         read += chunk;
     }
@@ -124,6 +128,8 @@ export fn ca_init(
 ) i32 {
     if (g_initialized) return -1;
 
+    g_ring = std.heap.c_allocator.alloc(u8, @as(usize, @intCast(RING_SIZE))) catch return -4;
+
     g_share_mode = if (share_mode == SHARE_EXCLUSIVE) SHARE_EXCLUSIVE else SHARE_SHARED;
     const ch: u32 = if (channels == 0) 2 else @as(u32, channels);
 
@@ -131,6 +137,8 @@ export fn ca_init(
     g_bytes_per_frame = ch * 4;
 
     if (c.ma_context_init(null, 0, null, &g_context) != c.MA_SUCCESS) {
+        std.heap.c_allocator.free(g_ring.?);
+        g_ring = null;
         return -3;
     }
     g_has_context = true;
@@ -169,6 +177,8 @@ export fn ca_init(
     if (result != c.MA_SUCCESS) {
         _ = c.ma_context_uninit(&g_context);
         g_has_context = false;
+        std.heap.c_allocator.free(g_ring.?);
+        g_ring = null;
         return @intCast(result);
     }
 
@@ -205,6 +215,7 @@ export fn ca_stop() i32 {
 }
 
 export fn ca_push_pcm(data: [*]const u8, len: u32) i32 {
+    const ring = g_ring orelse return -1;
     if (!g_initialized) return -1;
 
     const wp = g_ring_w.load(.acquire);
@@ -219,7 +230,7 @@ export fn ca_push_pcm(data: [*]const u8, len: u32) i32 {
         const pos = @as(usize, @intCast((wp + written) & RING_MASK));
         const chunk = @min(@as(u64, len) - written, RING_SIZE - @as(u64, pos));
         @memcpy(
-            g_ring[pos .. pos + @as(usize, @intCast(chunk))],
+            ring[pos .. pos + @as(usize, @intCast(chunk))],
             data[@as(usize, @intCast(written)) .. @as(usize, @intCast(written + chunk))],
         );
         written += chunk;
@@ -279,6 +290,10 @@ export fn ca_close() void {
     }
     g_initialized = false;
     g_playing = false;
+    if (g_ring) |ring| {
+        std.heap.c_allocator.free(ring);
+        g_ring = null;
+    }
     g_ring_w.store(0, .monotonic);
     g_ring_r.store(0, .monotonic);
     g_frames_consumed.store(0, .monotonic);

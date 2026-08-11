@@ -6,7 +6,10 @@
  * - 返回按钮（导航回上一页）
  * - 版本号注入
  * - 最大化状态同步（双击标题栏切换最大化）
- * - 标题栏图标：三大金刚键用 Segoe Fluent Icons 系统字体（码点 U+E921/E922/E923/E8BB）；返回键用内联 SVG
+ * - 标题栏图标：
+ *   Windows: 三大金刚键用 Segoe Fluent Icons 系统字体（码点 U+E921/E922/E923/E8BB）
+ *   Linux/macOS: macOS 风格红绿灯按钮（圆点 + hover 图标）
+ * - 返回键用内联 SVG
  * - Logo SVG 运行时加载 + Material You 重新着色
  */
 (function () {
@@ -35,20 +38,40 @@
     close:    '\uE8BB',    // ChromeClose
   };
 
+  // ── 平台检测 ───────────────────────────────────────────────
+  var _platform = (window.__electronAPI && window.__electronAPI.platform) || 'win32';
+  var _isWin = _platform === 'win32';
+
+  // 红绿灯 SVG 图标（hover 时显示）
+  var TRAFFIC_SVG = {
+    close:    '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 3l6 6M9 3l-6 6"/></svg>',
+    minimize: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.5 6h7"/></svg>',
+    maximize: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5v4a.5.5 0 0 0 .5.5h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 0-.5-.5h-4a.5.5 0 0 0-.5.5z"/><path d="M5 3h4a.5.5 0 0 1 .5.5v4"/></svg>',
+    restore:  '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 5v3a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 .5-.5v-3a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 0-.5.5z"/><path d="M5 2.5h3a.5.5 0 0 1 .5.5v3"/></svg>',
+  };
+
   function _applyIcons() {
     // 返回键：内联 SVG
     _setSvg('title-bar-back-icon', ICON_SVG.back);
 
-    // 三大金刚键：MDL2 字体 + 码点（直写，无检测/无备选）
-    ['title-bar-min-icon', 'title-bar-max-icon', 'title-bar-close-icon'].forEach(function (id) {
-      var el = document.getElementById(id);
-      if (el) el.style.fontFamily = '"Segoe Fluent Icons", sans-serif';
-    });
-    _setGlyph('title-bar-min-icon', MDL2.minimize);
-    _setGlyph('title-bar-close-icon', MDL2.close);
+    if (_isWin) {
+      // Windows: 三大金刚键用 Segoe Fluent Icons 字体
+      ['title-bar-min-icon', 'title-bar-max-icon', 'title-bar-close-icon'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.style.fontFamily = '"Segoe Fluent Icons", sans-serif';
+      });
+      _setGlyph('title-bar-min-icon', MDL2.minimize);
+      _setGlyph('title-bar-close-icon', MDL2.close);
 
-    var isMax = document.body.classList.contains('window-maximized');
-    _setGlyph('title-bar-max-icon', isMax ? MDL2.restore : MDL2.maximize);
+      var isMax = document.body.classList.contains('window-maximized');
+      _setGlyph('title-bar-max-icon', isMax ? MDL2.restore : MDL2.maximize);
+    } else {
+      // Linux/macOS: 红绿灯按钮，hover 时显示 SVG 图标
+      _setSvg('title-bar-close-icon', TRAFFIC_SVG.close);
+      _setSvg('title-bar-min-icon', TRAFFIC_SVG.minimize);
+      var isMax2 = document.body.classList.contains('window-maximized');
+      _setSvg('title-bar-max-icon', isMax2 ? TRAFFIC_SVG.restore : TRAFFIC_SVG.maximize);
+    }
   }
 
   function _setGlyph(id, code) {
@@ -110,6 +133,13 @@
    * 初始化标题栏
    */
   function init() {
+    // 平台 class 注入
+    document.body.classList.add('platform-' + _platform);
+    if (!_isWin) document.body.classList.add('platform-non-win');
+
+    // 非 Windows: 将三大金刚键移到左侧（macOS 风格）
+    if (!_isWin) _rearrangeTrafficLights();
+
     _applyIcons();
     _bindWindowControls();
     _bindBackButton();
@@ -117,6 +147,30 @@
     _loadVersionInfo();
     _loadLogo();
     _watchThemeChange();
+  }
+
+  /**
+   * 将 close/min/max 按钮移到标题栏左侧，按 macOS 顺序排列（close, min, max）。
+   * 包裹在 .traffic-light 容器中以便 CSS 样式化。
+   */
+  function _rearrangeTrafficLights() {
+    var leftContainer = document.querySelector('.title-bar-left');
+    if (!leftContainer) return;
+
+    var closeBtn = document.getElementById('title-bar-close');
+    var minBtn = document.getElementById('title-bar-min');
+    var maxBtn = document.getElementById('title-bar-max');
+    if (!closeBtn || !minBtn || !maxBtn) return;
+
+    // 创建红绿灯容器
+    var group = document.createElement('div');
+    group.className = 'traffic-light-group';
+    group.appendChild(closeBtn);
+    group.appendChild(minBtn);
+    group.appendChild(maxBtn);
+
+    // 插入到 .title-bar-left 的最前面
+    leftContainer.insertBefore(group, leftContainer.firstChild);
   }
 
   // ── 窗口控制按钮 ─────────────────────────────────────────────
@@ -218,8 +272,12 @@
 
   window.__updateMaximizedState = function (isMaximized) {
     document.body.classList.toggle('window-maximized', !!isMaximized);
-    // 切换最大化 / 还原 MDL2 码点
-    _setGlyph('title-bar-max-icon', isMaximized ? MDL2.restore : MDL2.maximize);
+    // 切换最大化 / 还原图标
+    if (_isWin) {
+      _setGlyph('title-bar-max-icon', isMaximized ? MDL2.restore : MDL2.maximize);
+    } else {
+      _setSvg('title-bar-max-icon', isMaximized ? TRAFFIC_SVG.restore : TRAFFIC_SVG.maximize);
+    }
   };
 
   // ── 全屏状态同步（由主进程推送）───────────────────────────────
@@ -236,5 +294,38 @@
     init();
   }
 
-  App.titlebar = { init: init, updateBackButton: _updateBackButton };
+  // 暴露红绿灯切换（供调试选项卡使用）
+  App.titlebar = {
+    init: init,
+    updateBackButton: _updateBackButton,
+    toggleTrafficLights: function () {
+      var isOn = document.body.classList.toggle('platform-non-win');
+      if (isOn) {
+        // 如果按钮还在右侧，移到左侧
+        if (!document.querySelector('.traffic-light-group')) {
+          _rearrangeTrafficLights();
+        }
+      } else {
+        // 恢复：把按钮放回右侧
+        var group = document.querySelector('.traffic-light-group');
+        if (group) {
+          var right = document.querySelector('.title-bar-right');
+          if (right) {
+            // 顺序：settings, min, max, close
+            var settings = right.querySelector('.title-bar-settings');
+            var min = group.querySelector('#title-bar-min');
+            var max = group.querySelector('#title-bar-max');
+            var close = group.querySelector('#title-bar-close');
+            if (settings) right.insertBefore(min, settings.nextSibling);
+            if (min) right.insertBefore(max, min.nextSibling);
+            if (max) right.insertBefore(close, max.nextSibling);
+            group.remove();
+          }
+        }
+      }
+      // 重新应用图标
+      _applyIcons();
+      return isOn;
+    },
+  };
 })();

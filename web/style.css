@@ -2618,7 +2618,18 @@ padding: 0;
 }
 /* 仅激活行附近保留合成层提升提示（激活行高亮/逐字/渐进模糊的频繁变化需要） */
 .np-lyrics-line.np-near {
-  will-change: opacity, filter;
+  will-change: opacity, filter, transform;
+}
+
+/* 切行时的逐行上提：滚动速度较快时提供连续的空间层次，
+   仅作用于当前行附近，动画结束后回到原始布局位置。 */
+.np-lyrics-line.np-lyrics-lift {
+  animation: np-lyrics-line-lift 180ms cubic-bezier(0.2, 0, 0, 1)
+             var(--lyrics-lift-delay, 0ms) both;
+}
+@keyframes np-lyrics-line-lift {
+  from { transform: translateY(5px); }
+  to   { transform: translateY(0); }
 }
 
 /* 渐进模糊模式：由 JS 根据行距离设置 inline filter，
@@ -2776,7 +2787,7 @@ padding: 0;
      过渡平滑展开与收起，让下方歌词平移上来而非硬切 */
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: grid-template-rows 0.175s cubic-bezier(0.22, 1, 0.36, 1);
   font-size: var(--lyrics-font-size, 16px);
   line-height: 1.6;
   opacity: 0;
@@ -5282,102 +5293,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   margin-left: auto;
 }
 
-/* 测试模式遮罩（Logo连击彩蛋） */
-.about-test-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.3s var(--ease-standard),
-              visibility 0.3s var(--ease-standard);
-}
-.about-test-overlay.active {
-  opacity: 1;
-  visibility: visible;
-}
-.about-test-card {
-  background: var(--md-surface-container-high);
-  border-radius: var(--shape-lg);
-  padding: 24px 28px;
-  min-width: 280px;
-  max-width: 90vw;
-  box-shadow: var(--elevation-3);
-  transform: scale(0.9);
-  opacity: 0;
-  transition: transform 0.3s var(--ease-standard),
-              opacity 0.3s var(--ease-standard);
-}
-.about-test-overlay.active .about-test-card {
-  transform: scale(1);
-  opacity: 1;
-}
-.about-test-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-.about-test-icon {
-  font-size: 28px;
-  color: var(--md-primary);
-  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 28;
-}
-.about-test-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--md-on-surface);
-  margin: 0;
-}
-.about-test-desc {
-  font-size: 14px;
-  color: var(--md-on-surface-variant);
-  margin: 0 0 16px 0;
-}
-.about-test-progress {
-  height: 4px;
-  background: var(--md-surface-container-highest);
-  border-radius: 2px;
-  overflow: hidden;
-  margin-bottom: 16px;
-}
-.about-test-progress-bar {
-  height: 100%;
-  width: 0;
-  background: var(--md-primary);
-  border-radius: 2px;
-}
-@keyframes about-test-progress {
-  from { width: 0; }
-  to { width: 100%; }
-}
-.about-test-close {
-  width: 100%;
-  padding: 12px 16px;
-  border: none;
-  border-radius: var(--shape-md);
-  background: var(--md-primary);
-  color: var(--md-on-primary);
-  font-size: 14px;
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background var(--motion-short) var(--ease-standard),
-              transform var(--motion-short) var(--ease-standard);
-}
-.about-test-close:hover {
-  background: var(--md-primary-hover, var(--md-primary));
-  filter: brightness(1.1);
-}
-.about-test-close:active {
-  transform: scale(0.98);
-}
-
 /* ── 23. Detail View (Album / Artist / Playlist) ────────── */
 /* Material You Expressive 紧凑头部：左侧封面 + 右侧信息卡片 */
 .detail-header {
@@ -6355,6 +6270,94 @@ body.settings-active.np-fullscreen .title-bar-center {
 }
 .title-bar-settings:hover {
   color: var(--md-primary);
+}
+
+/* ── macOS 风格红绿灯按钮（Linux / macOS） ─────────────────────── */
+/* 当 body 有 .platform-non-win class 时生效 */
+
+.platform-non-win .traffic-light-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 8px;
+  padding: 0 4px;
+  -webkit-app-region: no-drag;
+}
+
+.platform-non-win .title-bar-btn.title-bar-close,
+.platform-non-win .title-bar-btn.title-bar-min,
+.platform-non-win .title-bar-btn.title-bar-max {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  padding: 0;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease;
+}
+
+.platform-non-win .title-bar-btn.title-bar-close .title-bar-glyph,
+.platform-non-win .title-bar-btn.title-bar-min .title-bar-glyph,
+.platform-non-win .title-bar-btn.title-bar-max .title-bar-glyph {
+  font-family: inherit;
+  font-size: 0;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  width: 14px;
+  height: 14px;
+}
+
+.platform-non-win .title-bar-btn.title-bar-close .title-bar-glyph svg,
+.platform-non-win .title-bar-btn.title-bar-min .title-bar-glyph svg,
+.platform-non-win .title-bar-btn.title-bar-max .title-bar-glyph svg {
+  width: 8px;
+  height: 8px;
+}
+
+/* 默认状态颜色 */
+.platform-non-win .title-bar-btn.title-bar-close {
+  background: #ff5f57;
+}
+.platform-non-win .title-bar-btn.title-bar-min {
+  background: #febc2e;
+}
+.platform-non-win .title-bar-btn.title-bar-max {
+  background: #28c840;
+}
+
+/* hover 时显示图标 */
+.platform-non-win .traffic-light-group:hover .title-bar-glyph {
+  opacity: 1;
+}
+
+/* hover 时颜色稍微变暗 */
+.platform-non-win .title-bar-btn.title-bar-close:hover {
+  background: #e5403a;
+  color: rgba(0, 0, 0, 0.6);
+}
+.platform-non-win .title-bar-btn.title-bar-min:hover {
+  background: #e0a41e;
+  color: rgba(0, 0, 0, 0.6);
+}
+.platform-non-win .title-bar-btn.title-bar-max:hover {
+  background: #1da832;
+  color: rgba(0, 0, 0, 0.6);
+}
+
+/* 红绿灯模式下移除 Windows 的红色关闭按钮 hover 效果 */
+.platform-non-win .title-bar-close {
+  background: #ff5f57 !important;
+}
+.platform-non-win .title-bar-close:hover {
+  background: #e5403a !important;
+  color: rgba(0, 0, 0, 0.6) !important;
+}
+
+/* 红绿灯模式下隐藏右侧的设置按钮之外的一切（min/max/close 已移到左侧） */
+.platform-non-win .title-bar-right {
+  /* 设置按钮仍在右侧 */
 }
 
 /* ── 标题栏 Logo（Material You 着色） ── */
