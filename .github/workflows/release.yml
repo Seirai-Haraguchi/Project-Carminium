@@ -65,6 +65,11 @@ jobs:
           Copy-Item "$($binDir.FullName)\bin\ffmpeg.exe" electron\bin\win32\ffmpeg.exe -Force
           Copy-Item "$($binDir.FullName)\bin\ffprobe.exe" electron\bin\win32\ffprobe.exe -Force
           Remove-Item -Recurse ffmpeg-temp, ffmpeg.zip -Force
+          if ('${{ matrix.arch }}' -eq 'x64') {
+            Write-Host "ffmpeg installed:"; electron\bin\win32\ffprobe.exe -version | Select-Object -First 1
+          } else {
+            Write-Host "ffmpeg installed for ARM64 (not executed on the x64 runner)."
+          }
 
       - name: Build native library (Zig)
         working-directory: native
