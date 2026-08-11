@@ -1,0 +1,204 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, for example v1.0.0'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark this release as a prerelease'
+        required: true
+        default: false
+        type: boolean
+      draft:
+        description: 'Create the release as a draft'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            zig-target: x86_64-windows-gnu
+          - arch: arm64
+            zig-target: aarch64-windows-gnu
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.14.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --include=optional --cpu=${{ matrix.arch }}
+
+      - name: Sync version
+        run: node scripts/sync-version.js
+
+      - name: Download ffmpeg/ffprobe
+        shell: pwsh
+        run: |
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest" -Headers @{ "User-Agent" = "CI" }
+          $pattern = if ('${{ matrix.arch }}' -eq 'arm64') { 'winarm64-gpl\.zip$' } else { 'win64-gpl\.zip$' }
+          $asset = $release.assets | Where-Object { $_.name -match $pattern -and $_.name -notmatch "shared" } | Select-Object -First 1
+          if (-not $asset) { throw "No FFmpeg asset found for ${{ matrix.arch }}" }
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile ffmpeg.zip
+          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-temp -Force
+          $binDir = Get-ChildItem ffmpeg-temp -Directory | Select-Object -First 1
+          Copy-Item "$($binDir.FullName)\bin\ffmpeg.exe" electron\bin\win32\ffmpeg.exe -Force
+          Copy-Item "$($binDir.FullName)\bin\ffprobe.exe" electron\bin\win32\ffprobe.exe -Force
+          Remove-Item -Recurse ffmpeg-temp, ffmpeg.zip -Force
+
+      - name: Build native library (Zig)
+        working-directory: native
+        run: zig build copy copy-legacy -Doptimize=ReleaseFast -Dtarget=${{ matrix.zig-target }}
+
+      - name: Rebuild native addons
+        run: npx @electron/rebuild -f -w better-sqlite3 --arch ${{ matrix.arch }}
+
+      - name: Build Electron app (portable)
+        run: npx electron-builder --win portable --${{ matrix.arch }} --publish never
+
+      - name: Rename artifact with architecture
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $source = Get-ChildItem dist-electron\*.exe | Select-Object -First 1
+          $destination = "dist-electron\Carminium-$version-windows-${{ matrix.arch }}.exe"
+          Move-Item $source.FullName $destination -Force
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.arch }}-artifacts
+          path: dist-electron/*.exe
+          retention-days: 7
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libpulse-dev libfuse2
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.14.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Sync version
+        run: node scripts/sync-version.js
+
+      - name: Download ffmpeg/ffprobe
+        run: |
+          FFMPEG_URL=$(curl -s https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest \
+            | jq -r '.assets[] | select(.name | endswith("linux64-gpl.tar.xz")) | .browser_download_url' \
+            | head -1)
+          test -n "$FFMPEG_URL"
+          curl -L -o ffmpeg.tar.xz "$FFMPEG_URL"
+          DIR=$(tar tf ffmpeg.tar.xz | head -1 | cut -d/ -f1)
+          tar xf ffmpeg.tar.xz
+          cp "$DIR/bin/ffmpeg" electron/bin/linux/ffmpeg
+          cp "$DIR/bin/ffprobe" electron/bin/linux/ffprobe
+          rm -rf "$DIR" ffmpeg.tar.xz
+
+      - name: Build native library (Zig)
+        working-directory: native
+        run: zig build copy copy-legacy -Doptimize=ReleaseFast
+
+      - name: Rebuild native addons
+        run: npx @electron/rebuild -f -w better-sqlite3
+
+      - name: Build Electron app (deb + AppImage)
+        run: npx electron-builder --linux --publish never
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: |
+            dist-electron/*.deb
+            dist-electron/*.AppImage
+          retention-days: 7
+
+  release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: windows-*-artifacts
+          merge-multiple: true
+          path: artifacts
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-artifacts
+          path: artifacts
+
+      - name: Fetch random hitokoto
+        id: hitokoto
+        shell: bash
+        run: |
+          HITOKOTO=$(curl -fsSL --retry 3 --connect-timeout 5 --max-time 15 \
+            'https://v1.hitokoto.cn/' | jq -r '.hitokoto // empty' || true)
+          if [ -z "$HITOKOTO" ]; then
+            HITOKOTO='感谢每一位参与和支持 Carminium 的人。'
+          fi
+          {
+            echo 'text<<HITOKOTO_EOF'
+            echo "$HITOKOTO"
+            echo 'HITOKOTO_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: Carminium ${{ inputs.tag }}
+          prerelease: ${{ inputs.prerelease }}
+          draft: ${{ inputs.draft }}
+          generate_release_notes: true
+          body: |
+            > ${{ steps.hitokoto.outputs.text }}
+
+            ## 反馈与贡献
+
+            - 如需反馈问题或提出功能建议，请前往 [Issues](../../issues) 提交，并尽量附上复现步骤、系统版本和相关日志。
+            - 如需提交 PR，请先阅读项目贡献说明，在独立分支完成修改并提交测试结果，然后创建 Pull Request。
+            - 发布包问题请注明使用的版本号和平台架构（Windows x64、Windows ARM64 或 Linux x64）。
+
+          files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

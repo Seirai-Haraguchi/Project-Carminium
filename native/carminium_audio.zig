@@ -50,6 +50,21 @@ var g_ring_r: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
 var g_frames_consumed: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
+// Ubuntu and other current Linux desktops normally expose audio through
+// PipeWire's PulseAudio compatibility server.  Do not let miniaudio choose
+// ALSA first: an ALSA hardware device can exist while being unavailable to
+// the desktop session, which makes enumeration empty and playback fail.
+fn initContext(context: *c.ma_context) c.ma_result {
+    if (@import("builtin").os.tag == .linux) {
+        const backends = [_]c.ma_backend{
+            c.ma_backend_pulseaudio,
+            c.ma_backend_alsa,
+        };
+        return c.ma_context_init(&backends, backends.len, null, context);
+    }
+    return c.ma_context_init(null, 0, null, context);
+}
+
 // ── miniaudio データコールバック ────────────────────────────────────────────
 
 fn dataCallback(
@@ -136,7 +151,7 @@ export fn ca_init(
     const format = c.ma_format_f32;
     g_bytes_per_frame = ch * 4;
 
-    if (c.ma_context_init(null, 0, null, &g_context) != c.MA_SUCCESS) {
+    if (initContext(&g_context) != c.MA_SUCCESS) {
         std.heap.c_allocator.free(g_ring.?);
         g_ring = null;
         return -3;
@@ -310,7 +325,7 @@ export fn ca_enumerate_devices() ?[*:0]const u8 {
     }
 
     var context: c.ma_context = undefined;
-    if (c.ma_context_init(null, 0, null, &context) != c.MA_SUCCESS) {
+    if (initContext(&context) != c.MA_SUCCESS) {
         return null;
     }
     defer _ = c.ma_context_uninit(&context);

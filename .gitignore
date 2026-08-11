@@ -86,3 +86,6 @@ Thumbs.db
 .revert-backup/web/worklets/output-capture-processor.js
 .revert-backup/web/worklets/streaming-pcm-processor.js
 _preview/folders_preview.html
+# Zig build outputs and cache
+native/.zig-cache/
+native/zig-out/
