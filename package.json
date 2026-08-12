@@ -70,7 +70,7 @@
           ]
         }
       ],
-      "signAndEditExecutable": false,
+      "signAndEditExecutable": true,
       "files": [
         "electron/bin/win32/**/*",
         "electron/bin/carminium_audio.dll",
