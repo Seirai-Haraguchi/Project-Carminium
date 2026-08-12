@@ -304,8 +304,8 @@ jobs:
             find "$DIR" -maxdepth 2 -type f 2>/dev/null | head -n 20 >&2 || true
             exit 1
           fi
-          cp "$DIR/bin/ffmpeg"  electron/bin/linux/ffmpeg
-          cp "$DIR/bin/ffprobe" electron/bin/linux/ffprobe
+          install -m 755 "$DIR/bin/ffmpeg"  electron/bin/linux/ffmpeg
+          install -m 755 "$DIR/bin/ffprobe" electron/bin/linux/ffprobe
           rm -rf "$DIR" ffmpeg.tar.xz ffmpeg-contents.txt
           electron/bin/linux/ffprobe -version > ffprobe-version.txt 2>&1
           echo "ffmpeg installed:"; head -n 1 ffprobe-version.txt
