@@ -34,17 +34,27 @@ const oldVersion = data.version;
 const prefix = oldVersion.replace(/-\d+$/, '');
 const newVersion = prefix + '-' + dateStr;
 
-const changed = oldVersion !== newVersion;
+const versionChanged = oldVersion !== newVersion;
 
-if (changed) {
+if (versionChanged) {
   data.version = newVersion;
   fs.writeFileSync(versionJsonPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
   console.log(`[nightly] Updated version: ${oldVersion} -> ${newVersion}`);
-
-  // 同步到 package.json (semver 格式)
-  execSync('node scripts/sync-version.js', { cwd: rootDir, stdio: 'inherit' });
 } else {
   console.log(`[nightly] Version already up to date: ${oldVersion}`);
+}
+
+// Always synchronize package.json. The version may have been changed by a
+// release/manual commit without going through this script; checking only the
+// date above would then leave electron-builder using a stale version forever.
+const packagePath = path.join(rootDir, 'package.json');
+const packageBefore = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
+execSync('node scripts/sync-version.js', { cwd: rootDir, stdio: 'inherit' });
+const packageAfter = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
+const packageChanged = packageBefore.version !== packageAfter.version;
+const changed = versionChanged || packageChanged;
+if (packageChanged && !versionChanged) {
+  console.log(`[nightly] Repaired stale package.json version: ${packageBefore.version} -> ${packageAfter.version}`);
 }
 
 // 输出供 CI 解析的信息
