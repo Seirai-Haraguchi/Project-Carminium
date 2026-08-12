@@ -127,6 +127,12 @@
         "electron/bin/carminium_audio.so",
         "electron/bin/ffmpeg",
         "electron/bin/ffprobe"
+      ],
+      "extraResources": [
+        {
+          "from": "electron/bin/linux/carminium_audio.so",
+          "to": "carminium_audio.so"
+        }
       ]
     },
     "deb": {
