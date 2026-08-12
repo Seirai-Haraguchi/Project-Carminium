@@ -274,8 +274,12 @@ jobs:
                 found=1
                 ;;
               *.deb)
-                dpkg-deb -c "$archive" | grep -Eq 'resources/carminium_audio\.so$'
-                dpkg-deb -c "$archive" | grep -Eq 'ffmpeg$'
+                # pipe to a temp file first; grep closing the pipe early under
+                # `pipefail` would otherwise make tar exit with SIGPIPE.
+                dpkg-deb -c "$archive" > /tmp/deb-contents.txt
+                grep -Eq 'resources/carminium_audio\.so$' /tmp/deb-contents.txt
+                grep -Eq 'ffmpeg$' /tmp/deb-contents.txt
+                rm -f /tmp/deb-contents.txt
                 found=1
                 ;;
             esac
