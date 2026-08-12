@@ -1293,6 +1293,48 @@ async function initializeApp() {
     bridge.setMainWindow(mainWindow);
     smtc.setMainWindow(mainWindow);
 
+    // ── 动态窗口标题：进度 歌曲名 - 歌手 | Project Carminium ──────────────────
+    // 自定义标题栏 (frame:false) 不显示原生标题，但 Windows 任务栏缩略提示、
+    // Alt+Tab、任务管理器仍读取原生窗口标题。根据播放状态动态更新。
+    {
+      const APP_TITLE = 'Project Carminium';
+      let _titleTimer = null;
+
+      function _formatTime(ms) {
+        const totalSec = Math.floor((ms || 0) / 1000);
+        const h = Math.floor(totalSec / 3600);
+        const m = Math.floor((totalSec % 3600) / 60);
+        const s = totalSec % 60;
+        if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        return `${m}:${String(s).padStart(2, '0')}`;
+      }
+
+      function _updateWindowTitle() {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        const track = player.currentTrack;
+        if (!track || player.state === 'stopped') {
+          mainWindow.setTitle(APP_TITLE);
+          return;
+        }
+        const pos = _formatTime(player.position);
+        const title = track.title || '';
+        const artist = track.artist || track.album_artist || '';
+        let songInfo = title;
+        if (artist) songInfo = `${title} - ${artist}`;
+        mainWindow.setTitle(`${pos} ${songInfo} | ${APP_TITLE}`);
+      }
+
+      player.on('track_changed', _updateWindowTitle);
+      player.on('state_changed', _updateWindowTitle);
+      player.on('position_changed', () => {
+        if (_titleTimer) return;
+        _titleTimer = setTimeout(() => {
+          _titleTimer = null;
+          _updateWindowTitle();
+        }, 1000);
+      });
+    }
+
     // ── 任务栏/窗口图标随系统暗色模式实时变化 ──────────────────────────────
     // 直接监听 nativeTheme（不依赖渲染进程）：即使应用主题设为「固定」亮/暗，
     // 只要系统暗色模式切换，任务栏图标也跟着变（符合「按系统暗色模式自动变化」）。
