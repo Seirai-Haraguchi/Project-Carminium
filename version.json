@@ -1,5 +1,10 @@
 {
+<<<<<<< HEAD
   "version": "1.0.8.0",
   "build": 122.1080,
+=======
+  "version": "1.0.7.3-20260812",
+  "build": 105.107,
+>>>>>>> cfebad1fcd7e12da80ae99028a5a7072e208cbb4
   "codename": "Nina Iseri"
 }
