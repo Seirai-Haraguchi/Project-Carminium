@@ -76,7 +76,7 @@
       'albums.filteredCount': '{shown}/{total} 张专辑',
 
       // 导航
-      'nav.yourMix': '推荐',
+      'nav.yourMix': '探新',
       'nav.music': '音乐',
       'nav.albums': '专辑',
       'nav.artists': '艺术家',
@@ -94,10 +94,10 @@
       // 启动
       'splash.connecting': '正在连接…',
 
-      // Recommendation 页面
-      'yourMix.title': '推荐',
+      // 探新 页面
+      'yourMix.title': '探新',
       'yourMix.subtitle': '已收听 {count} 首不同曲目',
-      'yourMix.emptyHistory': '开始播放音乐后这里会显示个性化推荐',
+      'yourMix.emptyHistory': '开始播放音乐后这里会显示个性化发现',
       'yourMix.loadError': '加载失败，请稍后重试',
       'yourMix.dailyMix': '每日合集',
       'yourMix.dailyMixDesc': '基于你的收听历史自动生成',
@@ -722,7 +722,7 @@
       'albums.count': '{count} 張專輯',
       'albums.filteredCount': '{shown}/{total} 張專輯',
 
-      'nav.yourMix': '推薦',
+      'nav.yourMix': '探新',
       'nav.music': '音樂',
       'nav.albums': '專輯',
       'nav.artists': '藝術家',
@@ -738,9 +738,9 @@
 
       'splash.connecting': '正在連線…',
 
-      'yourMix.title': '推薦',
+      'yourMix.title': '探新',
       'yourMix.subtitle': '已收聽 {count} 首不同曲目',
-      'yourMix.emptyHistory': '開始播放音樂後這裡會顯示個人化推薦',
+      'yourMix.emptyHistory': '開始播放音樂後這裡會顯示個人化發現',
       'yourMix.loadError': '載入失敗，請稍後重試',
       'yourMix.dailyMix': '每日合集',
       'yourMix.dailyMixDesc': '基於你的收聽歷史自動生成',
@@ -1949,7 +1949,7 @@
       'albums.count': '{count} albums',
       'albums.filteredCount': '{shown}/{total} albums',
 
-      'nav.yourMix': 'Recommendation',
+      'nav.yourMix': 'Discover',
       'nav.music': 'Music',
       'nav.albums': 'Albums',
       'nav.artists': 'Artists',
@@ -1965,9 +1965,9 @@
 
       'splash.connecting': 'Connecting…',
 
-      'yourMix.title': 'Recommendation',
+      'yourMix.title': 'Discover',
       'yourMix.subtitle': 'Listened to {count} unique tracks',
-      'yourMix.emptyHistory': 'Play some music to get personalized recommendations here',
+      'yourMix.emptyHistory': 'Play some music to get personalized discoveries here',
       'yourMix.loadError': 'Failed to load, please try again later',
       'yourMix.dailyMix': 'Daily Mix',
       'yourMix.dailyMixDesc': 'Auto-generated based on your listening history',
@@ -2562,7 +2562,7 @@
       'albums.count': '{count} альбомов',
       'albums.filteredCount': '{shown}/{total} альбомов',
 
-      'nav.yourMix': 'Рекомендации',
+      'nav.yourMix': 'Новинки',
       'nav.music': 'Музыка',
       'nav.albums': 'Альбомы',
       'nav.artists': 'Исполнители',
@@ -2578,9 +2578,9 @@
 
       'splash.connecting': 'Подключение…',
 
-      'yourMix.title': 'Рекомендации',
+      'yourMix.title': 'Новинки',
       'yourMix.subtitle': 'Прослушано {count} уникальных треков',
-      'yourMix.emptyHistory': 'Воспроизведите музыку, чтобы получить персонализированные рекомендации',
+      'yourMix.emptyHistory': 'Воспроизведите музыку, чтобы получать персонализированные новинки',
       'yourMix.loadError': 'Ошибка загрузки, попробуйте позже',
       'yourMix.dailyMix': 'Ежедневный микс',
       'yourMix.dailyMixDesc': 'Автоматически создаётся на основе истории прослушиваний',

@@ -69,6 +69,9 @@ jobs:
           - arch: arm64
             zig-target: aarch64-windows-gnu
     runs-on: windows-latest
+    env:
+      npm_config_arch: ${{ matrix.arch }}
+      npm_config_target_arch: ${{ matrix.arch }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -145,20 +148,67 @@ jobs:
         run: |
           npx @electron/rebuild -f -w better-sqlite3 --arch ${{ matrix.arch }}
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "Retrying without --arch flag..."
-            npx @electron/rebuild -f -w better-sqlite3
+            throw "Failed to rebuild better-sqlite3 for ${{ matrix.arch }}"
           }
 
-      - name: Verify pre-build artifacts (Windows)
+      - name: Verify pre-build artifacts and architectures (Windows)
         shell: pwsh
         run: |
+          # --- existence checks ---
           if (-not (Test-Path electron\bin\win32\carminium_audio.dll) -or (Get-Item electron\bin\win32\carminium_audio.dll).Length -eq 0) {
             throw "carminium_audio.dll is missing or empty"
           }
           if (-not (Test-Path electron\bin\win32\ffmpeg.exe) -or (Get-Item electron\bin\win32\ffmpeg.exe).Length -eq 0) {
             throw "ffmpeg.exe is missing or empty"
           }
-          Write-Host "Pre-build artifacts verified."
+
+          # --- PE machine type verification ---
+          function Get-PEMachine {
+            param([string]$Path)
+            $bytes = [System.IO.File]::ReadAllBytes($Path)
+            if ($bytes.Length -lt 64) { return "TOO SMALL" }
+            $peOffset = [System.BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [System.BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            switch ($machine) {
+              0x8664 { return 'x64' }
+              0xAA64 { return 'ARM64' }
+              0x014C { return 'x86' }
+              default { return "Unknown (0x$($machine.ToString('X4')))" }
+            }
+          }
+          $expectedMachine = if ('${{ matrix.arch }}' -eq 'arm64') { 'ARM64' } else { 'x64' }
+
+          # carminium_audio.dll
+          $actual = Get-PEMachine electron\bin\win32\carminium_audio.dll
+          Write-Host "carminium_audio.dll: $actual (expected: $expectedMachine)"
+          if ($actual -ne $expectedMachine) { throw "carminium_audio.dll architecture mismatch: $actual != $expectedMachine" }
+
+          # ffmpeg.exe
+          $actual = Get-PEMachine electron\bin\win32\ffmpeg.exe
+          Write-Host "ffmpeg.exe: $actual (expected: $expectedMachine)"
+          if ($actual -ne $expectedMachine) { throw "ffmpeg.exe architecture mismatch: $actual != $expectedMachine" }
+
+          # better-sqlite3 native addon
+          $nodeFile = "node_modules\better-sqlite3\build\Release\better_sqlite3.node"
+          if (Test-Path $nodeFile) {
+            $actual = Get-PEMachine $nodeFile
+            Write-Host "better_sqlite3.node: $actual (expected: $expectedMachine)"
+            if ($actual -ne $expectedMachine) { throw "better_sqlite3.node architecture mismatch: $actual != $expectedMachine" }
+          } else {
+            throw "better_sqlite3.node not found at $nodeFile"
+          }
+
+          # koffi optional dependency
+          $koffiDir = "node_modules\@koromix\koffi-win32-${{ matrix.arch }}"
+          if (-not (Test-Path $koffiDir)) { throw "koffi ${{ matrix.arch }} dependency not found: $koffiDir" }
+          Write-Host "koffi ${{ matrix.arch }} dependency: OK"
+
+          # sharp optional dependency
+          $sharpDir = "node_modules\@img\sharp-win32-${{ matrix.arch }}"
+          if (-not (Test-Path $sharpDir)) { throw "sharp ${{ matrix.arch }} dependency not found: $sharpDir" }
+          Write-Host "sharp ${{ matrix.arch }} dependency: OK"
+
+          Write-Host "Pre-build artifacts and architectures verified."
           Get-Item electron\bin\win32\carminium_audio.dll, electron\bin\win32\ffmpeg.exe | Format-Table Name, Length
 
       - name: Build Electron app (portable)
