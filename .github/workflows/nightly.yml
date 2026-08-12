@@ -161,6 +161,16 @@ jobs:
 
       - name: Install system dependencies
         run: |
+          # GitHub-hosted Ubuntu images may contain Microsoft/Azure sources
+          # that intermittently return 403. They are unrelated to this build;
+          # disable them for this ephemeral runner before refreshing APT.
+          sudo mkdir -p /tmp/disabled-apt-sources
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f -print0 \
+            | while IFS= read -r -d '' source; do
+                if sudo grep -q 'packages\.microsoft\.com' "$source"; then
+                  sudo mv "$source" /tmp/disabled-apt-sources/
+                fi
+              done
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libpulse-dev libfuse2
 
