@@ -217,8 +217,8 @@ jobs:
           echo "Downloading $FFMPEG_URL..."
           curl --fail-with-body --retry 3 --retry-delay 2 -L -o ffmpeg.tar.xz "$FFMPEG_URL"
           tar -tf ffmpeg.tar.xz > ffmpeg-contents.txt
-          DIR=$(awk 'NR == 1 { sub(/\/$/, ""); print; exit }' ffmpeg-contents.txt)
-          if [ -z "$DIR" ] || [[ "$DIR" == */* ]]; then
+          DIR=$(sed -n '1s#/.*##p' ffmpeg-contents.txt)
+          if [ -z "$DIR" ]; then
             echo "Unable to determine FFmpeg archive directory." >&2
             head -n 10 ffmpeg-contents.txt >&2
             exit 1
