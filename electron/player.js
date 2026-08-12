@@ -36,6 +36,9 @@ class MusicPlayer extends EventEmitter {
     // _playNative の同時実行抑制用トークン（monotonic）
     this._nativePlayToken = 0;
 
+    // Dummy mode notification flag (prevent repeated toasts)
+    this._dummyModeNotified = false;
+
     // SoundTouch パラメータ（レンダラーと同期）
     this._tempo = 1.0;
     this._pitch = 1.0;
@@ -565,6 +568,15 @@ class MusicPlayer extends EventEmitter {
           sampleRate: this._renderer._sampleRate,
           channels: this._renderer._channels,
         }));
+        // Dummy mode: native audio device unavailable. Notify the frontend
+        // once so the user sees a toast. Playback continues without sound.
+        if (this._renderer.isDummyMode && !this._dummyModeNotified) {
+          this._dummyModeNotified = true;
+          this.emit('playback_error', JSON.stringify({
+            type: 'no_audio_device',
+            message: 'No audio output device found. Playback continues without sound.',
+          }));
+        }
       }
       this._renderer._currentFilePath = filePath;
 
@@ -1087,6 +1099,15 @@ class MusicPlayer extends EventEmitter {
 
   setOutputDevice(deviceId) {
     this._settings.set('audio_output_device', deviceId || '');
+    // Reset the native init failure flag — the user may have connected
+    // an audio device since the last failure. This allows init() to
+    // retry the native audio backend instead of immediately entering
+    // dummy mode.
+    if (this._renderer && this._renderer.isDummyMode) {
+      const { NativeRenderer } = require('./wasapi');
+      NativeRenderer.resetNativeInitFailed();
+      this._dummyModeNotified = false;
+    }
     // デバイス切り替えは再初期化が必要
     if (this._renderer && this._renderer.isInitialized) {
       this._reinitRenderer();

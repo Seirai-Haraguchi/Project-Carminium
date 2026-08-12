@@ -47,6 +47,11 @@ function _resolveRealPath(p) {
 
 let _lib = null;
 let _f = {};
+// Set to true when ca_init returns a hard failure (e.g. MA_NO_DEVICE on
+// Linux with no sound card). When true, enumerateDevices() returns empty
+// and the NativeRenderer enters dummy mode so the rest of the app
+// (UI, queue management, position tracking) keeps working without audio.
+let _nativeInitFailed = false;
 
 function _loadDll() {
   if (_lib) return true;
@@ -257,9 +262,18 @@ class NativeRenderer extends EventEmitter {
     this.PREROLL_MS = 800;          // 目標水位（ミリ秒）
     this.PREROLL_TIMEOUT_MS = 3000; // 水位が貯まらなくても強制開始する上限
     this._prerollTimer = null;
+
+    // ── Dummy mode ──
+    // When the native audio device cannot be opened (e.g. Linux with no
+    // sound card / PulseAudio not running), the renderer enters dummy mode.
+    // All native calls become no-ops, but the rest of the app (AudioEngine,
+    // FFmpeg decoding, position tracking, UI) continues to function.
+    // The user sees a notification explaining that no audio device was found.
+    this._dummyMode = false;
   }
 
   static enumerateDevices() {
+    if (_nativeInitFailed) return [];
     if (!_loadDll()) return [];
     try {
       const json = _f.ca_enumerate_devices();
@@ -277,9 +291,33 @@ class NativeRenderer extends EventEmitter {
     }
   }
 
+  /**
+   * Reset the native init failure flag, allowing a retry on the next init()
+   * call. Used when the user manually switches output devices — they may
+   * have connected an audio device since the last failure.
+   */
+  static resetNativeInitFailed() {
+    if (_nativeInitFailed) {
+      _nativeInitFailed = false;
+      console.log('[wasapi] Native init failure flag reset — will retry on next init()');
+    }
+  }
+
   async init(opts = {}) {
     if (!_loadDll()) throw new Error('carminium_audio native library not loaded: ' + LIB_NAME);
     if (this._initialized) await this.close();
+
+    // Already failed once — enter dummy mode immediately without retrying
+    // (prevents repeated ALSA/PulseAudio error spam on every play attempt).
+    if (_nativeInitFailed) {
+      this._enterDummyMode(opts);
+      return {
+        sampleRate: this._sampleRate,
+        channels: this._channels,
+        bitsPerSample: 32,
+        shareMode: this._shareMode,
+      };
+    }
 
     // Linux/macOS: PulseAudio/ALSA/CoreAudio don't support WASAPI exclusive mode.
     // Force shared mode on non-Windows; ignore the shareMode option.
@@ -295,10 +333,32 @@ class NativeRenderer extends EventEmitter {
         console.warn('[wasapi] Exclusive mode init failed (ca_init=' + result + '), falling back to shared');
         const retry = _f.ca_init(SHARE_SHARED, deviceIndex, sampleRate, channels);
         if (retry !== 0) {
-          throw new Error(`ca_init failed: miniaudio error ${retry}`);
+          // Hard failure: no audio device available. Enter dummy mode
+          // so the app remains usable (UI, queue, position tracking)
+          // without audio output.
+          console.error('[wasapi] ca_init failed (miniaudio error ' + retry +
+            ') — entering dummy mode (no audio device available)');
+          _nativeInitFailed = true;
+          this._enterDummyMode(opts);
+          return {
+            sampleRate: this._sampleRate,
+            channels: this._channels,
+            bitsPerSample: 32,
+            shareMode: this._shareMode,
+          };
         }
       } else {
-        throw new Error(`ca_init failed: miniaudio error ${result}`);
+        // Hard failure: no audio device available. Enter dummy mode.
+        console.error('[wasapi] ca_init failed (miniaudio error ' + result +
+          ') — entering dummy mode (no audio device available)');
+        _nativeInitFailed = true;
+        this._enterDummyMode(opts);
+        return {
+          sampleRate: this._sampleRate,
+          channels: this._channels,
+          bitsPerSample: 32,
+          shareMode: this._shareMode,
+        };
       }
     }
 
@@ -331,6 +391,42 @@ class NativeRenderer extends EventEmitter {
     };
   }
 
+  // ── Dummy mode ──────────────────────────────────────────────────────────
+
+  /**
+   * Enter dummy mode: the native audio device could not be opened, but the
+   * app remains usable. FFmpeg decoding, AudioEngine processing, position
+   * tracking and UI all continue to work — only actual audio output is
+   * silent. All _f.* native calls are skipped when _dummyMode is true.
+   */
+  _enterDummyMode(opts = {}) {
+    this._dummyMode = true;
+    this._initialized = true;
+    this._playing = false;
+    this._paused = false;
+    this._volume = 1.0;
+    this._shareMode = SHARE_SHARED;
+    // Use requested sample rate or fall back to 44100, which is what
+    // player.js always requests. AudioEngine will use this to create its
+    // AudioContext.
+    this._sampleRate = opts.sampleRate || 44100;
+    this._channels = opts.channels || 2;
+    this._bytesPerFrame = (this._channels * 32) / 8;
+    this._seekOffsetMs = 0;
+
+    // Set up FFmpeg decoder so FFmpeg-based decoding still works
+    // (AudioEngine receives PCM, processes it, sends it back — we just
+    // silently drop it in pushProcessedPcm).
+    const ff = _findFFmpeg();
+    if (ff) {
+      if (!this._decoder) this._decoder = new DecoderPool(ff);
+      this._decoder.configure(this._sampleRate, this._channels);
+    }
+
+    console.warn('[wasapi] Dummy mode active: sampleRate=' + this._sampleRate +
+      ', channels=' + this._channels + ' — audio output disabled');
+  }
+
   // ── FFmpeg デコード ──────────────────────────────────────────────────────
 
   async playFile(filePath) {
@@ -348,7 +444,7 @@ class NativeRenderer extends EventEmitter {
     this._nextDurationMs = 0;
     this._seekOffsetMs = 0;
     this._resumePositionMs = null;
-    _f.ca_clear_buffer();
+    if (!this._dummyMode) _f.ca_clear_buffer();
 
     this._durationMs = await this._probeDuration(filePath);
 
@@ -421,6 +517,8 @@ class NativeRenderer extends EventEmitter {
 
   pushProcessedPcm(float32ArrayOrBuffer) {
     if (!this._initialized) return -1;
+    // Dummy mode: silently drop PCM (no audio device available)
+    if (this._dummyMode) return 0;
 
     let buf;
     if (Buffer.isBuffer(float32ArrayOrBuffer)) {
@@ -487,6 +585,8 @@ class NativeRenderer extends EventEmitter {
   _startWithPreroll() {
     this._cancelPreroll();
     if (!this._initialized) return;
+    // Dummy mode: no native device to start, just emit state
+    if (this._dummyMode) return;
 
     const targetBytes = Math.max(1, Math.round(
       this._sampleRate * this._bytesPerFrame * (this.PREROLL_MS / 1000)
@@ -571,7 +671,7 @@ class NativeRenderer extends EventEmitter {
   async pause() {
     if (!this._playing) return;
     this._cancelPreroll();
-    _f.ca_stop();
+    if (!this._dummyMode) _f.ca_stop();
     // 记录暂停位置，供 play() 恢复时从该处重新解码
     this._resumePositionMs = this._currentPositionMs();
     // 终止 FFmpeg 子进程 → 释放其占用的内存
@@ -607,7 +707,7 @@ class NativeRenderer extends EventEmitter {
 
   async stop() {
     this._cancelPreroll();
-    _f.ca_stop();
+    if (!this._dummyMode) _f.ca_stop();
     this._playing = false;
     this._paused = false;
     this._resumePositionMs = null;
@@ -618,7 +718,7 @@ class NativeRenderer extends EventEmitter {
     }
     this._nextFilePath = null;
     this._seekOffsetMs = 0;
-    _f.ca_clear_buffer();
+    if (!this._dummyMode) _f.ca_clear_buffer();
     this.emit('state_changed', 'stopped');
   }
 
@@ -628,9 +728,9 @@ class NativeRenderer extends EventEmitter {
     const wasPlaying = this._playing;
 
     this._cancelPreroll();
-    _f.ca_stop();
+    if (!this._dummyMode) _f.ca_stop();
     if (this._decoder) this._decoder.stopSlot('main');
-    _f.ca_clear_buffer();
+    if (!this._dummyMode) _f.ca_clear_buffer();
     this._seekOffsetMs = Math.round(seekSec * 1000);
 
     if (this._currentFilePath && !this._webAudioBrowserDecode && this._decoder) {
@@ -689,7 +789,7 @@ class NativeRenderer extends EventEmitter {
     this._nextFilePath = null;
     this._nextDurationMs = 0;
     this._seekOffsetMs = 0;
-    _f.ca_clear_buffer();
+    if (!this._dummyMode) _f.ca_clear_buffer();
 
     this._durationMs = await this._probeDuration(filePath);
 
@@ -829,6 +929,7 @@ class NativeRenderer extends EventEmitter {
    */
   getBufferLatencyMs() {
     if (!this._initialized) return 0;
+    if (this._dummyMode) return 0;
     try {
       const bytes = _f.ca_get_buffered_bytes();
       if (bytes <= 0) return 0;
@@ -840,6 +941,7 @@ class NativeRenderer extends EventEmitter {
 
   _currentPositionMs() {
     if (!this._initialized) return this._seekOffsetMs;
+    if (this._dummyMode) return this._seekOffsetMs;
     try {
       const frames = _f.ca_get_consumed_frames();
       return this._seekOffsetMs + Math.round(frames * 1000 / this._sampleRate);
@@ -884,6 +986,10 @@ class NativeRenderer extends EventEmitter {
     return this._initialized;
   }
 
+  get isDummyMode() {
+    return this._dummyMode;
+  }
+
   // ── 互換性プロパティ（player.js からの参照用） ─────────────────────────
 
   set setGaplessEnabled(_) { /* Web Audio API 側で管理 */ }
@@ -910,12 +1016,17 @@ class NativeRenderer extends EventEmitter {
     this._nextFilePath = null;
 
     if (this._initialized) {
-      try { _f.ca_close(); } catch { /* ignore */ }
+      if (!this._dummyMode) {
+        try { _f.ca_close(); } catch { /* ignore */ }
+      }
       this._initialized = false;
     }
     this._playing = false;
     this._paused = false;
     this._seekOffsetMs = 0;
+    // Reset dummy mode so that a subsequent init() can attempt the real
+    // native backend again (used after resetNativeInitFailed()).
+    this._dummyMode = false;
   }
 }
 

@@ -104,6 +104,8 @@ class Bridge extends EventEmitter {
     player.on('liked_changed', (liked) => this._emit('liked_changed', liked));
     player.on('lyrics_changed', (trackId) => this._emit('lyrics_changed', trackId));
     player.on('automix_takeover', () => this._emit('automix_takeover'));
+// Native audio device unavailable (dummy mode) — notify renderer to show toast
+player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     // 独占モード回退時に player から settings_changed が発行される → 転送
     player.on('settings_changed', (settingsJson) => {
       this.emit('settings_changed', settingsJson);
