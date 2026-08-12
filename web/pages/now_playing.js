@@ -2208,7 +2208,13 @@ let _lastKnownPositionMs = 0;
       _stopInterludeRaf();
       _interludeExitEl = _activeInterlude.el;
       _interludeExitHeight = _interludeExitEl.offsetHeight;
-      _interludeExitLineTop = lines[idx] ? lines[idx].offsetTop : null;
+      // 间奏退出时 adjustedPos 处于 lead 期（end ≤ pos < nextStart），
+      // idx 指向间奏前最后一行；但收起后要激活的是间奏后下一行。
+      // 必须用下一行的 offsetTop（含间奏展开高度）计算收起后的最终位置，
+      // 否则 finalLineTop 会基于前一行，导致歌词滚到错误位置。
+      var _nextLineIdx = _activeInterlude.lineIdx + 1;
+      _interludeExitLineTop = (_nextLineIdx >= 0 && _nextLineIdx < lines.length && lines[_nextLineIdx])
+        ? lines[_nextLineIdx].offsetTop : null;
       _exitInterlude(_activeInterlude);
       _interludeExiting = true;
       _activeInterlude = null;
