@@ -195,13 +195,27 @@ jobs:
           NODE
 
       - name: Download ffmpeg/ffprobe (Linux)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           echo "Fetching BtbN/FFmpeg-Builds latest release..."
-          FFMPEG_URL=$(curl -s https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest \
-            | jq -r '.assets[] | select(.name | endswith("linux64-gpl.tar.xz")) | .browser_download_url' \
-            | head -1)
+          API_URL="https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest"
+          RELEASE_JSON=$(curl --fail-with-body --retry 3 --retry-delay 2 -sSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -H "User-Agent: Carminium-nightly" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            "$API_URL")
+          FFMPEG_URL=$(printf '%s' "$RELEASE_JSON" \
+            | jq -r '[.assets // [] | .[] | select(.name | endswith("linux64-gpl.tar.xz"))][0].browser_download_url // empty')
+          if [ -z "$FFMPEG_URL" ]; then
+            echo "No linux64-gpl.tar.xz asset found in the latest BtbN release." >&2
+            printf '%s' "$RELEASE_JSON" | jq -r '.message // "API response did not contain a matching asset"' >&2
+            exit 1
+          fi
           echo "Downloading $FFMPEG_URL..."
-          curl -L -o ffmpeg.tar.xz "$FFMPEG_URL"
+          curl --fail-with-body --retry 3 --retry-delay 2 -L -o ffmpeg.tar.xz "$FFMPEG_URL"
           DIR=$(tar tf ffmpeg.tar.xz | head -1 | cut -d/ -f1)
           tar xf ffmpeg.tar.xz
           cp "$DIR/bin/ffmpeg"  electron/bin/linux/ffmpeg
