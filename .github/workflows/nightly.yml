@@ -21,11 +21,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'package-lock.json'
 
       - name: Update version date
         id: update
@@ -68,6 +72,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Zig
         uses: goto-bus-stop/setup-zig@v2
@@ -78,9 +84,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'package-lock.json'
 
       - name: Install dependencies
-        run: npm install --include=optional --cpu=${{ matrix.arch }}
+        run: npm ci --include=optional --cpu=${{ matrix.arch }} --prefer-offline --no-audit --no-fund
 
       - name: Update version locally
         run: node scripts/update-nightly-version.js
@@ -101,9 +109,16 @@ jobs:
 
       - name: Download ffmpeg/ffprobe (Windows)
         shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           Write-Host "Fetching BtbN/FFmpeg-Builds latest release..."
-          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest" -Headers @{ "User-Agent" = "CI" }
+          $headers = @{
+            "User-Agent" = "Carminium-nightly"
+            "Authorization" = "Bearer $env:GITHUB_TOKEN"
+            "Accept" = "application/vnd.github+json"
+          }
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest" -Headers $headers
           $pattern = if ('${{ matrix.arch }}' -eq 'arm64') { 'winarm64-gpl\.zip$' } else { 'win64-gpl\.zip$' }
           $asset = $release.assets | Where-Object { $_.name -match $pattern -and $_.name -notmatch "shared" } | Select-Object -First 1
           if (-not $asset) { throw "No FFmpeg asset found for ${{ matrix.arch }}" }
@@ -126,7 +141,25 @@ jobs:
           zig build copy copy-legacy -Doptimize=ReleaseFast -Dtarget=${{ matrix.zig-target }}
 
       - name: Rebuild native addons
-        run: npx @electron/rebuild -f -w better-sqlite3 --arch ${{ matrix.arch }}
+        shell: pwsh
+        run: |
+          npx @electron/rebuild -f -w better-sqlite3 --arch ${{ matrix.arch }}
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Retrying without --arch flag..."
+            npx @electron/rebuild -f -w better-sqlite3
+          }
+
+      - name: Verify pre-build artifacts (Windows)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path electron\bin\win32\carminium_audio.dll) -or (Get-Item electron\bin\win32\carminium_audio.dll).Length -eq 0) {
+            throw "carminium_audio.dll is missing or empty"
+          }
+          if (-not (Test-Path electron\bin\win32\ffmpeg.exe) -or (Get-Item electron\bin\win32\ffmpeg.exe).Length -eq 0) {
+            throw "ffmpeg.exe is missing or empty"
+          }
+          Write-Host "Pre-build artifacts verified."
+          Get-Item electron\bin\win32\carminium_audio.dll, electron\bin\win32\ffmpeg.exe | Format-Table Name, Length
 
       - name: Build Electron app (portable)
         run: npx electron-builder --win portable --${{ matrix.arch }} --publish never
@@ -158,21 +191,47 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install system dependencies
         run: |
           # GitHub-hosted Ubuntu images may contain Microsoft/Azure sources
           # that intermittently return 403. They are unrelated to this build;
           # disable them for this ephemeral runner before refreshing APT.
-          sudo mkdir -p /tmp/disabled-apt-sources
-          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f -print0 \
-            | while IFS= read -r -d '' source; do
-                if sudo grep -q 'packages\.microsoft\.com' "$source"; then
-                  sudo mv "$source" /tmp/disabled-apt-sources/
-                fi
-              done
+          sudo rm -f /etc/apt/sources.list.d/azure-cli.list \
+                    /etc/apt/sources.list.d/msprod.list \
+                    /etc/apt/sources.list.d/microsoft-prod.list || true
+          sudo sed -i '/packages.microsoft.com/d' /etc/apt/sources.list || true
+          sudo sed -i '/packages.microsoft.com/d' /etc/apt/sources.list.d/* 2>/dev/null || true
+
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libpulse-dev libfuse2
+          # build-essential / g++ / make / python3: Zig & node-gyp / better-sqlite3
+          # libsqlite3-dev: better-sqlite3 native binding
+          # libasound2-dev / libpulse-dev / libfuse2: audio + AppImage runtime
+          # libgtk-3-dev / libnotify-dev / libappindicator3-dev / libxtst-dev / libxss-dev: electron-builder linux deps
+          # jq / ca-certificates / wget: ffmpeg release JSON parsing & download
+          sudo apt-get install -y \
+            build-essential \
+            python3 \
+            python3-pip \
+            python3-dev \
+            make \
+            g++ \
+            pkg-config \
+            libasound2-dev \
+            libpulse-dev \
+            libfuse2 \
+            libssl-dev \
+            libsqlite3-dev \
+            libgtk-3-dev \
+            libnotify-dev \
+            libappindicator3-dev \
+            libxtst-dev \
+            libxss-dev \
+            jq \
+            ca-certificates \
+            wget
 
       - name: Setup Zig
         uses: goto-bus-stop/setup-zig@v2
@@ -183,9 +242,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'package-lock.json'
 
       - name: Install dependencies
-        run: npm install --include=optional
+        run: npm ci --include=optional --prefer-offline --no-audit --no-fund
 
       - name: Update version locally
         run: node scripts/update-nightly-version.js
@@ -250,13 +311,16 @@ jobs:
         working-directory: native
         run: zig build copy copy-legacy -Doptimize=ReleaseFast
 
-      - name: Verify Linux native audio library
+      - name: Verify pre-build artifacts (Linux)
         shell: bash
         run: |
           set -euxo pipefail
           test -s electron/bin/linux/carminium_audio.so
+          test -x electron/bin/linux/ffmpeg
+          test -x electron/bin/linux/ffprobe
           file electron/bin/linux/carminium_audio.so
           ldd electron/bin/linux/carminium_audio.so
+          electron/bin/linux/ffmpeg -version | head -n 1
 
       - name: Rebuild native addons
         run: npx @electron/rebuild -f -w better-sqlite3
@@ -264,7 +328,7 @@ jobs:
       - name: Build Electron app (deb + AppImage)
         run: npx electron-builder --linux --publish never
 
-      - name: Verify packaged native audio library
+      - name: Verify packaged artifacts
         shell: bash
         run: |
           set -euxo pipefail
@@ -275,10 +339,13 @@ jobs:
                 mkdir -p appimage-check
                 (cd appimage-check && "$(pwd)/../$archive" --appimage-extract >/dev/null)
                 test -s appimage-check/squashfs-root/resources/carminium_audio.so
+                # ffmpeg is unpacked from asar into app.asar.unpacked
+                find appimage-check/squashfs-root -name 'ffmpeg' -type f -executable | head -n 1 | grep -q .
                 found=1
                 ;;
               *.deb)
-                dpkg-deb -c "$archive" | grep -Eq '/resources/carminium_audio\.so$'
+                dpkg-deb -c "$archive" | grep -Eq 'resources/carminium_audio\.so$'
+                dpkg-deb -c "$archive" | grep -Eq 'ffmpeg$'
                 found=1
                 ;;
             esac
