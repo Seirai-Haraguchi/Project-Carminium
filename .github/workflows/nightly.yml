@@ -122,7 +122,8 @@ jobs:
 
       - name: Build native library (Zig)
         working-directory: native
-        run: zig build copy copy-legacy -Doptimize=ReleaseFast -Dtarget=${{ matrix.zig-target }}
+        run: |
+          zig build copy copy-legacy -Doptimize=ReleaseFast -Dtarget=${{ matrix.zig-target }}
 
       - name: Rebuild native addons
         run: npx @electron/rebuild -f -w better-sqlite3 --arch ${{ matrix.arch }}
