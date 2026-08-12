@@ -237,6 +237,16 @@
           /* AutoMix 变速过渡依赖前端 Web Audio API，已随前端模式一并移除 */
         });
 
+        // 播放错误：无音频设备时通知用户
+        App.backend.playback_error.connect(function (errJson) {
+          try {
+            var err = JSON.parse(errJson);
+            if (err.type === 'no_audio_device' && App.utils && App.utils.toast) {
+              App.utils.toast(App.i18n ? App.i18n.t('audio.noDeviceToast') : err.message);
+            }
+          } catch (e) { /* ignore */ }
+        });
+
         uiSync.on('library_updated', function (json) {
           // 刷新前端全量缓存，然后重渲染当前页
           if (App.pages.music && App.pages.music.releaseLibraryViewMemory) {

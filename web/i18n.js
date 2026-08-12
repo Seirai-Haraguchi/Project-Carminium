@@ -241,6 +241,7 @@
       'audio.switchSharedConfirm': '切回',
       'audio.fallbackTitle': '已切回共享模式',
       'audio.fallbackBody': '独占模式暂不可用（可能输出设备被占用），已自动回退共享模式。',
+'audio.noDeviceToast': '未找到音频输出设备，播放将继续但没有声音。请检查音频设备连接。',
 
       // 右键菜单
       'cm.play': '立即播放',
@@ -875,6 +876,7 @@
       'audio.switchSharedConfirm': '切回',
       'audio.fallbackTitle': '已切回共享模式',
       'audio.fallbackBody': '獨佔模式暫不可用（可能輸出裝置被佔用），已自動回退共享模式。',
+'audio.noDeviceToast': '未找到音訊輸出裝置，播放將繼續但沒有聲音。請檢查音訊裝置連接。',
 
       'cm.play': '立即播放',
       'cm.playSelected': '播放選中曲目',
@@ -1488,6 +1490,7 @@
       'audio.switchSharedConfirm': '切替',
       'audio.fallbackTitle': '共有モードに戻りました',
       'audio.fallbackBody': '排他モードは一時的に使用できません（出力デバイスが占有されている可能性があります）。共有モードに自動的に戻りました。',
+'audio.noDeviceToast': 'オーディオ出力デバイスが見つかりません。再生は続行されますが音声は出力されません。オーディオデバイスの接続を確認してください。',
 
       'cm.play': '今すぐ再生',
       'cm.playSelected': '選択した曲を再生',
@@ -2100,6 +2103,7 @@
       'audio.switchSharedConfirm': 'Switch Back',
       'audio.fallbackTitle': 'Switched Back to Shared Mode',
       'audio.fallbackBody': 'Exclusive mode is temporarily unavailable (the output device may be occupied). Automatically fell back to shared mode.',
+'audio.noDeviceToast': 'No audio output device found. Playback continues without sound. Please check your audio device connection.',
 
       'cm.play': 'Play Now',
       'cm.playSelected': 'Play Selected',
@@ -2712,6 +2716,7 @@
       'audio.switchSharedConfirm': 'Переключить',
       'audio.fallbackTitle': 'Переключено обратно на Shared',
       'audio.fallbackBody': 'Exclusive режим временно недоступен (возможно, устройство вывода занято). Автоматический возврат на Shared режим.',
+'audio.noDeviceToast': 'Звуковое устройство вывода не найдено. Воспроизведение продолжается без звука. Проверьте подключение аудиоустройства.',
 
       'cm.play': 'Воспроизвести сейчас',
       'cm.playSelected': 'Воспроизвести выбранные',

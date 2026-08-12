@@ -54,13 +54,28 @@ var g_frames_consumed: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 // PipeWire's PulseAudio compatibility server.  Do not let miniaudio choose
 // ALSA first: an ALSA hardware device can exist while being unavailable to
 // the desktop session, which makes enumeration empty and playback fail.
+//
+// We try PulseAudio + ALSA first, then fall back to trying all available
+// backends (including JACK) if neither works. This maximises the chance of
+// finding a usable audio device on diverse Linux setups.
+var g_linux_fallback_tried: bool = false;
+
 fn initContext(context: *c.ma_context) c.ma_result {
     if (@import("builtin").os.tag == .linux) {
         const backends = [_]c.ma_backend{
             c.ma_backend_pulseaudio,
             c.ma_backend_alsa,
         };
-        return c.ma_context_init(&backends, backends.len, null, context);
+        const result = c.ma_context_init(&backends, backends.len, null, context);
+        if (result == c.MA_SUCCESS) return result;
+        // Preferred backends failed — try all available backends as fallback.
+        // This includes JACK and any other compiled-in backend.
+        if (!g_linux_fallback_tried) {
+            g_linux_fallback_tried = true;
+            std.log.warn("Preferred audio backends failed, trying all available", .{});
+            return c.ma_context_init(null, 0, null, context);
+        }
+        return result;
     }
     return c.ma_context_init(null, 0, null, context);
 }
