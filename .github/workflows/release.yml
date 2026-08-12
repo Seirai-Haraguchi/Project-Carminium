@@ -137,13 +137,17 @@ jobs:
       - name: Install system dependencies
         run: |
           # GitHub-hosted Ubuntu images may contain Microsoft/Azure sources
-          # that intermittently return 403. They are unrelated to this build;
-          # disable them for this ephemeral runner before refreshing APT.
+          # that intermittently return 403 or are malformed. They are unrelated
+          # to this build; disable them for this ephemeral runner before APT.
+          # Handle both legacy .list and deb822 .sources formats.
           sudo rm -f /etc/apt/sources.list.d/azure-cli.list \
+                    /etc/apt/sources.list.d/azure-cli.sources \
                     /etc/apt/sources.list.d/msprod.list \
-                    /etc/apt/sources.list.d/microsoft-prod.list || true
+                    /etc/apt/sources.list.d/msprod.sources \
+                    /etc/apt/sources.list.d/microsoft-prod.list \
+                    /etc/apt/sources.list.d/microsoft-prod.sources || true
           sudo sed -i '/packages.microsoft.com/d' /etc/apt/sources.list || true
-          sudo sed -i '/packages.microsoft.com/d' /etc/apt/sources.list.d/* 2>/dev/null || true
+          sudo sed -i '/packages.microsoft.com/d' /etc/apt/sources.list.d/*.list 2>/dev/null || true
 
           sudo apt-get update
           # build-essential / g++ / make / python3: Zig & node-gyp / better-sqlite3
