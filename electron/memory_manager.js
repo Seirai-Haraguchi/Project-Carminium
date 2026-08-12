@@ -79,6 +79,9 @@ class MemoryManager {
 
     // 紧急清理回调（比普通清理更激进）
     this._emergencyCallbacks = [];
+
+    // 紧急清理触发次数（供诊断面板展示）
+    this._killCount = 0;
   }
 
   // ── 启动 / 停止 ────────────────────────────────────────────────────────
@@ -206,6 +209,7 @@ class MemoryManager {
 
   /** 紧急清理：级联释放所有非关键资源 */
   _emergencyCleanup() {
+    this._killCount++;
     console.warn('[MemoryManager] EMERGENCY CLEANUP — cascading resource release');
 
     // 1. 执行所有紧急回调
@@ -297,10 +301,13 @@ class MemoryManager {
       disposables: this._disposables.size,
       pressureLevel: this._pressureLevel,
       emergencyMode: this._emergencyMode,
+      killCount: this._killCount,
       thresholds: { soft: RSS_SOFT_MB, hard: RSS_HARD_MB, critical: RSS_CRITICAL_MB },
       timestamp: Date.now(),
     };
   }
+
+  get killCount() { return this._killCount; }
 
   get pressureLevel() { return this._pressureLevel; }
   get isEmergency() { return this._emergencyMode; }

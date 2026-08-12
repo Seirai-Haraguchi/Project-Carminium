@@ -1182,10 +1182,14 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       } catch {
         // ignore
       }
+      const os = require('os');
       return _dump({
         version: versionData.version || '0.0.0',
         build: versionData.build || 0,
         codename: versionData.codename || '',
+        platform: process.platform,
+        arch: process.arch,
+        osVersion: os.release(),
         diagnostic: {
           electron_version: process.versions.electron,
           chrome_version: process.versions.chrome,
@@ -1193,6 +1197,44 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
           platform: process.platform,
           arch: process.arch,
         },
+      });
+    });
+
+    // ── 诊断信息 ──
+    ipcMain.handle('get_diagnostic_info', () => {
+      const os = require('os');
+      const mem = process.memoryUsage();
+      let killCount = 0;
+      try {
+        const { getInstance } = require('./memory_manager');
+        killCount = getInstance().killCount;
+      } catch { /* ignore */ }
+
+      // 设备厂商（仅 Windows 尝试读取，其余平台留空）
+      let deviceVendor = '';
+      try {
+        if (process.platform === 'win32') {
+          const { execSync } = require('child_process');
+          const out = execSync(
+            'wmic computersystem get manufacturer /value',
+            { encoding: 'utf8', timeout: 3000, windowsHide: true }
+          ).trim();
+          const m = out.match(/Manufacturer=(.+)/);
+          if (m) deviceVendor = m[1].trim();
+        }
+      } catch { /* ignore */ }
+
+      const fmtMB = (bytes) => (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+
+      return _dump({
+        SystemOsVersion: os.type() + ' ' + os.release() + (process.platform === 'win32' ? ' (' + os.version() + ')' : ''),
+        SystemOsArch: process.platform + '-' + process.arch,
+        SystemDeviceName: os.hostname(),
+        SystemDeviceVendor: deviceVendor || 'N/A',
+        AppRoot: app.getAppPath(),
+        AppCurrentDirectory: process.cwd(),
+        AppCurrentMemoryUsage: 'RSS: ' + fmtMB(mem.rss) + ' | Heap: ' + fmtMB(mem.heapUsed) + ' / ' + fmtMB(mem.heapTotal) + ' | External: ' + fmtMB(mem.external),
+        DiagnosticMemoryKillCount: String(killCount),
       });
     });
   }
