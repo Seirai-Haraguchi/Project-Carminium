@@ -217,13 +217,18 @@ jobs:
           echo "Downloading $FFMPEG_URL..."
           curl --fail-with-body --retry 3 --retry-delay 2 -L -o ffmpeg.tar.xz "$FFMPEG_URL"
           tar -tf ffmpeg.tar.xz > ffmpeg-contents.txt
-          DIR=$(head -n 1 ffmpeg-contents.txt | cut -d/ -f1)
-          if [ -z "$DIR" ] || [ ! -d "$DIR" ]; then
+          DIR=$(awk 'NR == 1 { sub(/\/$/, ""); print; exit }' ffmpeg-contents.txt)
+          if [ -z "$DIR" ] || [[ "$DIR" == */* ]]; then
             echo "Unable to determine FFmpeg archive directory." >&2
             head -n 10 ffmpeg-contents.txt >&2
             exit 1
           fi
           tar xf ffmpeg.tar.xz
+          if [ ! -d "$DIR" ] || [ ! -x "$DIR/bin/ffmpeg" ] || [ ! -x "$DIR/bin/ffprobe" ]; then
+            echo "FFmpeg archive has an unexpected layout: $DIR" >&2
+            find "$DIR" -maxdepth 2 -type f 2>/dev/null | head -n 20 >&2 || true
+            exit 1
+          fi
           cp "$DIR/bin/ffmpeg"  electron/bin/linux/ffmpeg
           cp "$DIR/bin/ffprobe" electron/bin/linux/ffprobe
           rm -rf "$DIR" ffmpeg.tar.xz ffmpeg-contents.txt
