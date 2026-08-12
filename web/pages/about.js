@@ -92,6 +92,19 @@
             '</div>' +
           '</div>' +
         '</div>' +
+        // ── 平台信息 ──
+        '<div class="settings-row about-info-row" id="about-platform-row">' +
+          '<div><p class="settings-row-label" data-i18n="about.platform">平台</p></div>' +
+          '<span class="settings-row-sub" id="about-platform-text">—</span>' +
+        '</div>' +
+        '<div class="settings-row about-info-row" id="about-arch-row">' +
+          '<div><p class="settings-row-label" data-i18n="about.arch">架构</p></div>' +
+          '<span class="settings-row-sub" id="about-arch-text">—</span>' +
+        '</div>' +
+        '<div class="settings-row about-info-row" id="about-os-version-row">' +
+          '<div><p class="settings-row-label" data-i18n="about.osVersion">系统版本</p></div>' +
+          '<span class="settings-row-sub" id="about-os-version-text">—</span>' +
+        '</div>' +
       '</div>' +
 
       // ── 操作 ──
@@ -103,6 +116,10 @@
         '</div>' +
         '<div class="settings-row about-action-row" id="about-feedback">' +
           '<div><p class="settings-row-label" data-i18n="about.feedback">问题反馈</p></div>' +
+          CHEVRON_SVG +
+        '</div>' +
+        '<div class="settings-row about-action-row" id="about-diagnostic">' +
+          '<div><p class="settings-row-label" data-i18n="about.diagnostic">诊断信息</p></div>' +
           CHEVRON_SVG +
         '</div>' +
       '</div>';
@@ -151,6 +168,14 @@
       });
     }
 
+    // 诊断信息
+    var diag = container.querySelector('#about-diagnostic');
+    if (diag) {
+      diag.addEventListener('click', function () {
+        _showDiagnosticDialog();
+      });
+    }
+
     // Logo连击彩蛋
     _initLogoEasterEgg(container);
   }
@@ -183,6 +208,14 @@
       });
     }
 
+    // 诊断信息
+    var diag = container.querySelector('#about-diagnostic');
+    if (diag) {
+      diag.addEventListener('click', function () {
+        _showDiagnosticDialog();
+      });
+    }
+
     // Logo连击彩蛋
     _initLogoEasterEgg(container);
   }
@@ -200,6 +233,104 @@
         if (info.codename) text += ' (Codename ' + info.codename + ')';
         el.textContent = text;
       }
+      // 平台信息
+      var platformMap = { win32: 'Windows', darwin: 'macOS', linux: 'Linux' };
+      var platformText = platformMap[info.platform] || info.platform || '—';
+      var archText = info.arch || '—';
+      var osVerText = info.osVersion || '—';
+      var pEl = document.getElementById('about-platform-text');
+      var aEl = document.getElementById('about-arch-text');
+      var oEl = document.getElementById('about-os-version-text');
+      if (pEl) pEl.textContent = platformText;
+      if (aEl) aEl.textContent = archText;
+      if (oEl) oEl.textContent = osVerText;
+    });
+  }
+
+  // ── 诊断信息对话框 ──────────────────────────────────────────────────────────
+  function _showDiagnosticDialog() {
+    if (!App.utils || !App.utils.call) return;
+    App.utils.call('get_diagnostic_info').then(function (res) {
+      var info;
+      try { info = JSON.parse(res); } catch (e) { return; }
+
+      // 构建诊断文本
+      var lines = [];
+      var keys = [
+        'SystemOsVersion', 'SystemOsArch', 'SystemDeviceName', 'SystemDeviceVendor',
+        'AppRoot', 'AppCurrentDirectory', 'AppCurrentMemoryUsage', 'DiagnosticMemoryKillCount'
+      ];
+      for (var i = 0; i < keys.length; i++) {
+        lines.push(keys[i] + ': ' + (info[keys[i]] !== undefined ? info[keys[i]] : 'N/A'));
+      }
+      var text = lines.join('\n');
+
+      // 创建对话框
+      var overlay = document.createElement('div');
+      overlay.className = 'cmd-dialog-overlay';
+      var dlg = document.createElement('div');
+      dlg.className = 'cmd-dialog';
+      dlg.style.maxWidth = '560px';
+
+      var titleEl = document.createElement('div');
+      titleEl.className = 'cmd-dialog-title';
+      titleEl.textContent = App.i18n ? App.i18n.t('about.diagnostic') : '诊断信息';
+
+      var bodyWrap = document.createElement('div');
+      bodyWrap.style.padding = '0 24px';
+
+      var textarea = document.createElement('textarea');
+      textarea.readOnly = true;
+      textarea.value = text;
+      textarea.style.width = '100%';
+      textarea.style.minHeight = '240px';
+      textarea.style.padding = '12px';
+      textarea.style.border = '1px solid var(--md-outline-variant)';
+      textarea.style.borderRadius = '8px';
+      textarea.style.background = 'var(--md-surface-container-high)';
+      textarea.style.color = 'var(--md-on-surface)';
+      textarea.style.fontFamily = 'monospace';
+      textarea.style.fontSize = '13px';
+      textarea.style.lineHeight = '1.6';
+      textarea.style.resize = 'vertical';
+      textarea.style.userSelect = 'text';
+      textarea.spellcheck = false;
+
+      bodyWrap.appendChild(textarea);
+
+      var actions = document.createElement('div');
+      actions.className = 'cmd-dialog-actions';
+      var closeBtn = document.createElement('button');
+      closeBtn.className = 'cmd-dialog-btn cmd-dialog-btn--confirm';
+      closeBtn.textContent = App.i18n ? App.i18n.t('common.close') : '关闭';
+      actions.appendChild(closeBtn);
+
+      dlg.appendChild(titleEl);
+      dlg.appendChild(bodyWrap);
+      dlg.appendChild(actions);
+      overlay.appendChild(dlg);
+      document.body.appendChild(overlay);
+      requestAnimationFrame(function () { overlay.classList.add('open'); });
+
+      var done = false;
+      function close() {
+        if (done) return;
+        done = true;
+        overlay.classList.remove('open');
+        document.removeEventListener('keydown', onKey);
+        setTimeout(function () {
+          if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        }, 180);
+      }
+      function onKey(e) {
+        if (e.key === 'Escape') close();
+      }
+      closeBtn.addEventListener('click', close);
+      overlay.addEventListener('click', function (e) {
+        if (e.target === overlay) close();
+      });
+      document.addEventListener('keydown', onKey);
+      setTimeout(function () { closeBtn.focus(); }, 50);
     });
   }
 
