@@ -63,6 +63,13 @@ function _loadDll() {
   if (!IS_WIN) {
     candidates.push(path.join(__dirname, '..', 'native', 'zig-out', 'lib', LIB_NAME));
   }
+  // Linux packages may place native assets in resources/ rather than beside
+  // electron/ inside the asar. Keep this location as a final packaged-app
+  // fallback so AppImage/deb layouts remain loadable.
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, LIB_NAME));
+    candidates.push(path.join(process.resourcesPath, 'electron', 'bin', PLATFORM_SUBDIR, LIB_NAME));
+  }
   let libPath = null;
   for (const c of candidates) {
     // electron-builder unpacks native assets next to app.asar. Resolve the
@@ -72,7 +79,8 @@ function _loadDll() {
     if (fs.existsSync(realPath)) { libPath = realPath; break; }
   }
   if (!libPath) {
-    console.error('[wasapi] Native library not found:', LIB_NAME, '. Searched:', candidates);
+    console.error('[wasapi] Native library not found:', LIB_NAME, '. Searched:',
+      candidates.map((candidate) => _resolveRealPath(candidate)));
     return false;
   }
 

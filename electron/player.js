@@ -856,7 +856,10 @@ class MusicPlayer extends EventEmitter {
   // ── Playback control ──────────────────────────────────────────────────────
 
   play() {
-    if (this._renderer) {
+    // Initialization can fail when a packaged Linux build is missing its
+    // native backend. Do not call into NativeRenderer in that state; callers
+    // may invoke play independently after an asynchronous _playNative error.
+    if (this._renderer && this._renderer.isInitialized) {
       // AudioEngine に再生再開を通知（_posTimer / _pumpTimer 再開）
       this.emit('audio_control', JSON.stringify({ action: 'resume' }));
       this._renderer.play();
