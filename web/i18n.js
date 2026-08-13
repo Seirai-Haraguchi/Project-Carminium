@@ -520,6 +520,8 @@
       'settings.resumePlayback.sub': '下次启动时恢复当前的播放队列和进度',
       'settings.automix.label': 'AutoTransmit 智能混音',
       'settings.automix.sub': '在上一首末尾（最后一行歌词）交叉淡化过渡到下一首。仅在共享模式下可用',
+      'settings.radicalTransitions.label': '激进 DJ 过渡',
+      'settings.radicalTransitions.sub': '延长交叉淡化并强化节拍匹配，让下一曲像 DJ 混音一样无缝接入。会自动开启智能混音',
       'settings.gapless.label': '无间隙播放',
       'settings.gapless.sub': '在上一首末尾预加载下一曲，自然结束时立即切换，避免切换间的加载停顿。与 AutoTransmit 互斥',
 
@@ -1140,6 +1142,8 @@
       'settings.resumePlayback.sub': '下次啟動時恢復目前的播放佇列和進度',
       'settings.automix.label': 'AutoTransmit 智慧混音',
       'settings.automix.sub': '在上一首末尾（最後一行歌詞）交叉淡化過渡到下一首。僅在共享模式下可用',
+      'settings.radicalTransitions.label': '激進 DJ 過渡',
+      'settings.radicalTransitions.sub': '延長交叉淡化並強化節拍匹配，讓下一曲像 DJ 混音一樣無縫接入。會自動開啟智慧混音',
       'settings.gapless.label': '無間隙播放',
       'settings.gapless.sub': '在上一首末尾預載下一曲，自然結束時立即切換，避免切換間的載入停頓。與 AutoTransmit 互斥',
 
@@ -1753,6 +1757,8 @@
       'settings.resumePlayback.sub': '次回起動時に現在の再生キューと進度を復元',
       'settings.automix.label': 'AutoTransmit スマートミキシング',
       'settings.automix.sub': '前の曲の末尾（最後の歌詞行）でクロスフェードして次の曲へ移行。共有モードのみ利用可能',
+      'settings.radicalTransitions.label': 'ラディカル DJ トランジション',
+      'settings.radicalTransitions.sub': 'クロスフェードを長くし、ビートマッチを強化して DJ のように次の曲へシームレスに移行します。スマートミックスを自動で有効化',
       'settings.gapless.label': 'ギャップレス再生',
       'settings.gapless.sub': '前の曲の末尾で次の曲をプリロード、自然終了時に即座に切替。AutoTransmit と相互排他',
 
@@ -2366,6 +2372,8 @@
       'settings.resumePlayback.sub': 'Restore current playback queue and position on next startup',
       'settings.automix.label': 'AutoTransmit Smart Mix',
       'settings.automix.sub': 'Crossfade transition to the next track at the end of the previous one (last lyrics line). Shared mode only',
+      'settings.radicalTransitions.label': 'Radical DJ Transitions',
+      'settings.radicalTransitions.sub': 'Use longer crossfades and stronger beat matching to blend into the next track like a DJ. Automatically enables Smart Mix',
       'settings.gapless.label': 'Gapless Playback',
       'settings.gapless.sub': 'Preload the next track at the end of the current one for seamless switching. Mutually exclusive with AutoTransmit',
 
@@ -2979,6 +2987,8 @@
       'settings.resumePlayback.sub': 'Восстановить текущую очередь и позицию при следующем запуске',
       'settings.automix.label': 'AutoTransmit умный микс',
       'settings.automix.sub': 'Кроссфейд переход к следующему треку в конце текущего (последняя строка текста). Только в Shared режиме',
+      'settings.radicalTransitions.label': 'Радикальные DJ-переходы',
+      'settings.radicalTransitions.sub': 'Увеличивает кроссфейд и усиливает синхронизацию битов для бесшовного DJ-перехода. Автоматически включает умный микс',
       'settings.gapless.label': 'Воспроизведение без пауз',
       'settings.gapless.sub': 'Предзагрузка следующего трека в конце текущего для бесшовного переключения. Взаимоисключающе с AutoTransmit',
 

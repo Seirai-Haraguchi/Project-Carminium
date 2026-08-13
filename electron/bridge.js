@@ -505,6 +505,10 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       this._player.setAutomixEnabled(!!enabled);
     });
     ipcMain.handle('get_automix', () => this._player.automixEnabled);
+    ipcMain.handle('set_radical_transitions', (_e, enabled) => {
+      this._player.setRadicalTransitionsEnabled(!!enabled);
+    });
+    ipcMain.handle('get_radical_transitions', () => this._player.radicalTransitionsEnabled);
     ipcMain.handle('set_crossfade_duration', (_e, ms) => {
       this._player.setCrossfadeDuration(parseInt(ms, 10));
     });

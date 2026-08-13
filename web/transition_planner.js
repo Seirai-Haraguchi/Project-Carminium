@@ -56,7 +56,9 @@
    * @returns {object} 过渡方案
    */
   TransitionPlanner.prototype.plan = function (current, next, settings) {
+    var radical = !!(settings && settings.radicalTransitions);
     var fallbackDuration = this._safeGetNumber(settings, 'crossfadeDurationMs', DEFAULT_CROSSFADE_MS);
+    if (radical) fallbackDuration = Math.max(fallbackDuration, 10000);
 
     // 无任何分析数据：固定时长回退
     if (!current && !next) {
@@ -69,12 +71,12 @@
     }
 
     // 完整分析数据
-    return this._fullPlan(current, next, fallbackDuration);
+    return this._fullPlan(current, next, fallbackDuration, radical);
   };
 
   // ── 完整规划 ──────────────────────────────────────────────────────────────
 
-  TransitionPlanner.prototype._fullPlan = function (current, next, fallbackDuration) {
+  TransitionPlanner.prototype._fullPlan = function (current, next, fallbackDuration, radical) {
     // ── 1. 合并 osu! 数据（osu! 优先）──
     var cur = this._mergeAnalysis(current);
     var nxt = this._mergeAnalysis(next);
@@ -126,7 +128,7 @@
 
     var crossfadeDuration = this._computeCrossfadeDuration(
       transitionStart, curDuration, nextIntroEnd, nextDuration,
-      cur.bpm, nxt.bpm, bpmMatch, fallbackDuration
+      cur.bpm, nxt.bpm, bpmMatch, fallbackDuration, radical
     );
 
     // ── 6. 计算下一曲起始偏移 ──
@@ -168,6 +170,74 @@
       candidateReason: best.score.reason,
       source: this._determineSource(cur, nxt),
       confidence: this._computeConfidence(cur, nxt, best.score),
+      radical: !!radical,
+      expansionEffect: this._buildExpansionEffect(cur, nxt, transitionStart, crossfadeDuration, bpmMatch, radical, best.candidate.type),
+    };
+  };
+
+  /**
+   * Generate a musical, transition-local expansion effect.  This is deliberately
+   * conservative: no beat grid / no structural cue means no effect.
+   */
+  TransitionPlanner.prototype._buildExpansionEffect = function (cur, nxt, transitionStart, crossfadeDuration, bpmMatch, radical, candidateType) {
+    var beatMs = this._safeGetNumber(cur, 'beatIntervalMs', 0);
+    if (beatMs <= 0 && cur.bpm > 0) beatMs = 60000 / cur.bpm;
+    if (beatMs <= 0 || !cur.beatGridMs || cur.beatGridMs.length < 4) return null;
+
+    var duration = this._safeGetNumber(cur, 'durationMs', 0);
+    var phraseMs = beatMs * 4;
+    var tailStart = this._getOutroStart(cur, duration);
+    var climax = this._getClimax(cur);
+    var tailEnergy = this._getEnergyAt(cur.energy, Math.max(tailStart, transitionStart - phraseMs));
+    var transitionEnergy = this._getEnergyAt(cur.energy, transitionStart);
+    var energyDrop = tailEnergy > 0 ? Math.max(0, (tailEnergy - transitionEnergy) / tailEnergy) : 0;
+    var nearClimax = climax > 0 && transitionStart >= climax - phraseMs * 2 && transitionStart <= climax + phraseMs * 2;
+    var structuralCue = candidateType === 'energy_drop' || candidateType === 'post_climax' ||
+      (candidateType === 'outro_start' && energyDrop >= 0.18);
+
+    // Avoid making every transition sound alike.  Energy movement or a clear
+    // phrase/section cue is required, and very weak material is skipped.
+    if (!structuralCue && !nearClimax && energyDrop < 0.16) return null;
+    if (transitionStart < tailStart - phraseMs * 2 && !nearClimax && energyDrop < 0.24) return null;
+
+    var density = 0;
+    if (cur.energy && cur.energy.length > 3) {
+      var from = Math.max(0, Math.floor((transitionStart - phraseMs) / 1000));
+      var to = Math.min(cur.energy.length - 1, Math.floor(transitionStart / 1000));
+      var sum = 0, count = 0;
+      for (var i = from; i <= to; i++) { sum += cur.energy[i] || 0; count++; }
+      density = count ? sum / count : 0;
+    }
+    var intensity = 0.16 + Math.min(0.18, energyDrop * 0.45) + (nearClimax ? 0.08 : 0);
+    if (bpmMatch && bpmMatch.matched) intensity += 0.04;
+    if (radical) intensity += 0.05;
+    intensity = this._clamp(intensity, 0.14, 0.42);
+
+    // High-density material uses half-beat fragments; otherwise use one beat.
+    // Spacing and all phase boundaries remain musical divisions.
+    var fragmentBeats = density > 0.55 ? 0.5 : 1;
+    var spacingBeats = density > 0.7 ? 0.5 : 1;
+    var count = intensity > 0.32 ? 6 : 4;
+    if (radical && intensity > 0.3) count = 8;
+    var spacingMs = Math.round(beatMs * spacingBeats);
+    var fragmentMs = Math.round(beatMs * fragmentBeats);
+    var totalMs = Math.min(crossfadeDuration, spacingMs * count + beatMs);
+    var fragmentOffsetMs = Math.max(0, Math.round(transitionStart - fragmentMs));
+
+    return {
+      enabled: true,
+      startMs: Math.round(transitionStart),
+      durationMs: Math.round(totalMs),
+      fragmentOffsetMs: fragmentOffsetMs,
+      fragmentDurationMs: fragmentMs,
+      repeatCount: count,
+      spacingMs: spacingMs,
+      intensity: Math.round(intensity * 1000) / 1000,
+      airGainDb: Math.round((1.5 + intensity * 8) * 10) / 10,
+      reverbWet: Math.round((0.08 + intensity * 0.34) * 1000) / 1000,
+      delayWet: Math.round((0.04 + intensity * 0.18) * 1000) / 1000,
+      width: Math.round((0.08 + intensity * 0.42) * 1000) / 1000,
+      reason: candidateType || (nearClimax ? 'near_climax' : 'energy_change'),
     };
   };
 
@@ -508,7 +578,7 @@
    */
   TransitionPlanner.prototype._computeCrossfadeDuration = function (
     transitionStart, curDuration, nextIntroEnd, nextDuration,
-    curBpm, nextBpm, bpmMatch, fallbackDuration
+    curBpm, nextBpm, bpmMatch, fallbackDuration, radical
   ) {
     var outroRemaining = curDuration - transitionStart;
 
@@ -529,6 +599,7 @@
     } else if (bpmMatch.tempoAdjust > 0) {
       duration = Math.round(duration * 1.15);
     }
+    if (radical) duration = Math.round(duration * 1.35);
 
     // 约束在合理范围
     duration = Math.max(MIN_CROSSFADE_MS, Math.min(MAX_CROSSFADE_MS, duration));
