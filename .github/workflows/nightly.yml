@@ -67,7 +67,7 @@ jobs:
           - arch: x64
             zig-target: x86_64-windows-gnu
           - arch: arm64
-            zig-target: aarch64-windows-gnu
+                        zig-target: aarch64-windows-gnu
     runs-on: windows-latest
     env:
       npm_config_arch: ${{ matrix.arch }}
@@ -152,7 +152,7 @@ jobs:
             throw "Failed to rebuild better-sqlite3 for ${{ matrix.arch }}"
           }
 
-      - name: Verify pre-build artifacts and architectures (Windows)
+            - name: Verify pre-build artifacts and architectures (Windows)
         shell: pwsh
         run: |
           # --- existence checks ---
