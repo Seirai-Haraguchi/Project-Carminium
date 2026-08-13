@@ -65,6 +65,7 @@ class MusicPlayer extends EventEmitter {
     // AutoMix
     this._automix_active = false;
     this._automixEnabled = settings ? !!settings.get('automix', false) : false;
+    this._radicalTransitions = settings ? !!settings.get('radical_transitions', false) : false;
     this._crossfadeDurationMs = settings ? parseInt(settings.get('crossfade_duration', 4000), 10) || 4000 : 4000;
 
     // Crossfade 状态跟踪
@@ -101,6 +102,7 @@ class MusicPlayer extends EventEmitter {
       // AudioEngine control: renderer に初期設定を送る
       this.emit('audio_control', JSON.stringify({ action: 'set_gapless', enabled: this._gaplessEnabled }));
       this.emit('audio_control', JSON.stringify({ action: 'set_crossfade', enabled: this._automixEnabled }));
+      this.emit('audio_control', JSON.stringify({ action: 'set_radical_transitions', enabled: this._radicalTransitions }));
       this.emit('audio_control', JSON.stringify({ action: 'set_crossfade_duration', ms: this._crossfadeDurationMs }));
     }
   }
@@ -827,6 +829,18 @@ class MusicPlayer extends EventEmitter {
 
   get automixEnabled() {
     return this._automixEnabled;
+  }
+
+  setRadicalTransitionsEnabled(enabled) {
+    this._radicalTransitions = !!enabled;
+    if (this._settings) this._settings.set('radical_transitions', this._radicalTransitions);
+    this.emit('audio_control', JSON.stringify({ action: 'set_radical_transitions', enabled: this._radicalTransitions }));
+    if (this._radicalTransitions && !this._automixEnabled) this.setAutomixEnabled(true);
+    if (this._automixEnabled && this._fe_state === 'playing') this._preloadNextTrack();
+  }
+
+  get radicalTransitionsEnabled() {
+    return this._radicalTransitions;
   }
 
   setCrossfadeDuration(ms) {

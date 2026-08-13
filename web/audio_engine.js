@@ -158,6 +158,7 @@
 
       // ── 交叉淡化 / 无缝 ──
       this._crossfadeEnabled = false;
+      this._radicalTransitions = false;
       this._crossfadeDurationMs = 5000;
       this._gaplessEnabled = false;
       this._crossfadeTimer = null;
@@ -187,6 +188,8 @@
       this._transitionPlan = null;
       /** @type {{fadeOut:Float32Array, fadeIn:Float32Array}|null} 预计算的等功率曲线缓存（setTransitionPlan 时算好，startCrossfade 直接取用，避免主线程顿卡） */
       this._cachedCrossfadeCurves = null;
+      /** @type {{sources: AudioBufferSourceNode[], nodes: AudioNode[], cleanupTimer: number}|null} */
+      this._expansionEffect = null;
 
       // ── 音量 ──
       this._volume = 1.0;
@@ -727,6 +730,7 @@
     stop() {
       this._stopCrossfadeTimer();
       this._stopPositionTimer();
+      this._stopExpansionEffect();
 
       // Buffer 源
       this._safeStopSource(this._currentSource);
@@ -819,6 +823,7 @@
      */
     async seek(positionMs) {
       await this._ensureInit();
+      this._stopExpansionEffect();
 
       // 取消进行中的 crossfade
       this._stopCrossfadeTimer();
@@ -996,6 +1001,10 @@
      * 根据当前/下一曲的模式分发到对应的实现。
      */
     startCrossfade() {
+      // The planner may generate a transition-local expansion effect.  It is
+      // scheduled before the crossfade nodes so both share the same musical
+      // start instant; unsupported streaming sources simply skip it.
+      this._startExpansionEffect();
       var currentIsBuffer = !!this._currentBuffer;
       var nextIsBuffer = !!this._nextBuffer;
       var nextIsStreaming = this._nextIsStreaming || this._nextStreamingNode != null;
@@ -1262,6 +1271,7 @@
      * 过渡完成处理。统一处理所有模式的 crossfade 完成。
      */
     _finishTransition() {
+      this._stopExpansionEffect();
       this._crossfadeActive = false;
       this._crossfadeTimer = null;
       this._pendingBufferToStreamingCrossfade = false;
@@ -1684,6 +1694,7 @@
     // ── 配置 ────────────────────────────────────────────────────────────────
 
     setCrossfadeEnabled(enabled) { this._crossfadeEnabled = !!enabled; }
+    setRadicalTransitionsEnabled(enabled) { this._radicalTransitions = !!enabled; }
     setCrossfadeDuration(ms) { this._crossfadeDurationMs = ms; this._cachedCrossfadeCurves = null; }
     setGaplessEnabled(enabled) { this._gaplessEnabled = !!enabled; }
 
@@ -1951,6 +1962,129 @@
     }
 
     /**
+     * Schedule a subtle beat-locked repetition layer on the outgoing buffer.
+     * The dry/current and incoming tracks keep their existing routing and
+     * crossfade curves; this is a parallel, temporary bus only.
+     */
+    _startExpansionEffect() {
+      this._stopExpansionEffect();
+      var plan = this._transitionPlan;
+      var fx = plan && plan.expansionEffect;
+      if (!fx || !fx.enabled || !this._ctx || !this._currentBuffer) return;
+
+      var sr = this._ctx.sampleRate;
+      var now = this._ctx.currentTime;
+      var fragmentSec = Math.max(0.03, fx.fragmentDurationMs / 1000);
+      var spacingSec = Math.max(fragmentSec, fx.spacingMs / 1000);
+      var fragmentOffset = Math.max(0, Math.min(
+        this._currentBuffer.duration - fragmentSec,
+        fx.fragmentOffsetMs / 1000
+      ));
+      if (!isFinite(fragmentOffset) || fragmentOffset < 0) return;
+
+      var repeatBus = this._ctx.createGain();
+      repeatBus.gain.value = 0.72;
+      var air = this._ctx.createBiquadFilter();
+      air.type = 'highshelf';
+      air.frequency.value = 7000;
+      air.gain.value = 0;
+
+      var convolver = this._ctx.createConvolver();
+      convolver.buffer = this._makeExpansionImpulse(Math.min(1.8, 0.65 + fx.reverbWet * 2.2), sr);
+      var reverbGain = this._ctx.createGain();
+      reverbGain.gain.value = 0;
+
+      var delay = this._ctx.createDelay(2.0);
+      delay.delayTime.value = Math.min(0.8, Math.max(0.06, spacingSec * 0.75));
+      var feedback = this._ctx.createGain();
+      feedback.gain.value = 0.18;
+      var delayGain = this._ctx.createGain();
+      delayGain.gain.value = 0;
+
+      repeatBus.connect(air);
+      air.connect(this._effectsInput || this._outputNode);
+      air.connect(convolver);
+      convolver.connect(reverbGain);
+      reverbGain.connect(this._effectsInput || this._outputNode);
+      air.connect(delay);
+      delay.connect(delayGain);
+      delayGain.connect(this._effectsInput || this._outputNode);
+      delay.connect(feedback);
+      feedback.connect(delay);
+
+      var totalSec = Math.max(spacingSec, (fx.durationMs || spacingSec * fx.repeatCount) / 1000);
+      var peakSec = totalSec * 0.58;
+      var endSec = totalSec;
+      air.gain.setValueAtTime(0, now);
+      air.gain.linearRampToValueAtTime(fx.airGainDb, now + peakSec);
+      air.gain.linearRampToValueAtTime(0, now + endSec);
+      reverbGain.gain.setValueAtTime(0, now);
+      reverbGain.gain.linearRampToValueAtTime(fx.reverbWet, now + peakSec);
+      reverbGain.gain.linearRampToValueAtTime(0, now + endSec);
+      delayGain.gain.setValueAtTime(0, now);
+      delayGain.gain.linearRampToValueAtTime(fx.delayWet, now + peakSec);
+      delayGain.gain.linearRampToValueAtTime(0, now + endSec);
+
+      var sources = [];
+      var nodes = [repeatBus, air, convolver, reverbGain, delay, feedback, delayGain];
+      var count = Math.max(1, Math.min(8, Math.round(fx.repeatCount || 4)));
+      for (var i = 0; i < count; i++) {
+        var when = now + i * spacingSec;
+        if (when >= now + endSec) break;
+        var source = new AudioBufferSourceNode(this._ctx, { buffer: this._currentBuffer });
+        var gain = this._ctx.createGain();
+        var pan = this._ctx.createStereoPanner();
+        var progress = count <= 1 ? 1 : i / (count - 1);
+        var envelope = fx.intensity * (0.42 + 0.28 * Math.sin(progress * Math.PI));
+        gain.gain.setValueAtTime(0, when);
+        gain.gain.linearRampToValueAtTime(envelope, when + Math.min(0.025, fragmentSec * 0.12));
+        gain.gain.linearRampToValueAtTime(envelope * 0.62, when + fragmentSec * 0.72);
+        gain.gain.linearRampToValueAtTime(0, when + fragmentSec);
+        pan.pan.value = (progress - 0.5) * 2 * Math.min(0.55, fx.width || 0.2);
+        source.connect(gain);
+        gain.connect(pan);
+        pan.connect(repeatBus);
+        source.start(when, fragmentOffset, fragmentSec);
+        sources.push(source);
+        nodes.push(gain, pan);
+      }
+      if (!sources.length) {
+        nodes.forEach((n) => this._safeDisconnect(n));
+        return;
+      }
+      var self = this;
+      var cleanupTimer = setTimeout(function () { self._stopExpansionEffect(); }, Math.ceil((endSec + 1.0) * 1000));
+      this._expansionEffect = { sources: sources, nodes: nodes, cleanupTimer: cleanupTimer };
+      console.log('[AudioEngine] Expansion effect scheduled:', fx.reason,
+        'repeats=' + count, 'spacing=' + fx.spacingMs + 'ms', 'duration=' + fx.durationMs + 'ms');
+    }
+
+    _makeExpansionImpulse(seconds, sampleRate) {
+      var length = Math.max(1, Math.floor(seconds * sampleRate));
+      var impulse = this._ctx.createBuffer(2, length, sampleRate);
+      for (var ch = 0; ch < 2; ch++) {
+        var data = impulse.getChannelData(ch);
+        for (var i = 0; i < length; i++) {
+          var decay = Math.pow(1 - i / length, 2.4);
+          data[i] = (Math.random() * 2 - 1) * decay * (ch === 0 ? 0.72 : 0.66);
+        }
+      }
+      return impulse;
+    }
+
+    _stopExpansionEffect() {
+      var fx = this._expansionEffect;
+      if (!fx) return;
+      if (fx.cleanupTimer) clearTimeout(fx.cleanupTimer);
+      for (var i = 0; i < fx.sources.length; i++) {
+        try { fx.sources[i].stop(); } catch (_) {}
+        this._safeDisconnect(fx.sources[i]);
+      }
+      for (var j = 0; j < fx.nodes.length; j++) this._safeDisconnect(fx.nodes[j]);
+      this._expansionEffect = null;
+    }
+
+    /**
      * 获取当前有效的交叉淡化时长（优先使用 transitionPlan）。
      */
     _getEffectiveCrossfadeMs() {
@@ -1992,6 +2126,7 @@
     }
 
     clearNextState() {
+      this._stopExpansionEffect();
       // Buffer next
       this._safeStopSource(this._nextSource);
       this._safeDisconnect(this._nextGain);

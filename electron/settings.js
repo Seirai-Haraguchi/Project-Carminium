@@ -21,6 +21,7 @@ const DEFAULTS = {
   audio_output_device: '',
   wasapi_exclusive: false,
   automix: false,
+  radical_transitions: false,
   gapless: false,
   lyrics_progressive_blur: false,
   lyrics_center: false,

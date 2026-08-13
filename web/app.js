@@ -1395,6 +1395,10 @@
               App.nowPlaying.clearTransitionPoint();
             }
             break;
+          case 'set_radical_transitions':
+            _audioEngine.setRadicalTransitionsEnabled(cmd.enabled);
+            _maybeComputePlan();
+            break;
           case 'set_crossfade_duration':
             _audioEngine.setCrossfadeDuration(cmd.ms);
             break;
@@ -1443,6 +1447,9 @@
         _audioEngine.setCrossfadeEnabled(!!enabled);
         console.log('[app] Synced automix (crossfade):', enabled);
       }).catch(function (e) { console.warn('[app] get_automix failed:', e); });
+      ea.invoke('get_radical_transitions').then(function (enabled) {
+        _audioEngine.setRadicalTransitionsEnabled(!!enabled);
+      }).catch(function (e) { console.warn('[app] get_radical_transitions failed:', e); });
       ea.invoke('get_gapless').then(function (enabled) {
         _audioEngine.setGaplessEnabled(!!enabled);
         console.log('[app] Synced gapless:', enabled);
@@ -1675,7 +1682,10 @@
     var plan = _transitionPlanner.plan(
       _currentTrackAnalysis || null,
       _nextTrackAnalysis || null,
-      { crossfadeDurationMs: _audioEngine._crossfadeDurationMs }
+      {
+        crossfadeDurationMs: _audioEngine._crossfadeDurationMs,
+        radicalTransitions: !!_audioEngine._radicalTransitions
+      }
     );
 
     _audioEngine.setTransitionPlan(plan);

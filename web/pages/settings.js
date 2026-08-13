@@ -367,6 +367,20 @@
             },
             {
               type: 'toggle',
+              bind: 'radical_transitions',
+              label: _t('settings.radicalTransitions.label'),
+              sub: _t('settings.radicalTransitions.sub'),
+              onChange: function (checked) {
+                App.utils.call('set_radical_transitions', checked);
+                if (checked) {
+                  App.utils.call('set_automix', true);
+                  var automixEl = document.querySelector('input[type="checkbox"][data-bind="automix"]');
+                  if (automixEl) automixEl.checked = true;
+                }
+              },
+            },
+            {
+              type: 'toggle',
               bind: 'gapless',
               label: _t('settings.gapless.label'),
               sub: _t('settings.gapless.sub'),
