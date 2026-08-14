@@ -47,6 +47,7 @@ const DEFAULTS = {
   compressor_enabled: false,
   vocal_enhance: false,
   guitar_friendly: false,
+  hearing_protection: false,     // 听觉系统保护：削减损伤听力的频段 + 限制最大音量
   onboarding_complete: false,   // 新手引导是否已完成
   // 内存优化等级: 'off' | 'normal' | 'aggressive'
   //   off       — 不做任何 Chromium 内存优化
