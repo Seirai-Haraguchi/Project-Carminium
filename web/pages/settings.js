@@ -128,6 +128,13 @@
               onChange: function (checked) { _applyVideoBackground(checked); },
             },
             {
+              type: 'toggle',
+              bind: 'system_material',
+              label: _t('settings.systemMaterial.label'),
+              sub: _t('settings.systemMaterial.sub'),
+              onChange: function (checked) { _applySystemMaterial(checked); },
+            },
+            {
               type: 'select',
               bind: 'np_default_view',
               label: _t('settings.npDefaultView.label'),
@@ -1704,6 +1711,22 @@
   function _applyVideoBackground(enabled) {
     if (window.App && App.nowPlaying && App.nowPlaying.refreshVideoBackground) {
       App.nowPlaying.refreshVideoBackground(enabled);
+    }
+  }
+
+  // ── 系统材质（Windows Acrylic） ──────────────────────────────────
+  // 开启后整个窗口背景使用系统级 Acrylic 材质，叠加 Material Theme 色彩偏色层。
+  // 正在播放页面移除流光背景，统一使用 Acrylic + Material 背景。
+  function _applySystemMaterial(enabled) {
+    // 切换 body 上的 system-material 类（CSS 驱动所有背景透明化）
+    document.body.classList.toggle('system-material', !!enabled);
+    // 通知主进程切换 Acrylic 系统材质
+    if (window.__electronAPI && window.__electronAPI.invoke) {
+      window.__electronAPI.invoke('set_system_material', !!enabled).catch(function () {});
+    }
+    // 通知正在播放面板：停止/恢复极光效果
+    if (window.App && App.nowPlaying && App.nowPlaying.refreshSystemMaterial) {
+      App.nowPlaying.refreshSystemMaterial(!!enabled);
     }
   }
 

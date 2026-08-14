@@ -54,6 +54,9 @@ const DEFAULTS = {
   //   normal    — 常规优化（默认）：关闭无用后台服务，限制渲染进程数，适度裁剪 features
   //   aggressive — 激进优化：normal 全部 + no-sandbox + low-end-device-mode + 大量 disable-features + V8 堆 96MB
   memory_optimization: 'normal',
+  // 系统材质（Windows Acrylic）：开启后窗口背景使用系统级 Acrylic 材质
+  // 叠加 Material Theme 色彩偏色层，正在播放页面移除流光背景
+  system_material: false,
   // Virtual Bass Enhancement (modern smartphone DSP pipeline)
   vbe_enabled: false,
   vbe_cutoff: 90,            // Speaker model HPF cutoff (50–300 Hz)

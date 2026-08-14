@@ -1093,9 +1093,46 @@ function _loadAppIcon(isDark) {
   return null;
 }
 
+/**
+ * 应用或移除 Windows 系统级 Acrylic 材质到主窗口。
+ * Electron 的 setBackgroundMaterial 在 Win10/11 上使用 DWM Acrylic
+ * （真正的系统级背景模糊+半透明，非 Canvas 模拟）。
+ * @param {BrowserWindow} win
+ * @param {boolean} enabled
+ */
+function _applySystemMaterial(win, enabled) {
+  if (!win || win.isDestroyed()) return;
+  if (process.platform !== 'win32') return;
+  try {
+    win.setBackgroundMaterial(enabled ? 'acrylic' : 'none');
+  } catch (e) {
+    console.warn('[main] setBackgroundMaterial failed:', e.message);
+  }
+}
+
 function createMainWindow() {
   // 根据系统暗色模式加载对应的应用图标
   const appIcon = _loadAppIcon(nativeTheme.shouldUseDarkColors);
+
+  // 启动前读取 system_material 设置，决定是否在窗口创建时即应用 Acrylic
+  let _systemMaterial = false;
+  try {
+    const os = require('os');
+    let configDir;
+    if (process.platform === 'win32') {
+      configDir = path.join(process.env.APPDATA || os.homedir(), 'Carminium');
+    } else if (process.platform === 'darwin') {
+      configDir = path.join(os.homedir(), 'Library', 'Application Support', 'Carminium');
+    } else {
+      configDir = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'Carminium');
+    }
+    const settingsPath = path.join(configDir, 'settings.json');
+    if (fs.existsSync(settingsPath)) {
+      const raw = fs.readFileSync(settingsPath, 'utf-8');
+      const data = JSON.parse(raw);
+      _systemMaterial = !!data.system_material;
+    }
+  } catch (_) { /* ignore */ }
 
   mainWindow = new BrowserWindow({
     width: 1152,
@@ -1107,6 +1144,9 @@ function createMainWindow() {
     show: false,
     autoHideMenuBar: true,
     frame: false,
+    // 系统材质开启时使窗口透明以允许 DWM Acrylic 透射
+    transparent: _systemMaterial,
+    backgroundColor: _systemMaterial ? '#00000000' : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -1114,6 +1154,11 @@ function createMainWindow() {
       sandbox: false,
     },
   });
+
+  // 窗口创建后立即应用 Acrylic 系统材质
+  if (_systemMaterial) {
+    _applySystemMaterial(mainWindow, true);
+  }
 
   // 开发模式下打开 DevTools
   if (process.argv.includes('--dev')) {

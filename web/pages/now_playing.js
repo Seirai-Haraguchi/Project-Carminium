@@ -281,6 +281,12 @@ let _lastKnownPositionMs = 0;
       return;
     }
 
+    // 系统材质模式下不做极光效果（流光已被移除，背景由 Acrylic 接管）
+    if (document.body.classList.contains('system-material')) {
+      _stopBeatLoop();
+      return;
+    }
+
     // 应用冻结（窗口后台）时跳过渲染，省电
     if (window.__appFrozen) {
       _beatRafId = requestAnimationFrame(_beatLoopTick);
@@ -3612,6 +3618,32 @@ function _updateLyricsSourceBadge() {
    */
   np.setDefaultView = function (val) {
     _npDefaultView = val || 'side';
+  };
+
+  // ── 系统材质（Windows Acrylic）切换 ──────────────────────────────────
+  /**
+   * 供 settings.js / app.js 调用：切换系统材质模式。
+   * 开启时停止鼓点驱动背景流动（极光效果），背景由 Acrylic + Material 接管。
+   * 关闭时恢复原有流光背景系统。
+   * @param {boolean} enabled
+   */
+  np.refreshSystemMaterial = function (enabled) {
+    if (enabled) {
+      // 系统材质开启：停止极光 RAF 循环，降低 GPU 负载
+      _stopBeatLoop();
+      // 确保面板上残留的 beat 变量被清除
+      var pane = document.getElementById('now-playing-pane');
+      if (pane) {
+        pane.style.removeProperty('--beat-scale');
+        pane.style.removeProperty('--beat-surge');
+      }
+    } else {
+      // 系统材质关闭：如果当前在全窗口视图，恢复极光效果
+      var pane2 = document.getElementById('now-playing-pane');
+      if (pane2 && pane2.classList.contains('fullscreen')) {
+        _startBeatLoop();
+      }
+    }
   };
 
   // ── 语言变更：刷新动态文本 ───────────────────────────────────────────────

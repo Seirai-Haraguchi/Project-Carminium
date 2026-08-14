@@ -7341,3 +7341,155 @@ body.onboarding-active .title-bar-settings { display: none; }
   flex-shrink: 0;
   white-space: nowrap;
 }
+
+/* ── 30. 系统材质（System Material / Windows Acrylic） ──────────────
+   当 body 拥有 .system-material 类时，整个窗口使用 Windows 系统级 Acrylic
+   作为最底层背景材质，在此之上叠加 Material Theme 色彩偏色层。
+
+   背景层级（从底到顶）：
+     1. Windows Acrylic 系统材质（DWM 提供，非 CSS 模拟）
+     2. Material Theme 色彩偏色层（半透明混色，让 Acrylic 仍能透射）
+     3. 页面内容与 UI 控件
+
+   关键设计：
+   - body 背景从完全不透明改为半透明 Material 主题色，使 DWM Acrylic 透射可见
+   - 不使用 backdrop-filter 模拟模糊（系统已提供），避免 GPU 负载
+   - 正在播放全窗口视图移除流光（Aurora）背景，直接使用统一材质
+   - 所有背景层保持稳定，不因页面动画而重建 */
+
+/* ── 30a. 全局背景半透明化 ── */
+body.system-material {
+  /* body 背景从实色变为半透明 Material 主题色混合层
+     使用 color-mix 将当前主题的 surface 色与透明混合，
+     使 Windows Acrylic 背景能够透射并产生视觉影响。
+     保持 Material 色彩倾向（与当前主题动态关联），不使用固定颜色。 */
+  background:
+    radial-gradient(130% 130% at 0% 0%,   color-mix(in srgb, var(--md-primary)  10%, transparent) 0%, transparent 55%),
+    radial-gradient(120% 120% at 100% 100%, color-mix(in srgb, var(--md-tertiary) 12%, transparent) 0%, transparent 55%),
+    color-mix(in srgb, var(--md-surface-container-low) 72%, transparent);
+  background-attachment: fixed;
+}
+
+/* app-shell 背景也半透明化，让 Acrylic 透射 */
+body.system-material .app-shell {
+  background:
+    radial-gradient(ellipse at top left, var(--bg-tint-1, transparent) 0%, transparent 50%),
+    radial-gradient(ellipse at bottom right, var(--bg-tint-2, transparent) 0%, transparent 50%),
+    color-mix(in srgb, var(--md-surface) 60%, transparent);
+}
+
+/* 导航栏背景半透明化 */
+body.system-material .nav-drawer {
+  background: color-mix(in srgb, var(--md-surface-container-low) 55%, transparent);
+  backdrop-filter: blur(8px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
+}
+
+/* 内容区背景半透明化 */
+body.system-material .content-pane {
+  background: color-mix(in srgb, var(--md-surface-container-lowest) 60%, transparent);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+/* 正在播放面板背景半透明化 */
+body.system-material .now-playing-pane {
+  background: color-mix(in srgb, var(--md-surface-container-low) 50%, transparent);
+  backdrop-filter: blur(8px) saturate(1.15);
+  -webkit-backdrop-filter: blur(8px) saturate(1.15);
+  border-left-color: color-mix(in srgb, var(--md-outline-variant) 40%, transparent);
+}
+
+/* Mini player 背景半透明化 */
+body.system-material .mini-player {
+  background: color-mix(in srgb, var(--md-surface-container-low) 65%, transparent);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  border-top-color: color-mix(in srgb, var(--md-outline-variant) 40%, transparent);
+}
+
+/* 标题栏背景半透明化 */
+body.system-material .title-bar {
+  background: color-mix(in srgb, var(--md-surface-container-low) 50%, transparent);
+  backdrop-filter: blur(8px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
+}
+
+/* ── 30b. 正在播放页全窗口视图：移除流光（Aurora）背景 ──
+   系统材质开启时，全窗口视图不再显示原有的封面模糊流光背景。
+   流光动画及其动态渐变全部移除，背景区域直接使用 Acrylic + Material 背景。 */
+
+/* 隐藏封面氛围背景层（流光层） */
+body.system-material .np-bg {
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
+/* 隐藏视频背景层（系统材质模式下不显示视频背景） */
+body.system-material .np-bg-video,
+body.system-material .np-bg-video-overlay {
+  opacity: 0 !important;
+}
+
+/* 正在播放面板全窗口视图：背景完全透明，由 Acrylic + Material 混色层接管 */
+body.system-material .now-playing-pane.fullscreen {
+  background: color-mix(in srgb, var(--md-surface-container-low) 35%, transparent);
+  backdrop-filter: blur(12px) saturate(1.15);
+  -webkit-backdrop-filter: blur(12px) saturate(1.15);
+}
+
+/* 全窗口视图下各子面板背景半透明化（毛玻璃效果） */
+body.system-material .now-playing-pane.fullscreen .np-secondary-controls {
+  background: color-mix(in srgb, var(--md-surface-container-low) 30%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+body.system-material .now-playing-pane.fullscreen .np-control-pill {
+  background: color-mix(in srgb, var(--md-surface-container-high) 25%, transparent);
+}
+body.system-material .now-playing-pane.fullscreen .np-secondary-btn {
+  background: color-mix(in srgb, var(--md-surface-container) 25%, transparent);
+}
+body.system-material .now-playing-pane.fullscreen .np-secondary-btn:hover {
+  background: color-mix(in srgb, var(--md-surface-container-high) 35%, transparent);
+}
+body.system-material .now-playing-pane.fullscreen .np-secondary-btn.active {
+  background: color-mix(in srgb, var(--md-secondary-container) 40%, transparent);
+}
+body.system-material .now-playing-pane.fullscreen .np-lyrics-toolbar {
+  background: color-mix(in srgb, var(--md-surface-container-high) 30%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-color: transparent;
+}
+body.system-material .now-playing-pane.fullscreen .np-lyrics-source {
+  background: color-mix(in srgb, var(--md-surface-container-high) 30%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-color: transparent;
+}
+body.system-material .now-playing-pane.fullscreen .np-collapse-btn {
+  background: color-mix(in srgb, var(--md-secondary-container) 40%, transparent);
+}
+body.system-material .now-playing-pane.fullscreen .np-pivot-tab.active {
+  background: color-mix(in srgb, var(--md-secondary-container) 45%, transparent);
+}
+body.system-material .now-playing-pane.fullscreen .np-queue-item.current {
+  background: color-mix(in srgb, var(--md-secondary-container) 30%, transparent);
+}
+body.system-material .now-playing-pane.fullscreen .np-queue-cover-wrap {
+  background: color-mix(in srgb, var(--md-surface-container) 30%, transparent);
+}
+
+/* ── 30c. 系统材质下的过渡动画 ── */
+/* 切换系统材质时平滑过渡背景透明度 */
+body.system-material,
+body.system-material .app-shell,
+body.system-material .nav-drawer,
+body.system-material .content-pane,
+body.system-material .now-playing-pane,
+body.system-material .mini-player,
+body.system-material .title-bar {
+  transition: background-color var(--motion-medium) var(--ease-standard),
+              backdrop-filter var(--motion-medium) var(--ease-standard);
+}

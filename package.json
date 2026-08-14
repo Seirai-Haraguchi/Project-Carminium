@@ -66,7 +66,8 @@
         {
           "target": "portable",
           "arch": [
-            "x64"
+            "x64",
+            "arm64"
           ]
         }
       ],
@@ -80,11 +81,9 @@
       "asarUnpack": [
         "node_modules/better-sqlite3/**/*",
         "node_modules/koffi/**/*",
-        "node_modules/@koromix/koffi-win32-x64/**/*",
-        "node_modules/@koromix/koffi-win32-arm64/**/*",
+        "node_modules/@koromix/koffi-win32-${arch}/**/*",
         "node_modules/sharp/**/*",
-        "node_modules/@img/sharp-win32-x64/**/*",
-        "node_modules/@img/sharp-win32-arm64/**/*",
+        "node_modules/@img/sharp-win32-${arch}/**/*",
         "electron/bin/win32/**/*",
         "electron/bin/carminium_audio.dll",
         "electron/bin/ffmpeg.exe",
