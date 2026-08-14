@@ -28,10 +28,8 @@ jobs:
       matrix:
         include:
           - arch: x64
-            zig-target: x86_64-windows-gnu
             runner: windows-latest
           - arch: arm64
-            zig-target: aarch64-windows-gnu
             runner: windows-11-arm
     runs-on: ${{ matrix.runner }}
     env:
@@ -85,7 +83,7 @@ jobs:
 
       - name: Build native library (Zig)
         working-directory: native
-        run: zig build copy copy-legacy -Doptimize=ReleaseFast -Dtarget=${{ matrix.zig-target }}
+        run: zig build copy copy-legacy -Doptimize=ReleaseFast
 
       - name: Rebuild native addons
         shell: pwsh
@@ -203,10 +201,10 @@ jobs:
           $proc = Start-Process -FilePath $exe -PassThru
           Start-Sleep -Seconds 10
           if ($proc.HasExited) {
-            Write-Host "Process exited early with code $($proc.ExitCode) — build is broken!"
+            Write-Host "Process exited early with code $($proc.ExitCode) �?build is broken!"
             throw "Smoke test failed: process exited after $([math]::Round(($proc.ExitTime - $proc.StartTime).TotalSeconds, 1))s"
           }
-          Write-Host "Process is still running after 10s — smoke test passed."
+          Write-Host "Process is still running after 10s �?smoke test passed."
           Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
 
       - name: Upload Windows artifact
@@ -409,7 +407,7 @@ jobs:
           HITOKOTO=$(curl -fsSL --retry 3 --connect-timeout 5 --max-time 15 \
             'https://v1.hitokoto.cn/' | jq -r '.hitokoto // empty' || true)
           if [ -z "$HITOKOTO" ]; then
-            HITOKOTO='感谢每一位参与和支持 Carminium 的人。'
+            HITOKOTO='感谢每一位参与和支持 Carminium 的人�?
           fi
           {
             echo 'text<<HITOKOTO_EOF'
@@ -428,11 +426,11 @@ jobs:
           body: |
             > ${{ steps.hitokoto.outputs.text }}
 
-            ## 反馈与贡献
+            ## 反馈与贡�?
 
-            - 如需反馈问题或提出功能建议，请前往 [Issues](../../issues) 提交，并尽量附上复现步骤、系统版本和相关日志。
-            - 如需提交 PR，请先阅读项目贡献说明，在独立分支完成修改并提交测试结果，然后创建 Pull Request。
-            - 发布包问题请注明使用的版本号和平台架构（Windows x64、Windows ARM64 或 Linux x64）。
+            - 如需反馈问题或提出功能建议，请前往 [Issues](../../issues) 提交，并尽量附上复现步骤、系统版本和相关日志�?
+            - 如需提交 PR，请先阅读项目贡献说明，在独立分支完成修改并提交测试结果，然后创�?Pull Request�?
+            - 发布包问题请注明使用的版本号和平台架构（Windows x64、Windows ARM64 �?Linux x64）�?
 
           files: artifacts/*
         env:
