@@ -119,7 +119,7 @@ jobs:
         working-directory: native
         shell: pwsh
         run: |
-          $dll = Get-ChildItem zig-out\bin -Filter *.dll | Select-Object -First 1
+          $dll = Get-Item "..\electron\bin\win32\carminium_audio.dll"
           $b = [IO.File]::ReadAllBytes($dll.FullName)
           $peOff = [BitConverter]::ToInt32($b, 0x3C)
           $machine = [BitConverter]::ToUInt16($b, $peOff + 4)
