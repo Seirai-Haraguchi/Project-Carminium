@@ -2,7 +2,7 @@ name: Nightly Build & Prerelease
 
 on:
   schedule:
-    # 每天 UTC 16:00 运行（北京时间次�?00:00�?
+    # 每天 UTC 16:00 运行（北京时间次日 00:00）
     - cron: '0 16 * * *'
   workflow_dispatch:
 
@@ -58,7 +58,7 @@ jobs:
   # ─────────────────────────────────────────────
   build-windows:
     needs: update-version
-    # 定时触发：仅版本变更时构建；手动触发：始终构�?
+    # 定时触发：仅版本变更时构建；手动触发：始终构建
     if: needs.update-version.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
@@ -254,10 +254,10 @@ jobs:
           $proc = Start-Process -FilePath $exe -PassThru
           Start-Sleep -Seconds 10
           if ($proc.HasExited) {
-            Write-Host "Process exited early with code $($proc.ExitCode) �?build is broken!"
+            Write-Host "Process exited early with code $($proc.ExitCode) — build is broken!"
             throw "Smoke test failed: process exited after $([math]::Round(($proc.ExitTime - $proc.StartTime).TotalSeconds, 1))s"
           }
-          Write-Host "Process is still running after 10s �?smoke test passed."
+          Write-Host "Process is still running after 10s — smoke test passed."
           Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
 
       - name: Upload artifacts
@@ -272,7 +272,7 @@ jobs:
   # ─────────────────────────────────────────────
   build-linux:
     needs: update-version
-    # 定时触发：仅版本变更时构建；手动触发：始终构�?
+    # 定时触发：仅版本变更时构建；手动触发：始终构建
     if: needs.update-version.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
@@ -496,12 +496,12 @@ jobs:
             **版本:** `${{ needs.update-version.outputs.version }}`
             **构建日期:** `${{ needs.update-version.outputs.date }}`
 
-            > ⚠️ 这是自动构建�?nightly 版本，可能不稳定�?
+            > ⚠️ 这是自动构建的 nightly 版本，可能不稳定。
 
             ### 下载
-            - **Windows:** `.exe` (portable) �?免安装便携版
-            - **Linux:** `.deb` �?Debian/Ubuntu 安装�?
-            - **Linux:** `.AppImage` �?免安装直接运�?
+            - **Windows:** `.exe` (portable) — 免安装便携版
+            - **Linux:** `.deb` — Debian/Ubuntu 安装包
+            - **Linux:** `.AppImage` — 免安装直接运行
           files: artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -510,7 +510,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 删除 7 天前�?nightly releases
+          # 删除 7 天前的 nightly releases
           CUTOFF=$(date -d "7 days ago" +%Y%m%d)
           echo "Cleaning up nightly releases older than ${CUTOFF}"
           gh release list --limit 100 | grep 'Nightly' | while IFS= read -r line; do
