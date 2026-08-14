@@ -235,19 +235,35 @@ jobs:
       - name: Smoke test (native runner)
         shell: pwsh
         run: |
-          # Start the portable exe, wait a few seconds, then kill it.
-          # On a native runner (x64 on windows-latest, ARM64 on windows-11-arm),
-          # a successful start means the Electron binary and all native modules
-          # (koffi, better-sqlite3, sharp, carminium_audio.dll) loaded correctly.
+          # Start the portable exe, wait, then kill it. On a native runner
+          # (x64 on windows-latest, ARM64 on windows-11-arm) a successful
+          # start means the Electron binary and all native modules loaded.
+          # stdout/stderr are captured so startup failures (e.g. a native
+          # module that fails to load) are visible in the job log.
           $exe = (Get-ChildItem dist-electron\*.exe | Select-Object -First 1).FullName
           Write-Host "Smoke testing: $exe"
-          $proc = Start-Process -FilePath $exe -PassThru
-          Start-Sleep -Seconds 10
-          if ($proc.HasExited) {
-            Write-Host "Process exited early with code $($proc.ExitCode) — build is broken!"
-            throw "Smoke test failed: process exited after $([math]::Round(($proc.ExitTime - $proc.StartTime).TotalSeconds, 1))s"
+          $out = "$env:RUNNER_TEMP\smoke-stdout.txt"
+          $err = "$env:RUNNER_TEMP\smoke-stderr.txt"
+          $env:ELECTRON_ENABLE_LOGGING = '1'
+          $proc = Start-Process -FilePath $exe -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+          $exited = $proc.WaitForExit(20000)
+          if ($exited) {
+            Write-Host "::error::Process exited with code $($proc.ExitCode)"
+            foreach ($f in @($out, $err)) {
+              if (Test-Path $f) {
+                Write-Host "===== $(Split-Path $f -Leaf) (tail) ====="
+                Get-Content $f -Tail 120 | ForEach-Object { Write-Host $_ }
+              }
+            }
+            $ud = Join-Path $env:APPDATA 'Project Carminium'
+            if (Test-Path $ud) {
+              Write-Host "===== userData files ====="
+              Get-ChildItem $ud -Recurse -File -ErrorAction SilentlyContinue |
+                Select-Object -First 40 FullName, Length | Format-Table -AutoSize | Out-String | Write-Host
+            }
+            throw "Smoke test failed: process exited with code $($proc.ExitCode)"
           }
-          Write-Host "Process is still running after 10s — smoke test passed."
+          Write-Host "Process is still running after 20s — smoke test passed."
           Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
 
       - name: Upload Windows artifact
