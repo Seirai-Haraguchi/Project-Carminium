@@ -133,6 +133,12 @@ jobs:
           Remove-Item -Recurse ffmpeg-temp, ffmpeg.zip -Force
           Write-Host "ffmpeg installed:"; electron\bin\win32\ffprobe.exe -version | Select-Object -First 1
 
+      - name: Setup MSVC Developer Environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
       - name: Build native library (Zig)
         working-directory: native
         run: |
