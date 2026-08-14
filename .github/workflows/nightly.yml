@@ -66,8 +66,10 @@ jobs:
         include:
           - arch: x64
             runner: windows-latest
+            zig-target: ''
           - arch: arm64
             runner: windows-11-arm
+            zig-target: -Dtarget=aarch64-windows-gnu
     runs-on: ${{ matrix.runner }}
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
@@ -77,10 +79,35 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Zig
+      - name: Setup Zig (native)
+        if: matrix.arch != 'arm64'
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.16.0
+
+      # zig-aarch64-windows-0.16.0 is broken: any `zig build` on a native
+      # ARM64 host fails immediately with
+      # "Invalid cast (Producer: 'zig 0.16.0' Reader: 'LLVM 21.1.0')"
+      # while compiling the build runner, regardless of -Dtarget. On the
+      # ARM64 runner we therefore run the x86_64 compiler under Windows 11
+      # x64 emulation and cross-compile the library with
+      # -Dtarget=aarch64-windows-gnu (the configuration that produced green
+      # ARM64 builds before the native-runner migration).
+      - name: Setup Zig (x86_64 under x64 emulation)
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          $dest = "$env:RUNNER_TOOL_CACHE\zig\0.16.0\x86_64"
+          if (-not (Test-Path "$dest\zig.exe")) {
+            $zip = "$env:RUNNER_TEMP\zig-x86_64-windows-0.16.0.zip"
+            Invoke-WebRequest -Uri "https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip" -OutFile $zip
+            $tmp = "$env:RUNNER_TEMP\zig-x86_64-extract"
+            Expand-Archive -Path $zip -DestinationPath $tmp -Force
+            $inner = (Get-ChildItem $tmp -Directory | Select-Object -First 1).FullName
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            Move-Item "$inner\*" $dest -Force
+          }
+          Add-Content $env:GITHUB_PATH "$dest"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -133,15 +160,25 @@ jobs:
           Remove-Item -Recurse ffmpeg-temp, ffmpeg.zip -Force
           Write-Host "ffmpeg installed:"; electron\bin\win32\ffprobe.exe -version | Select-Object -First 1
 
-      - name: Setup MSVC Developer Environment
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: ${{ matrix.arch }}
-
       - name: Build native library (Zig)
         working-directory: native
-        run: zig version && zig build copy copy-legacy -Doptimize=ReleaseFast
+        run: zig version && zig build copy copy-legacy -Doptimize=ReleaseFast ${{ matrix.zig-target }}
+
+      # Guard: prove the DLL is pure aarch64 machine code (PE Machine = 0xAA64),
+      # regardless of the compiler binary's own architecture.
+      - name: Verify ARM64 DLL (PE machine type)
+        if: matrix.arch == 'arm64'
+        working-directory: native
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem zig-out\bin -Filter *.dll | Select-Object -First 1
+          $b = [IO.File]::ReadAllBytes($dll.FullName)
+          $peOff = [BitConverter]::ToInt32($b, 0x3C)
+          $machine = [BitConverter]::ToUInt16($b, $peOff + 4)
+          if ($machine -ne 0xAA64) {
+            throw "$($dll.Name) is NOT pure ARM64 (PE Machine=0x$($machine.ToString('X4')), expected 0xAA64)"
+          }
+          Write-Host "$($dll.Name): PE Machine=0xAA64 (ARM64) - pure aarch64 native code confirmed"
 
       - name: Rebuild native addons
         shell: pwsh
@@ -329,7 +366,7 @@ jobs:
             ca-certificates \
             wget
 
-      - name: Setup Zig
+      - name: Setup Zig (Linux)
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.16.0
