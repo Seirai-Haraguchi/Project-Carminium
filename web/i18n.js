@@ -464,6 +464,8 @@
 'settings.waveProgress.sub': '在媒体播放器上显示一个扭曲的、恼人的、无用的、看起来像精子的和令人分心的进度条',
 'settings.videoBackground.label': '视频背景',
 'settings.videoBackground.sub': '当库中有与歌曲同名的视频文件时，以视频作为正在播放页面的背景（需在全窗口视图中生效）',
+'settings.systemMaterial.label': '系统材质',
+'settings.systemMaterial.sub': '使用 Windows 系统级 Acrylic 亚克力材质作为窗口背景，叠加当前 Material 主题色彩。正在播放页面的流光效果将被移除，统一使用系统材质背景（仅 Windows 可用）',
       'settings.npDefaultView.label': '默认恢复视图',
       'settings.npDefaultView.sub': '从底栏展开时进入的默认视图模式',
       'settings.npDefaultView.side': '侧边视图',

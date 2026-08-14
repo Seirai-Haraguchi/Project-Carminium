@@ -29,12 +29,12 @@ jobs:
         include:
           - arch: x64
             zig-target: x86_64-windows-gnu
+            runner: windows-latest
           - arch: arm64
             zig-target: aarch64-windows-gnu
-    runs-on: windows-latest
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
     env:
-      npm_config_arch: ${{ matrix.arch }}
-      npm_config_target_arch: ${{ matrix.arch }}
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - name: Checkout
@@ -55,7 +55,7 @@ jobs:
           cache-dependency-path: 'package-lock.json'
 
       - name: Install dependencies
-        run: npm ci --include=optional --cpu=${{ matrix.arch }} --prefer-offline --no-audit --no-fund
+        run: npm ci --include=optional --prefer-offline --no-audit --no-fund
 
       - name: Sync version
         run: node scripts/sync-version.js
@@ -81,11 +81,7 @@ jobs:
           Copy-Item "$($binDir.FullName)\bin\ffmpeg.exe" electron\bin\win32\ffmpeg.exe -Force
           Copy-Item "$($binDir.FullName)\bin\ffprobe.exe" electron\bin\win32\ffprobe.exe -Force
           Remove-Item -Recurse ffmpeg-temp, ffmpeg.zip -Force
-          if ('${{ matrix.arch }}' -eq 'x64') {
-            Write-Host "ffmpeg installed:"; electron\bin\win32\ffprobe.exe -version | Select-Object -First 1
-          } else {
-            Write-Host "ffmpeg installed for ARM64 (not executed on the x64 runner)."
-          }
+          Write-Host "ffmpeg installed:"; electron\bin\win32\ffprobe.exe -version | Select-Object -First 1
 
       - name: Build native library (Zig)
         working-directory: native
@@ -94,9 +90,9 @@ jobs:
       - name: Rebuild native addons
         shell: pwsh
         run: |
-          npx @electron/rebuild -f -w better-sqlite3 --arch ${{ matrix.arch }}
+          npx @electron/rebuild -f -w better-sqlite3
           if ($LASTEXITCODE -ne 0) {
-            throw "Failed to rebuild better-sqlite3 for ${{ matrix.arch }}"
+            throw "Failed to rebuild better-sqlite3"
           }
 
       - name: Verify pre-build artifacts and architectures (Windows)
@@ -193,6 +189,25 @@ jobs:
           $source = Get-ChildItem dist-electron\*.exe | Select-Object -First 1
           $destination = "dist-electron\Carminium-$version-windows-${{ matrix.arch }}.exe"
           Move-Item $source.FullName $destination -Force
+          Write-Host "Created $destination"
+
+      - name: Smoke test (native runner)
+        shell: pwsh
+        run: |
+          # Start the portable exe, wait a few seconds, then kill it.
+          # On a native runner (x64 on windows-latest, ARM64 on windows-11-arm),
+          # a successful start means the Electron binary and all native modules
+          # (koffi, better-sqlite3, sharp, carminium_audio.dll) loaded correctly.
+          $exe = (Get-ChildItem dist-electron\*.exe | Select-Object -First 1).FullName
+          Write-Host "Smoke testing: $exe"
+          $proc = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 10
+          if ($proc.HasExited) {
+            Write-Host "Process exited early with code $($proc.ExitCode) — build is broken!"
+            throw "Smoke test failed: process exited after $([math]::Round(($proc.ExitTime - $proc.StartTime).TotalSeconds, 1))s"
+          }
+          Write-Host "Process is still running after 10s — smoke test passed."
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
