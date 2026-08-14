@@ -136,14 +136,16 @@ jobs:
           Write-Host "ffmpeg.exe: $actual (expected: $expectedMachine)"
           if ($actual -ne $expectedMachine) { throw "ffmpeg.exe architecture mismatch: $actual != $expectedMachine" }
 
-          # better-sqlite3 native addon
-          $nodeFile = "node_modules\better-sqlite3\build\Release\better_sqlite3.node"
-          if (Test-Path $nodeFile) {
+          # better-sqlite3 native addon (prebuilds or build/Release)
+          $prebuildFile = "node_modules\better-sqlite3\prebuilds\win32-${{ matrix.arch }}.node"
+          $buildFile = "node_modules\better-sqlite3\build\Release\better_sqlite3.node"
+          $nodeFile = if (Test-Path $prebuildFile) { $prebuildFile } elseif (Test-Path $buildFile) { $buildFile } else { $null }
+          if ($nodeFile) {
             $actual = Get-PEMachine $nodeFile
-            Write-Host "better_sqlite3.node: $actual (expected: $expectedMachine)"
+            Write-Host "better_sqlite3.node ($nodeFile): $actual (expected: $expectedMachine)"
             if ($actual -ne $expectedMachine) { throw "better_sqlite3.node architecture mismatch: $actual != $expectedMachine" }
           } else {
-            throw "better_sqlite3.node not found at $nodeFile"
+            throw "better_sqlite3.node not found at $prebuildFile or $buildFile"
           }
 
           # koffi optional dependency
