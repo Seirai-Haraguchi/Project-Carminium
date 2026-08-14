@@ -267,6 +267,40 @@ jobs:
           # Electron may leave child processes (gpu, renderer); clean up by name
           Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
+      - name: Smoke test (win-unpacked)
+        shell: pwsh
+        run: |
+          # Run the unpacked packaged app (the portable exe is built from this
+          # exact tree). Unlike the NSIS portable wrapper it forwards the main
+          # process stdout/stderr, so startup failures show their real error.
+          $exe = "dist-electron\win-unpacked\Project Carminium.exe"
+          if (-not (Test-Path $exe)) { Write-Host "win-unpacked exe not found, skipping"; exit 0 }
+          $out = "$env:RUNNER_TEMP\unp-stdout.txt"
+          $err = "$env:RUNNER_TEMP\unp-stderr.txt"
+          $env:ELECTRON_ENABLE_LOGGING = '1'
+          Write-Host "Unpacked smoke: $exe"
+          $proc = Start-Process -FilePath $exe -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+          $exited = $proc.WaitForExit(15000)
+          if ($exited) {
+            Write-Host "::error::win-unpacked app exited with code $($proc.ExitCode)"
+            foreach ($f in @($err, $out)) {
+              if (Test-Path $f) {
+                $tag = if ($f -eq $err) { 'UNP-ERR' } else { 'UNP-OUT' }
+                Write-Host "===== $tag full ====="
+                Get-Content $f | ForEach-Object { Write-Host $_ }
+                Get-Content $f | Where-Object { $_.Trim() } | Select-Object -First 6 | ForEach-Object {
+                  $line = ($_ -replace '\s+', ' ').Trim()
+                  if ($line.Length -gt 240) { $line = $line.Substring(0, 240) }
+                  Write-Host "::error::$tag`: $line"
+                }
+              }
+            }
+            throw "win-unpacked smoke failed: exit code $($proc.ExitCode)"
+          }
+          Write-Host "win-unpacked app still running after 15s — unpacked smoke passed."
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          Get-Process "Project Carminium" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
       - name: Smoke test (native runner)
         shell: pwsh
         run: |
