@@ -83,7 +83,9 @@ jobs:
 
       - name: Build native library (Zig)
         working-directory: native
-        run: zig build copy copy-legacy -Doptimize=ReleaseFast
+        run: |
+          zig version
+          zig build copy copy-legacy -Doptimize=ReleaseFast --summary all
 
       - name: Rebuild native addons
         shell: pwsh
