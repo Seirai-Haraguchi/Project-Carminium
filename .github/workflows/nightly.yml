@@ -284,6 +284,41 @@ jobs:
           Move-Item $source.FullName $destination -Force
           Write-Host "Created $destination"
 
+      - name: Smoke test (dev mode)
+        shell: pwsh
+        run: |
+          # Run the app directly with the dev Electron binary before testing
+          # the packaged portable exe. This exercises the same startup path
+          # (native modules, carminium_audio.dll) without asar packaging, and
+          # its captured stderr pinpoints startup failures.
+          $electron = "node_modules\electron\dist\electron.exe"
+          if (-not (Test-Path $electron)) { Write-Host "electron.exe not found, skipping dev smoke"; exit 0 }
+          $out = "$env:RUNNER_TEMP\dev-stdout.txt"
+          $err = "$env:RUNNER_TEMP\dev-stderr.txt"
+          $env:ELECTRON_ENABLE_LOGGING = '1'
+          Write-Host "Dev smoke: $electron ."
+          $proc = Start-Process -FilePath $electron -ArgumentList "." -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+          $exited = $proc.WaitForExit(15000)
+          if ($exited) {
+            Write-Host "::error::Dev-mode electron exited with code $($proc.ExitCode)"
+            foreach ($f in @($err, $out)) {
+              if (Test-Path $f) {
+                $tag = if ($f -eq $err) { 'DEV-ERR' } else { 'DEV-OUT' }
+                Get-Content $f -Tail 10 | Where-Object { $_.Trim() } | Select-Object -First 8 | ForEach-Object {
+                  $line = ($_ -replace '\s+', ' ').Trim()
+                  if ($line.Length -gt 240) { $line = $line.Substring(0, 240) }
+                  Write-Host "::error::$tag`: $line"
+                  Write-Host $line
+                }
+              }
+            }
+            throw "Dev smoke test failed: exit code $($proc.ExitCode)"
+          }
+          Write-Host "Dev-mode electron still running after 15s — dev smoke passed."
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          # Electron may leave child processes (gpu, renderer); clean up by name
+          Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
       - name: Smoke test (native runner)
         shell: pwsh
         run: |
@@ -305,6 +340,20 @@ jobs:
               if (Test-Path $f) {
                 Write-Host "===== $(Split-Path $f -Leaf) (tail) ====="
                 Get-Content $f -Tail 120 | ForEach-Object { Write-Host $_ }
+              }
+            }
+            # Mirror the last stderr/stdout lines into annotations so the
+            # actual startup error is visible without log download rights.
+            $annCount = 0
+            foreach ($f in @($err, $out)) {
+              if (-not (Test-Path $f)) { continue }
+              $tag = if ($f -eq $err) { 'SMOKE-ERR' } else { 'SMOKE-OUT' }
+              Get-Content $f -Tail 15 | Where-Object { $_.Trim() } | Select-Object -Last 6 | ForEach-Object {
+                if ($annCount -ge 10) { return }
+                $annCount++
+                $line = ($_ -replace '\s+', ' ').Trim()
+                if ($line.Length -gt 240) { $line = $line.Substring(0, 240) }
+                Write-Host "::error::$tag`: $line"
               }
             }
             $ud = Join-Path $env:APPDATA 'Project Carminium'
