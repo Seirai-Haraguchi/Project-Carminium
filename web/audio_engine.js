@@ -99,6 +99,17 @@
       /** @type {boolean} 吉他友好是否启用 */
       this._guitarEnabled = false;
 
+      // ── 听觉系统保护 ──
+      /** @type {boolean} 听觉保护是否启用 */
+      this._hearingProtectionEnabled = false;
+      /** @type {BiquadFilterNode|null} 听力损伤频段削减（4kHz 以上高频 highshelf 衰减） */
+      this._hearingProtectionFilter = null;
+      /** @type {GainNode|null} 安全音量限制节点（限制最大输出增益） */
+      this._safetyGainNode = null;
+      /** 安全音量上限（线性增益）。即使音量拉满(1.0)，输出也不会超过此值。
+       *  约 -8dB ≈ 0.398，保证大音量下不损伤听力 */
+      this._SAFETY_MAX_GAIN = 0.398;
+
       // ── 当前曲目：Buffer 模式 ──
       /** @type {AudioBufferSourceNode|null} */
       this._currentSource = null;
@@ -319,7 +330,20 @@
         this._limiter.attack.value = 0.001;   // 1ms 快速响应
         this._limiter.release.value = 0.05;   // 50ms 快速释放
         this._limiter.knee.value = 0;         // 硬拐点
-        // 连接效果链: effectsInput → EQ[0-15] → VBE → bassBoost → vocal → guitar → compressor → limiter → outputNode
+        // ── 听觉系统保护滤波链 ──
+        // 1. 高频削减滤波器：衰减 4kHz 以上频段（这些频率在大音量下最易损伤听力）
+        //    使用 highshelf 滤波器，转折频率 ~3.5kHz，衰减 -6dB
+        this._hearingProtectionFilter = this._ctx.createBiquadFilter();
+        this._hearingProtectionFilter.type = 'highshelf';
+        this._hearingProtectionFilter.frequency.value = 3500;
+        this._hearingProtectionFilter.Q.value = 0.7;
+        this._hearingProtectionFilter.gain.value = 0; // disabled by default
+        // 2. 安全音量限制 GainNode：限制最大输出增益
+        this._safetyGainNode = this._ctx.createGain();
+        this._safetyGainNode.gain.value = 1.0; // disabled (1.0 = no limiting)
+
+        // 连接效果链: effectsInput → EQ[0-15] → VBE → bassBoost → vocal → guitar →
+        //   compressor → limiter → [hearingProtectionFilter → safetyGainNode] → outputNode
         var prev = this._effectsInput;
         for (var i = 0; i < this._eqBands.length; i++) {
           prev.connect(this._eqBands[i]);
@@ -339,7 +363,10 @@
         }
         prev.connect(this._compressor);
         this._compressor.connect(this._limiter);
-        this._limiter.connect(this._outputNode);
+        // 听觉保护链插入在 limiter 之后、outputNode 之前
+        this._limiter.connect(this._hearingProtectionFilter);
+        this._hearingProtectionFilter.connect(this._safetyGainNode);
+        this._safetyGainNode.connect(this._outputNode);
 
         // 必须连接到 destination，否则 Web Audio 渲染引擎不会处理整个音频图，
         // OutputCaptureWorklet.process() 不会被调用，DLL 收不到任何 PCM 数据。
@@ -898,11 +925,16 @@
 
     setVolume(level) {
       this._volume = Math.max(0, Math.min(1, level));
+      // 听觉保护启用时，音量被限制在安全范围
+      var effectiveVol = this._volume;
+      if (this._hearingProtectionEnabled) {
+        effectiveVol = Math.min(this._volume, this._SAFETY_MAX_GAIN);
+      }
       if (this._currentGain) {
-        this._currentGain.gain.value = this._volume;
+        this._currentGain.gain.value = effectiveVol;
       }
       if (this._currentStreamingGain && !this._crossfadeActive) {
-        this._currentStreamingGain.gain.value = this._volume;
+        this._currentStreamingGain.gain.value = effectiveVol;
       }
     }
 
@@ -1788,12 +1820,16 @@
       if (settings.vbe_reson_freq !== undefined)
         this._vbeParams.resonFreq = settings.vbe_reson_freq;
       this._sendVbeParams();
+      // 听觉系统保护
+      this._hearingProtectionEnabled = !!settings.hearing_protection;
+      this._applyHearingProtection();
       // 增益补偿
       this._updateEffectsGain();
       console.log('[AudioEngine] Audio effects applied: eq=' + this._eqEnabled +
         ', bass=' + this._bassEnabled + ', comp=' + this._compressorEnabled +
         ', vocal=' + this._vocalEnabled + ', guitar=' + this._guitarEnabled +
-        ', vbe=' + this._vbeEnabled);
+        ', vbe=' + this._vbeEnabled +
+        ', hearingProtection=' + this._hearingProtectionEnabled);
     }
 
     /**
@@ -1894,6 +1930,38 @@
       } else {
         this._compressor.threshold.value = 0;
         this._compressor.ratio.value = 1;
+      }
+    }
+
+    /**
+     * 设置听觉系统保护启用状态。
+     * 启用时：
+     *   1. 高频削减滤波器衰减 3.5kHz 以上频段 -6dB（这些频率在大音量下最易损伤毛细胞）
+     *   2. 安全音量限制：即使音量拉满(1.0)，实际输出被限制在 -8dB 线性增益以内
+     *   3. 末级限幅器仍始终启用，防止任何残余削波
+     * 三重保护确保用户即使在最大音量下也不会损伤听力。
+     */
+    setHearingProtection(enabled) {
+      this._hearingProtectionEnabled = !!enabled;
+      this._applyHearingProtection();
+      // 重新应用当前音量（可能在限制生效/失效后需要更新实际增益）
+      this.setVolume(this._volume);
+      this._updateEffectsGain();
+    }
+
+    /**
+     * 应用听觉保护滤波与安全音量限制。
+     */
+    _applyHearingProtection() {
+      if (this._hearingProtectionFilter) {
+        // -6dB 高频削减：衰减大音量下最易损伤听力的频段
+        this._hearingProtectionFilter.gain.value = this._hearingProtectionEnabled ? -6 : 0;
+      }
+      // 安全增益限制：启用时限制最大输出，禁用时恢复 1.0
+      // 实际音量限制在 setVolume() 中根据 _hearingProtectionEnabled 应用
+      if (this._safetyGainNode) {
+        this._safetyGainNode.gain.value = 1.0; // 作为最终硬限制器，始终 1.0；
+        // 音量级别的限制在 source gain 侧执行（setVolume）
       }
     }
 

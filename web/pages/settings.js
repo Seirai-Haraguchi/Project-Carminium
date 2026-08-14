@@ -276,6 +276,16 @@
             },
             {
               type: 'toggle',
+              bind: 'hearing_protection',
+              label: _t('settings.hearingProtection.label'),
+              sub: _t('settings.hearingProtection.sub'),
+              onChange: function (checked) {
+                var ae = window.__audioEngine;
+                if (ae) ae.setHearingProtection(checked);
+              },
+            },
+            {
+              type: 'toggle',
               bind: 'vocal_enhance',
               label: _t('settings.vocalEnhance.label'),
               sub: _t('settings.vocalEnhance.sub'),
