@@ -4,6 +4,29 @@
  */
 'use strict';
 
+// ── 起動診断ログ ────────────────────────────────────────────────────────────
+// すべての require より前に実行され、起動フェーズのクラッシュを
+// %APPDATA%\Project Carminium\logs\boot.log に記録する。
+// portable 版など stderr が取得できない環境での切り分けに使用。
+// 依存を増やさないため純粋な fs のみを使用し、失敗はすべて無視する。
+try {
+  const _fs = require('fs');
+  const _path = require('path');
+  const _os = require('os');
+  const _logDir = _path.join(process.env.APPDATA || _os.homedir(), 'Project Carminium', 'logs');
+  _fs.mkdirSync(_logDir, { recursive: true });
+  global.__bootLog = (m) => {
+    try { _fs.appendFileSync(_path.join(_logDir, 'boot.log'), `${new Date().toISOString()} [${process.arch}] ${m}\n`); } catch { /* ignore */ }
+  };
+  __bootLog(`boot start: electron=${process.versions.electron} node=${process.versions.node} packaged=${!!process.defaultApp ? 'no' : 'yes'}`);
+  process.on('uncaughtException', (e) => {
+    __bootLog(`uncaughtException: ${(e && e.stack) || e}`);
+    // 起動フェーズの例外は既定の挙動（exit code 1）を維持しつつ記録する。
+    if (!global.__bootDone) process.exit(1);
+  });
+  process.on('exit', (c) => __bootLog(`process exit code=${c}`));
+} catch { /* ignore */ }
+
 // 全局禁用 TLS 证书验证（Subsonic 服务器常使用自签名证书）
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
@@ -1474,3 +1497,7 @@ app.on('web-contents-created', (_e, contents) => {
     if (!allowed) event.preventDefault();
   });
 });
+
+// モジュールのトップレベル評価が完了＝起動フェーズ終了。以降の例外は
+// 既存の uncaughtException ハンドラ（ダイアログ表示）の挙動に任せる。
+global.__bootDone = true;

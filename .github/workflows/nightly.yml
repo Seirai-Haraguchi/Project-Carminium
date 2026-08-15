@@ -312,6 +312,16 @@ jobs:
                 }
               }
             }
+            $bootLog = Join-Path $env:APPDATA 'Project Carminium\logs\boot.log'
+            if (Test-Path $bootLog) {
+              Write-Host "===== boot.log (tail) ====="
+              Get-Content $bootLog -Tail 30 | ForEach-Object { Write-Host $_ }
+              Get-Content $bootLog | Where-Object { $_ -match 'uncaughtException' } | Select-Object -First 3 | ForEach-Object {
+                $line = ($_ -replace '\s+', ' ').Trim()
+                if ($line.Length -gt 240) { $line = $line.Substring(0, 240) }
+                Write-Host "::error::BOOT: $line"
+              }
+            }
             throw "Dev smoke test failed: exit code $($proc.ExitCode)"
           }
           Write-Host "Dev-mode electron still running after 15s — dev smoke passed."
@@ -345,6 +355,16 @@ jobs:
                   if ($line.Length -gt 240) { $line = $line.Substring(0, 240) }
                   Write-Host "::error::$tag`: $line"
                 }
+              }
+            }
+            $bootLog = Join-Path $env:APPDATA 'Project Carminium\logs\boot.log'
+            if (Test-Path $bootLog) {
+              Write-Host "===== boot.log (tail) ====="
+              Get-Content $bootLog -Tail 30 | ForEach-Object { Write-Host $_ }
+              Get-Content $bootLog | Where-Object { $_ -match 'uncaughtException' } | Select-Object -First 3 | ForEach-Object {
+                $line = ($_ -replace '\s+', ' ').Trim()
+                if ($line.Length -gt 240) { $line = $line.Substring(0, 240) }
+                Write-Host "::error::BOOT: $line"
               }
             }
             throw "win-unpacked smoke failed: exit code $($proc.ExitCode)"
@@ -395,6 +415,18 @@ jobs:
               Write-Host "===== userData files ====="
               Get-ChildItem $ud -Recurse -File -ErrorAction SilentlyContinue |
                 Select-Object -First 40 FullName, Length | Format-Table -AutoSize | Out-String | Write-Host
+            }
+            $bootLog = Join-Path $env:APPDATA 'Project Carminium\logs\boot.log'
+            if (Test-Path $bootLog) {
+              Write-Host "===== boot.log (tail) ====="
+              Get-Content $bootLog -Tail 30 | ForEach-Object { Write-Host $_ }
+              Get-Content $bootLog | Where-Object { $_ -match 'uncaughtException' } | Select-Object -First 3 | ForEach-Object {
+                $line = ($_ -replace '\s+', ' ').Trim()
+                if ($line.Length -gt 240) { $line = $line.Substring(0, 240) }
+                Write-Host "::error::BOOT: $line"
+              }
+            } else {
+              Write-Host "::error::boot.log not found — main.js never reached first line (loader/asar issue?)"
             }
             throw "Smoke test failed: process exited with code $($proc.ExitCode)"
           }
