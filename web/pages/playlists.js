@@ -374,12 +374,7 @@ owner_email: params.owner_email || null,
     if (!ul) return;
     ul.innerHTML = '';
 
-    const list = filterStr ? tracks.filter(t => {
-      const q = filterStr;
-      return (t.title && t.title.toLowerCase().includes(q)) ||
-             (t.artist && t.artist.toLowerCase().includes(q)) ||
-             (t.album && t.album.toLowerCase().includes(q));
-    }) : tracks;
+    const list = filterStr ? tracks.filter(t => App.utils.matchTrack(filterStr, t)) : tracks;
 
     const countEl = document.getElementById('playlist-count');
     if (countEl) {

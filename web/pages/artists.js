@@ -241,9 +241,9 @@
     const listEl = document.getElementById('artist-list');
     if (!listEl) return;
 
-    let list = filterStr ? allArtists.filter(a => {
-      return a.name && a.name.toLowerCase().includes(filterStr);
-    }) : allArtists;
+    let list = filterStr ? allArtists.filter(a => App.utils.matchItem(filterStr, a, [
+      { text: 'name', key: 'sort_key' },
+    ])) : allArtists;
 
     // 应用排序
     list = _sortArtists(list);

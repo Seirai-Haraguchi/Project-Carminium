@@ -231,11 +231,10 @@
     // 销毁可能存在的旧虚拟列表实例（专辑网格不需要虚拟化，数量少）
     if (_vl) { _vl.destroy(); _vl = null; }
 
-    let list = filterStr ? allAlbums.filter(a => {
-      const q = filterStr;
-      return (a.album && a.album.toLowerCase().includes(q)) ||
-             (a.album_artist && a.album_artist.toLowerCase().includes(q));
-    }) : allAlbums;
+    let list = filterStr ? allAlbums.filter(a => App.utils.matchItem(filterStr, a, [
+      { text: 'album', key: 'sort_key' },
+      { text: 'album_artist', key: 'album_artist_sort_key' },
+    ])) : allAlbums;
 
     // 应用排序
     list = _sortAlbums(list);

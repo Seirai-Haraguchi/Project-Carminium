@@ -275,6 +275,50 @@ jobs:
           } while ($retryCount -lt $maxRetries)
           if ($LASTEXITCODE -ne 0) { throw "Build failed after $maxRetries attempts" }
 
+      - name: Verify packaged app is pure target architecture
+        shell: pwsh
+        run: |
+          # Scan every PE file that can actually load on Windows inside
+          # win-unpacked and assert its machine type. The NSIS portable
+          # wrapper itself is x86 by design; the payload inside is what
+          # this step guards.
+          $root = "dist-electron\win-unpacked"
+          if (-not (Test-Path $root)) { throw "win-unpacked not found at $root" }
+          $expected = if ('${{ matrix.arch }}' -eq 'arm64') { 0xAA64 } else { 0x8664 }
+          function Get-PEMachine([string]$Path) {
+            $fs = [IO.File]::OpenRead($Path); $br = New-Object IO.BinaryReader($fs)
+            if ($fs.Length -lt 64 -or $br.ReadUInt16() -ne 0x5A4D) { $br.Close(); return $null }
+            $fs.Seek(0x3C, 'Begin') | Out-Null; $off = $br.ReadInt32()
+            if ($off -le 0 -or $off + 6 -gt $fs.Length) { $br.Close(); return $null }
+            $fs.Seek($off + 4, 'Begin') | Out-Null; $m = $br.ReadUInt16(); $br.Close(); return $m
+          }
+          # Exemptions: elevate.exe is an x86 electron-builder helper;
+          # better-sqlite3 ships cross-platform prebuild copies that are
+          # never loaded on Windows (only win32-<arch>.node is).
+          $exempt = @('resources\elevate.exe')
+          $prebuildPrefix = 'resources\app.asar.unpacked\node_modules\better-sqlite3\prebuilds\'
+          $prebuildKeep = "win32-${{ matrix.arch }}.node"
+          $checked = 0; $bad = @()
+          $files = Get-ChildItem $root -Recurse -Include *.exe,*.dll,*.node -File
+          $rootAbs = (Resolve-Path $root).Path
+          foreach ($f in $files) {
+            $rel = $f.FullName.Substring($rootAbs.Length + 1)
+            if ($exempt -contains $rel) { Write-Host "  SKIP (exempt): $rel"; continue }
+            if ($rel.StartsWith($prebuildPrefix) -and (Split-Path $rel -Leaf) -ne $prebuildKeep) {
+              Write-Host "  SKIP (foreign prebuild copy): $rel"; continue
+            }
+            $m = Get-PEMachine $f.FullName
+            if ($null -eq $m) { Write-Host "  SKIP (not PE): $rel"; continue }
+            $tag = switch ($m) { 0xAA64 { 'ARM64' } 0x8664 { 'x64' } 0x014C { 'x86' } default { "0x$($m.ToString('X4'))" } }
+            Write-Host "  $tag  $rel"
+            if ($m -ne $expected) { $bad += "$rel = $tag" } else { $checked++ }
+          }
+          if ($bad.Count -gt 0) {
+            $bad | ForEach-Object { Write-Host "::error::Wrong architecture: $_" }
+            throw "$($bad.Count) PE file(s) are not ${{ matrix.arch }}!"
+          }
+          Write-Host "All loadable PE files ($checked) are pure ${{ matrix.arch }}."
+
       - name: Rename artifact with architecture
         shell: pwsh
         run: |

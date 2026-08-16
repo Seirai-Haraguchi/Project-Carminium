@@ -83,12 +83,7 @@
     if (!ul) return;
     ul.innerHTML = '';
 
-    const list = filterStr ? allHistory.filter(t => {
-      const q = filterStr;
-      return (t.title && t.title.toLowerCase().includes(q)) ||
-             (t.artist && t.artist.toLowerCase().includes(q)) ||
-             (t.album && t.album.toLowerCase().includes(q));
-    }) : allHistory;
+    const list = filterStr ? allHistory.filter(t => App.utils.matchTrack(filterStr, t)) : allHistory;
 
     const countEl = document.getElementById('history-count');
     if (countEl) {
