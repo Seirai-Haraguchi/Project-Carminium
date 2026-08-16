@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 加入讨论
+    url: https://github.com/rezen/carminium-/discussions
+    about: 如果你有问题想讨论而不是提交 Bug 或功能建议，请前往 Discussions
