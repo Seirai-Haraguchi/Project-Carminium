@@ -1153,6 +1153,9 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     ).all();
     const deduped = this._dedupeTracks(rows);
     for (const t of deduped) {
+      t.sort_key = makeSortKey(t.title);
+      t.artist_sort_key = makeSortKey(t.artist);
+      t.album_sort_key = makeSortKey(t.album);
       t.artists = this._splitArtists(t.artist);
     }
     return deduped;
@@ -1184,6 +1187,9 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     ).all(parseInt(limit, 10));
     const deduped = this._dedupeTracks(rows);
     for (const t of deduped) {
+      t.sort_key = makeSortKey(t.title);
+      t.artist_sort_key = makeSortKey(t.artist);
+      t.album_sort_key = makeSortKey(t.album);
       t.artists = this._splitArtists(t.artist);
     }
     return deduped;
@@ -1453,6 +1459,9 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
        WHERE pt.playlist_id=? ORDER BY pt.position`
     ).all(playlistId);
     for (const t of rows) {
+      t.sort_key = makeSortKey(t.title);
+      t.artist_sort_key = makeSortKey(t.artist);
+      t.album_sort_key = makeSortKey(t.album);
       t.artists = this._splitArtists(t.artist);
     }
     return rows;

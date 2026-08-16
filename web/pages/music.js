@@ -791,14 +791,10 @@
     // 1. 排除筛选
     let list = _hasExclusions() ? allTracks.filter(t => !_isExcluded(t)) : allTracks.slice();
 
-    // 2. 搜索词过滤
+    // 2. 搜索词过滤（支持罗马音/拼音搜索）
     if (filterStr) {
-      list = list.filter(t => {
-        const q = filterStr;
-        return (t.title && t.title.toLowerCase().includes(q)) ||
-               (t.artist && t.artist.toLowerCase().includes(q)) ||
-               (t.album && t.album.toLowerCase().includes(q));
-      });
+      const q = filterStr;
+      list = list.filter(t => App.utils.matchTrack(q, t));
     }
 
     // 3. 排序

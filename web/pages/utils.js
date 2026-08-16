@@ -496,6 +496,117 @@
     return groups;
   };
 
+  // ── 搜索匹配工具（罗马音/拼音搜索支持）─────────────────────────────────────
+
+  /**
+   * 将字符串归一化为搜索键：假名→罗马音、转小写、去非字母数字。
+   * 与后端 sortkey.js 的 makeSortKey 逻辑一致（前端不含拼音，拼音通过 sort_key 字段覆盖）。
+   * @param {string} text
+   * @returns {string}
+   */
+  utils.normalizeForSearch = function (text) {
+    if (!text) return '';
+    var s = String(text).trim();
+    if (!s) return '';
+    // 1. 假名 → 罗马音
+    s = s.replace(_KANA_RE, function (m) { return _KANA_MAP[m] || m; });
+    // 2. 转小写
+    s = s.toLowerCase();
+    // 3. 去非字母数字
+    s = s.replace(/[^a-z0-9]/g, '');
+    return s;
+  };
+
+  /**
+   * 搜索词缓存（避免对同一查询词重复归一化）
+   */
+  var _searchQueryCache = {};
+
+  /**
+   * 检查曲目是否匹配搜索词。
+   *
+   * 匹配策略（三重匹配）：
+   * 1. 原始文本直接 includes（兼容原有行为，如拉丁字母直接匹配）
+   * 2. 后端预计算的 sort_key / artist_sort_key / album_sort_key 字段
+   *    （包含假名→罗马音 + 汉字→拼音的完整转换）
+   * 3. 前端实时归一化（假名→罗马音，覆盖没有 sort_key 的场景）
+   *
+   * @param {string} query  搜索词（已 trim + toLowerCase）
+   * @param {object} track  曲目对象
+   * @returns {boolean}
+   */
+  utils.matchTrack = function (query, track) {
+    if (!query || !track) return false;
+
+    // 归一化搜索词（去非字母数字，假名转罗马音）
+    var normQuery = _searchQueryCache[query];
+    if (normQuery === undefined) {
+      normQuery = utils.normalizeForSearch(query);
+      _searchQueryCache[query] = normQuery;
+    }
+    if (!normQuery) return false;
+
+    // ── 1. title 匹配 ──
+    if (track.sort_key) {
+      if (track.sort_key.includes(normQuery)) return true;
+    } else if (track.title) {
+      if (track.title.toLowerCase().includes(query) ||
+          utils.normalizeForSearch(track.title).includes(normQuery)) return true;
+    }
+
+    // ── 2. artist 匹配 ──
+    if (track.artist_sort_key) {
+      if (track.artist_sort_key.includes(normQuery)) return true;
+    } else if (track.artist) {
+      if (track.artist.toLowerCase().includes(query) ||
+          utils.normalizeForSearch(track.artist).includes(normQuery)) return true;
+    }
+
+    // ── 3. album 匹配 ──
+    if (track.album_sort_key) {
+      if (track.album_sort_key.includes(normQuery)) return true;
+    } else if (track.album) {
+      if (track.album.toLowerCase().includes(query) ||
+          utils.normalizeForSearch(track.album).includes(normQuery)) return true;
+    }
+
+    return false;
+  };
+
+  /**
+   * 检查专辑/艺术家是否匹配搜索词。
+   * 支持原始文本匹配 + sort_key 匹配（假名/拼音）。
+   * @param {string} query  搜索词（已 trim + toLowerCase）
+   * @param {object} item  专辑或艺术家对象
+   * @param {string[]} fields  要匹配的字段名数组 + 对应的 sort_key 字段名
+   *   例如：[{text:'album', key:'sort_key'}, {text:'album_artist', key:'album_artist_sort_key'}]
+   * @returns {boolean}
+   */
+  utils.matchItem = function (query, item, fields) {
+    if (!query || !item) return false;
+
+    var normQuery = _searchQueryCache[query];
+    if (normQuery === undefined) {
+      normQuery = utils.normalizeForSearch(query);
+      _searchQueryCache[query] = normQuery;
+    }
+    if (!normQuery) return false;
+
+    for (var i = 0; i < fields.length; i++) {
+      var f = fields[i];
+      var textVal = item[f.text];
+      var keyVal = item[f.key];
+
+      if (keyVal) {
+        if (keyVal.includes(normQuery)) return true;
+      } else if (textVal) {
+        if (textVal.toLowerCase().includes(query) ||
+            utils.normalizeForSearch(textVal).includes(normQuery)) return true;
+      }
+    }
+    return false;
+  };
+
   // ── DOM 构建工具 ───────────────────────────────────────────────────────────
 
   /**

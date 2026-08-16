@@ -63,12 +63,7 @@
     if (!ul) return;
     ul.innerHTML = '';
 
-    const list = filterStr ? allLiked.filter(t => {
-      const q = filterStr;
-      return (t.title && t.title.toLowerCase().includes(q)) ||
-             (t.artist && t.artist.toLowerCase().includes(q)) ||
-             (t.album && t.album.toLowerCase().includes(q));
-    }) : allLiked;
+    const list = filterStr ? allLiked.filter(t => App.utils.matchTrack(filterStr, t)) : allLiked;
 
     const countEl = document.getElementById('liked-count');
     if (countEl) {
