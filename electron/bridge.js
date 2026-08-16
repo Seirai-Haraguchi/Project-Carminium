@@ -1067,17 +1067,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
         'subsonic_auto_sync', 'subsonic_sync_interval_minutes',
       ];
       if (AUTO_REFRESH_KEYS.some((k) => k in data)) this.startAutoRefresh();
-      // 系统材质变更：立即应用/移除 Acrylic
-      if ('system_material' in data) {
-        const win = this._mainWindow;
-        if (win && !win.isDestroyed() && process.platform === 'win32') {
-          try {
-            win.setBackgroundMaterial(data.system_material ? 'acrylic' : 'none');
-          } catch (e) {
-            console.warn('[bridge] setBackgroundMaterial failed:', e.message);
-          }
-        }
-      }
     });
 
     ipcMain.handle('set_wasapi_exclusive', async (_e, enabled) => {
@@ -1126,24 +1115,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       if (img) win.setIcon(img);
     });
 
-    // ── 系统材质（Windows Acrylic）──
-    // 动态切换窗口的 Acrylic 系统材质。由于 transparent 属性只能在窗口创建时设置，
-    // 运行时切换需要重新创建窗口。为避免重启应用的体验，我们采用以下策略：
-    // 1. 开启时：setBackgroundMaterial('acrylic') + 通知渲染进程添加 CSS 混色层
-    // 2. 关闭时：setBackgroundMaterial('none') + 通知渲染进程移除 CSS 混色层
-    // 注意：transparent 属性在窗口创建时已根据设置决定，运行时仅切换 material。
-    ipcMain.handle('set_system_material', (_e, enabled) => {
-      const win = this._mainWindow;
-      if (!win || win.isDestroyed()) return false;
-      if (process.platform !== 'win32') return false;
-      try {
-        win.setBackgroundMaterial(enabled ? 'acrylic' : 'none');
-        return true;
-      } catch (e) {
-        console.warn('[bridge] set_system_material failed:', e.message);
-        return false;
-      }
-    });
+    // ── 窗口控制 ──
     ipcMain.handle('toggle_fullscreen', () => {
       if (this._mainWindow && !this._mainWindow.isDestroyed()) {
         this._mainWindow.setFullScreen(!this._mainWindow.isFullScreen());
