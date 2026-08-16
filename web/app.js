@@ -314,17 +314,6 @@
             if (s.tag_editor_path !== undefined) {
               App.state.tagEditorPath = s.tag_editor_path || '';
             }
-            // 系统材质（Windows Acrylic）变更
-            if (s.system_material !== undefined) {
-              var smEnabled = !!s.system_material;
-              document.body.classList.toggle('system-material', smEnabled);
-              if (window.__electronAPI && window.__electronAPI.invoke) {
-                window.__electronAPI.invoke('set_system_material', smEnabled).catch(function () {});
-              }
-              if (App.nowPlaying && App.nowPlaying.refreshSystemMaterial) {
-                App.nowPlaying.refreshSystemMaterial(smEnabled);
-              }
-            }
           } catch (e) { /* ignore */ }
         });
 
@@ -508,19 +497,6 @@
 
       // 同步外部音乐标签编辑应用路径到 App.state
       App.state.tagEditorPath = settings.tag_editor_path || '';
-
-      // 同步系统材质（Windows Acrylic）状态
-      if (settings.system_material) {
-        document.body.classList.add('system-material');
-        // 通知主进程应用 Acrylic 系统材质（窗口创建时已应用，此处确保一致）
-        if (window.__electronAPI && window.__electronAPI.invoke) {
-          window.__electronAPI.invoke('set_system_material', true).catch(function () {});
-        }
-        // 通知正在播放面板停止极光效果
-        if (App.nowPlaying && App.nowPlaying.refreshSystemMaterial) {
-          App.nowPlaying.refreshSystemMaterial(true);
-        }
-      }
     });
 
     // 监听系统主题变化
