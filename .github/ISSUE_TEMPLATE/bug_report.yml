@@ -1,0 +1,111 @@
+name: 🐛 问题反馈
+description: 遇到了 Bug 或异常行为？使用此模板提交反馈
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你抽出时间反馈问题！请认真填写下方表单，信息越详细，我们越能快速定位和解决问题。
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认事项
+      description: 在继续之前，请确认以下事项
+      options:
+        - label: 我已搜索过现有的 Issues，确认没有重复提交
+          required: true
+        - label: 我已尝试更新到最新版本，问题仍然存在
+          required: true
+        - label: 我确认下方填写的信息真实、准确、详尽
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 请详细描述你遇到的问题。发生了什么？在什么情况下发生的？
+      placeholder: 请尽可能详细地描述问题...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+      description: 你认为正常情况下应该发生什么？
+      placeholder: 描述你期望发生的行为...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 实际上发生了什么？
+      placeholder: 描述实际发生的行为...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 请提供复现该问题的具体步骤
+      placeholder: |
+        1. 打开...
+        2. 点击...
+        3. 看到...
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 页面诊断信息
+      description: |
+        请提供页面诊断信息。
+        - 你可以在应用的设置页面中找到诊断信息并将其复制粘贴到此处。
+        - 包括但不限于：操作系统版本、应用版本、浏览器信息等。
+        - 如果有诊断信息截图，请一并上传。
+      placeholder: 将诊断信息粘贴到此处...
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图
+      description: 如有相关截图，请上传。截图能帮助我们更直观地理解问题。
+      placeholder: 拖拽或粘贴截图到此处...
+
+  - type: textarea
+    id: attachments
+    attributes:
+      label: 附件
+      description: 如有日志文件、配置文件或其他附件，请上传。
+      placeholder: 拖拽或粘贴文件到此处...
+
+  - type: input
+    id: os
+    attributes:
+      label: 操作系统
+      placeholder: 如 Windows 11、macOS 14.5
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: 应用版本
+      placeholder: 如 v1.0.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 还有其他需要补充的内容吗？
+      placeholder: 其他你想说明的内容...

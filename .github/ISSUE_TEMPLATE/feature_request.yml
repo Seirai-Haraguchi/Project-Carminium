@@ -1,0 +1,97 @@
+name: ✨ 新功能建议
+description: 有好的想法或功能建议？使用此模板告诉我们
+title: "[FEATURE] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你提出新功能建议！请认真填写下方表单，描述越清晰，我们越能准确理解你的需求。
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认事项
+      description: 在继续之前，请确认以下事项
+      options:
+        - label: 我已搜索过现有的 Issues，确认没有重复提交
+          required: true
+        - label: 我已仔细思考过该功能的必要性和可行性
+          required: true
+        - label: 我确认下方填写的信息真实、准确、详尽
+          required: true
+
+  - type: dropdown
+    id: feature-type
+    attributes:
+      label: 功能类型
+      description: 该功能属于哪种类型？
+      options:
+        - 新功能（全新能力）
+        - 功能增强（对已有功能的改进）
+        - 界面优化（UI/UX 改进）
+        - 性能优化
+        - 兼容性支持
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: feature-name
+    attributes:
+      label: 功能名称
+      description: 请用简短的语言概括该功能的名称
+      placeholder: 如"全局快捷键支持"、"歌词翻译"等
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 功能描述
+      description: 请详细描述你希望实现的功能。
+      placeholder: 详细说明该功能是什么...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+      description: 你期望该功能如何工作？请描述使用场景和交互流程。
+      placeholder: |
+        1. 用户执行某操作...
+        2. 应用响应...
+        3. 预期结果...
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解决的问题
+      description: 该功能解决什么问题？或满足什么需求？
+      placeholder: 描述该功能要解决的痛点或需求...
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 替代方案
+      description: 你是否考虑过其他替代方案？为什么它们不够好？
+      placeholder: 描述你考虑过的替代方案...
+
+  - type: textarea
+    id: attachments
+    attributes:
+      label: 附件 / 效果图 / 设计稿
+      description: |
+        如有相关效果图、设计稿、参考截图或其他附件，请上传。
+        支持图片、PDF、Sketch、Figma 等格式。
+      placeholder: 拖拽或粘贴文件到此处...
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 还有其他需要补充的内容吗？
+      placeholder: 其他你想说明的内容...
