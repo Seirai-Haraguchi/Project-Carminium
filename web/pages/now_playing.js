@@ -324,11 +324,13 @@ let _lastKnownPositionMs = 0;
     var beat = engine ? engine.getBeatData() : null;
     var specBass = 0, specMid = 0, specTreble = 0;
     if (beat) {
-      // 指数平滑：attack 快、release 慢
-      var aR = 0.4, rR = 0.1;
+      // 指数平滑：attack 快、release 慢（修复：原 0.4/0.1 + AnalyserNode 0.6 三层串联
+      // 等效时间常数 ~100ms，远短于 120BPM 节拍间隔(500ms)，导致流光两秒内归零。
+      // release 降到 0.04：~950ms 衰减到 10%，让鼓点能量延续到下一拍）
+      var aR = 0.42, rR = 0.04;
       _beatSpecBass = _beatSpecBass + (beat.bass - _beatSpecBass) * (beat.bass > _beatSpecBass ? aR : rR);
-      _beatSpecMid = _beatSpecMid + (beat.mid - _beatSpecMid) * (beat.mid > _beatSpecMid ? aR * 0.8 : rR * 1.2);
-      _beatSpecTreble = _beatSpecTreble + (beat.treble - _beatSpecTreble) * (beat.treble > _beatSpecTreble ? aR * 0.6 : rR * 1.5);
+      _beatSpecMid = _beatSpecMid + (beat.mid - _beatSpecMid) * (beat.mid > _beatSpecMid ? aR * 0.8 : rR * 1.5);
+      _beatSpecTreble = _beatSpecTreble + (beat.treble - _beatSpecTreble) * (beat.treble > _beatSpecTreble ? aR * 0.6 : rR * 2.0);
       specBass = _beatSpecBass;
       specMid = _beatSpecMid;
       specTreble = _beatSpecTreble;
@@ -353,8 +355,8 @@ let _lastKnownPositionMs = 0;
       combinedPulse = bpmPulse * 0.5;
     }
 
-    // 平滑最终脉冲值
-    var smoothRate = combinedPulse > _beatPulse ? 0.5 : 0.1;
+    // 平滑最终脉冲值（release 0.05：~690ms 衰减到 10%，与频谱层 0.04 协同）
+    var smoothRate = combinedPulse > _beatPulse ? 0.5 : 0.05;
     _beatPulse = _beatPulse + (combinedPulse - _beatPulse) * smoothRate;
 
     // ── 4. 分频段驱动 CSS（仅合成器属性：transform + opacity，滤镜静态烘焙，零重光栅） ──

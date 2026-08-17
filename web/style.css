@@ -5677,6 +5677,14 @@ select.cmd-text-field__input + .cmd-text-field__label {
   font-size: 13px;
   color: var(--md-on-surface-variant);
 }
+.context-submenu-header {
+  padding: 8px 12px 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--md-on-surface-variant);
+  user-select: none;
+  cursor: default;
+}
 .context-submenu-create .context-submenu-item-icon {
   color: var(--md-primary);
 }
