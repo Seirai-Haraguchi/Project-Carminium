@@ -295,6 +295,7 @@
           </div>
         `;
 
+        card._albumData = album;
         card.addEventListener('click', () => _renderDetail(container, album));
         frag.appendChild(card);
       });

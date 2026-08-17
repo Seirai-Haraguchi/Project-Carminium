@@ -40,6 +40,13 @@
 
     // 拦截全局右键菜单
     document.addEventListener('contextmenu', function(e) {
+      // 优先检测专辑卡片
+      const albumCard = e.target.closest('.album-card');
+      if (albumCard && albumCard._albumData) {
+        e.preventDefault();
+        showAlbum(e.clientX, e.clientY, albumCard._albumData);
+        return;
+      }
       const trackRow = e.target.closest('.track-row');
       if (trackRow && trackRow._trackData) {
         e.preventDefault();
@@ -82,6 +89,60 @@
       submenuEl.style.display = 'none';
       submenuEl.innerHTML = '';
     }
+  }
+
+  /**
+   * 构建「打开歌手」子菜单（多歌手时）
+   * @param {Array} artists  歌手名数组
+   */
+  function _showArtistSubmenu(artists) {
+    _hideSubmenu();
+    var gen = ++submenuGeneration;
+    if (!artists || artists.length === 0) return;
+
+    var frag = document.createDocumentFragment();
+
+    // 标题行：「从创作者中选择一个：」
+    var header = document.createElement('div');
+    header.className = 'context-submenu-header';
+    header.textContent = App.i18n.t('cm.chooseArtist');
+    frag.appendChild(header);
+
+    // 歌手列表
+    artists.forEach(function (name) {
+      var item = document.createElement('div');
+      item.className = 'context-submenu-item';
+      item.innerHTML =
+        '<span class="material-symbols-rounded context-submenu-item-icon">person</span>' +
+        '<span class="context-submenu-item-name">' + App.utils.esc(name) + '</span>';
+      item.addEventListener('click', function () {
+        hide();
+        if (App.navigate) {
+          App.navigate('artists', { artist: name });
+        }
+      });
+      frag.appendChild(item);
+    });
+
+    submenuEl.innerHTML = '';
+    submenuEl.appendChild(frag);
+    submenuEl.style.display = 'block';
+
+    // 定位：主菜单右侧
+    var rect = menuContainer.getBoundingClientRect();
+    var subRect = submenuEl.getBoundingClientRect();
+    var posX = rect.right + 4;
+    var posY = rect.top;
+    if (posX + subRect.width > window.innerWidth - 8) {
+      posX = rect.left - subRect.width - 4;
+    }
+    if (posX < 8) posX = 8;
+    if (posY + subRect.height > window.innerHeight - 8) {
+      posY = window.innerHeight - subRect.height - 8;
+    }
+    if (posY < 8) posY = 8;
+    submenuEl.style.left = posX + 'px';
+    submenuEl.style.top = posY + 'px';
   }
 
   /**
@@ -314,14 +375,39 @@
     const list = document.createElement('div');
     list.className = 'context-menu-list';
 
+    // 多歌手信息（仅单曲时有意义）
+    var trackArtists = (!isMulti && track.artists) ? track.artists : null;
+    if (!trackArtists && !isMulti && track.artist) {
+      trackArtists = [track.artist];
+    }
+    var hasMultipleArtists = trackArtists && trackArtists.length > 1;
+
     const items = [
       { id: 'play', icon: 'play_arrow', text: isMulti ? App.i18n.t('cm.playSelected') : App.i18n.t('cm.play'), color: 'var(--md-primary)' },
       { id: 'play_next', icon: 'queue_play_next', text: isMulti ? App.i18n.t('cm.playNextSelected') : App.i18n.t('cm.playNext') },
       { id: 'add_queue', icon: 'playlist_play', text: isMulti ? App.i18n.t('cm.addToQueueSelected') : App.i18n.t('cm.addToQueue') },
       { id: 'add_to_playlist', icon: 'playlist_add', text: App.i18n.t('cm.addToPlaylist'), hasSubmenu: true },
+    ];
+
+    // 单曲时显示「打开专辑」和「打开歌手」
+    if (!isMulti) {
+      if (track.album) {
+        items.push({ id: 'open_album', icon: 'album', text: App.i18n.t('cm.openAlbum', { name: track.album }) });
+      }
+      if (trackArtists && trackArtists.length > 0) {
+        if (hasMultipleArtists) {
+          // 多歌手：显示二级菜单
+          items.push({ id: 'open_artist', icon: 'person', text: App.i18n.t('cm.openArtist', { name: trackArtists.join(' / ') }), hasSubmenu: true, submenuType: 'artist' });
+        } else {
+          items.push({ id: 'open_artist', icon: 'person', text: App.i18n.t('cm.openArtist', { name: trackArtists[0] }) });
+        }
+      }
+    }
+
+    items.push(
       { id: 'copy_path', icon: 'content_copy', text: isMulti ? App.i18n.t('cm.copyPathSelected') : App.i18n.t('cm.copyPath') },
       { id: 'explorer', icon: 'folder_open', text: App.i18n.t('cm.showInExplorer') },
-    ];
+    );
 
     // 仅在已设置外部标签编辑应用时显示该项
     if (App.state && App.state.tagEditorPath) {
@@ -351,7 +437,11 @@
           if (submenuTimer) { clearTimeout(submenuTimer); submenuTimer = null; }
           // 等待下一帧再显示，确保菜单已渲染
           requestAnimationFrame(function () {
-            _showPlaylistSubmenu(selectedTracks);
+            if (item.submenuType === 'artist') {
+              _showArtistSubmenu(trackArtists);
+            } else {
+              _showPlaylistSubmenu(selectedTracks);
+            }
           });
         });
         el.addEventListener('mouseleave', function () {
@@ -381,6 +471,15 @@
           selectedTracks.forEach(function (t) {
             App.backend.append_queue(JSON.stringify(t));
           });
+        } else if (item.id === 'open_album') {
+          if (App.navigate) {
+            App.navigate('albums', { album: track.album, album_artist: track.album_artist || track.artist || '' });
+          }
+        } else if (item.id === 'open_artist') {
+          // 单歌手直接导航（多歌手走 submenu）
+          if (App.navigate && trackArtists && trackArtists.length === 1) {
+            App.navigate('artists', { artist: trackArtists[0] });
+          }
         } else if (item.id === 'copy_path') {
           if (isMulti) {
             var paths = selectedTracks.map(function (t) { return t.path; });
@@ -446,8 +545,146 @@
     menuContainer.style.top = posY + 'px';
   }
 
+  /**
+   * 从前端缓存中获取专辑的曲目列表
+   * @param {Object} album  专辑对象
+   * @returns {Array} 曲目数组（已排序）
+   */
+  function _getAlbumTracks(album) {
+    var allTracks = (App.state && App.state.allTracks) ? App.state.allTracks : [];
+    return allTracks.filter(function (t) {
+      if (t.album !== album.album) return false;
+      var tArtist = t.album_artist || t.artist;
+      return tArtist === album.album_artist;
+    }).sort(function (a, b) {
+      var da = (a.disc_number || 0), db = (b.disc_number || 0);
+      if (da !== db) return da - db;
+      return (a.track_number || 0) - (b.track_number || 0);
+    });
+  }
+
+  /**
+   * 显示专辑右键菜单
+   * @param {number} x
+   * @param {number} y
+   * @param {Object} album  专辑对象
+   */
+  function showAlbum(x, y, album) {
+    menuContainer.innerHTML = '';
+    _hideSubmenu();
+
+    // 获取专辑曲目
+    var tracks = _getAlbumTracks(album);
+
+    // 1. 顶部卡片（专辑信息）
+    var header = document.createElement('div');
+    header.className = 'context-menu-header';
+
+    var coverHtml = '';
+    if (album.cover_track_id) {
+      coverHtml = '<img src="' + window.coverUrl(album.cover_track_id, 128) + '" alt="Cover">';
+    } else {
+      var bg = App.utils.hashColor(album.album || '');
+      coverHtml = '<div class="cm-cover-placeholder" style="background:' + bg + '">' + App.utils.initial(album.album || '') + '</div>';
+    }
+
+    var albumName = album.album || App.i18n.t('common.unknownAlbum');
+    var albumArtist = album.album_artist || App.i18n.t('common.unknownArtist');
+
+    header.innerHTML =
+      coverHtml +
+      '<div class="context-menu-info">' +
+        '<div class="context-menu-title">' + App.utils.esc(albumName) + '</div>' +
+        '<div class="context-menu-artist">' + App.utils.esc(albumArtist) + '</div>' +
+      '</div>';
+
+    // 2. 底部功能列表
+    var list = document.createElement('div');
+    list.className = 'context-menu-list';
+
+    var items = [
+      { id: 'album_play', icon: 'play_arrow', text: App.i18n.t('cm.playAlbum'), color: 'var(--md-primary)' },
+      { id: 'album_add_to_playlist', icon: 'playlist_add', text: App.i18n.t('cm.addAlbumToPlaylist'), hasSubmenu: true },
+      { id: 'album_open_artist', icon: 'person', text: App.i18n.t('cm.openArtist', { name: albumArtist }) },
+    ];
+
+    items.forEach(function (item) {
+      var el = document.createElement('div');
+      el.className = 'context-menu-item';
+      if (item.hasSubmenu) el.classList.add('has-submenu');
+
+      var iconColorStyle = item.color ? 'style="color:' + item.color + '"' : '';
+      var arrowHtml = item.hasSubmenu
+        ? '<span class="material-symbols-rounded context-submenu-arrow">chevron_right</span>'
+        : '';
+
+      el.innerHTML =
+        '<span class="material-symbols-rounded" ' + iconColorStyle + '>' + item.icon + '</span>' +
+        '<span class="context-menu-text">' + App.utils.esc(item.text) + '</span>' +
+        arrowHtml;
+
+      // 子菜单 hover 处理
+      if (item.hasSubmenu) {
+        el.addEventListener('mouseenter', function () {
+          if (submenuTimer) { clearTimeout(submenuTimer); submenuTimer = null; }
+          requestAnimationFrame(function () {
+            _showPlaylistSubmenu(tracks);
+          });
+        });
+        el.addEventListener('mouseleave', function () {
+          submenuTimer = setTimeout(function () {
+            _hideSubmenu();
+          }, 300);
+        });
+      } else {
+        el.addEventListener('mouseenter', function () {
+          if (submenuTimer) { clearTimeout(submenuTimer); submenuTimer = null; }
+          _hideSubmenu();
+        });
+      }
+
+      el.addEventListener('click', function () {
+        if (item.hasSubmenu) return;
+        hide();
+        if (item.id === 'album_play') {
+          if (tracks.length > 0) {
+            App.backend.play_from_list(JSON.stringify(tracks), 0);
+          }
+        } else if (item.id === 'album_open_artist') {
+          if (App.navigate) {
+            App.navigate('artists', { artist: album.album_artist || album.artist || '' });
+          }
+        }
+      });
+      list.appendChild(el);
+    });
+
+    menuContainer.appendChild(header);
+    menuContainer.appendChild(list);
+
+    overlayEl.style.display = 'block';
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        overlayEl.classList.add('open');
+      });
+    });
+
+    // 调整位置以防超出屏幕边界
+    var rect = menuContainer.getBoundingClientRect();
+    var posX = x;
+    var posY = y;
+    if (posX + rect.width > window.innerWidth) posX = window.innerWidth - rect.width - 16;
+    if (posY + rect.height > window.innerHeight) posY = window.innerHeight - rect.height - 16;
+    if (posX < 8) posX = 8;
+    if (posY < 8) posY = 8;
+
+    menuContainer.style.left = posX + 'px';
+    menuContainer.style.top = posY + 'px';
+  }
+
   cm.init = init;
   cm.hide = hide;
+  cm.showAlbum = showAlbum;
   document.addEventListener('DOMContentLoaded', init);
 
 })();

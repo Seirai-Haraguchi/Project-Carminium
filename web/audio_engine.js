@@ -379,7 +379,7 @@
         // 通过零增益 GainNode 连接，确保不产生声音输出。
         this._analyser = this._ctx.createAnalyser();
         this._analyser.fftSize = 512;        // 256 bins，覆盖低频鼓点
-        this._analyser.smoothingTimeConstant = 0.6;  // 适度平滑
+        this._analyser.smoothingTimeConstant = 0.2;  // 降低平滑：0.6 削峰+加速衰减导致流光两秒内归零
         this._freqData = new Uint8Array(this._analyser.frequencyBinCount);
         this._limiter.connect(this._analyser);
         // 零增益连接到 destination，保持 AnalyserNode 活跃
