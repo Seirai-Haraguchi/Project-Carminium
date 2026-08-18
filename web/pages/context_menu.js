@@ -11,8 +11,75 @@
   let overlayEl;
   let menuContainer;
   let submenuEl;       // 「添加到歌单」子菜单
-  let submenuTimer = null;
   let submenuGeneration = 0; // 防止过期的异步回调
+
+  // ── 子菜单保活：安全三角（safe triangle）延迟隐藏 ──────────────────────
+  // 鼠标离开触发项/子菜单后不立即隐藏，而是记录出发点（anchor），
+  // 只要指针朝子菜单近侧边缘构成的三角区内移动就持续宽限（有硬上限）。
+  // 这解决了"慢慢移向子菜单时中途消失、鼠标跟不上"的问题。
+  const SUBMENU_HIDE_DELAY = 380;   // 常规隐藏延迟 ms
+  const SUBMENU_GRACE = 320;        // 朝子菜单移动时的每次宽限 ms
+  const SUBMENU_HARD_CAP = 1800;    // 宽限总硬上限 ms
+  let submenuTickTimer = null;      // 周期检查定时器
+  let submenuAnchor = null;         // 出发点 {x, y}
+  let submenuArmTime = 0;           // 武装隐藏的时刻
+  let submenuDeadline = 0;          // 隐藏截止时刻
+  const lastMouse = { x: 0, y: 0 }; // 全局追踪最近一次指针位置
+
+  document.addEventListener('mousemove', function (e) {
+    lastMouse.x = e.clientX;
+    lastMouse.y = e.clientY;
+  }, { passive: true, capture: true });
+
+  function _signTri(p1, p2, p3) {
+    return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
+  }
+
+  function _pointInTriangle(p, a, b, c) {
+    var d1 = _signTri(p, a, b), d2 = _signTri(p, b, c), d3 = _signTri(p, c, a);
+    var hasNeg = d1 < 0 || d2 < 0 || d3 < 0;
+    var hasPos = d1 > 0 || d2 > 0 || d3 > 0;
+    return !(hasNeg && hasPos);
+  }
+
+  /** 指针是否在"出发点 → 子菜单近侧两角"的安全三角内（即正朝子菜单移动） */
+  function _pointerTowardSubmenu() {
+    if (!submenuAnchor || !submenuEl || submenuEl.style.display === 'none') return false;
+    var r = submenuEl.getBoundingClientRect();
+    var menuR = menuContainer.getBoundingClientRect();
+    if (r.width === 0 || menuR.width === 0) return false;
+    // 子菜单中心在主菜单右侧 → 近侧是子菜单左边缘；反之右边缘
+    var submenuRight = (r.left + r.right) / 2 >= (menuR.left + menuR.right) / 2;
+    var edgeX = submenuRight ? r.left : r.right;
+    return _pointInTriangle(lastMouse, submenuAnchor,
+      { x: edgeX, y: r.top }, { x: edgeX, y: r.bottom });
+  }
+
+  /** 取消挂起的隐藏（鼠标进入触发项或子菜单时调用） */
+  function _cancelSubmenuHide() {
+    if (submenuTickTimer) { clearTimeout(submenuTickTimer); submenuTickTimer = null; }
+    submenuAnchor = null;
+  }
+
+  /** 武装延迟隐藏：离开触发项/子菜单、或 hover 到兄弟项时调用 */
+  function _armSubmenuHide() {
+    if (submenuTickTimer) { clearTimeout(submenuTickTimer); submenuTickTimer = null; }
+    submenuAnchor = { x: lastMouse.x, y: lastMouse.y };
+    submenuArmTime = performance.now();
+    submenuDeadline = submenuArmTime + SUBMENU_HIDE_DELAY;
+    submenuTickTimer = setTimeout(_submenuHideTick, 110);
+  }
+
+  function _submenuHideTick() {
+    submenuTickTimer = null;
+    var now = performance.now();
+    if (now >= submenuDeadline) { _hideSubmenu(); return; }
+    if (_pointerTowardSubmenu()) {
+      // 指针正朝子菜单移动：宽限，但不超过硬上限
+      submenuDeadline = Math.min(submenuDeadline + SUBMENU_GRACE, submenuArmTime + SUBMENU_HARD_CAP);
+    }
+    submenuTickTimer = setTimeout(_submenuHideTick, 110);
+  }
 
   function init() {
     overlayEl = document.createElement('div');
@@ -40,6 +107,9 @@
 
     // 拦截全局右键菜单
     document.addEventListener('contextmenu', function(e) {
+      // 右键坐标即最新指针位置（右键前可能未触发 mousemove）
+      lastMouse.x = e.clientX;
+      lastMouse.y = e.clientY;
       // 检测正在播放页面的专辑封面图
       var coverEl = e.target.closest('#np-cover, #np-cover-img');
       if (coverEl) {
@@ -72,14 +142,12 @@
       }
     });
 
-    // 子菜单 hover 保持：鼠标移入子菜单时取消隐藏定时器
+    // 子菜单 hover 保持：鼠标移入子菜单时取消隐藏
     submenuEl.addEventListener('mouseenter', function () {
-      if (submenuTimer) { clearTimeout(submenuTimer); submenuTimer = null; }
+      _cancelSubmenuHide();
     });
     submenuEl.addEventListener('mouseleave', function () {
-      submenuTimer = setTimeout(function () {
-        _hideSubmenu();
-      }, 300);
+      _armSubmenuHide();
     });
   }
 
@@ -94,6 +162,7 @@
   }
 
   function _hideSubmenu() {
+    _cancelSubmenuHide();
     submenuGeneration++; // 使任何待处理的异步显示无效
     if (submenuEl) {
       submenuEl.style.display = 'none';
@@ -104,8 +173,9 @@
   /**
    * 构建「打开歌手」子菜单（多歌手时）
    * @param {Array} artists  歌手名数组
+   * @param {Element} [itemEl]  触发的菜单项元素（用于行对齐定位）
    */
-  function _showArtistSubmenu(artists) {
+  function _showArtistSubmenu(artists, itemEl) {
     _hideSubmenu();
     var gen = ++submenuGeneration;
     if (!artists || artists.length === 0) return;
@@ -137,12 +207,13 @@
     submenuEl.innerHTML = '';
     submenuEl.appendChild(frag);
     submenuEl.style.display = 'block';
+    _cancelSubmenuHide();
 
-    // 定位：主菜单右侧
+    // 定位：主菜单右侧，顶部与触发行对齐（路径最短，鼠标最容易到达）
     var rect = menuContainer.getBoundingClientRect();
     var subRect = submenuEl.getBoundingClientRect();
     var posX = rect.right + 4;
-    var posY = rect.top;
+    var posY = (itemEl ? itemEl.getBoundingClientRect().top : rect.top) - 6;
     if (posX + subRect.width > window.innerWidth - 8) {
       posX = rect.left - subRect.width - 4;
     }
@@ -158,8 +229,9 @@
   /**
    * 构建「添加到歌单」子菜单
    * @param {Array} tracks  要添加的曲目数组
+   * @param {Element} [itemEl]  触发的菜单项元素（用于行对齐定位）
    */
-  function _showPlaylistSubmenu(tracks) {
+  function _showPlaylistSubmenu(tracks, itemEl) {
     _hideSubmenu();
     var gen = ++submenuGeneration;
 
@@ -226,12 +298,14 @@
       submenuEl.innerHTML = '';
       submenuEl.appendChild(frag);
       submenuEl.style.display = 'block';
+      // 异步渲染完成后若仍在宽限期内（鼠标在路上），保持存活
+      if (submenuTickTimer) _cancelSubmenuHide();
 
-      // 定位：主菜单右侧
+      // 定位：主菜单右侧，顶部与触发行对齐（路径最短，鼠标最容易到达）
       var rect = menuContainer.getBoundingClientRect();
       var subRect = submenuEl.getBoundingClientRect();
       var posX = rect.right + 4;
-      var posY = rect.top;
+      var posY = (itemEl ? itemEl.getBoundingClientRect().top : rect.top) - 6;
       // 如果右侧空间不足，放到主菜单左侧
       if (posX + subRect.width > window.innerWidth - 8) {
         posX = rect.left - subRect.width - 4;
@@ -444,27 +518,25 @@
       // 子菜单 hover 处理
       if (item.hasSubmenu) {
         el.addEventListener('mouseenter', function () {
-          if (submenuTimer) { clearTimeout(submenuTimer); submenuTimer = null; }
+          _cancelSubmenuHide();
           // 等待下一帧再显示，确保菜单已渲染
           requestAnimationFrame(function () {
             if (item.submenuType === 'artist') {
-              _showArtistSubmenu(trackArtists);
+              _showArtistSubmenu(trackArtists, el);
             } else {
-              _showPlaylistSubmenu(selectedTracks);
+              _showPlaylistSubmenu(selectedTracks, el);
             }
           });
         });
         el.addEventListener('mouseleave', function () {
-          // 延迟隐藏子菜单，让用户有时间移入子菜单
-          submenuTimer = setTimeout(function () {
-            _hideSubmenu();
-          }, 300);
+          // 延迟隐藏子菜单：若指针朝子菜单移动（安全三角内）会持续宽限
+          _armSubmenuHide();
         });
       } else {
-        // 非 submenu 项 hover 时隐藏子菜单
+        // 非 submenu 项 hover 时武装延迟隐藏（立即杀掉会让朝子菜单的
+        // 斜向路径被途经项打断；延迟后停在别项上仍会正常关闭）
         el.addEventListener('mouseenter', function () {
-          if (submenuTimer) { clearTimeout(submenuTimer); submenuTimer = null; }
-          _hideSubmenu();
+          _armSubmenuHide();
         });
       }
 
@@ -636,20 +708,17 @@
       // 子菜单 hover 处理
       if (item.hasSubmenu) {
         el.addEventListener('mouseenter', function () {
-          if (submenuTimer) { clearTimeout(submenuTimer); submenuTimer = null; }
+          _cancelSubmenuHide();
           requestAnimationFrame(function () {
-            _showPlaylistSubmenu(tracks);
+            _showPlaylistSubmenu(tracks, el);
           });
         });
         el.addEventListener('mouseleave', function () {
-          submenuTimer = setTimeout(function () {
-            _hideSubmenu();
-          }, 300);
+          _armSubmenuHide();
         });
       } else {
         el.addEventListener('mouseenter', function () {
-          if (submenuTimer) { clearTimeout(submenuTimer); submenuTimer = null; }
-          _hideSubmenu();
+          _armSubmenuHide();
         });
       }
 
@@ -722,8 +791,7 @@
         '<span class="context-menu-text">' + App.utils.esc(item.text) + '</span>';
 
       el.addEventListener('mouseenter', function () {
-        if (submenuTimer) { clearTimeout(submenuTimer); submenuTimer = null; }
-        _hideSubmenu();
+        _armSubmenuHide();
       });
 
       el.addEventListener('click', function () {

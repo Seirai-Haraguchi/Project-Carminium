@@ -940,7 +940,8 @@
       return w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     });
     // 匹配 "关键词:值" 或 "关键词：值"，允许关键词前后有空白
-    var creditRegex = new RegExp('^(' + escaped.join('|') + ')\\s*[：:]', 'g');
+    // 增强 LRC（逐字歌词）剥离 <mm:ss.xx> 标签后，行首可能残留空白，故 ^ 后加 \s*
+    var creditRegex = new RegExp('^\\s*(' + escaped.join('|') + ')\\s*[：:]', 'g');
 
     var lines = lyricsText.split('\n');
     var creditNames = [];

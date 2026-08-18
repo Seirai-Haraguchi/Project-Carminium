@@ -39,6 +39,16 @@
     return { fadeOut, fadeIn };
   }
 
+  // ── Airy transition wash targets ──────────────────────────────────────────
+  // The outgoing deck gradually sinks into a soft, band-limited, compressed
+  // texture ("wash") and holds there while it fades out; the incoming deck
+  // starts inside the same wash and slowly recovers the full frequency
+  // range, dynamics and clarity as the track settles in.
+  // Frequencies in Hz, threshold in dB, ratio is N:1, makeup is linear gain.
+  var WASH_NEUTRAL = { lowpass: 19500, highpass: 22, threshold: 0, ratio: 1.0, makeup: 1.0 };
+  var WASH_OUT_DEEP = { lowpass: 1050, highpass: 190, threshold: -30, ratio: 4.5, makeup: 1.3 };
+  var WASH_IN_START = { lowpass: 1500, highpass: 150, threshold: -24, ratio: 3.0, makeup: 1.22 };
+
   // ── AudioEngine ────────────────────────────────────────────────────────────
 
   class AudioEngine {
@@ -175,6 +185,10 @@
       this._crossfadeTimer = null;
       /** @type {boolean} crossfade 进行中标志（抑制 onStreamEnded） */
       this._crossfadeActive = false;
+      /** @type {object|null} 当前 deck 的 wash 链（highpass → lowpass → compressor → makeup） */
+      this._currentWash = null;
+      /** @type {object|null} 下一曲 deck 的 wash 链（过渡结束后提升为 current 并缓慢恢复） */
+      this._nextWash = null;
       /** @type {boolean} 等待 next streaming PCM 到达后启动延迟 crossfade */
       this._pendingBufferToStreamingCrossfade = false;
       /** @type {boolean} 到达过渡触发点但下一曲未就绪，等待就绪后补触发 */
@@ -758,6 +772,11 @@
       this._stopCrossfadeTimer();
       this._stopPositionTimer();
       this._stopExpansionEffect();
+      // Airy wash：deck 全部停止，直接释放（无需旁路回连）
+      this._disposeWash(this._currentWash, null);
+      this._currentWash = null;
+      this._disposeWash(this._nextWash, null);
+      this._nextWash = null;
 
       // Buffer 源
       this._safeStopSource(this._currentSource);
@@ -851,6 +870,13 @@
     async seek(positionMs) {
       await this._ensureInit();
       this._stopExpansionEffect();
+      // Airy wash：过渡被中止。streaming deck 会保留复用 → 旁路回连；
+      // buffer deck 会被重建 → 直接释放；next deck 一律释放。
+      var liveDeck = (!this._currentBuffer && this._currentStreamingGain) ? this._currentStreamingGain : null;
+      this._disposeWash(this._currentWash, liveDeck);
+      this._currentWash = null;
+      this._disposeWash(this._nextWash, null);
+      this._nextWash = null;
 
       // 取消进行中的 crossfade
       this._stopCrossfadeTimer();
@@ -1085,6 +1111,8 @@
 
       // 当前 streaming gain fade out
       const now = this._ctx.currentTime;
+      // Airy wash：outgoing deck 逐渐沉入滤波+压限的氛围织体
+      this._engageOutgoingWash(this._currentStreamingGain, now, cfSec);
       var curves = this._getCrossfadeCurves(cfFrames);
       var fadeOut = curves.fadeOut;
       var fadeIn = curves.fadeIn;
@@ -1097,7 +1125,10 @@
       var nextGain = this._ctx.createGain();
       nextGain.gain.value = 0;
       nextSrc.connect(nextGain);
-      nextGain.connect(this._effectsInput || this._outputNode);
+      // incoming deck 从水洗状态中浮现，过渡结束后缓慢恢复全频段与动态
+      if (!this._routeIncomingWash(nextGain, now, cfSec)) {
+        nextGain.connect(this._effectsInput || this._outputNode);
+      }
 
       // 智能过渡：从分析得出的起始偏移开始播放下一曲
       var nextOffsetSec = 0;
@@ -1108,8 +1139,8 @@
         );
       }
 
-      // 智能调速：crossfade 期间以调速播放，过渡完成后线性渐回用户设定速率。
-      // 速率变化发生在 fade-in 期间，避免 incoming track 突然变调。
+      // 智能调速（单侧全量）：outgoing 是 streaming（worklet 不支持变速、
+      // 无法弯折），incoming 以全量比率贴齐当前曲，过渡完成后渐回原速。
       var tempoAdjust = this._getTempoAdjust();
       if (tempoAdjust !== 1.0) {
         nextSrc.playbackRate.value = this._userRate * tempoAdjust;
@@ -1152,6 +1183,10 @@
 
       this._crossfadeActive = true;
 
+      const now = this._ctx.currentTime;
+      // Airy wash：outgoing deck 逐渐沉入滤波+压限的氛围织体
+      this._engageOutgoingWash(this._currentGain, now, cfSec);
+
       var curves = this._getCrossfadeCurves(cfFrames);
       var fadeOut = curves.fadeOut;
       var fadeIn = curves.fadeIn;
@@ -1160,7 +1195,10 @@
       const nextGain = this._ctx.createGain();
       nextGain.gain.value = 0;
       nextSrc.connect(nextGain);
-      nextGain.connect(this._effectsInput || this._outputNode);
+      // incoming deck 从水洗状态中浮现，过渡结束后缓慢恢复全频段与动态
+      if (!this._routeIncomingWash(nextGain, now, cfSec)) {
+        nextGain.connect(this._effectsInput || this._outputNode);
+      }
 
       // 智能过渡：从分析得出的起始偏移开始播放下一曲
       var nextOffsetSec = 0;
@@ -1171,14 +1209,28 @@
         );
       }
 
-      // 智能调速：crossfade 期间以调速播放，过渡完成后线性渐回用户设定速率。
-      var tempoAdjust = this._getTempoAdjust();
-      if (tempoAdjust !== 1.0) {
-        nextSrc.playbackRate.value = this._userRate * tempoAdjust;
-        this._tempoAdjustActive = tempoAdjust;
-        console.log('[AudioEngine] Tempo adjust (crossfade):', tempoAdjust.toFixed(4),
-          '(cur=' + (this._transitionPlan ? this._transitionPlan.bpmCurrent : '?') +
-          ' next=' + (this._transitionPlan ? this._transitionPlan.bpmNext : '?') + ')');
+      // 智能调速（双侧汇合）：两曲各承担一半修正（对数空间），在几何平均
+      // BPM 处对齐。outgoing 在交叉淡化前 85% 内从 userRate 缓慢弯折到
+      // userRate/half，incoming 以 userRate*half 进入；过渡完成后 incoming
+      // 再从 half 渐回原速（_finishTransition 的 ramp-back），形成
+      // 128→119→112 的连续变速旅程，无任何突变。
+      var rawAdjust = this._transitionPlan ? this._transitionPlan.bpmTempoAdjust : 0;
+      if (typeof rawAdjust === 'number' && isFinite(rawAdjust) && rawAdjust > 0 && rawAdjust !== 1.0) {
+        // full ∈ [0.80,1.25] → half ∈ [0.894,1.118]，单侧幅度始终 ≤12%
+        var clamped = Math.max(0.80, Math.min(1.25, rawAdjust));
+        var half = Math.sqrt(clamped);
+        nextSrc.playbackRate.value = this._userRate * half;
+        this._tempoAdjustActive = half;
+        if (this._currentSource && this._currentSource.playbackRate) {
+          var pr = this._currentSource.playbackRate;
+          pr.cancelScheduledValues(now);
+          pr.setValueAtTime(this._userRate, now);
+          pr.linearRampToValueAtTime(this._userRate / half, now + cfSec * 0.85);
+        }
+        console.log('[AudioEngine] Tempo converge (crossfade): cur ×' + (1 / half).toFixed(4) +
+          ' ↔ next ×' + half.toFixed(4) +
+          ' (cur=' + (this._transitionPlan ? this._transitionPlan.bpmCurrent : '?') +
+          ' next=' + (this._transitionPlan ? this._transitionPlan.bpmNext : '?') + ' bpm)');
       } else {
         this._tempoAdjustActive = 0;
       }
@@ -1188,7 +1240,6 @@
       this._nextSource = nextSrc;
       this._nextGain = nextGain;
 
-      const now = this._ctx.currentTime;
       this._currentGain.gain.setValueCurveAtTime(fadeOut, now, cfSec);
       nextGain.gain.setValueCurveAtTime(fadeIn, now, cfSec);
 
@@ -1233,6 +1284,10 @@
 
       // 当前曲目 gain fade out
       const now = this._ctx.currentTime;
+      // Airy wash：outgoing deck 逐渐沉入滤波+压限的氛围织体；
+      // incoming streaming deck（已预连接效果链）改接入水洗链
+      this._engageOutgoingWash(this._currentStreamingGain, now, cfSec);
+      this._routeIncomingWash(this._nextStreamingGain, now, cfSec);
       if (this._currentStreamingGain) {
         this._currentStreamingGain.gain.setValueCurveAtTime(fadeOut, now, cfSec);
       }
@@ -1277,6 +1332,11 @@
 
       const now = this._ctx.currentTime;
 
+      // Airy wash：outgoing deck 逐渐沉入滤波+压限的氛围织体；
+      // incoming streaming deck（已预连接效果链）改接入水洗链
+      this._engageOutgoingWash(this._currentGain, now, cfSec);
+      this._routeIncomingWash(this._nextStreamingGain, now, cfSec);
+
       // 当前 buffer source fade out（不是硬切！）
       // 保留 _currentSource / _currentGain / _currentBuffer 不变，
       // 让 _finishTransition 在 crossfade 结束后统一清理。
@@ -1299,6 +1359,157 @@
       }, cfMs + 50);
     }
 
+    // ── Airy transition wash ────────────────────────────────────────────────
+
+    /**
+     * 创建单条 deck 的 wash 链：input → highpass → lowpass → compressor →
+     * makeup(=output)。初始为全中性（透明直通），自动化介入前不影响声音。
+     * @param {'out'|'in'} role - deck 角色（outgoing 压得更狠、incoming 更柔和）
+     * @param {GainNode|null} deckGain - 该链服务的 deck 增益节点
+     */
+    _createWashChain(role, deckGain) {
+      var input = this._ctx.createGain();
+      var highpass = this._ctx.createBiquadFilter();
+      highpass.type = 'highpass';
+      highpass.Q.value = 0.6;
+      highpass.frequency.value = WASH_NEUTRAL.highpass;
+      var lowpass = this._ctx.createBiquadFilter();
+      lowpass.type = 'lowpass';
+      lowpass.Q.value = 0.55;
+      lowpass.frequency.value = WASH_NEUTRAL.lowpass;
+      var comp = this._ctx.createDynamicsCompressor();
+      comp.knee.value = role === 'out' ? 14 : 10;
+      // outgoing：快 attack 抹平瞬态，慢 release 得到平滑的"水洗"延音；
+      // incoming：稍慢 attack，避免进入时的呼吸感过于突兀。
+      comp.attack.value = role === 'out' ? 0.004 : 0.008;
+      comp.release.value = role === 'out' ? 0.35 : 0.28;
+      comp.threshold.value = WASH_NEUTRAL.threshold;
+      comp.ratio.value = WASH_NEUTRAL.ratio;
+      var makeup = this._ctx.createGain();
+      makeup.gain.value = WASH_NEUTRAL.makeup;
+      input.connect(highpass);
+      highpass.connect(lowpass);
+      lowpass.connect(comp);
+      comp.connect(makeup);
+      return {
+        role: role,
+        deckGain: deckGain || null,
+        input: input,
+        highpass: highpass,
+        lowpass: lowpass,
+        comp: comp,
+        makeup: makeup,
+        output: makeup,
+        restoreTimer: null,
+      };
+    }
+
+    /**
+     * 给 outgoing deck 挂上 wash：把 deckGain 改接到 wash 链，并在交叉淡化
+     * 前 ~70% 时间内逐渐下沉到目标织体（低通收窄 + 高通抬升 + 压限加深 +
+     * 少量 makeup 补偿），之后保持在最深状态随淡出消失。
+     * @returns {object|null} 挂上的 wash（失败时为 null）
+     */
+    _engageOutgoingWash(deckGain, t0, cfSec) {
+      if (!this._ctx || !deckGain) return null;
+      // 极短曲目：上一轮 wash 可能尚未恢复完毕，先旁路掉避免叠加压缩器延迟
+      this._disposeWash(this._currentWash, deckGain);
+      var wash = this._createWashChain('out', deckGain);
+      try {
+        deckGain.disconnect();
+        deckGain.connect(wash.input);
+        wash.output.connect(this._effectsInput || this._outputNode);
+      } catch (e) {
+        this._disposeWash(wash, null);
+        return null;
+      }
+      var deepenSec = Math.max(0.35, cfSec * 0.7);
+      wash.lowpass.frequency.setValueAtTime(WASH_NEUTRAL.lowpass, t0);
+      wash.lowpass.frequency.exponentialRampToValueAtTime(WASH_OUT_DEEP.lowpass, t0 + deepenSec);
+      wash.highpass.frequency.setValueAtTime(WASH_NEUTRAL.highpass, t0);
+      wash.highpass.frequency.exponentialRampToValueAtTime(WASH_OUT_DEEP.highpass, t0 + deepenSec);
+      wash.comp.threshold.setValueAtTime(WASH_NEUTRAL.threshold, t0);
+      wash.comp.threshold.linearRampToValueAtTime(WASH_OUT_DEEP.threshold, t0 + deepenSec);
+      wash.comp.ratio.setValueAtTime(WASH_NEUTRAL.ratio, t0);
+      wash.comp.ratio.linearRampToValueAtTime(WASH_OUT_DEEP.ratio, t0 + deepenSec);
+      wash.makeup.gain.setValueAtTime(WASH_NEUTRAL.makeup, t0);
+      wash.makeup.gain.linearRampToValueAtTime(WASH_OUT_DEEP.makeup, t0 + deepenSec);
+      this._currentWash = wash;
+      return wash;
+    }
+
+    /**
+     * 把 incoming deck 接入 wash：起始即处于水洗状态（与 outgoing 的织体
+     * 同源、稍明亮），交叉淡化期间保持，结束后在 settle 窗口内缓缓恢复
+     * 全频段、动态与清晰度，恢复完毕自动旁路并释放节点。
+     * @param {GainNode} deckGain - incoming deck 的增益节点（已连接/未连接均可）
+     * @returns {object|null} 挂上的 wash（失败时为 null，调用方直连效果链）
+     */
+    _routeIncomingWash(deckGain, t0, cfSec) {
+      if (!this._ctx || !deckGain) return null;
+      this._disposeWash(this._nextWash, null);
+      var wash = this._createWashChain('in', deckGain);
+      try {
+        // streaming next gain 可能已直连效果链（setNextInfo 预创建），先断开再入链
+        deckGain.disconnect();
+        deckGain.connect(wash.input);
+        wash.output.connect(this._effectsInput || this._outputNode);
+      } catch (e) {
+        this._disposeWash(wash, null);
+        return null;
+      }
+      // 起始：处于水洗状态（比 outgoing 的最深点略开一些，形成纵深感）
+      wash.lowpass.frequency.setValueAtTime(WASH_IN_START.lowpass, t0);
+      wash.highpass.frequency.setValueAtTime(WASH_IN_START.highpass, t0);
+      wash.comp.threshold.setValueAtTime(WASH_IN_START.threshold, t0);
+      wash.comp.ratio.setValueAtTime(WASH_IN_START.ratio, t0);
+      wash.makeup.gain.setValueAtTime(WASH_IN_START.makeup, t0);
+      // 恢复：交叉淡化结束（deck 已提升为 current）后开始，随曲目"落定"
+      // 逐渐找回全部频段与动态。使用绝对时间调度，与主线程定时器无竞态。
+      var settleSec = Math.max(2.2, Math.min(5.0, cfSec * 0.75));
+      var t1 = t0 + cfSec;
+      wash.lowpass.frequency.setValueAtTime(WASH_IN_START.lowpass, t1);
+      wash.lowpass.frequency.exponentialRampToValueAtTime(WASH_NEUTRAL.lowpass, t1 + settleSec);
+      wash.highpass.frequency.setValueAtTime(WASH_IN_START.highpass, t1);
+      wash.highpass.frequency.exponentialRampToValueAtTime(WASH_NEUTRAL.highpass, t1 + settleSec);
+      wash.comp.threshold.setValueAtTime(WASH_IN_START.threshold, t1);
+      wash.comp.threshold.linearRampToValueAtTime(WASH_NEUTRAL.threshold, t1 + settleSec);
+      wash.comp.ratio.setValueAtTime(WASH_IN_START.ratio, t1);
+      wash.comp.ratio.linearRampToValueAtTime(WASH_NEUTRAL.ratio, t1 + settleSec);
+      wash.makeup.gain.setValueAtTime(WASH_IN_START.makeup, t1);
+      wash.makeup.gain.linearRampToValueAtTime(WASH_NEUTRAL.makeup, t1 + settleSec);
+      // 恢复完毕后旁路并释放链路（避免压缩器前视延迟在信号路径中累积）
+      var self = this;
+      wash.restoreTimer = setTimeout(function () {
+        wash.restoreTimer = null;
+        var live = wash.deckGain &&
+          (wash.deckGain === self._currentGain || wash.deckGain === self._currentStreamingGain);
+        self._disposeWash(wash, live ? wash.deckGain : null);
+        if (self._currentWash === wash) self._currentWash = null;
+        if (self._nextWash === wash) self._nextWash = null;
+      }, Math.ceil((cfSec + settleSec + 0.3) * 1000));
+      this._nextWash = wash;
+      return wash;
+    }
+
+    /**
+     * 释放一条 wash 链。若对应 deck 仍在发声（如 seek / 过渡被中止），
+     * 传入 liveDeckGain 将其直连回效果链，播放不中断。
+     */
+    _disposeWash(wash, liveDeckGain) {
+      if (!wash) return;
+      if (wash.restoreTimer) {
+        clearTimeout(wash.restoreTimer);
+        wash.restoreTimer = null;
+      }
+      if (liveDeckGain) {
+        try { liveDeckGain.disconnect(); } catch (_) {}
+        try { liveDeckGain.connect(this._effectsInput || this._outputNode); } catch (_) {}
+      }
+      var nodes = [wash.input, wash.highpass, wash.lowpass, wash.comp, wash.makeup];
+      for (var i = 0; i < nodes.length; i++) this._safeDisconnect(nodes[i]);
+    }
+
     /**
      * 过渡完成处理。统一处理所有模式的 crossfade 完成。
      */
@@ -1309,6 +1520,12 @@
       this._pendingBufferToStreamingCrossfade = false;
       this._crossfadePending = false;
       this._crossfadePendingSince = 0;
+
+      // Airy wash：outgoing deck 即将销毁，其 wash 链一并释放；
+      // incoming deck 的 wash 提升为 current，恢复自动化在音频线程继续。
+      this._disposeWash(this._currentWash, null);
+      this._currentWash = this._nextWash;
+      this._nextWash = null;
 
       var hadNextStreaming = !!this._nextStreamingNode;
       var hadNextBuffer = !!this._nextSource || !!this._nextBuffer;
@@ -2030,7 +2247,9 @@
     }
 
     /**
-     * Schedule a subtle beat-locked repetition layer on the outgoing buffer.
+     * Schedule a beat-locked DJ pull-up gesture on the outgoing buffer:
+     * accelerating pitched-up repeats (抽拉) that build into the transition,
+     * optionally finished with a reversed-fragment spinback (倒带甩盘).
      * The dry/current and incoming tracks keep their existing routing and
      * crossfade curves; this is a parallel, temporary bus only.
      */
@@ -2095,7 +2314,9 @@
 
       var sources = [];
       var nodes = [repeatBus, air, convolver, reverbGain, delay, feedback, delayGain];
-      var count = Math.max(1, Math.min(8, Math.round(fx.repeatCount || 4)));
+      var count = Math.max(1, Math.min(10, Math.round(fx.repeatCount || 4)));
+      var rateRise = Math.max(0, Math.min(0.9, fx.rateRise || 0));
+      var lastRate = 1;
       for (var i = 0; i < count; i++) {
         var when = now + i * spacingSec;
         if (when >= now + endSec) break;
@@ -2103,12 +2324,20 @@
         var gain = this._ctx.createGain();
         var pan = this._ctx.createStereoPanner();
         var progress = count <= 1 ? 1 : i / (count - 1);
-        var envelope = fx.intensity * (0.42 + 0.28 * Math.sin(progress * Math.PI));
+        // 抽拉：playbackRate 逐次上行 → 节奏越拉越紧、音调越拽越高
+        var rate = 1 + progress * rateRise;
+        lastRate = rate;
+        source.playbackRate.value = rate;
+        // 片段时长按速率换算成墙钟时间，保证重复仍然落在节奏网格上
+        var hitSec = fragmentSec / rate;
+        // 能量递增：往复越拉越响，把张力推向下一曲的 drop
+        var envelope = fx.intensity * (0.55 + 0.45 * progress);
         gain.gain.setValueAtTime(0, when);
-        gain.gain.linearRampToValueAtTime(envelope, when + Math.min(0.025, fragmentSec * 0.12));
-        gain.gain.linearRampToValueAtTime(envelope * 0.62, when + fragmentSec * 0.72);
-        gain.gain.linearRampToValueAtTime(0, when + fragmentSec);
-        pan.pan.value = (progress - 0.5) * 2 * Math.min(0.55, fx.width || 0.2);
+        gain.gain.linearRampToValueAtTime(envelope, when + Math.min(0.02, hitSec * 0.15));
+        gain.gain.linearRampToValueAtTime(envelope * 0.85, when + hitSec * 0.6);
+        gain.gain.linearRampToValueAtTime(0, when + hitSec);
+        // 往复：左右交替甩出，模拟唱片被来回拽
+        pan.pan.value = (i % 2 === 0 ? -1 : 1) * Math.min(0.7, fx.width || 0.2);
         source.connect(gain);
         gain.connect(pan);
         pan.connect(repeatBus);
@@ -2116,6 +2345,35 @@
         sources.push(source);
         nodes.push(gain, pan);
       }
+
+      // 倒带甩盘（spinback）：手势收尾——反向片段 + 快速升速，
+      // 模拟 DJ 把唱片拽回卷带的"咻"，紧接着下一曲落入。
+      if (fx.spinback && sources.length) {
+        var spinDur = Math.max(0.15, fragmentSec * 0.7);
+        var spinWhen = now + count * spacingSec;
+        if (spinWhen + spinDur <= now + endSec + 0.25) {
+          var revBuf = this._makeReversedFragment(this._currentBuffer, fragmentOffset, fragmentSec, sr);
+          var spin = new AudioBufferSourceNode(this._ctx, { buffer: revBuf });
+          var spinGain = this._ctx.createGain();
+          var spinPan = this._ctx.createStereoPanner();
+          var spinPeak = fx.intensity * 1.35;
+          spin.playbackRate.setValueAtTime(Math.max(1, lastRate * 0.9), spinWhen);
+          spin.playbackRate.exponentialRampToValueAtTime(2.6, spinWhen + spinDur);
+          spinGain.gain.setValueAtTime(0, spinWhen);
+          spinGain.gain.linearRampToValueAtTime(spinPeak, spinWhen + 0.02);
+          spinGain.gain.setValueAtTime(spinPeak, spinWhen + spinDur * 0.55);
+          spinGain.gain.linearRampToValueAtTime(0, spinWhen + spinDur);
+          spinPan.pan.setValueAtTime(-0.2, spinWhen);
+          spinPan.pan.linearRampToValueAtTime(0.25, spinWhen + spinDur);
+          spin.connect(spinGain);
+          spinGain.connect(spinPan);
+          spinPan.connect(repeatBus);
+          spin.start(spinWhen, 0, fragmentSec);
+          sources.push(spin);
+          nodes.push(spinGain, spinPan);
+        }
+      }
+
       if (!sources.length) {
         nodes.forEach((n) => this._safeDisconnect(n));
         return;
@@ -2124,7 +2382,26 @@
       var cleanupTimer = setTimeout(function () { self._stopExpansionEffect(); }, Math.ceil((endSec + 1.0) * 1000));
       this._expansionEffect = { sources: sources, nodes: nodes, cleanupTimer: cleanupTimer };
       console.log('[AudioEngine] Expansion effect scheduled:', fx.reason,
-        'repeats=' + count, 'spacing=' + fx.spacingMs + 'ms', 'duration=' + fx.durationMs + 'ms');
+        'repeats=' + count, 'spacing=' + fx.spacingMs + 'ms', 'rateRise=' + rateRise,
+        'spinback=' + !!fx.spinback, 'duration=' + fx.durationMs + 'ms');
+    }
+
+    /**
+     * 构建片段的反向拷贝（倒带甩盘用）。AudioBufferSourceNode 不支持负速率，
+     * 反转样本数据实现倒放。
+     */
+    _makeReversedFragment(buffer, offsetSec, lengthSec, sampleRate) {
+      var length = Math.max(1, Math.min(buffer.length, Math.round(lengthSec * sampleRate)));
+      var start = Math.max(0, Math.min(buffer.length - length, Math.round(offsetSec * sampleRate)));
+      var rev = this._ctx.createBuffer(buffer.numberOfChannels, length, sampleRate);
+      for (var ch = 0; ch < buffer.numberOfChannels; ch++) {
+        var src = buffer.getChannelData(ch);
+        var dst = rev.getChannelData(ch);
+        for (var i = 0; i < length; i++) {
+          dst[i] = src[start + length - 1 - i];
+        }
+      }
+      return rev;
     }
 
     _makeExpansionImpulse(seconds, sampleRate) {
@@ -2195,6 +2472,14 @@
 
     clearNextState() {
       this._stopExpansionEffect();
+      // Airy wash：next deck 的 wash 随 deck 一并释放；若 crossfade 进行中
+      // 被清除，current deck 仍存活 → 旁路回连效果链。
+      this._disposeWash(this._nextWash, null);
+      this._nextWash = null;
+      if (this._crossfadeActive) {
+        this._disposeWash(this._currentWash, this._currentGain || this._currentStreamingGain);
+        this._currentWash = null;
+      }
       // Buffer next
       this._safeStopSource(this._nextSource);
       this._safeDisconnect(this._nextGain);
