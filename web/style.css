@@ -4352,19 +4352,62 @@ select.cmd-text-field__input + .cmd-text-field__label {
 /* Queue */
 .np-queue-item {
   display: grid;
-  grid-template-columns: 40px 1fr auto auto;
+  grid-template-columns: 20px 40px 1fr auto auto;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   padding: 6px 12px;
   border-radius: var(--shape-sm);
   cursor: pointer;
-  transition: background var(--motion-short) var(--ease-standard);
+  transition: background var(--motion-short) var(--ease-standard), opacity var(--motion-short) var(--ease-standard);
   min-height: 56px;
+  position: relative;
 }
 .np-queue-item:hover { background: var(--md-state-hover); }
 .np-queue-item.current { background: var(--md-secondary-container); }
 .np-queue-item.current .np-queue-title { color: var(--md-on-secondary-container); font-weight: 600; }
 .np-queue-item.current .np-queue-artist { color: var(--md-on-secondary-container); opacity: 0.8; }
+.np-queue-drag {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  opacity: 0.3;
+  cursor: grab;
+  padding: 0;
+  transition: opacity var(--motion-short) var(--ease-standard);
+  -webkit-app-region: no-drag;
+}
+.np-queue-item:hover .np-queue-drag { opacity: 0.7; }
+.np-queue-drag:active { cursor: grabbing; }
+.np-queue-drag-icon {
+  width: 8px;
+  height: 14px;
+  background-image: radial-gradient(circle, currentColor 1.2px, transparent 1.5px);
+  background-size: 4px 7px;
+  background-position: 0 0;
+  background-repeat: repeat;
+}
+.np-queue-item.dragging {
+  opacity: 0.4;
+  background: var(--md-surface-container-high);
+}
+.np-queue-item.drag-over-top::before,
+.np-queue-item.drag-over-bottom::before {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  background: var(--md-primary);
+  border-radius: 1px;
+  pointer-events: none;
+}
+.np-queue-item.drag-over-top::before { top: 0; }
+.np-queue-item.drag-over-bottom::before { bottom: 0; }
 .np-queue-cover-wrap {
   width: 40px;
   height: 40px;
@@ -6588,6 +6631,58 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   height: 100%;
   object-fit: cover;
 }
+
+/* ── Genre Mosaic Cover (multi-album geometric layout) ─────────── */
+
+.ym-mosaic-wrapper {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+.ym-mosaic-wrapper .ym-mosaic-cover {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  gap: 2px;
+  background: var(--md-surface-container-high);
+}
+.ym-mosaic-cover .ym-mosaic-cell {
+  overflow: hidden;
+  position: relative;
+}
+.ym-mosaic-cover .ym-mosaic-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 1 image: full bleed */
+.ym-mosaic-cover:has(.m1) {
+  grid-template: 1fr / 1fr;
+}
+/* 2 images: left/right halves */
+.ym-mosaic-cover:has(.m2-l) {
+  grid-template: 1fr / 1fr 1fr;
+}
+/* 3 images: left big + right top/bottom */
+.ym-mosaic-cover:has(.m3-l) {
+  grid-template: 1fr 1fr / 1fr 1fr;
+}
+.ym-mosaic-cover .m3-l {
+  grid-row: 1 / span 2;
+}
+/* 4 images: 2×2 grid */
+.ym-mosaic-cover:has(.m4-tl) {
+  grid-template: 1fr 1fr / 1fr 1fr;
+}
+
+/* ── Detail page mosaic (200×200) ──────────────────────────────── */
+
+.ym-mix-detail-cover .ym-mosaic-wrapper {
+  width: 100%;
+  height: 100%;
+}
 .ym-mix-cover-letter {
   font-size: 38px;
   font-weight: 700;
@@ -6637,7 +6732,7 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   margin-bottom: 4px;
 }
 .ym-mix-type-icon {
-  font-size: 12px !important;
+font-size: 12px !important;
 }
 .ym-mix-info {
   padding: 8px 10px 10px;
@@ -6655,6 +6750,128 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   font-size: 11px;
   color: var(--md-on-surface-variant);
   margin: 0;
+}
+
+/* ── Abstract Art Cover (Apple Music style) ─────────────────── */
+
+.ym-mix-cover-art {
+  background: var(--md-surface-container-high);
+  /* SVG 内部自渐变，此背景仅用于加载前的占位 */
+}
+.ym-mix-cover-art svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ── Mix Detail Page ───────────────────────────────────────── */
+
+.ym-mix-detail-page {
+  padding: 0 0 24px;
+}
+
+.ym-mix-detail-header {
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+  padding: 24px 28px 20px;
+}
+
+.ym-mix-detail-cover {
+  width: 200px;
+  height: 200px;
+  border-radius: var(--shape-lg);
+  overflow: hidden;
+  flex-shrink: 0;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+}
+.ym-mix-detail-cover svg {
+display: block;
+width: 100%;
+height: 100%;
+}
+.ym-mix-detail-cover img {
+display: block;
+width: 100%;
+height: 100%;
+object-fit: cover;
+}
+
+.ym-mix-detail-meta {
+  flex: 1;
+  min-width: 0;
+  padding-bottom: 8px;
+}
+
+.ym-mix-detail-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--md-on-surface-variant);
+  background: var(--md-surface-container-high);
+  padding: 3px 8px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+.ym-mix-detail-badge .material-symbols-rounded {
+  font-size: 14px;
+}
+
+.ym-mix-detail-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--md-on-surface);
+  margin: 0 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ym-mix-detail-sub {
+  font-size: 13px;
+  color: var(--md-on-surface-variant);
+  margin: 0 0 12px;
+}
+
+.ym-mix-detail-actions {
+  display: flex;
+  gap: 10px;
+}
+
+/* ── Playlists Submenu: Mix entry & section headers ────────── */
+
+.nav-submenu-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--md-on-surface-variant);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.nav-submenu-divider {
+  height: 1px;
+  margin: 4px 12px;
+  background: var(--md-outline-variant);
+}
+.nav-submenu-item--mix {
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+}
+.nav-submenu-item--mix:hover {
+  background: var(--md-primary-container);
+  filter: brightness(1.05);
+}
+.nav-submenu-item-chevron {
+  font-size: 18px !important;
+  margin-left: auto;
+  opacity: 0.5;
 }
 
 /* ── Recent Plays List ────────────────────────────────────── */

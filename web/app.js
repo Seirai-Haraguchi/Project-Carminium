@@ -19,7 +19,8 @@
     allAlbums: [],       // 全量专辑缓存
     allArtists: [],      // 全量艺术家缓存
     allFolders: [],      // 全量文件夹缓存
-    allSubsonicServers: [], // 全量 Subsonic 服务器缓存
+    allSubsonicServers: [], // 全量 Subsonic 服务器缓存（兼容旧代码）
+    allRemoteServers: [],   // 全量远程服务器缓存（Subsonic + WebDAV + SMB）
     colorScheme: 'tonal_spot', // Material You 配色方案
     monetSource: 'album_cover', // 莫奈取色来源: "album_cover" | "system_wallpaper"
     isExclusive: false,  // WASAPI 独占模式标志（由 settings_changed 同步）
@@ -104,6 +105,7 @@
       App.utils.call('get_artists').then(function (raw) { return JSON.parse(raw); }),
       App.utils.call('get_folders').then(function (raw) { return JSON.parse(raw); }),
       App.utils.call('get_subsonic_servers').then(function (raw) { return JSON.parse(raw); }),
+      App.utils.call('get_remote_servers').then(function (raw) { return JSON.parse(raw); }).catch(function () { return []; }),
     ]).then(function (results) {
       function replaceArrayInPlace(key, next) {
         var current = App.state[key];
@@ -122,6 +124,13 @@
       replaceArrayInPlace('allArtists', results[2]);
       replaceArrayInPlace('allFolders', results[3]);
       replaceArrayInPlace('allSubsonicServers', results[4]);
+      // allRemoteServers 可能不存在（如果 get_remote_servers 不可用），安全处理
+      if (results[5]) {
+        replaceArrayInPlace('allRemoteServers', results[5]);
+        // 同步更新 allSubsonicServers 为远程服务器中 subsonic 类型的子集（兼容旧代码）
+        var subsonicOnly = results[5].filter(function (s) { return s.type === 'subsonic'; });
+        replaceArrayInPlace('allSubsonicServers', subsonicOnly);
+      }
       return App.state;
     });
   };
@@ -205,6 +214,19 @@
           try { App.state.allSubsonicServers = JSON.parse(json); } catch (e) {}
           if (App.pages.folders && App.pages.folders.onSubsonicServersUpdated) {
             App.pages.folders.onSubsonicServersUpdated(json);
+          }
+        });
+
+        // 统一远程服务器列表变化（Subsonic + WebDAV + SMB）
+        uiSync.on('remote_servers_changed', function (json) {
+          try {
+            var servers = JSON.parse(json);
+            App.state.allRemoteServers = servers;
+            // 同步更新 allSubsonicServers 为 subsonic 类型的子集（兼容旧代码）
+            App.state.allSubsonicServers = servers.filter(function (s) { return s.type === 'subsonic'; });
+          } catch (e) {}
+          if (App.pages.folders && App.pages.folders.onRemoteServersUpdated) {
+            App.pages.folders.onRemoteServersUpdated(json);
           }
         });
 
@@ -338,6 +360,7 @@
         _wireSignal('history_changed');
         _wireSignal('liked_tracks_changed');
         _wireSignal('subsonic_servers_changed');
+        _wireSignal('remote_servers_changed');
         _wireSignal('library_updated');
         _wireSignal('folders_updated');
         _wireSignal('settings_changed');
@@ -1007,34 +1030,65 @@
 
   function _renderPlaylistsSubmenu(playlists) {
     if (!playlistsListEl) return;
-    if (!playlists || playlists.length === 0) {
-      playlistsListEl.innerHTML = `
-        <div class="nav-submenu-empty">
-          <span class="material-symbols-rounded">queue_music</span>
-          <p>暂无歌单</p>
-        </div>
-      `;
-      return;
-    }
+    
+    // 清空并重建列表
     playlistsListEl.innerHTML = '';
     const frag = document.createDocumentFragment();
-    playlists.forEach(pl => {
-      const isRemote = pl.source === 'subsonic';
-      const item = document.createElement('button');
-      item.className = 'nav-submenu-item';
-      item.type = 'button';
-      var iconHtml;
-      if (isRemote && pl.cover_art_id && pl.server_id && window.__coverBase) {
-        iconHtml = '<img class="nav-submenu-item-cover" src="' + window.__coverBase + '/subsonic/cover/' + pl.server_id + '/' + encodeURIComponent(pl.cover_art_id) + '" alt="" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'inline-flex\'"><span class="material-symbols-rounded nav-submenu-item-icon" style="display:none">cloud</span>';
-      } else {
-        iconHtml = '<span class="material-symbols-rounded nav-submenu-item-icon">' + (isRemote ? 'cloud' : 'playlist_play') + '</span>';
-      }
-      item.innerHTML = `
-        ${iconHtml}
-        <span class="nav-submenu-item-name">${App.utils.esc(pl.name)}</span>
-        ${isRemote ? '<span class="playlist-mini-badge">☁</span>' : ''}
-        <span class="nav-submenu-item-count">${pl.track_count || 0}</span>
-      `;
+
+    // ── 每日合集入口 ──
+    var mixHeader = document.createElement('div');
+    mixHeader.className = 'nav-submenu-section-header';
+    mixHeader.innerHTML = '<span class="material-symbols-rounded" style="font-size:14px">auto_awesome</span><span>' + (App.i18n ? App.i18n.t('yourMix.dailyMix') : '每日合集') + '</span>';
+    frag.appendChild(mixHeader);
+
+    var mixItem = document.createElement('button');
+    mixItem.className = 'nav-submenu-item nav-submenu-item--mix';
+    mixItem.type = 'button';
+    mixItem.innerHTML = `
+      <span class="material-symbols-rounded nav-submenu-item-icon">auto_awesome</span>
+      <span class="nav-submenu-item-name">${App.i18n ? App.i18n.t('nav.yourMix') : '探新'}</span>
+      <span class="material-symbols-rounded nav-submenu-item-chevron">chevron_right</span>
+    `;
+    mixItem.addEventListener('click', function () {
+      _closePlaylistsSubmenu();
+      navigate('your_mix');
+    });
+    frag.appendChild(mixItem);
+
+    // 分隔线
+    var divider = document.createElement('div');
+    divider.className = 'nav-submenu-divider';
+    frag.appendChild(divider);
+
+    // 歌单标题
+    var plHeader = document.createElement('div');
+    plHeader.className = 'nav-submenu-section-header';
+    plHeader.innerHTML = '<span class="material-symbols-rounded" style="font-size:14px">queue_music</span><span>' + (App.i18n ? App.i18n.t('nav.playlists') : '歌单') + '</span>';
+    frag.appendChild(plHeader);
+
+    if (!playlists || playlists.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'nav-submenu-empty';
+      empty.innerHTML = '<span class="material-symbols-rounded">queue_music</span><p>' + (App.i18n ? App.i18n.t('empty.noPlaylists') : '暂无歌单') + '</p>';
+      frag.appendChild(empty);
+    } else {
+      playlists.forEach(pl => {
+        const isRemote = pl.source === 'subsonic';
+        const item = document.createElement('button');
+        item.className = 'nav-submenu-item';
+        item.type = 'button';
+        var iconHtml;
+        if (isRemote && pl.cover_art_id && pl.server_id && window.__coverBase) {
+          iconHtml = '<img class="nav-submenu-item-cover" src="' + window.__coverBase + '/subsonic/cover/' + pl.server_id + '/' + encodeURIComponent(pl.cover_art_id) + '" alt="" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'inline-flex\'"><span class="material-symbols-rounded nav-submenu-item-icon" style="display:none">cloud</span>';
+        } else {
+          iconHtml = '<span class="material-symbols-rounded nav-submenu-item-icon">' + (isRemote ? 'cloud' : 'playlist_play') + '</span>';
+        }
+        item.innerHTML = `
+          ${iconHtml}
+          <span class="nav-submenu-item-name">${App.utils.esc(pl.name)}</span>
+          ${isRemote ? '<span class="playlist-mini-badge">☁</span>' : ''}
+          <span class="nav-submenu-item-count">${pl.track_count || 0}</span>
+        `;
       item.addEventListener('click', function () {
         _closePlaylistsSubmenu();
         navigate('playlists', { playlist_id: pl.id, playlist_name: pl.name, source: pl.source, server_id: pl.server_id, remote_id: pl.remote_id, server_name: pl.server_name, cover_art_id: pl.cover_art_id, owner: pl.owner, owner_email: pl.owner_email });
@@ -1082,6 +1136,7 @@
       });
       frag.appendChild(item);
     });
+    }
     playlistsListEl.appendChild(frag);
   }
 

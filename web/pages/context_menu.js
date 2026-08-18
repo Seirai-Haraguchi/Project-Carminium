@@ -40,6 +40,16 @@
 
     // 拦截全局右键菜单
     document.addEventListener('contextmenu', function(e) {
+      // 检测正在播放页面的专辑封面图
+      var coverEl = e.target.closest('#np-cover, #np-cover-img');
+      if (coverEl) {
+        var track = App.state && App.state.currentTrack;
+        if (track && track.has_cover) {
+          e.preventDefault();
+          showCover(e.clientX, e.clientY, track);
+          return;
+        }
+      }
       // 优先检测专辑卡片
       const albumCard = e.target.closest('.album-card');
       if (albumCard && albumCard._albumData) {
@@ -680,6 +690,104 @@
 
     menuContainer.style.left = posX + 'px';
     menuContainer.style.top = posY + 'px';
+  }
+
+  /**
+   * 显示专辑封面右键菜单
+   * @param {number} x
+   * @param {number} y
+   * @param {Object} track  当前播放曲目
+   */
+  function showCover(x, y, track) {
+    menuContainer.innerHTML = '';
+    _hideSubmenu();
+
+    var coverUrl = window.coverUrl(track.id, 800);
+
+    var list = document.createElement('div');
+    list.className = 'context-menu-list';
+
+    var items = [
+      { id: 'copy_cover', icon: 'content_copy', text: App.i18n.t('cm.copyCover') },
+      { id: 'open_cover_browser', icon: 'open_in_new', text: App.i18n.t('cm.openCoverInBrowser') },
+    ];
+
+    items.forEach(function (item) {
+      var el = document.createElement('div');
+      el.className = 'context-menu-item';
+
+      var iconColorStyle = item.color ? 'style="color:' + item.color + '"' : '';
+      el.innerHTML =
+        '<span class="material-symbols-rounded" ' + iconColorStyle + '>' + item.icon + '</span>' +
+        '<span class="context-menu-text">' + App.utils.esc(item.text) + '</span>';
+
+      el.addEventListener('mouseenter', function () {
+        if (submenuTimer) { clearTimeout(submenuTimer); submenuTimer = null; }
+        _hideSubmenu();
+      });
+
+      el.addEventListener('click', function () {
+        hide();
+        if (item.id === 'copy_cover') {
+          _copyCoverToClipboard(coverUrl);
+        } else if (item.id === 'open_cover_browser') {
+          window.open(coverUrl, '_blank');
+        }
+      });
+      list.appendChild(el);
+    });
+
+    menuContainer.appendChild(list);
+
+    overlayEl.style.display = 'block';
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        overlayEl.classList.add('open');
+      });
+    });
+
+    // 调整位置
+    var rect = menuContainer.getBoundingClientRect();
+    var posX = x;
+    var posY = y;
+    if (posX + rect.width > window.innerWidth) posX = window.innerWidth - rect.width - 16;
+    if (posY + rect.height > window.innerHeight) posY = window.innerHeight - rect.height - 16;
+    if (posX < 8) posX = 8;
+    if (posY < 8) posY = 8;
+
+    menuContainer.style.left = posX + 'px';
+    menuContainer.style.top = posY + 'px';
+  }
+
+  /**
+   * 将封面图片复制到剪贴板
+   * @param {string} url  封面图 URL
+   */
+  function _copyCoverToClipboard(url) {
+    fetch(url)
+      .then(function (res) { return res.blob(); })
+      .then(function (blob) {
+        if (!navigator.clipboard || !navigator.clipboard.write) {
+          App.utils.toast(App.i18n.t('cm.copyCoverUnsupported'));
+          return;
+        }
+        var mime = blob.type || 'image/png';
+        // 确保类型是 clipboard 支持的格式
+        if (mime !== 'image/png' && mime !== 'image/jpeg' && mime !== 'image/webp') {
+          mime = 'image/png';
+        }
+        var itemData = {};
+        itemData[mime] = blob;
+        var clipboardItem = new ClipboardItem(itemData);
+        navigator.clipboard.write([clipboardItem]).then(function () {
+          App.utils.toast(App.i18n.t('cm.copyCoverSuccess'));
+        }).catch(function () {
+          App.utils.toast(App.i18n.t('cm.copyCoverFailed'));
+        });
+      })
+      .catch(function () {
+        App.utils.toast(App.i18n.t('cm.copyCoverFailed'));
+      });
   }
 
   cm.init = init;

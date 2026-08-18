@@ -2627,6 +2627,7 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
         li.classList.add('current');
       }
       li.dataset.index = i;
+      li.draggable = true;
 
       let coverHtml = '';
       if (track.has_cover) {
@@ -2637,6 +2638,9 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
       }
 
       li.innerHTML = `
+        <button class="np-queue-drag" aria-label="${App.i18n.t('np.dragToReorder') || ''}">
+          <span class="np-queue-drag-icon"></span>
+        </button>
         <div class="np-queue-cover-wrap">${coverHtml}</div>
         <div class="np-queue-info">
           <div class="np-queue-title">${App.utils.esc(track.title || App.i18n.t('common.unknownTrack'))}</div>
@@ -2650,6 +2654,7 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
 
       li.addEventListener('click', function (e) {
         if (e.target.closest('.np-queue-remove')) return;
+        if (e.target.closest('.np-queue-drag')) return;
         App.backend.play_queue_at(i);
       });
 
@@ -2662,7 +2667,106 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
 
       els.queueList.appendChild(li);
     }
+
+    _setupQueueDragAndDrop();
   };
+
+  // ── 队列拖拽排序 ─────────────────────────────────────────────────────────
+  var _draggedQueueItem = null;
+
+  function _setupQueueDragAndDrop() {
+    var items = els.queueList.querySelectorAll('.np-queue-item');
+    items.forEach(function (item) {
+      item.addEventListener('dragstart', function (e) {
+        _draggedQueueItem = item;
+        item.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', item.dataset.index);
+      });
+
+      item.addEventListener('dragend', function () {
+        item.classList.remove('dragging');
+        _draggedQueueItem = null;
+        // 清理所有 drag-over 标记
+        var allItems = els.queueList.querySelectorAll('.np-queue-item');
+        allItems.forEach(function (it) {
+          it.classList.remove('drag-over-top', 'drag-over-bottom');
+        });
+      });
+
+      item.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (_draggedQueueItem === item) return;
+
+        var rect = item.getBoundingClientRect();
+        var midpoint = rect.top + rect.height / 2;
+        var allItems = els.queueList.querySelectorAll('.np-queue-item');
+        allItems.forEach(function (it) {
+          it.classList.remove('drag-over-top', 'drag-over-bottom');
+        });
+
+        if (e.clientY < midpoint) {
+          item.classList.add('drag-over-top');
+        } else {
+          item.classList.add('drag-over-bottom');
+        }
+      });
+
+      item.addEventListener('dragleave', function () {
+        item.classList.remove('drag-over-top', 'drag-over-bottom');
+      });
+
+      item.addEventListener('drop', function (e) {
+        e.preventDefault();
+        if (!_draggedQueueItem || _draggedQueueItem === item) return;
+
+        var fromIndex = parseInt(_draggedQueueItem.dataset.index, 10);
+        var rect = item.getBoundingClientRect();
+        var midpoint = rect.top + rect.height / 2;
+        var toIndex = parseInt(item.dataset.index, 10);
+
+        // 如果拖到下半部分，插入到目标项之后
+        if (e.clientY >= midpoint) {
+          toIndex = toIndex + 1;
+          // 拖到队列末尾之外的情况，限制为最后一个索引
+          if (toIndex > els.queueList.children.length - 1) {
+            toIndex = els.queueList.children.length - 1;
+          }
+        }
+
+        // 调整 toIndex：如果从前面拖到后面，splice 后索引会偏移
+        if (fromIndex < toIndex) {
+          toIndex = toIndex - 1;
+        }
+
+        if (fromIndex !== toIndex) {
+          App.backend.reorder_queue(fromIndex, toIndex);
+        }
+      });
+    });
+
+    // 队列容器本身也接受 drop（拖到空白区域 = 放到最后）
+    els.queueList.addEventListener('dragover', function (e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    });
+    els.queueList.addEventListener('drop', function (e) {
+      e.preventDefault();
+      // 如果 drop 在容器空白处而非某个 item 上，放到最后
+      if (_draggedQueueItem && !_draggedQueueItem.parentNode) return;
+      if (!_draggedQueueItem) return;
+      // 检查是否落在 item 上（由 item 的 drop handler 处理）
+      var targetItem = e.target.closest('.np-queue-item');
+      if (targetItem) return; // 已由 item 处理
+
+      var fromIndex = parseInt(_draggedQueueItem.dataset.index, 10);
+      var toIndex = els.queueList.children.length - 1;
+      if (fromIndex !== toIndex) {
+        App.backend.reorder_queue(fromIndex, toIndex);
+      }
+    });
+  }
 
   function _openDropdown() {
     els.dropdownMenu.style.display = 'block';

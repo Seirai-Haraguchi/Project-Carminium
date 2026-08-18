@@ -28,6 +28,8 @@ try {
 
 // 后台同步状态：记录正在同步的 server_id，防止重复触发
 const _syncingServers = new Set();
+const _syncingWebDAVServers = new Set();
+const _syncingSMBServers = new Set();
 
 function _dump(obj) {
   return JSON.stringify(obj, null, undefined);
@@ -286,6 +288,14 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     const payload = _dump(this._lib.getSubsonicServers());
     this.emit('subsonic_servers_changed', payload);
     this._emit('subsonic_servers_changed', payload);
+  }
+
+  _emitRemoteServersChanged() {
+    const payload = _dump(this._lib.getAllRemoteServers());
+    this.emit('remote_servers_changed', payload);
+    this._emit('remote_servers_changed', payload);
+    // 同时发 subsonic_servers_changed 以兼容旧前端
+    this._emitSubsonicServersChanged();
   }
 
   // ── 注册 IPC handlers ────────────────────────────────────────────────────
@@ -665,6 +675,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       this._player.appendQueue(track);
     });
     ipcMain.handle('remove_from_queue', (_e, index) => this._player.removeFromQueue(index));
+    ipcMain.handle('reorder_queue', (_e, fromIndex, toIndex) => this._player.reorderQueue(fromIndex, toIndex));
     ipcMain.handle('play_queue_at', (_e, index) => {
       const queue = this._player.getQueue();
       if (queue && index >= 0 && index < queue.length) {
@@ -706,6 +717,12 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     });
     ipcMain.handle('get_daily_mixes', () => {
       return _dump(this._lib.getDailyMixes());
+    });
+    ipcMain.handle('get_explore_tracks', () => {
+      return _dump(this._lib.getExploreTracks());
+    });
+    ipcMain.handle('get_similar_recommendations', () => {
+      return _dump(this._lib.getSimilarRecommendations());
     });
 
     // ── Playlists ──
@@ -828,6 +845,93 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
 
     ipcMain.handle('sync_subsonic_server', (_e, serverId) => {
       return this._syncSubsonicServer(parseInt(serverId, 10));
+    });
+
+    // ── 统一远程服务器查询 ──
+    ipcMain.handle('get_remote_servers', () => _dump(this._lib.getAllRemoteServers()));
+
+    // ── WebDAV ──
+    ipcMain.handle('get_webdav_servers', () => _dump(this._lib.getWebDAVServers()));
+
+    ipcMain.handle('add_webdav_server', (_e, name, serverUrl, username, password) => {
+      const server = this._lib.addWebDAVServer(name, serverUrl, username, password);
+      this._emitRemoteServersChanged();
+      return _dump(server);
+    });
+
+    ipcMain.handle('remove_webdav_server', (_e, serverId) => {
+      this._lib.removeWebDAVServer(parseInt(serverId, 10));
+      this._player.reloadLikedTracks();
+      this._emitRemoteServersChanged();
+      this._emitLibraryUpdated();
+      this._emitLikedTracksChanged();
+    });
+
+    ipcMain.handle('update_webdav_server', (_e, serverId, name, serverUrl, username, password) => {
+      const updated = this._lib.updateWebDAVServer(
+        parseInt(serverId, 10), name, serverUrl, username, password
+      );
+      this._emitRemoteServersChanged();
+      return _dump(updated);
+    });
+
+    ipcMain.handle('test_webdav_server', async (_e, serverId) => {
+      const { WebDAVClient } = require('./webdav');
+      const cfg = this._lib.getWebDAVServer(parseInt(serverId, 10));
+      if (!cfg) return _dump({ ok: false, error: '服务器不存在' });
+      const client = new WebDAVClient(cfg.server_url, cfg.username, cfg.password, 20.0);
+      try {
+        const result = await client.ping();
+        return _dump(result);
+      } catch (e) {
+        return _dump({ ok: false, error: String(e) });
+      }
+    });
+
+    ipcMain.handle('sync_webdav_server', (_e, serverId) => {
+      return this._syncWebDAVServer(parseInt(serverId, 10));
+    });
+
+    // ── SMB / NAS ──
+    ipcMain.handle('get_smb_servers', () => _dump(this._lib.getSMBServers()));
+
+    ipcMain.handle('add_smb_server', (_e, name, host, shareName, username, password, domain) => {
+      const server = this._lib.addSMBServer(name, host, shareName, username, password, domain || '');
+      this._emitRemoteServersChanged();
+      return _dump(server);
+    });
+
+    ipcMain.handle('remove_smb_server', (_e, serverId) => {
+      this._lib.removeSMBServer(parseInt(serverId, 10));
+      this._player.reloadLikedTracks();
+      this._emitRemoteServersChanged();
+      this._emitLibraryUpdated();
+      this._emitLikedTracksChanged();
+    });
+
+    ipcMain.handle('update_smb_server', (_e, serverId, name, host, shareName, username, password, domain) => {
+      const updated = this._lib.updateSMBServer(
+        parseInt(serverId, 10), name, host, shareName, username, password, domain
+      );
+      this._emitRemoteServersChanged();
+      return _dump(updated);
+    });
+
+    ipcMain.handle('test_smb_server', async (_e, serverId) => {
+      const { SMBClient } = require('./smb');
+      const cfg = this._lib.getSMBServer(parseInt(serverId, 10));
+      if (!cfg) return _dump({ ok: false, error: '服务器不存在' });
+      const client = new SMBClient(cfg.host, cfg.share_name, cfg.username, cfg.password, cfg.domain || '', 20.0);
+      try {
+        const result = await client.ping();
+        return _dump(result);
+      } catch (e) {
+        return _dump({ ok: false, error: String(e) });
+      }
+    });
+
+    ipcMain.handle('sync_smb_server', (_e, serverId) => {
+      return this._syncSMBServer(parseInt(serverId, 10));
     });
 
     // ── Cover colors ──
@@ -1485,7 +1589,154 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     return _dump({ ok: true, started: true, message: '同步已开始' });
   }
 
-  // ── 浮动窗口 ──
+  // ── WebDAV 同步（后台异步）──
+
+  _syncWebDAVServer(serverId) {
+    if (_syncingWebDAVServers.has(serverId)) {
+      return _dump({ ok: false, error: '该服务器正在同步中，请稍候' });
+    }
+    _syncingWebDAVServers.add(serverId);
+
+    setImmediate(async () => {
+      const { WebDAVClient, WebDAVError, syncServerToLibrary } = require('./webdav');
+      try {
+        const cfg = this._lib.getWebDAVServer(serverId);
+        if (!cfg) {
+          this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: '服务器不存在' }));
+          return;
+        }
+
+        this._emit('subsonic_sync_progress', _dump({ server_id: serverId, stage: 'start' }));
+
+        const client = new WebDAVClient(cfg.server_url, cfg.username, cfg.password, 60.0);
+
+        let lastEmitTracks = 0;
+
+        const progressCb = (s) => {
+          const cur = parseInt(s.tracks || 0);
+          if (cur - lastEmitTracks >= 5 || cur === 1 || s.phase !== 'tracks') {
+            lastEmitTracks = cur;
+            this._emit('subsonic_sync_progress', _dump({
+              server_id: serverId, stage: 'progress', phase: s.phase || 'tracks',
+              tracks: cur,
+              current_file: s.current_file || s.current_path || '',
+            }));
+          }
+        };
+
+        const libraryChangedCb = () => {
+          this._emitLibraryUpdated();
+        };
+
+        let stats;
+        try {
+          stats = await syncServerToLibrary(client, this._lib, serverId, {
+            progressCb,
+            libraryChangedCb,
+            libraryChangedInterval: 10,
+          });
+        } catch (e) {
+          if (e instanceof WebDAVError) {
+            this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: e.message, code: e.code }));
+          } else {
+            this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: `同步异常: ${e}` }));
+          }
+          return;
+        }
+
+        if (stats.error) {
+          this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: stats.error, warnings: stats.warnings || [] }));
+          return;
+        }
+
+        try { this._lib.updateWebDAVServerLastSync(serverId); } catch { /* ignore */ }
+
+        this._emitRemoteServersChanged();
+        this._emitLibraryUpdated();
+        this._emit('subsonic_sync_result', _dump({ ok: true, server_id: serverId, stats }));
+      } finally {
+        _syncingWebDAVServers.delete(serverId);
+      }
+    });
+
+    return _dump({ ok: true, started: true, message: '同步已开始' });
+  }
+
+  // ── SMB 同步（后台异步）──
+
+  _syncSMBServer(serverId) {
+    if (_syncingSMBServers.has(serverId)) {
+      return _dump({ ok: false, error: '该服务器正在同步中，请稍候' });
+    }
+    _syncingSMBServers.add(serverId);
+
+    setImmediate(async () => {
+      const { SMBClient, SMBError, syncServerToLibrary } = require('./smb');
+      let client = null;
+      try {
+        const cfg = this._lib.getSMBServer(serverId);
+        if (!cfg) {
+          this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: '服务器不存在' }));
+          return;
+        }
+
+        this._emit('subsonic_sync_progress', _dump({ server_id: serverId, stage: 'start' }));
+
+        client = new SMBClient(cfg.host, cfg.share_name, cfg.username, cfg.password, cfg.domain || '', 60.0);
+
+        const progressCb = (s) => {
+          this._emit('subsonic_sync_progress', _dump({
+            server_id: serverId, stage: 'progress', phase: s.phase || 'scanning',
+            tracks: s.tracks || 0,
+            current_path: s.current_path || '',
+          }));
+        };
+
+        const libraryChangedCb = () => {
+          this._emitLibraryUpdated();
+        };
+
+        let stats;
+        try {
+          stats = await syncServerToLibrary(client, this._lib, serverId, {
+            progressCb,
+            libraryChangedCb,
+          });
+        } catch (e) {
+          if (e instanceof SMBError) {
+            this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: e.message, code: e.code }));
+          } else {
+            this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: `同步异常: ${e}` }));
+          }
+          return;
+        }
+
+        if (stats.error) {
+          this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: stats.error, warnings: stats.warnings || [] }));
+          return;
+        }
+
+        try { this._lib.updateSMBServerLastSync(serverId); } catch { /* ignore */ }
+
+        // SMB 扫描完成后断开挂载（释放驱动器盘符/挂载点）
+        if (client && client.connected) {
+          try { await client.disconnect(); } catch { /* ignore */ }
+        }
+
+        this._emitRemoteServersChanged();
+        this._emitLibraryUpdated();
+        this._emit('subsonic_sync_result', _dump({ ok: true, server_id: serverId, stats }));
+      } finally {
+        // 确保断开 SMB 连接
+        if (client && client.connected) {
+          try { await client.disconnect(); } catch { /* ignore */ }
+        }
+        _syncingSMBServers.delete(serverId);
+      }
+    });
+
+    return _dump({ ok: true, started: true, message: '同步已开始' });
+  }
 
   _toggleFloatingWindow() {
     if (this._floatingWindow) {

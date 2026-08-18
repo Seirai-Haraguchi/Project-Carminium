@@ -94,6 +94,28 @@ CREATE TABLE IF NOT EXISTS subsonic_sources (
     last_sync     REAL
 );
 
+CREATE TABLE IF NOT EXISTS webdav_sources (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    server_url    TEXT NOT NULL,
+    username      TEXT NOT NULL,
+    password      TEXT NOT NULL,
+    added_at      REAL NOT NULL,
+    last_sync     REAL
+);
+
+CREATE TABLE IF NOT EXISTS smb_sources (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    host          TEXT NOT NULL,
+    share_name    TEXT NOT NULL,
+    username      TEXT NOT NULL,
+    password      TEXT NOT NULL,
+    domain        TEXT NOT NULL DEFAULT '',
+    added_at      REAL NOT NULL,
+    last_sync     REAL
+);
+
 CREATE TABLE IF NOT EXISTS cover_colors (
     track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
     colors   TEXT NOT NULL
@@ -171,6 +193,9 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     tryAlter('ALTER TABLE playlists ADD COLUMN owner TEXT');
     tryAlter('ALTER TABLE playlists ADD COLUMN owner_email TEXT');
 
+    // ── WebDAV / SMB 曲目支持：tracks 表添加 webdav_path 列 ──
+    tryAlter('ALTER TABLE tracks ADD COLUMN webdav_path TEXT');
+
     // 歌词回填
     const rows = this._db.prepare(
       "SELECT id, path FROM tracks WHERE lyrics IS NULL AND source IS NULL"
@@ -218,6 +243,30 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     if (orphanSubsonicIds.length > 0) {
       this._deleteTracksByCondition(
         "source='subsonic' AND server_id IS NOT NULL AND CAST(server_id AS INTEGER) NOT IN (SELECT id FROM subsonic_sources)"
+      );
+    }
+
+    // 删除 server_id 不在 webdav_sources 表中、且 source='webdav' 的曲目
+    const orphanWebdavIds = this._db.prepare(
+      `SELECT t.id FROM tracks t
+       WHERE t.source='webdav' AND t.server_id IS NOT NULL
+       AND CAST(t.server_id AS INTEGER) NOT IN (SELECT id FROM webdav_sources)`
+    ).all();
+    if (orphanWebdavIds.length > 0) {
+      this._deleteTracksByCondition(
+        "source='webdav' AND server_id IS NOT NULL AND CAST(server_id AS INTEGER) NOT IN (SELECT id FROM webdav_sources)"
+      );
+    }
+
+    // 删除 server_id 不在 smb_sources 表中、且 source='smb' 的曲目
+    const orphanSmbIds = this._db.prepare(
+      `SELECT t.id FROM tracks t
+       WHERE t.source='smb' AND t.server_id IS NOT NULL
+       AND CAST(t.server_id AS INTEGER) NOT IN (SELECT id FROM smb_sources)`
+    ).all();
+    if (orphanSmbIds.length > 0) {
+      this._deleteTracksByCondition(
+        "source='smb' AND server_id IS NOT NULL AND CAST(server_id AS INTEGER) NOT IN (SELECT id FROM smb_sources)"
       );
     }
   }
@@ -633,6 +682,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     const row = this._db.prepare('SELECT path, source FROM tracks WHERE id=?').get(trackId);
     if (!row) return null;
     if (row.source === 'subsonic') return null;
+    if (row.source === 'webdav') return null;
     if (!row.path) return null;
 
     // ── 2. 磁盘缓存命中 ──
@@ -663,6 +713,25 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     this._coverDataCache.set(trackId, data);
 
     return data;
+  }
+
+  /**
+   * 存储封面数据到磁盘缓存（供 WebDAV 等远程曲目使用）。
+   * @param {string} trackId
+   * @param {Buffer} data - JPEG 封面数据
+   */
+  storeCoverData(trackId, data) {
+    if (!trackId || !data) return;
+    const diskPath = this._coverCachePath(trackId);
+    try {
+      fs.writeFileSync(diskPath, data);
+    } catch { /* 磁盘写入失败，忽略 */ }
+    // 同时更新内存 LRU
+    if (this._coverDataCache.size >= this._coverDataCacheMax) {
+      const oldest = this._coverDataCache.keys().next();
+      if (!oldest.done) this._coverDataCache.delete(oldest.value);
+    }
+    this._coverDataCache.set(trackId, data);
   }
 
   /**
@@ -890,11 +959,12 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     const localRows = this._db.prepare(
       "SELECT id, title, artist, album_artist, path, source FROM tracks WHERE source IS NULL"
     ).all();
-    const subsonicRows = this._db.prepare(
-      "SELECT id, title, artist, album_artist FROM tracks WHERE source = 'subsonic'"
+    // 远程曲目包括 subsonic, webdav, smb
+    const remoteRows = this._db.prepare(
+      "SELECT id, title, artist, album_artist, source FROM tracks WHERE source IN ('subsonic', 'webdav', 'smb')"
     ).all();
 
-    if (localRows.length === 0 || subsonicRows.length === 0) {
+    if (localRows.length === 0 || remoteRows.length === 0) {
       this._dedupCache = { dupIds: new Set(), localMap: new Map() };
       return this._dedupCache;
     }
@@ -907,10 +977,10 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
     }
 
-    // 找出 Subsonic 中与本地重复的曲目，并建立 Subsonic ID → 本地曲目 映射
+    // 找出远程中与本地重复的曲目，并建立远程 ID → 本地曲目 映射
     const dupIds = new Set();
     const localMap = new Map();
-    for (const r of subsonicRows) {
+    for (const r of remoteRows) {
       for (const k of this._trackKeys(r)) {
         if (localKeyMap.has(k)) {
           dupIds.add(r.id);
@@ -933,12 +1003,14 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
   }
 
   /**
-   * 查找 Subsonic 曲目对应的本地版本（用于播放时优先使用本地文件）。
+   * 查找远程曲目对应的本地版本（用于播放时优先使用本地文件）。
+   * 支持 subsonic, webdav, smb 来源。
    * @param {{id: string, source?: string}} track
    * @returns {object|null} 本地曲目对象，或 null
    */
   findLocalTrackForSubsonic(track) {
-    if (!track || track.source !== 'subsonic') return null;
+    if (!track) return null;
+    if (track.source !== 'subsonic' && track.source !== 'webdav' && track.source !== 'smb') return null;
     const { localMap } = this._getDedupInfo();
     return localMap.get(track.id) || null;
   }
@@ -1356,6 +1428,174 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       if (byType.artist[i]) result.push(byType.artist[i]);
       if (byType.genre[i]) result.push(byType.genre[i]);
       if (byType.album[i]) result.push(byType.album[i]);
+    }
+
+    return result;
+  }
+
+  // ── Explore: 尚未播放过的曲目推荐 ──────────────────────────────────────────
+
+  getExploreTracks() {
+    const db = this._db;
+    const { clause, params } = this._dedupExcludeClause();
+
+    // 获取已播放过的 track ID 集合
+    const playedIds = new Set(
+      db.prepare('SELECT DISTINCT track_id FROM play_history').all().map(r => r.track_id)
+    );
+
+    // 获取用户最常听的流派（用于优先推荐同流派新曲目）
+    const topGenres = db.prepare(
+      `SELECT t.genre AS name, COUNT(*) AS play_count
+       FROM play_history h JOIN tracks t ON t.id = h.track_id
+       WHERE t.genre IS NOT NULL AND t.genre != ''
+       GROUP BY t.genre ORDER BY play_count DESC LIMIT 5`
+    ).all().map(r => r.name);
+
+    // 获取用户最常听的艺术家（用于优先推荐同艺术家新曲目）
+    const topArtists = db.prepare(
+      `SELECT t.artist AS name, COUNT(*) AS play_count
+       FROM play_history h JOIN tracks t ON t.id = h.track_id
+       WHERE t.artist IS NOT NULL AND t.artist != ''
+       GROUP BY t.artist ORDER BY play_count DESC LIMIT 5`
+    ).all().map(r => r.name);
+
+    // 从未播放过的曲目，优先从喜爱流派/艺术家中选取
+    const allTracks = db.prepare(
+      `SELECT * FROM tracks WHERE 1=1${clause} ORDER BY added_at DESC LIMIT 500`
+    ).all(...params);
+
+    const result = [];
+    const seen = new Set();
+
+    // 1. 优先：同流派 + 同艺术家，但未播放过
+    for (const t of allTracks) {
+      if (playedIds.has(t.id) || seen.has(t.id)) continue;
+      if (t.genre && topGenres.includes(t.genre) && t.artist && topArtists.includes(t.artist)) {
+        result.push(t);
+        seen.add(t.id);
+        if (result.length >= 25) break;
+      }
+    }
+
+    // 2. 同流派，未播放过
+    if (result.length < 25) {
+      for (const t of allTracks) {
+        if (playedIds.has(t.id) || seen.has(t.id)) continue;
+        if (t.genre && topGenres.includes(t.genre)) {
+          result.push(t);
+          seen.add(t.id);
+          if (result.length >= 25) break;
+        }
+      }
+    }
+
+    // 3. 同艺术家，未播放过
+    if (result.length < 25) {
+      for (const t of allTracks) {
+        if (playedIds.has(t.id) || seen.has(t.id)) continue;
+        if (t.artist && topArtists.includes(t.artist)) {
+          result.push(t);
+          seen.add(t.id);
+          if (result.length >= 25) break;
+        }
+      }
+    }
+
+    // 4. 补齐：随机未播放过的曲目
+    if (result.length < 25) {
+      for (const t of allTracks) {
+        if (playedIds.has(t.id) || seen.has(t.id)) continue;
+        result.push(t);
+        seen.add(t.id);
+        if (result.length >= 25) break;
+      }
+    }
+
+    // 如果仍然不足（库太小），用随机已播放但不同版本的曲目补
+    if (result.length < 10) {
+      for (const t of allTracks) {
+        if (seen.has(t.id)) continue;
+        result.push(t);
+        seen.add(t.id);
+        if (result.length >= 25) break;
+      }
+    }
+
+    for (const t of result) {
+      t.artists = this._splitArtists(t.artist);
+    }
+
+    return {
+      title: '探索',
+      subtitle: '发现你尚未听过的曲目',
+      tracks: result.slice(0, 25),
+    };
+  }
+
+  // ── Similar Recommendations: 基于流派相似的新推荐歌单 ──────────────────────
+
+  getSimilarRecommendations() {
+    const db = this._db;
+    const { clause, params } = this._dedupExcludeClause();
+
+    // 获取用户听过的所有流派（按播放次数排序）
+    const listenedGenres = db.prepare(
+      `SELECT t.genre AS name, COUNT(*) AS play_count
+       FROM play_history h JOIN tracks t ON t.id = h.track_id
+       WHERE t.genre IS NOT NULL AND t.genre != ''
+       GROUP BY t.genre ORDER BY play_count DESC`
+    ).all();
+
+    if (listenedGenres.length === 0) return [];
+
+    // 获取用户已播放的 track ID 集合
+    const playedIds = new Set(
+      db.prepare('SELECT DISTINCT track_id FROM play_history').all().map(r => r.track_id)
+    );
+
+    const result = [];
+
+    // 为每个已听流派找到"相似流派"——这里简化为：同流派中未听过的曲目 + 相邻流派
+    // 每个流派生成一个推荐歌单
+    const topGenres = listenedGenres.slice(0, 4); // 最多 4 个推荐歌单
+
+    for (const g of topGenres) {
+      // 同流派中未播放过的曲目
+      const tracks = db.prepare(
+        `SELECT * FROM tracks WHERE genre = ?${clause}
+         ORDER BY added_at DESC LIMIT 50`
+      ).all(g.name, ...params);
+
+      const newTracks = tracks.filter(t => !playedIds.has(t.id));
+
+      if (newTracks.length >= 3) {
+        // 取前 25 首
+        const selected = newTracks.slice(0, 25);
+        for (const t of selected) {
+          t.artists = this._splitArtists(t.artist);
+        }
+        result.push({
+          type: 'genre',
+          name: g.name,
+          subtitle: '相似类型新推荐',
+          playCount: g.play_count,
+          tracks: selected,
+        });
+      } else if (tracks.length >= 3) {
+        // 不够未播放的，混入已播放的
+        const mixed = [...newTracks, ...tracks.filter(t => playedIds.has(t.id))].slice(0, 25);
+        for (const t of mixed) {
+          t.artists = this._splitArtists(t.artist);
+        }
+        result.push({
+          type: 'genre',
+          name: g.name,
+          subtitle: '相似类型新推荐',
+          playCount: g.play_count,
+          tracks: mixed,
+        });
+      }
     }
 
     return result;
@@ -1878,6 +2118,300 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     }
   }
 
+  // ── WebDAV 服务器管理 ─────────────────────────────────────────────────────
+
+  addWebDAVServer(name, serverUrl, username, password) {
+    const now = Date.now() / 1000;
+    const result = this._db.prepare(
+      `INSERT INTO webdav_sources (name, server_url, username, password, added_at)
+       VALUES (?,?,?,?,?)`
+    ).run(name, serverUrl, username, password, now);
+    return {
+      id: result.lastInsertRowid,
+      name,
+      server_url: serverUrl,
+      username,
+      added_at: now,
+      last_sync: null,
+    };
+  }
+
+  removeWebDAVServer(serverId) {
+    const sid = parseInt(serverId, 10);
+    // 删除该服务器下所有曲目
+    this._deleteTracksByCondition("source='webdav' AND server_id=?", sid);
+    this._db.prepare('DELETE FROM webdav_sources WHERE id=?').run(sid);
+  }
+
+  getWebDAVServers() {
+    return this._db.prepare(
+      `SELECT id, name, server_url, username, added_at, last_sync,
+       (SELECT COUNT(*) FROM tracks t WHERE t.server_id=webdav_sources.id AND t.source='webdav') AS track_count
+       FROM webdav_sources ORDER BY added_at`
+    ).all();
+  }
+
+  getWebDAVServer(serverId) {
+    return this._db.prepare('SELECT * FROM webdav_sources WHERE id=?').get(parseInt(serverId, 10)) || null;
+  }
+
+  updateWebDAVServerLastSync(serverId) {
+    this._db.prepare('UPDATE webdav_sources SET last_sync=? WHERE id=?').run(
+      Date.now() / 1000, parseInt(serverId, 10)
+    );
+  }
+
+  updateWebDAVServer(serverId, name = null, serverUrl = null, username = null, password = null) {
+    const sets = [];
+    const params = [];
+    if (name !== null) { sets.push('name=?'); params.push(name); }
+    if (serverUrl !== null) { sets.push('server_url=?'); params.push(serverUrl); }
+    if (username !== null) { sets.push('username=?'); params.push(username); }
+    if (password !== null && password !== '') { sets.push('password=?'); params.push(password); }
+
+    if (sets.length === 0) {
+      return this._db.prepare(
+        `SELECT id, name, server_url, username, added_at, last_sync,
+         (SELECT COUNT(*) FROM tracks t WHERE t.server_id=webdav_sources.id AND t.source='webdav') AS track_count
+         FROM webdav_sources WHERE id=?`
+      ).get(parseInt(serverId, 10)) || null;
+    }
+    params.push(parseInt(serverId, 10));
+    this._db.prepare(`UPDATE webdav_sources SET ${sets.join(', ')} WHERE id=?`).run(...params);
+    return this._db.prepare(
+      `SELECT id, name, server_url, username, added_at, last_sync,
+       (SELECT COUNT(*) FROM tracks t WHERE t.server_id=webdav_sources.id AND t.source='webdav') AS track_count
+       FROM webdav_sources WHERE id=?`
+    ).get(parseInt(serverId, 10)) || null;
+  }
+
+  // ── WebDAV 曲目索引 ───────────────────────────────────────────────────────
+
+  /**
+   * WebDAV 曲目 ID 格式: w<serverId>_<sha1(relativePath)>
+   */
+  upsertWebDAVTrack(serverId, relativePath, href, meta) {
+    const serverIdInt = parseInt(serverId, 10);
+    const crypto = require('crypto');
+    const pathHash = crypto.createHash('sha1').update(relativePath, 'utf-8').digest('hex').slice(0, 16);
+    const tid = `w${serverIdInt}_${pathHash}`;
+    const path = `webdav://${serverIdInt}${relativePath}`;
+
+    const existed = this._db.prepare('SELECT 1 FROM tracks WHERE id=? LIMIT 1').get(tid) !== undefined;
+    if (!existed) {
+      this._db.prepare(
+        `INSERT OR IGNORE INTO tracks
+         (id, path, folder_id, title, artist, album, album_artist,
+          track_number, disc_number, year, duration_ms, file_size,
+          has_cover, genre, added_at, source, server_id, webdav_path)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).run(
+        tid, path, null,
+        meta.title || relativePath.split('/').pop() || '未知曲目',
+        meta.artist || null,
+        meta.album || null,
+        meta.album_artist || null,
+        meta.track_number || null,
+        meta.disc_number || null,
+        meta.year || null,
+        meta.duration_ms || null,
+        meta.file_size || 0,
+        meta.has_cover ? 1 : 0,
+        meta.genre || null,
+        Date.now() / 1000,
+        'webdav', serverIdInt, href
+      );
+    } else {
+      this._db.prepare(
+        `UPDATE tracks SET
+          title=?, artist=?, album=?, album_artist=?,
+          track_number=?, disc_number=?, year=?, duration_ms=?, file_size=?,
+          has_cover=?, genre=?, webdav_path=?
+          WHERE id=?`
+      ).run(
+        meta.title || relativePath.split('/').pop() || '未知曲目',
+        meta.artist || null,
+        meta.album || null,
+        meta.album_artist || null,
+        meta.track_number || null,
+        meta.disc_number || null,
+        meta.year || null,
+        meta.duration_ms || null,
+        meta.file_size || 0,
+        meta.has_cover ? 1 : 0,
+        meta.genre || null,
+        href, tid
+      );
+    }
+    this._invalidateDedupCache();
+  }
+
+  deleteStaleWebDAVTracks(serverId, livePaths) {
+    const serverIdInt = parseInt(serverId, 10);
+    const rows = this._db.prepare(
+      `SELECT id, path FROM tracks WHERE source='webdav' AND server_id=?`
+    ).all(serverIdInt);
+    const staleIds = [];
+    for (const row of rows) {
+      // 从 path (webdav://<serverId><relativePath>) 提取 relativePath
+      const prefix = `webdav://${serverIdInt}`;
+      let relPath = row.path;
+      if (row.path && row.path.startsWith(prefix)) {
+        relPath = row.path.slice(prefix.length);
+      }
+      if (!livePaths.has(relPath)) {
+        staleIds.push(row.id);
+      }
+    }
+    if (staleIds.length === 0) return 0;
+    this._deleteTracksByCondition(
+      `id IN (${staleIds.map(() => '?').join(',')})`,
+      ...staleIds
+    );
+    return staleIds.length;
+  }
+
+  // ── SMB 服务器管理 ─────────────────────────────────────────────────────────
+
+  addSMBServer(name, host, shareName, username, password, domain = '') {
+    const now = Date.now() / 1000;
+    const result = this._db.prepare(
+      `INSERT INTO smb_sources (name, host, share_name, username, password, domain, added_at)
+       VALUES (?,?,?,?,?,?,?)`
+    ).run(name, host, shareName, username, password, domain, now);
+    return {
+      id: result.lastInsertRowid,
+      name,
+      host,
+      share_name: shareName,
+      username,
+      domain,
+      added_at: now,
+      last_sync: null,
+    };
+  }
+
+  removeSMBServer(serverId) {
+    const sid = parseInt(serverId, 10);
+    // 删除该服务器下所有 SMB 曲目
+    this._deleteTracksByCondition("source='smb' AND server_id=?", sid);
+    this._db.prepare('DELETE FROM smb_sources WHERE id=?').run(sid);
+  }
+
+  getSMBServers() {
+    return this._db.prepare(
+      `SELECT id, name, host, share_name, username, domain, added_at, last_sync,
+       (SELECT COUNT(*) FROM tracks t WHERE t.server_id=smb_sources.id AND t.source='smb') AS track_count
+       FROM smb_sources ORDER BY added_at`
+    ).all();
+  }
+
+  getSMBServer(serverId) {
+    return this._db.prepare('SELECT * FROM smb_sources WHERE id=?').get(parseInt(serverId, 10)) || null;
+  }
+
+  updateSMBServerLastSync(serverId) {
+    this._db.prepare('UPDATE smb_sources SET last_sync=? WHERE id=?').run(
+      Date.now() / 1000, parseInt(serverId, 10)
+    );
+  }
+
+  updateSMBServer(serverId, name = null, host = null, shareName = null, username = null, password = null, domain = null) {
+    const sets = [];
+    const params = [];
+    if (name !== null) { sets.push('name=?'); params.push(name); }
+    if (host !== null) { sets.push('host=?'); params.push(host); }
+    if (shareName !== null) { sets.push('share_name=?'); params.push(shareName); }
+    if (username !== null) { sets.push('username=?'); params.push(username); }
+    if (password !== null && password !== '') { sets.push('password=?'); params.push(password); }
+    if (domain !== null) { sets.push('domain=?'); params.push(domain); }
+
+    if (sets.length === 0) {
+      return this._db.prepare(
+        `SELECT id, name, host, share_name, username, domain, added_at, last_sync,
+         (SELECT COUNT(*) FROM tracks t WHERE t.server_id=smb_sources.id AND t.source='smb') AS track_count
+         FROM smb_sources WHERE id=?`
+      ).get(parseInt(serverId, 10)) || null;
+    }
+    params.push(parseInt(serverId, 10));
+    this._db.prepare(`UPDATE smb_sources SET ${sets.join(', ')} WHERE id=?`).run(...params);
+    return this._db.prepare(
+      `SELECT id, name, host, share_name, username, domain, added_at, last_sync,
+       (SELECT COUNT(*) FROM tracks t WHERE t.server_id=smb_sources.id AND t.source='smb') AS track_count
+       FROM smb_sources WHERE id=?`
+    ).get(parseInt(serverId, 10)) || null;
+  }
+
+  // ── SMB 曲目管理 ──────────────────────────────────────────────────────────
+
+  /**
+   * 将指定文件夹下的所有曲目标记为 SMB 来源。
+   * 在 SMB 挂载并扫描完成后调用。
+   */
+  markTracksAsSmb(folderId, serverId) {
+    const serverIdInt = parseInt(serverId, 10);
+    this._db.prepare(
+      `UPDATE tracks SET source='smb', server_id=? WHERE folder_id=? AND source IS NULL`
+    ).run(serverIdInt, folderId);
+    this._invalidateDedupCache();
+  }
+
+  /**
+   * 返回指定文件夹下的所有曲目。
+   */
+  getTracksByFolder(folderId) {
+    return this._db.prepare('SELECT * FROM tracks WHERE folder_id=?').all(folderId);
+  }
+
+  /**
+   * 获取 SMB 服务器配置（供 player 解析路径使用）。
+   */
+  getSMBServerForTrack(trackId) {
+    if (!trackId || !trackId.startsWith('s')) {
+      // SMB 曲目 ID 以 s 开头（因为使用 trackId() 函数），需要通过 server_id 查找
+    }
+    return this._db.prepare(
+      `SELECT src.* FROM smb_sources src
+       INNER JOIN tracks t ON t.server_id=src.id
+       WHERE t.id=? AND t.source='smb'`
+    ).get(trackId) || null;
+  }
+
+  // ── 统一远程服务器查询 ──────────────────────────────────────────────────────
+
+  /**
+   * 获取所有远程服务器（Subsonic + WebDAV + SMB），统一格式。
+   * 每条包含 type 字段 ('subsonic' | 'webdav' | 'smb')。
+   */
+  getAllRemoteServers() {
+    const subsonic = this._db.prepare(
+      `SELECT id, name, server_url, username, added_at, last_sync,
+       'subsonic' AS type,
+       (SELECT COUNT(*) FROM tracks t WHERE t.server_id=subsonic_sources.id AND t.source='subsonic') AS track_count
+       FROM subsonic_sources ORDER BY added_at`
+    ).all();
+    const webdav = this._db.prepare(
+      `SELECT id, name, server_url, username, added_at, last_sync,
+       'webdav' AS type,
+       (SELECT COUNT(*) FROM tracks t WHERE t.server_id=webdav_sources.id AND t.source='webdav') AS track_count
+       FROM webdav_sources ORDER BY added_at`
+    ).all();
+    const smb = this._db.prepare(
+      `SELECT id, name, host, share_name, username, domain, added_at, last_sync,
+       'smb' AS type,
+       '' AS server_url,
+       (SELECT COUNT(*) FROM tracks t WHERE t.server_id=smb_sources.id AND t.source='smb') AS track_count
+       FROM smb_sources ORDER BY added_at`
+    ).all();
+
+    // SMB server_url 人工拼接
+    for (const s of smb) {
+      s.server_url = `\\\\${s.host}\\${s.share_name}`;
+    }
+
+    return [...subsonic, ...webdav, ...smb];
+  }
+
   close() {
     if (this._closed) return;
     this._closed = true;
@@ -2083,4 +2617,10 @@ function _extractOggCover(buf) {
   }
 }
 
-module.exports = { MusicLibrary, trackId, subsonicTrackId, SUPPORTED_EXT };
+function webdavTrackId(serverId, relativePath) {
+  const crypto = require('crypto');
+  const pathHash = crypto.createHash('sha1').update(relativePath, 'utf-8').digest('hex').slice(0, 16);
+  return `w${parseInt(serverId, 10)}_${pathHash}`;
+}
+
+module.exports = { MusicLibrary, trackId, subsonicTrackId, webdavTrackId, SUPPORTED_EXT };

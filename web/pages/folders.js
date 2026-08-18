@@ -66,7 +66,7 @@ container.innerHTML = `
     });
 
     document.getElementById('btn-add-subsonic').addEventListener('click', function () {
-      _promptAddSubsonic();
+      _promptAddStreaming();
     });
 
     _loadFolders();
@@ -75,7 +75,7 @@ container.innerHTML = `
 
   // 暴露添加流媒体库对话框，供新手引导等外部入口复用
   page.promptAddSubsonic = function () {
-    _promptAddSubsonic();
+    _promptAddStreaming();
   };
 
   function _loadFolders() {
@@ -88,7 +88,10 @@ container.innerHTML = `
     const listEl = document.getElementById('folder-list');
     if (!listEl) return;
 
-    const servers = (App.state && App.state.allSubsonicServers) ? App.state.allSubsonicServers : [];
+    // 使用统一远程服务器列表（如果可用），否则回退到 Subsonic 列表
+    const servers = (App.state && App.state.allRemoteServers && App.state.allRemoteServers.length > 0)
+      ? App.state.allRemoteServers
+      : ((App.state && App.state.allSubsonicServers) ? App.state.allSubsonicServers : []);
 
     // 本地文件夹 + 流媒体库混排（图标已区分类型），本地在前
     let entries = [];
@@ -179,27 +182,46 @@ container.innerHTML = `
     return row;
   }
 
-  // 构建单个流媒体库（Subsonic 服务器）行（DOM 元素）
+  // 构建单个流媒体库服务器行（支持 Subsonic / WebDAV / SMB）
   function _buildServerRow(srv) {
     const row = document.createElement('div');
-    row.className = 'folder-row subsonic-server-row';
+    const serverType = srv.type || 'subsonic';
+    row.className = 'folder-row subsonic-server-row remote-server-row--' + serverType;
     row.setAttribute('data-server-id', srv.id);
+    row.setAttribute('data-server-type', serverType);
 
     const lastSync = srv.last_sync ? App.utils.formatDate(srv.last_sync) : App.i18n.t('folders.notSynced');
-    const protocolLabel = srv.protocol_mode === 'opensubsonic' ? 'OpenSubsonic' : 'Subsonic';
+
+    // 根据服务器类型选择图标和标签
+    let iconSymbol = 'cloud';
+    let typeLabel = 'Subsonic';
+    let typeIcon = 'api';
+    if (serverType === 'webdav') {
+      iconSymbol = 'dns';
+      typeLabel = App.i18n.t('folders.webdavServer');
+      typeIcon = 'dns';
+    } else if (serverType === 'smb') {
+      iconSymbol = 'nas_storage';
+      typeLabel = App.i18n.t('folders.smbServer');
+      typeIcon = 'nas_storage';
+    } else {
+      typeLabel = srv.protocol_mode === 'opensubsonic' ? 'OpenSubsonic' : 'Subsonic';
+      typeIcon = 'api';
+    }
+
     const pending = _pendingSync[srv.id];
     const isSyncing = !!pending;
     const metaHtml = isSyncing
       ? _formatSyncingMeta(pending.lastStats)
-      : `<span class="folder-chip folder-chip--url" title="${App.utils.esc(srv.server_url)}"><span class="material-symbols-rounded">language</span>${App.utils.esc(srv.server_url)}</span>`
+      : `<span class="folder-chip folder-chip--url" title="${App.utils.esc(srv.server_url || '')}"><span class="material-symbols-rounded">language</span>${App.utils.esc(srv.server_url || '')}</span>`
         + `<span class="folder-chip"><span class="material-symbols-rounded">music_note</span>${App.i18n.t('music.trackCount', { count: srv.track_count || 0 })}</span>`
-        + `<span class="folder-chip"><span class="material-symbols-rounded">api</span>${protocolLabel}</span>`
+        + `<span class="folder-chip"><span class="material-symbols-rounded">${typeIcon}</span>${typeLabel}</span>`
         + `<span class="folder-chip"><span class="material-symbols-rounded">sync</span>${App.i18n.t('folders.lastSync', { date: lastSync })}</span>`;
 
     row.innerHTML = `
-      <span class="folder-icon-badge folder-icon-badge--cloud"><span class="material-symbols-rounded folder-icon">cloud</span></span>
+      <span class="folder-icon-badge folder-icon-badge--cloud"><span class="material-symbols-rounded folder-icon">${iconSymbol}</span></span>
       <div class="folder-info">
-        <p class="folder-path" title="${App.utils.esc(srv.name + ' — ' + srv.server_url)}">${App.utils.esc(srv.name)}</p>
+        <p class="folder-path" title="${App.utils.esc(srv.name + ' — ' + (srv.server_url || ''))}">${App.utils.esc(srv.name)}</p>
         <div class="folder-meta">${metaHtml}</div>
       </div>
       <div class="folder-actions">
@@ -224,19 +246,33 @@ container.innerHTML = `
     // 绑定事件
     row.querySelector('.btn-subsonic-sync').addEventListener('click', function () {
       if (this.disabled) return;
-      _startSyncWithOverlay(srv.id, srv.name);
+      _startSyncWithOverlay(srv.id, srv.name, serverType);
     });
     row.querySelector('.btn-subsonic-edit').addEventListener('click', function () {
-      _promptEditSubsonic(srv);
+      if (serverType === 'webdav') {
+        _promptEditWebDAV(srv);
+      } else if (serverType === 'smb') {
+        _promptEditSMB(srv);
+      } else {
+        _promptEditSubsonic(srv);
+      }
     });
     row.querySelector('.btn-subsonic-remove').addEventListener('click', function () {
       App.utils.confirmDialog({
-        title: App.i18n.t('folders.removeServerTitle'),
-        body: App.i18n.t('folders.removeServerBody', { name: srv.name }),
+        title: App.i18n.t('folders.removeServerTitleGeneric'),
+        body: App.i18n.t('folders.removeServerBodyGeneric', { name: srv.name }),
         confirmText: App.i18n.t('folders.remove'),
         cancelText: App.i18n.t('common.cancel'),
       }).then(function (ok) {
-        if (ok) App.utils.call('remove_subsonic_server', srv.id);
+        if (ok) {
+          if (serverType === 'webdav') {
+            App.utils.call('remove_webdav_server', srv.id);
+          } else if (serverType === 'smb') {
+            App.utils.call('remove_smb_server', srv.id);
+          } else {
+            App.utils.call('remove_subsonic_server', srv.id);
+          }
+        }
       });
     });
 
@@ -252,7 +288,15 @@ container.innerHTML = `
     }
   };
 
-  // ── Subsonic 服务器列表渲染 ───────────────────────────────────────────────
+  // ── 远程服务器列表渲染（统一处理 Subsonic / WebDAV / SMB）──
+  page.onRemoteServersUpdated = function (/* jsonStr */) {
+    // 本地文件夹与流媒体库混排，服务器变化直接重渲染整张列表
+    if (document.getElementById('folder-list')) {
+      _renderList();
+    }
+  };
+
+  // ── Subsonic 服务器列表渲染（兼容旧版）──
   page.onSubsonicServersUpdated = function (/* jsonStr */) {
     // 本地文件夹与流媒体库混排，服务器变化直接重渲染整张列表
     if (document.getElementById('folder-list')) {
@@ -481,9 +525,14 @@ container.innerHTML = `
   }
 
   // 启动后台同步并显示全屏遮罩
-  function _startSyncWithOverlay(serverId, serverName) {
+  function _startSyncWithOverlay(serverId, serverName, serverType) {
     _showSyncOverlay(serverId, serverName);
-    App.utils.call('sync_subsonic_server', serverId).then(function (syncRes) {
+    // 根据服务器类型选择同步 IPC
+    var syncCall = 'sync_subsonic_server';
+    if (serverType === 'webdav') syncCall = 'sync_webdav_server';
+    else if (serverType === 'smb') syncCall = 'sync_smb_server';
+
+    App.utils.call(syncCall, serverId).then(function (syncRes) {
       try {
         var data = JSON.parse(syncRes);
         if (!data.ok && _syncOverlay && _syncOverlay.serverId === serverId) {
@@ -507,15 +556,22 @@ container.innerHTML = `
     });
   }
 
-  // ── 添加 Subsonic 服务器对话框 ────────────────────────────────────────────
-  function _promptAddSubsonic() {
+  // ── 统一添加流媒体库对话框（Subsonic / WebDAV / NAS-SMB Pivot 切换）──────
+  function _promptAddStreaming() {
     const overlay = document.createElement('div');
     overlay.className = 'cmd-dialog-overlay';
     const dlg = document.createElement('div');
-    dlg.className = 'cmd-dialog subsonic-add-dialog';
+    dlg.className = 'cmd-dialog subsonic-add-dialog streaming-add-dialog';
     dlg.innerHTML = `
       <div class="cmd-dialog-title">${App.i18n.t('folders.addServerTitle')}</div>
-      <div class="cmd-dialog-body">
+      <div class="streaming-pivot np-pivot" style="padding:4px 0 8px;">
+        <button class="np-pivot-tab active" data-tab="subsonic">Subsonic</button>
+        <button class="np-pivot-tab" data-tab="webdav">WebDAV</button>
+        <button class="np-pivot-tab" data-tab="smb">NAS / SMB</button>
+      </div>
+
+      <!-- Subsonic 面板 -->
+      <div class="cmd-dialog-body streaming-panel active" data-panel="subsonic">
         <div class="cmd-text-field" style="margin-bottom:12px;">
           <input type="text" id="ss-name" class="cmd-text-field__input" placeholder=" " autocomplete="off">
           <label class="cmd-text-field__label">${App.i18n.t('folders.serverName')}</label>
@@ -540,9 +596,60 @@ container.innerHTML = `
           <label class="cmd-text-field__label">${App.i18n.t('folders.protocol')}</label>
         </div>
       </div>
+
+      <!-- WebDAV 面板 -->
+      <div class="cmd-dialog-body streaming-panel" data-panel="webdav" style="display:none;">
+        <p style="color:var(--md-on-surface-variant);font-size:13px;margin:-4px 0 12px;">${App.i18n.t('folders.webdavHint')}</p>
+        <div class="cmd-text-field" style="margin-bottom:12px;">
+          <input type="text" id="wd-name" class="cmd-text-field__input" placeholder=" " autocomplete="off">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.serverName')}</label>
+        </div>
+        <div class="cmd-text-field" style="margin-bottom:12px;">
+          <input type="text" id="wd-url" class="cmd-text-field__input" placeholder="https://nas.local:5006/Music" autocomplete="off">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.serverUrl')}</label>
+        </div>
+        <div class="cmd-text-field" style="margin-bottom:12px;">
+          <input type="text" id="wd-user" class="cmd-text-field__input" placeholder=" " autocomplete="off">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.username')}</label>
+        </div>
+        <div class="cmd-text-field">
+          <input type="password" id="wd-pass" class="cmd-text-field__input" placeholder=" " autocomplete="off">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.password')}</label>
+        </div>
+      </div>
+
+      <!-- NAS / SMB 面板 -->
+      <div class="cmd-dialog-body streaming-panel" data-panel="smb" style="display:none;">
+        <p style="color:var(--md-on-surface-variant);font-size:13px;margin:-4px 0 12px;">${App.i18n.t('folders.smbHint')}</p>
+        <div class="cmd-text-field" style="margin-bottom:12px;">
+          <input type="text" id="smb-name" class="cmd-text-field__input" placeholder=" " autocomplete="off">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.serverName')}</label>
+        </div>
+        <div class="cmd-text-field" style="margin-bottom:12px;">
+          <input type="text" id="smb-host" class="cmd-text-field__input" placeholder="192.168.1.100" autocomplete="off">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.host')}</label>
+        </div>
+        <div class="cmd-text-field" style="margin-bottom:12px;">
+          <input type="text" id="smb-share" class="cmd-text-field__input" placeholder="Music" autocomplete="off">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.shareName')}</label>
+        </div>
+        <div class="cmd-text-field" style="margin-bottom:12px;">
+          <input type="text" id="smb-user" class="cmd-text-field__input" placeholder=" " autocomplete="off">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.username')}</label>
+        </div>
+        <div class="cmd-text-field" style="margin-bottom:12px;">
+          <input type="password" id="smb-pass" class="cmd-text-field__input" placeholder=" " autocomplete="off">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.password')}</label>
+        </div>
+        <div class="cmd-text-field">
+          <input type="text" id="smb-domain" class="cmd-text-field__input" placeholder=" " autocomplete="off">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.domainOptional')}</label>
+        </div>
+      </div>
+
       <div class="cmd-dialog-actions">
         <button class="cmd-dialog-btn cmd-dialog-btn--cancel">${App.i18n.t('common.cancel')}</button>
-        <button class="cmd-dialog-btn" id="ss-btn-test">${App.i18n.t('folders.test')}</button>
+        <button class="cmd-dialog-btn" id="stream-btn-test">${App.i18n.t('folders.test')}</button>
         <button class="cmd-dialog-btn cmd-dialog-btn--confirm">${App.i18n.t('folders.add')}</button>
       </div>
     `;
@@ -550,8 +657,34 @@ container.innerHTML = `
     document.body.appendChild(overlay);
     requestAnimationFrame(() => overlay.classList.add('open'));
 
-    const nameInput = dlg.querySelector('#ss-name');
-    setTimeout(() => nameInput.focus(), 50);
+    // ── Pivot Tab 切换逻辑 ──
+    let currentTab = 'subsonic';
+    const tabs = dlg.querySelectorAll('.np-pivot-tab');
+    const panels = dlg.querySelectorAll('.streaming-panel');
+
+    function switchTab(tab) {
+      currentTab = tab;
+      tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+      panels.forEach(p => {
+        const match = p.dataset.panel === tab;
+        p.style.display = match ? '' : 'none';
+        p.classList.toggle('active', match);
+      });
+      // 焦点切换到当前面板的第一个输入框
+      const firstInput = panels.namedItem ? null : null;
+      const activePanel = dlg.querySelector('.streaming-panel.active');
+      if (activePanel) {
+        const inp = activePanel.querySelector('input, select');
+        if (inp) setTimeout(() => inp.focus(), 30);
+      }
+    }
+    tabs.forEach(t => {
+      t.addEventListener('click', function () { switchTab(this.dataset.tab); });
+    });
+
+    // 默认焦点
+    const ssName = dlg.querySelector('#ss-name');
+    setTimeout(() => ssName.focus(), 50);
 
     let done = false;
     let adding = false;
@@ -559,48 +692,108 @@ container.innerHTML = `
       if (done) return;
       done = true;
       overlay.classList.remove('open');
-      setTimeout(() => {
-        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-      }, 180);
+      setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 180);
     }
 
-    function collect() {
-      const name = (nameInput.value || '').trim();
-      const url = (dlg.querySelector('#ss-url').value || '').trim();
-      const user = (dlg.querySelector('#ss-user').value || '').trim();
-      const pass = dlg.querySelector('#ss-pass').value || '';
-      const protocol = dlg.querySelector('#ss-protocol').value || 'subsonic';
-      return { name: name, url: url, user: user, pass: pass, protocol: protocol };
+    // ── 各 Tab 的 collect / validate / add / test 逻辑 ──
+    function collectSubsonic() {
+      return {
+        name: (dlg.querySelector('#ss-name').value || '').trim(),
+        url: (dlg.querySelector('#ss-url').value || '').trim(),
+        user: (dlg.querySelector('#ss-user').value || '').trim(),
+        pass: dlg.querySelector('#ss-pass').value || '',
+        protocol: dlg.querySelector('#ss-protocol').value || 'subsonic',
+      };
     }
-
-    function validate(d) {
-      if (!d.name) { nameInput.focus(); return App.i18n.t('folders.errName'); }
+    function validateSubsonic(d) {
+      if (!d.name) { dlg.querySelector('#ss-name').focus(); return App.i18n.t('folders.errName'); }
       if (!d.url) { dlg.querySelector('#ss-url').focus(); return App.i18n.t('folders.errUrl'); }
       if (!d.user) { dlg.querySelector('#ss-user').focus(); return App.i18n.t('folders.errUser'); }
       if (!d.pass) { dlg.querySelector('#ss-pass').focus(); return App.i18n.t('folders.errPass'); }
       return null;
     }
 
+    function collectWebDAV() {
+      return {
+        name: (dlg.querySelector('#wd-name').value || '').trim(),
+        url: (dlg.querySelector('#wd-url').value || '').trim(),
+        user: (dlg.querySelector('#wd-user').value || '').trim(),
+        pass: dlg.querySelector('#wd-pass').value || '',
+      };
+    }
+    function validateWebDAV(d) {
+      if (!d.name) { dlg.querySelector('#wd-name').focus(); return App.i18n.t('folders.errName'); }
+      if (!d.url) { dlg.querySelector('#wd-url').focus(); return App.i18n.t('folders.errUrl'); }
+      return null;
+    }
+
+    function collectSMB() {
+      return {
+        name: (dlg.querySelector('#smb-name').value || '').trim(),
+        host: (dlg.querySelector('#smb-host').value || '').trim(),
+        share: (dlg.querySelector('#smb-share').value || '').trim(),
+        user: (dlg.querySelector('#smb-user').value || '').trim(),
+        pass: dlg.querySelector('#smb-pass').value || '',
+        domain: (dlg.querySelector('#smb-domain').value || '').trim(),
+      };
+    }
+    function validateSMB(d) {
+      if (!d.name) { dlg.querySelector('#smb-name').focus(); return App.i18n.t('folders.errName'); }
+      if (!d.host) { dlg.querySelector('#smb-host').focus(); return App.i18n.t('folders.errHost'); }
+      if (!d.share) { dlg.querySelector('#smb-share').focus(); return App.i18n.t('folders.errShare'); }
+      return null;
+    }
+
+    // 根据当前 Tab 返回 { collect, validate, addCall, testCall, syncCall, serverType }
+    function getConfig() {
+      if (currentTab === 'webdav') {
+        return {
+          collect: collectWebDAV, validate: validateWebDAV,
+          addCall: function (d) { return App.utils.call('add_webdav_server', d.name, d.url, d.user, d.pass); },
+          testCall: function (id) { return App.utils.call('test_webdav_server', id); },
+          syncCall: function (id) { return App.utils.call('sync_webdav_server', id); },
+          serverType: 'webdav', versionLabel: 'WebDAV',
+        };
+      }
+      if (currentTab === 'smb') {
+        return {
+          collect: collectSMB, validate: validateSMB,
+          addCall: function (d) { return App.utils.call('add_smb_server', d.name, d.host, d.share, d.user, d.pass, d.domain); },
+          testCall: function (id) { return App.utils.call('test_smb_server', id); },
+          syncCall: function (id) { return App.utils.call('sync_smb_server', id); },
+          serverType: 'smb', versionLabel: 'SMB/CIFS',
+        };
+      }
+      // 默认 subsonic
+      return {
+        collect: collectSubsonic, validate: validateSubsonic,
+        addCall: function (d) { return App.utils.call('add_subsonic_server', d.name, d.url, d.user, d.pass, d.protocol); },
+        testCall: function (id) { return App.utils.call('test_subsonic_server', id); },
+        syncCall: function (id) { return App.utils.call('sync_subsonic_server', id); },
+        serverType: 'subsonic', versionLabel: null, // subsonic 有特殊版本显示
+      };
+    }
+
     function add() {
       if (adding) return;
-      const d = collect();
-      const err = validate(d);
+      const cfg = getConfig();
+      const d = cfg.collect();
+      const err = cfg.validate(d);
       if (err) { alert(err); return; }
       adding = true;
       const confirmBtn = dlg.querySelector('.cmd-dialog-btn--confirm');
       confirmBtn.disabled = true;
-      App.utils.call('add_subsonic_server', d.name, d.url, d.user, d.pass, d.protocol).then(function (res) {
+      cfg.addCall(d).then(function (res) {
         var srvId = null;
         try { srvId = JSON.parse(res).id; } catch (e) { /* ignore */ }
         close();
         if (srvId) {
-          // 显示全屏同步遮罩，展示进度与结果
-          _startSyncWithOverlay(srvId, d.name);
+          _startSyncWithOverlay(srvId, d.name, cfg.serverType);
         } else {
           alert(App.i18n.t('folders.addFailed'));
         }
       }).catch(function (err) {
-        console.error('[subsonic] 添加服务器失败:', err);
+        console.error('[' + cfg.serverType + '] 添加服务器失败:', err);
         adding = false;
         confirmBtn.disabled = false;
         alert(App.i18n.t('folders.addFailed'));
@@ -609,15 +802,16 @@ container.innerHTML = `
 
     function test() {
       if (adding) return;
-      const d = collect();
-      const err = validate(d);
+      const cfg = getConfig();
+      const d = cfg.collect();
+      const err = cfg.validate(d);
       if (err) { alert(err); return; }
-      const testBtn = dlg.querySelector('#ss-btn-test');
+      const testBtn = dlg.querySelector('#stream-btn-test');
       const origText = testBtn.textContent;
       testBtn.textContent = App.i18n.t('folders.testing');
       testBtn.disabled = true;
-      // 先添加，再测试，再根据结果决定是否保留
-      App.utils.call('add_subsonic_server', d.name, d.url, d.user, d.pass, d.protocol).then(function (res) {
+      // 先添加，再测试
+      cfg.addCall(d).then(function (res) {
         let srvId = null;
         try { srvId = JSON.parse(res).id; } catch (e) { /* ignore */ }
         if (!srvId) {
@@ -626,41 +820,46 @@ container.innerHTML = `
           alert(App.i18n.t('folders.addFailedShort'));
           return;
         }
-        App.utils.call('test_subsonic_server', srvId).then(function (testRes) {
+        cfg.testCall(srvId).then(function (testRes) {
           testBtn.textContent = origText;
           testBtn.disabled = false;
           let data;
           try { data = JSON.parse(testRes); } catch (e) { data = null; }
           if (data && data.ok) {
-            const ver = data.version || '';
-            const osFlag = data.openSubsonic ? ' (OpenSubsonic)' : '';
+            var ver = data.version || cfg.versionLabel || '';
+            var osFlag = '';
+            if (cfg.serverType === 'subsonic' && data.openSubsonic) osFlag = ' (OpenSubsonic)';
             alert(App.i18n.t('folders.connectSuccess', { version: ver, osFlag: osFlag }));
             close();
-            App.utils.call('sync_subsonic_server', srvId);
+            cfg.syncCall(srvId);
           } else {
-            const errMsg = (data && data.error) ? data.error : App.i18n.t('folders.unknownError');
+            var errMsg = (data && data.error) ? data.error : App.i18n.t('folders.unknownError');
             alert(App.i18n.t('folders.connectFailed', { error: errMsg }));
             close();
             _renderList();
           }
         });
       }).catch(function (err) {
-        console.error('[subsonic] 测试服务器失败:', err);
+        console.error('[' + cfg.serverType + '] 测试服务器失败:', err);
         testBtn.textContent = origText;
         testBtn.disabled = false;
         alert(App.i18n.t('folders.testFailed'));
       });
     }
 
+    // 绑定按钮
     dlg.querySelector('.cmd-dialog-btn--cancel').addEventListener('click', close);
     dlg.querySelector('.cmd-dialog-btn--confirm').addEventListener('click', add);
-    dlg.querySelector('#ss-btn-test').addEventListener('click', test);
-    [nameInput, dlg.querySelector('#ss-url'), dlg.querySelector('#ss-user'), dlg.querySelector('#ss-pass')].forEach(inp => {
+    dlg.querySelector('#stream-btn-test').addEventListener('click', test);
+
+    // 所有面板的输入框 Enter→add, Escape→close
+    dlg.querySelectorAll('.streaming-panel input, .streaming-panel select').forEach(function (inp) {
       inp.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') add();
         else if (e.key === 'Escape') close();
       });
     });
+
     overlay.addEventListener('click', function (e) {
       if (e.target === overlay) close();
     });
@@ -811,6 +1010,269 @@ container.innerHTML = `
     overlay.addEventListener('click', function (e) {
       if (e.target === overlay) close();
     });
+  }
+
+  // ── 编辑 WebDAV 服务器对话框 ──────────────────────────────────────────────
+  function _promptEditWebDAV(srv) {
+    const overlay = document.createElement('div');
+    overlay.className = 'cmd-dialog-overlay';
+    const dlg = document.createElement('div');
+    dlg.className = 'cmd-dialog subsonic-add-dialog';
+    dlg.innerHTML = `
+      <div class="cmd-dialog-title">${App.i18n.t('folders.editWebDAVTitle')}</div>
+      <div class="cmd-dialog-body">
+        <div class="cmd-text-field" style="margin-bottom:12px;">
+          <input type="text" id="wd-name" class="cmd-text-field__input" placeholder=" " autocomplete="off" value="${App.utils.esc(srv.name)}">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.serverName')}</label>
+        </div>
+        <div class="cmd-text-field" style="margin-bottom:12px;">
+          <input type="text" id="wd-url" class="cmd-text-field__input" placeholder=" " autocomplete="off" value="${App.utils.esc(srv.server_url)}">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.serverUrl')}</label>
+        </div>
+        <div class="cmd-text-field" style="margin-bottom:12px;">
+          <input type="text" id="wd-user" class="cmd-text-field__input" placeholder=" " autocomplete="off" value="${App.utils.esc(srv.username || '')}">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.username')}</label>
+        </div>
+        <div class="cmd-text-field">
+          <input type="password" id="wd-pass" class="cmd-text-field__input" placeholder=" " autocomplete="off">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.passwordOptional')}</label>
+        </div>
+      </div>
+      <div class="cmd-dialog-actions">
+        <button class="cmd-dialog-btn cmd-dialog-btn--cancel">${App.i18n.t('common.cancel')}</button>
+        <button class="cmd-dialog-btn" id="wd-btn-test">${App.i18n.t('folders.test')}</button>
+        <button class="cmd-dialog-btn cmd-dialog-btn--confirm">${App.i18n.t('common.confirm')}</button>
+      </div>
+    `;
+    overlay.appendChild(dlg);
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('open'));
+
+    const nameInput = dlg.querySelector('#wd-name');
+    setTimeout(() => nameInput.focus(), 50);
+
+    let done = false;
+    let saving = false;
+    function close() {
+      if (done) return;
+      done = true;
+      overlay.classList.remove('open');
+      setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 180);
+    }
+
+    function collect() {
+      return {
+        name: (nameInput.value || '').trim(),
+        url: (dlg.querySelector('#wd-url').value || '').trim(),
+        user: (dlg.querySelector('#wd-user').value || '').trim(),
+        pass: dlg.querySelector('#wd-pass').value || '',
+      };
+    }
+
+    function validate(d) {
+      if (!d.name) { nameInput.focus(); return App.i18n.t('folders.errName'); }
+      if (!d.url) { dlg.querySelector('#wd-url').focus(); return App.i18n.t('folders.errUrl'); }
+      return null;
+    }
+
+    function save() {
+      if (saving) return;
+      const d = collect();
+      const err = validate(d);
+      if (err) { alert(err); return; }
+      saving = true;
+      const confirmBtn = dlg.querySelector('.cmd-dialog-btn--confirm');
+      confirmBtn.disabled = true;
+      App.utils.call('update_webdav_server', srv.id, d.name, d.url, d.user, d.pass).then(function () {
+        confirmBtn.textContent = App.i18n.t('folders.saved');
+        setTimeout(function () { close(); }, 600);
+      }).catch(function (err) {
+        console.error('[webdav] 更新服务器失败:', err);
+        saving = false;
+        confirmBtn.disabled = false;
+        alert(App.i18n.t('folders.saveFailed'));
+      });
+    }
+
+    function test() {
+      if (saving) return;
+      const d = collect();
+      const err = validate(d);
+      if (err) { alert(err); return; }
+      const testBtn = dlg.querySelector('#wd-btn-test');
+      const origText = testBtn.textContent;
+      testBtn.textContent = App.i18n.t('folders.testing');
+      testBtn.disabled = true;
+      App.utils.call('update_webdav_server', srv.id, d.name, d.url, d.user, d.pass).then(function () {
+        return App.utils.call('test_webdav_server', srv.id);
+      }).then(function (testRes) {
+        testBtn.textContent = origText;
+        testBtn.disabled = false;
+        let data;
+        try { data = JSON.parse(testRes); } catch (e) { data = null; }
+        if (data && data.ok) {
+          alert(App.i18n.t('folders.connectSuccess', { version: data.version || 'WebDAV', osFlag: '' }));
+          close();
+        } else {
+          const errMsg = (data && data.error) ? data.error : App.i18n.t('folders.unknownError');
+          alert(App.i18n.t('folders.connectFailedSaved', { error: errMsg }));
+          close();
+        }
+      }).catch(function (err) {
+        console.error('[webdav] 测试服务器失败:', err);
+        testBtn.textContent = origText;
+        testBtn.disabled = false;
+        alert(App.i18n.t('folders.testFailed'));
+      });
+    }
+
+    dlg.querySelector('.cmd-dialog-btn--cancel').addEventListener('click', close);
+    dlg.querySelector('.cmd-dialog-btn--confirm').addEventListener('click', save);
+    dlg.querySelector('#wd-btn-test').addEventListener('click', test);
+    [nameInput, dlg.querySelector('#wd-url'), dlg.querySelector('#wd-user'), dlg.querySelector('#wd-pass')].forEach(inp => {
+      inp.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') save();
+        else if (e.key === 'Escape') close();
+      });
+    });
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
+  }
+
+  // ── 编辑 SMB / NAS 服务器对话框 ───────────────────────────────────────────
+  function _promptEditSMB(srv) {
+    const overlay = document.createElement('div');
+    overlay.className = 'cmd-dialog-overlay';
+    const dlg = document.createElement('div');
+    dlg.className = 'cmd-dialog subsonic-add-dialog';
+    dlg.innerHTML = `
+      <div class="cmd-dialog-title">${App.i18n.t('folders.editSMBTitle')}</div>
+      <div class="cmd-dialog-body">
+        <div class="cmd-text-field" style="margin-bottom:12px;">
+          <input type="text" id="smb-name" class="cmd-text-field__input" placeholder=" " autocomplete="off" value="${App.utils.esc(srv.name)}">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.serverName')}</label>
+        </div>
+        <div class="cmd-text-field" style="margin-bottom:12px;">
+          <input type="text" id="smb-host" class="cmd-text-field__input" placeholder=" " autocomplete="off" value="${App.utils.esc(srv.host || '')}">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.host')}</label>
+        </div>
+        <div class="cmd-text-field" style="margin-bottom:12px;">
+          <input type="text" id="smb-share" class="cmd-text-field__input" placeholder=" " autocomplete="off" value="${App.utils.esc(srv.share_name || '')}">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.shareName')}</label>
+        </div>
+        <div class="cmd-text-field" style="margin-bottom:12px;">
+          <input type="text" id="smb-user" class="cmd-text-field__input" placeholder=" " autocomplete="off" value="${App.utils.esc(srv.username || '')}">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.username')}</label>
+        </div>
+        <div class="cmd-text-field" style="margin-bottom:12px;">
+          <input type="password" id="smb-pass" class="cmd-text-field__input" placeholder=" " autocomplete="off">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.passwordOptional')}</label>
+        </div>
+        <div class="cmd-text-field">
+          <input type="text" id="smb-domain" class="cmd-text-field__input" placeholder=" " autocomplete="off" value="${App.utils.esc(srv.domain || '')}">
+          <label class="cmd-text-field__label">${App.i18n.t('folders.domainOptional')}</label>
+        </div>
+      </div>
+      <div class="cmd-dialog-actions">
+        <button class="cmd-dialog-btn cmd-dialog-btn--cancel">${App.i18n.t('common.cancel')}</button>
+        <button class="cmd-dialog-btn" id="smb-btn-test">${App.i18n.t('folders.test')}</button>
+        <button class="cmd-dialog-btn cmd-dialog-btn--confirm">${App.i18n.t('common.confirm')}</button>
+      </div>
+    `;
+    overlay.appendChild(dlg);
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('open'));
+
+    const nameInput = dlg.querySelector('#smb-name');
+    setTimeout(() => nameInput.focus(), 50);
+
+    let done = false;
+    let saving = false;
+    function close() {
+      if (done) return;
+      done = true;
+      overlay.classList.remove('open');
+      setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 180);
+    }
+
+    function collect() {
+      return {
+        name: (nameInput.value || '').trim(),
+        host: (dlg.querySelector('#smb-host').value || '').trim(),
+        share: (dlg.querySelector('#smb-share').value || '').trim(),
+        user: (dlg.querySelector('#smb-user').value || '').trim(),
+        pass: dlg.querySelector('#smb-pass').value || '',
+        domain: (dlg.querySelector('#smb-domain').value || '').trim(),
+      };
+    }
+
+    function validate(d) {
+      if (!d.name) { nameInput.focus(); return App.i18n.t('folders.errName'); }
+      if (!d.host) { dlg.querySelector('#smb-host').focus(); return App.i18n.t('folders.errHost'); }
+      if (!d.share) { dlg.querySelector('#smb-share').focus(); return App.i18n.t('folders.errShare'); }
+      return null;
+    }
+
+    function save() {
+      if (saving) return;
+      const d = collect();
+      const err = validate(d);
+      if (err) { alert(err); return; }
+      saving = true;
+      const confirmBtn = dlg.querySelector('.cmd-dialog-btn--confirm');
+      confirmBtn.disabled = true;
+      App.utils.call('update_smb_server', srv.id, d.name, d.host, d.share, d.user, d.pass, d.domain).then(function () {
+        confirmBtn.textContent = App.i18n.t('folders.saved');
+        setTimeout(function () { close(); }, 600);
+      }).catch(function (err) {
+        console.error('[smb] 更新服务器失败:', err);
+        saving = false;
+        confirmBtn.disabled = false;
+        alert(App.i18n.t('folders.saveFailed'));
+      });
+    }
+
+    function test() {
+      if (saving) return;
+      const d = collect();
+      const err = validate(d);
+      if (err) { alert(err); return; }
+      const testBtn = dlg.querySelector('#smb-btn-test');
+      const origText = testBtn.textContent;
+      testBtn.textContent = App.i18n.t('folders.testing');
+      testBtn.disabled = true;
+      App.utils.call('update_smb_server', srv.id, d.name, d.host, d.share, d.user, d.pass, d.domain).then(function () {
+        return App.utils.call('test_smb_server', srv.id);
+      }).then(function (testRes) {
+        testBtn.textContent = origText;
+        testBtn.disabled = false;
+        let data;
+        try { data = JSON.parse(testRes); } catch (e) { data = null; }
+        if (data && data.ok) {
+          alert(App.i18n.t('folders.connectSuccess', { version: data.version || 'SMB/CIFS', osFlag: '' }));
+          close();
+        } else {
+          const errMsg = (data && data.error) ? data.error : App.i18n.t('folders.unknownError');
+          alert(App.i18n.t('folders.connectFailedSaved', { error: errMsg }));
+          close();
+        }
+      }).catch(function (err) {
+        console.error('[smb] 测试服务器失败:', err);
+        testBtn.textContent = origText;
+        testBtn.disabled = false;
+        alert(App.i18n.t('folders.testFailed'));
+      });
+    }
+
+    dlg.querySelector('.cmd-dialog-btn--cancel').addEventListener('click', close);
+    dlg.querySelector('.cmd-dialog-btn--confirm').addEventListener('click', save);
+    dlg.querySelector('#smb-btn-test').addEventListener('click', test);
+    [nameInput, dlg.querySelector('#smb-host'), dlg.querySelector('#smb-share'), dlg.querySelector('#smb-user'), dlg.querySelector('#smb-pass')].forEach(inp => {
+      inp.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') save();
+        else if (e.key === 'Escape') close();
+      });
+    });
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
   }
 
 })();
