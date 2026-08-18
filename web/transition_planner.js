@@ -39,7 +39,7 @@
   var MAX_CROSSFADE_MS = 15000;
   var DEFAULT_CROSSFADE_MS = 5000;
   var BPM_MATCH_THRESHOLD = 0.08;      // 8% 以内视为 BPM 匹配
-  var BPM_TEMPO_ADJUST_THRESHOLD = 0.15; // 15% 以内可做微调
+  var BPM_TEMPO_ADJUST_THRESHOLD = 0.20; // 20% 以内可做微调（双侧汇合时各承担一半，单侧 ≤12%）
   var PRELOAD_LEAD_MS = 6000;          // 预加载提前量
   var POST_CLIMAX_DELAY_MS = 3000;     // 高潮后延迟过渡的时间
   var MIN_OUTRO_FOR_TRANSITION_MS = 4000; // 尾奏至少 4 秒才能在其中过渡
@@ -197,8 +197,15 @@
 
     // Avoid making every transition sound alike.  Energy movement or a clear
     // phrase/section cue is required, and very weak material is skipped.
-    if (!structuralCue && !nearClimax && energyDrop < 0.16) return null;
-    if (transitionStart < tailStart - phraseMs * 2 && !nearClimax && energyDrop < 0.24) return null;
+    // Radical DJ mode relaxes the gating so the pull-up gesture shows up far
+    // more often and hits harder.
+    if (radical) {
+      if (!structuralCue && !nearClimax && energyDrop < 0.10) return null;
+      if (transitionStart < tailStart - phraseMs * 2 && !nearClimax && energyDrop < 0.16) return null;
+    } else {
+      if (!structuralCue && !nearClimax && energyDrop < 0.16) return null;
+      if (transitionStart < tailStart - phraseMs * 2 && !nearClimax && energyDrop < 0.24) return null;
+    }
 
     var density = 0;
     if (cur.energy && cur.energy.length > 3) {
@@ -211,7 +218,8 @@
     var intensity = 0.16 + Math.min(0.18, energyDrop * 0.45) + (nearClimax ? 0.08 : 0);
     if (bpmMatch && bpmMatch.matched) intensity += 0.04;
     if (radical) intensity += 0.05;
-    intensity = this._clamp(intensity, 0.14, 0.42);
+    if (radical) intensity = Math.max(intensity, 0.30);
+    intensity = this._clamp(intensity, 0.14, radical ? 0.5 : 0.42);
 
     // High-density material uses half-beat fragments; otherwise use one beat.
     // Spacing and all phase boundaries remain musical divisions.
@@ -219,10 +227,16 @@
     var spacingBeats = density > 0.7 ? 0.5 : 1;
     var count = intensity > 0.32 ? 6 : 4;
     if (radical && intensity > 0.3) count = 8;
+    if (radical && intensity > 0.38) count = 10;
     var spacingMs = Math.round(beatMs * spacingBeats);
     var fragmentMs = Math.round(beatMs * fragmentBeats);
     var totalMs = Math.min(crossfadeDuration, spacingMs * count + beatMs);
     var fragmentOffsetMs = Math.max(0, Math.round(transitionStart - fragmentMs));
+
+    // 抽拉：每次重复的 playbackRate 逐次上行（越拉越快、音调越高）。
+    // 倒带甩盘：手势收尾时用反向片段 + 快速升速模拟拽盘回卷的"咻"。
+    var rateRise = 0.2 + intensity * 0.8;
+    if (radical) rateRise = Math.max(0.45, rateRise);
 
     return {
       enabled: true,
@@ -233,6 +247,8 @@
       repeatCount: count,
       spacingMs: spacingMs,
       intensity: Math.round(intensity * 1000) / 1000,
+      rateRise: Math.round(rateRise * 1000) / 1000,
+      spinback: radical || intensity >= 0.32,
       airGainDb: Math.round((1.5 + intensity * 8) * 10) / 10,
       reverbWet: Math.round((0.08 + intensity * 0.34) * 1000) / 1000,
       delayWet: Math.round((0.04 + intensity * 0.18) * 1000) / 1000,

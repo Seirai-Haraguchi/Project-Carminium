@@ -1071,13 +1071,13 @@ class CoverHTTPServer {
   }
 
   // ── 艺人头像（免 key 在线抓取 + 磁盘缓存）────────────────────────────
-  // 来源链（任一失败自动下探）：
-  //   1) iTunes Search（musicArtist，Apple CDN，覆盖好）
-  //   2) Deezer Search（artist → picture_xl 1000x1000，免 key）
-  //   3) TheAudioDB（公开测试 key 123 → strArtistThumb，免注册）
-  //   4) Wikipedia REST 摘要图（免 key，小众艺人兜底）
-  //   5) MusicBrainz → image 关系（古典/小众艺人终极兜底）
-  // 命中后缓存到 userData/artist_images，后续直接从磁盘返回。
+  // 分层并行竞速（层内同时发起、任一命中即用；层间下探）：
+  //   第 1 层）网易云音乐（CJK 权威）+ iTunes Search（覆盖好）
+  //   第 2 层）Deezer Search + TheAudioDB
+  //   第 3 层）Wikipedia REST 摘要图 + MusicBrainz image 关系
+  // 统一取 ~500px 头像规格（30-150KB）；命中/miss 都落盘（miss 为负缓存，
+  // TTL 7 天，期内直接 404 不再重爬）。
+  // 缓存目录 userData/artist_images。
 
   _getArtistImageCacheDir() {
     if (this._artistImgCacheDir) return this._artistImgCacheDir;
@@ -1093,6 +1093,26 @@ class CoverHTTPServer {
     try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { /* ignore */ }
     this._artistImgCacheDir = dir;
     return dir;
+  }
+
+  /** 负缓存：记录"全部来源都无图"的艺人（TTL 内直接 404，不再重爬六源） */
+  _artistMissFresh(cacheFile, ttlMs = 7 * 24 * 3600 * 1000) {
+    try {
+      const st = fs.statSync(cacheFile + '.miss');
+      return Date.now() - st.mtimeMs < ttlMs;
+    } catch (e) { return false; }
+  }
+
+  /** 落盘：命中写 jpg 并清掉 miss 标记；miss 写 .miss 时间戳 */
+  _artistCacheStore(cacheFile, img) {
+    try {
+      if (img && img.buffer && (img.contentType || '').startsWith('image/')) {
+        fs.writeFileSync(cacheFile, img.buffer);
+        try { fs.unlinkSync(cacheFile + '.miss'); } catch (e) { /* 无 miss 文件 */ }
+      } else {
+        fs.writeFileSync(cacheFile + '.miss', String(Date.now()));
+      }
+    } catch (e) { /* ignore */ }
   }
 
   async _handleArtistImage(req, res, name, method) {
@@ -1114,6 +1134,12 @@ class CoverHTTPServer {
       } catch (e) { /* 读取失败则重新抓取 */ }
     }
 
+    // 2) 负缓存命中：TTL 内已知无图，直接 404（避免每次滚动都重爬六源）
+    if (this._artistMissFresh(cacheFile)) {
+      this._sendError(res, 404);
+      return;
+    }
+
     // 并发去重：同一艺人同时只抓一次（后台预热与详情页请求共用）
     if (this._artistInflight[key]) {
       try {
@@ -1126,14 +1152,14 @@ class CoverHTTPServer {
 
     this._artistInflight[key] = (async () => {
       let img = null;
-      try { img = await this._fetchArtistImage(norm); } catch (e) {
+      try {
+        img = await this._fetchArtistImage(norm);
+        this._artistCacheStore(cacheFile, img); // 命中写图 / 确认 miss 写负缓存
+      } catch (e) {
+        // 瞬时故障（限流/断网）：不写负缓存，下次请求重试
         console.error('[artist-image] fetch failed:', e && e.message);
       }
-      if (img && img.buffer && (img.contentType || '').startsWith('image/')) {
-        try { fs.writeFileSync(cacheFile, img.buffer); } catch (e) { /* ignore */ }
-        return img.buffer;
-      }
-      return null;
+      return (img && img.buffer && (img.contentType || '').startsWith('image/')) ? img.buffer : null;
     })();
 
     try {
@@ -1146,58 +1172,107 @@ class CoverHTTPServer {
     this._sendError(res, 404);
   }
 
-  async _fetchArtistImage(name, timeoutMs = 15000) {
+  /**
+   * 抓取艺人头像：分层并行竞速。
+   * 层内多个源同时发起、任一命中即返回（命中延迟 ≈ 最快源，而非串行叠加）；
+   * 层内全部落空才下探下一层。每源超时 timeoutMs，全 miss 最坏 ≈ 3 × timeoutMs。
+   *
+   * 返回值语义（供负缓存决策）：
+   *   - 返回 img：命中
+   *   - 返回 null：确认无图（至少一源明确回应"查无此人"且无任何源报错）
+   *   - throw：瞬时故障（限流/断网），调用方不得写负缓存
+   * opts.skipNetease：后台预热置 true——网易云搜索接口限流严格，
+   * 只把配额留给前台按需请求。
+   */
+  async _fetchArtistImage(name, timeoutMs = 6000, opts = {}) {
     const q = encodeURIComponent(name);
 
-    // 1) iTunes Search（musicArtist）→ 600x600（Apple CDN，覆盖好）
-    try {
-      const search = await this._httpJson(
-        'https://itunes.apple.com/search?entity=musicArtist&limit=1&term=' + q
+    // 网易云音乐（免 key）：POST 搜索艺人（type=100）→ img/img1v1Url
+    // （126.net CDN，?param= 控制尺寸；头像场景 500y500 足够，约 30-150KB，
+    // 比 1024y1024 的 1.7MB 快一个数量级）
+    const fromNetease = async () => {
+      const ne = await this._httpPostFormJson(
+        'https://music.163.com/api/search/get/web',
+        { s: name, type: 100, offset: 0, total: 'true', limit: 1 },
+        {
+          'Referer': 'https://music.163.com/',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Carminium/1.0',
+        },
+        timeoutMs
       );
-      if (search && search.results && search.results[0] && search.results[0].artworkUrl100) {
-        let art = search.results[0].artworkUrl100.replace(/100x100bb(\.\w+)?$/, '600x600bb$1');
+      // 限流时 HTTP 仍是 200 但 body code=405（"操作频繁"）——必须当作错误
+      // 抛出，否则会被误判成"查无此人"并毒化负缓存
+      if (!ne || ne.code !== 200) throw new Error('netease code ' + (ne && ne.code));
+      const a = ne.result && ne.result.artists && ne.result.artists[0];
+      let art = a && (a.img || a.img1v1Url || a.picUrl);
+      if (art) {
+        // 已有 param= 则替换尺寸；裸 URL 则追加（CDN 支持任意图 URL 缩放）
+        if (/([?&])param=\d+y\d+/.test(art)) {
+          art = art.replace(/([?&])param=\d+y\d+/, '$1param=500y500');
+        } else {
+          art += '?param=500y500';
+        }
         const img = await this._httpGet(art, 0, timeoutMs);
         if (img && img.contentType && img.contentType.startsWith('image/')) return img;
       }
-    } catch (e) { /* 尝试下一来源 */ }
+      return null;
+    };
 
-    // 2) Deezer Search（artist）→ picture_xl 1000x1000（免 key）
-    try {
-      const dz = await this._httpJson('https://api.deezer.com/search/artist/?q=' + q + '&limit=1');
-      const art = dz && dz.data && dz.data[0] && (dz.data[0].picture_xl || dz.data[0].picture_big);
+    // iTunes Search（musicArtist）→ 600x600（Apple CDN，覆盖好）
+    const fromItunes = async () => {
+      const search = await this._httpJson(
+        'https://itunes.apple.com/search?entity=musicArtist&limit=1&term=' + q,
+        null, timeoutMs
+      );
+      if (search && search.results && search.results[0] && search.results[0].artworkUrl100) {
+        const art = search.results[0].artworkUrl100.replace(/100x100bb(\.\w+)?$/, '600x600bb$1');
+        const img = await this._httpGet(art, 0, timeoutMs);
+        if (img && img.contentType && img.contentType.startsWith('image/')) return img;
+      }
+      return null;
+    };
+
+    // Deezer Search（artist）→ picture_big 500x500（免 key）
+    const fromDeezer = async () => {
+      const dz = await this._httpJson('https://api.deezer.com/search/artist/?q=' + q + '&limit=1', null, timeoutMs);
+      const art = dz && dz.data && dz.data[0] && (dz.data[0].picture_big || dz.data[0].picture_xl);
       if (art) {
         const img = await this._httpGet(art, 0, timeoutMs);
         if (img && img.contentType && img.contentType.startsWith('image/')) return img;
       }
-    } catch (e) { /* 尝试下一来源 */ }
+      return null;
+    };
 
-    // 3) TheAudioDB（公开测试 key 123，免注册）→ strArtistThumb
-    try {
-      const adb = await this._httpJson('https://www.theaudiodb.com/api/v1/json/123/search.php?s=' + q);
+    // TheAudioDB（公开测试 key 123，免注册）→ strArtistThumb
+    const fromAudiodb = async () => {
+      const adb = await this._httpJson('https://www.theaudiodb.com/api/v1/json/123/search.php?s=' + q, null, timeoutMs);
       const art = adb && adb.artists && adb.artists[0] && adb.artists[0].strArtistThumb;
       if (art) {
         const img = await this._httpGet(art, 0, timeoutMs);
         if (img && img.contentType && img.contentType.startsWith('image/')) return img;
       }
-    } catch (e) { /* 尝试下一来源 */ }
+      return null;
+    };
 
-    // 4) Wikipedia REST 摘要图（兜底）
-    try {
+    // Wikipedia REST 摘要图（免 key，小众艺人兜底）
+    const fromWikipedia = async () => {
       const summary = await this._httpJson(
-        'https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(name)
+        'https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(name),
+        null, timeoutMs
       );
       if (summary && summary.thumbnail && summary.thumbnail.source) {
         const img = await this._httpGet(summary.thumbnail.source, 0, timeoutMs);
         if (img && img.contentType && img.contentType.startsWith('image/')) return img;
       }
-    } catch (e) { /* 尝试下一来源 */ }
+      return null;
+    };
 
-    // 5) MusicBrainz → 直接 image 关系（古典/小众艺人终极兜底）
-    try {
-      const mb = await this._httpJson('https://musicbrainz.org/ws/2/artist/?query=artist:' + q + '&fmt=json');
+    // MusicBrainz → image 关系（古典/小众艺人终极兜底）
+    const fromMusicbrainz = async () => {
+      const mb = await this._httpJson('https://musicbrainz.org/ws/2/artist/?query=artist:' + q + '&fmt=json', null, timeoutMs);
       const id = mb && mb.artists && mb.artists[0] && mb.artists[0].id;
       if (id) {
-        const detail = await this._httpJson('https://musicbrainz.org/ws/2/artist/' + id + '?inc=url-rels&fmt=json');
+        const detail = await this._httpJson('https://musicbrainz.org/ws/2/artist/' + id + '?inc=url-rels&fmt=json', null, timeoutMs);
         const rel = detail && detail.relations && detail.relations.find(function (r) { return r.type === 'image'; });
         const art = rel && rel.url && rel.url.resource;
         if (art) {
@@ -1205,9 +1280,63 @@ class CoverHTTPServer {
           if (img && img.contentType && img.contentType.startsWith('image/')) return img;
         }
       }
-    } catch (e) { /* 放弃 */ }
+      return null;
+    };
 
-    return null;
+    // 分层竞速 + 瞬时故障跟踪：任一源因限流/网络抛错（sawError）时，
+    // 即使全部落空也不确认 miss（防止把限流误判成"查无此人"毒化负缓存）。
+    let sawError = false;
+    const wrap = (fn) => async () => {
+      try {
+        return await fn();
+      } catch (e) {
+        sawError = true;
+        throw e;
+      }
+    };
+
+    // 第 1 层：网易云 + iTunes 并行（覆盖 95% 艺人；预热时跳过网易云省配额）；
+    // 第 2 层：TheAudioDB + Deezer；第 3 层：MusicBrainz + Wikipedia（墙内
+    // Wikipedia 基本必超时，放最后只给全 miss 兜底）。
+    // 总预算 2.5 × timeoutMs：超过后不再下探，直接按已有结果收尾。
+    const tiers = [
+      opts.skipNetease ? [wrap(fromItunes)] : [wrap(fromNetease), wrap(fromItunes)],
+      [wrap(fromAudiodb), wrap(fromDeezer)],
+      [wrap(fromMusicbrainz), wrap(fromWikipedia)],
+    ];
+    const budget = timeoutMs * 2.5;
+    const t0 = Date.now();
+    for (let t = 0; t < tiers.length; t++) {
+      if (t > 0 && Date.now() - t0 > budget) break;
+      try {
+        const img = await this._firstSuccess(tiers[t].map((fn) => fn()));
+        if (img) return img;
+      } catch (e) { /* 下探下一层 */ }
+    }
+    if (sawError) throw new Error('transient sources'); // 有源报错：不确认 miss，防毒化负缓存
+    return null; // 确认无图：所有下探均干净落空
+  }
+
+  /** 竞速：任一 promise 成功且结果非空即 resolve；全部失败/为空则 reject */
+  _firstSuccess(promises) {
+    return new Promise((resolve, reject) => {
+      let pending = promises.length;
+      if (pending === 0) { reject(new Error('empty')); return; }
+      let settled = false;
+      promises.forEach((p) => {
+        Promise.resolve(p).then(
+          (v) => {
+            if (settled) return;
+            if (v) { settled = true; resolve(v); return; }
+            if (--pending === 0) reject(new Error('all empty'));
+          },
+          () => {
+            if (settled) return;
+            if (--pending === 0) reject(new Error('all failed'));
+          }
+        );
+      });
+    });
   }
 
   // ── 后台预热（本地库慢慢缓存）─────────────────────────────────────────────
@@ -1229,6 +1358,7 @@ class CoverHTTPServer {
       if (this._prefetchSet.has(key)) continue;           // 本会话已处理/已入队
       const cacheFile = path.join(dir, key + '.jpg');
       if (fs.existsSync(cacheFile)) { this._prefetchSet.add(key); continue; }  // 已缓存
+      if (this._artistMissFresh(cacheFile)) { this._prefetchSet.add(key); continue; }  // 负缓存期内，跳过
       this._prefetchSet.add(key);
       this._prefetchQueue.push({ name: norm, cacheFile: cacheFile });
       added++;
@@ -1244,44 +1374,81 @@ class CoverHTTPServer {
     return Math.max(1, Math.min(threads, 8));
   }
 
-  // 泵式并发：在并发上限内持续从队列领取任务；每个 worker 抓完一个后歇 1500ms 再领下一个
+  // 泵式并发：在并发上限内持续从队列领取任务；每张图只有几十 KB，
+  // worker 间隔 250ms 即可（原 1500ms 是为 MB 级大图设计的）
   _pumpPrefetch() {
     const N = this._prefetchConcurrency();
     while (this._prefetchActive < N && this._prefetchQueue.length > 0) {
       const item = this._prefetchQueue.shift();
       this._prefetchActive++;
-      // 后台抓取用更短的每源超时（6s），整条链路最坏约 30s，避免单艺人在墙后长期占队列
-      this._fetchArtistImage(item.name, 6000)
+      // 后台预热：短超时 + 跳过网易云（限流严格，配额留给前台按需请求）
+      this._fetchArtistImage(item.name, 5000, { skipNetease: true })
         .then((img) => {
-          if (img && img.buffer && (img.contentType || '').startsWith('image/')) {
-            try { fs.writeFileSync(item.cacheFile, img.buffer); } catch (e) { /* ignore */ }
-          }
+          // 预热只写命中、不写 miss：跳过了网易云就无法确认"真没图"，
+          // 只有网易云有图的小众艺人若被写成负缓存会被错杀 7 天。
+          // miss 由前台按需请求（含网易云）确认后落盘。
+          if (img) this._artistCacheStore(item.cacheFile, img);
         })
         .catch(() => { /* 抓取失败则跳过，留待下次启动重试 */ })
         .then(() => {
           this._prefetchActive--;
-          // 慢慢来：每个 worker 抓完一个后间隔 1500ms 再领下一个，不挤占前台网络/CPU
-          setTimeout(() => this._pumpPrefetch(), 1500);
+          setTimeout(() => this._pumpPrefetch(), 250);
         });
     }
   }
 
-  _httpJson(urlStr) {
-    return this._httpGet(urlStr).then(({ buffer }) => JSON.parse(buffer.toString('utf-8')));
+  _httpJson(urlStr, extraHeaders, timeoutMs = 15000) {
+    return this._httpGet(urlStr, 0, timeoutMs, extraHeaders)
+      .then(({ buffer }) => JSON.parse(buffer.toString('utf-8')));
   }
 
-  _httpGet(urlStr, redirects = 0, timeoutMs = 15000) {
+  /** POST application/x-www-form-urlencoded 并解析 JSON（网易云搜索接口需要） */
+  _httpPostFormJson(urlStr, params, extraHeaders, timeoutMs = 15000) {
+    return new Promise((resolve, reject) => {
+      const lib = urlStr.startsWith('https:') ? https : http;
+      const body = Object.keys(params)
+        .map((k) => encodeURIComponent(k) + '=' + encodeURIComponent(params[k]))
+        .join('&');
+      const req = lib.request(urlStr, {
+        method: 'POST',
+        headers: Object.assign({
+          'User-Agent': 'Carminium/1.0',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Length': Buffer.byteLength(body),
+        }, extraHeaders || {}),
+      }, (resp) => {
+        const status = resp.statusCode;
+        if (status !== 200) {
+          resp.resume();
+          reject(new Error('HTTP ' + status));
+          return;
+        }
+        const chunks = [];
+        resp.on('data', (c) => chunks.push(c));
+        resp.on('end', () => {
+          try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf-8'))); }
+          catch (e) { reject(e); }
+        });
+      });
+      req.on('error', reject);
+      req.setTimeout(timeoutMs, () => req.destroy(new Error('timeout')));
+      req.write(body);
+      req.end();
+    });
+  }
+
+  _httpGet(urlStr, redirects = 0, timeoutMs = 15000, extraHeaders) {
     return new Promise((resolve, reject) => {
       if (redirects > 5) { reject(new Error('too many redirects')); return; }
       const lib = urlStr.startsWith('https:') ? https : http;
       const req = lib.get(urlStr, {
-        headers: { 'User-Agent': 'Carminium/1.0' },
+        headers: Object.assign({ 'User-Agent': 'Carminium/1.0' }, extraHeaders || {}),
       }, (resp) => {
         const status = resp.statusCode;
         if (status >= 300 && status < 400 && resp.headers.location) {
           resp.resume();
           const next = new URL(resp.headers.location, urlStr).toString();
-          resolve(this._httpGet(next, redirects + 1));
+          resolve(this._httpGet(next, redirects + 1, timeoutMs, extraHeaders));
           return;
         }
         if (status !== 200) {
