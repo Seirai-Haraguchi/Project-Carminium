@@ -258,7 +258,7 @@ jobs:
             Write-Host "Removed koffi CMake build artifacts"
           }
 
-      - name: Build Electron app (portable)
+      - name: Build Electron app (portable + dir)
         shell: pwsh
         run: |
           $maxRetries = 3
@@ -266,7 +266,10 @@ jobs:
           do {
             $retryCount++
             Write-Host "Build attempt $retryCount of $maxRetries"
-            npx electron-builder --win portable --${{ matrix.arch }} --publish never
+            # Build both portable .exe and unpacked dir. The unpacked dir is
+            # required by the next "Verify packaged app" step; electron-builder
+            # only keeps it on disk when explicitly listed in `target`.
+            npx electron-builder --win portable dir --${{ matrix.arch }} --publish never
             if ($LASTEXITCODE -eq 0) { break }
             if ($retryCount -lt $maxRetries) {
               Write-Host "Build failed, retrying in 15 seconds..."
