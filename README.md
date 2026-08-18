@@ -1,5 +1,10 @@
 <div align="center">
 <h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="build/icon-dark.png" />
+    <source media="(prefers-color-scheme: light)" srcset="build/icon.png" />
+    <img src="build/icon.png" width="42" align="top" alt="Project Carminium">
+  </picture>
   Project Carminium
 </h1>
 <p>
