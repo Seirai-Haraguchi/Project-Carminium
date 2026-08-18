@@ -146,6 +146,8 @@
   }
 
   // ── Queue ──────────────────────────────────────────────────────────────────
+  var _draggedQueueItem = null;
+
   function updateQueue(queue, currentIndex) {
     if (!els.queueList) return;
     els.queueList.innerHTML = '';
@@ -155,7 +157,12 @@
       var track = queue[i];
       var li = document.createElement('div');
       li.className = 'np-queue-item' + (i === currentIndex ? ' current' : '');
+      li.dataset.index = i;
+      li.draggable = true;
       li.innerHTML =
+        '<button class="np-queue-drag" aria-label="' + (App.i18n.t('np.dragToReorder') || '') + '">' +
+          '<span class="np-queue-drag-icon"></span>' +
+        '</button>' +
         '<div class="np-queue-cover-wrap">' +
           '<div class="np-queue-cover">' +
             (track.has_cover
@@ -175,6 +182,7 @@
       (function (idx) {
         li.addEventListener('click', function (e) {
           if (e.target.closest('.np-queue-remove')) return;
+          if (e.target.closest('.np-queue-drag')) return;
           backend.play_queue_at(idx);
         });
         var removeBtn = li.querySelector('.np-queue-remove');
@@ -189,6 +197,94 @@
 
       els.queueList.appendChild(li);
     }
+
+    _setupQueueDragAndDrop();
+  }
+
+  function _setupQueueDragAndDrop() {
+    var items = els.queueList.querySelectorAll('.np-queue-item');
+    items.forEach(function (item) {
+      item.addEventListener('dragstart', function (e) {
+        _draggedQueueItem = item;
+        item.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', item.dataset.index);
+      });
+
+      item.addEventListener('dragend', function () {
+        item.classList.remove('dragging');
+        _draggedQueueItem = null;
+        var allItems = els.queueList.querySelectorAll('.np-queue-item');
+        allItems.forEach(function (it) {
+          it.classList.remove('drag-over-top', 'drag-over-bottom');
+        });
+      });
+
+      item.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (_draggedQueueItem === item) return;
+
+        var rect = item.getBoundingClientRect();
+        var midpoint = rect.top + rect.height / 2;
+        var allItems = els.queueList.querySelectorAll('.np-queue-item');
+        allItems.forEach(function (it) {
+          it.classList.remove('drag-over-top', 'drag-over-bottom');
+        });
+
+        if (e.clientY < midpoint) {
+          item.classList.add('drag-over-top');
+        } else {
+          item.classList.add('drag-over-bottom');
+        }
+      });
+
+      item.addEventListener('dragleave', function () {
+        item.classList.remove('drag-over-top', 'drag-over-bottom');
+      });
+
+      item.addEventListener('drop', function (e) {
+        e.preventDefault();
+        if (!_draggedQueueItem || _draggedQueueItem === item) return;
+
+        var fromIndex = parseInt(_draggedQueueItem.dataset.index, 10);
+        var rect = item.getBoundingClientRect();
+        var midpoint = rect.top + rect.height / 2;
+        var toIndex = parseInt(item.dataset.index, 10);
+
+        if (e.clientY >= midpoint) {
+          toIndex = toIndex + 1;
+          if (toIndex > els.queueList.children.length - 1) {
+            toIndex = els.queueList.children.length - 1;
+          }
+        }
+
+        if (fromIndex < toIndex) {
+          toIndex = toIndex - 1;
+        }
+
+        if (fromIndex !== toIndex) {
+          backend.reorder_queue(fromIndex, toIndex);
+        }
+      });
+    });
+
+    els.queueList.addEventListener('dragover', function (e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    });
+    els.queueList.addEventListener('drop', function (e) {
+      e.preventDefault();
+      if (!_draggedQueueItem) return;
+      var targetItem = e.target.closest('.np-queue-item');
+      if (targetItem) return;
+
+      var fromIndex = parseInt(_draggedQueueItem.dataset.index, 10);
+      var toIndex = els.queueList.children.length - 1;
+      if (fromIndex !== toIndex) {
+        backend.reorder_queue(fromIndex, toIndex);
+      }
+    });
   }
 
   // ── Update functions ───────────────────────────────────────────────────────

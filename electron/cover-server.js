@@ -182,6 +182,9 @@ class CoverHTTPServer {
       } else if (pathname.startsWith('/subsonic/stream/')) {
         const raw = decodeURIComponent(pathname.slice('/subsonic/stream/'.length));
         this._handleSubsonicStream(req, res, raw, method);
+      } else if (pathname.startsWith('/webdav/stream/')) {
+        const raw = decodeURIComponent(pathname.slice('/webdav/stream/'.length));
+        this._handleWebDAVStream(req, res, raw, method);
       } else if (pathname.startsWith('/artist-image/')) {
         const name = decodeURIComponent(pathname.slice('/artist-image/'.length));
         this._handleArtistImage(req, res, name, method);
@@ -218,6 +221,14 @@ class CoverHTTPServer {
       this._proxySubsonicCoverForTrack(req, res, trackId, method, size);
       return;
     }
+    // WebDAV 曲目：尝试从远程文件提取封面（异步代理 + 缓存）
+    if (trackId.startsWith('w') && trackId.includes('_')) {
+      this._proxyWebDAVCoverForTrack(req, res, trackId, method, size);
+      return;
+    }
+    // SMB 曲目：有本地路径（挂载点），使用 library 的本地封面提取
+    // SMB trackId 不以 s/w 开头，而是使用 trackId() 生成的 hash
+    // 因此 getCoverData 已经在上面处理了
     this._sendError(res, 404);
   }
 
@@ -333,12 +344,182 @@ class CoverHTTPServer {
     }
   }
 
+  // ── WebDAV 封面代理 ────────────────────────────────────────────────────
+
+  /**
+   * WebDAV 曲目封面：尝试从远程音频文件中提取内嵌封面图。
+   * 策略：
+   *   1) 先检查本地是否已缓存封面数据（library.getCoverData）
+   *   2) 缓存未命中：下载远程文件头部 → 提取封面 → 缓存 → 返回
+   *   3) 提取失败：返回 404
+   *
+   * trackId 格式: w<serverId>_<hash>
+   */
+  async _proxyWebDAVCoverForTrack(req, res, trackId, method, size) {
+    // 1) 检查本地缓存（之前提取过并写入 library 的封面数据）
+    const cached = this._library.getCoverData(trackId);
+    if (cached) {
+      this._sendResizedCover(req, res, trackId, cached, size, method);
+      return;
+    }
+
+    // 2) 从数据库获取曲目信息
+    const track = this._library.getTrack(trackId);
+    if (!track || track.source !== 'webdav') {
+      this._sendError(res, 404);
+      return;
+    }
+
+    const serverId = track.server_id;
+    if (serverId === null || serverId === undefined) {
+      this._sendError(res, 404);
+      return;
+    }
+
+    const cfg = this._library.getWebDAVServer(parseInt(serverId, 10));
+    if (!cfg) {
+      this._sendError(res, 404);
+      return;
+    }
+
+    // 3) 解析相对路径
+    let relativePath = track.path || '';
+    const prefix = `webdav://${parseInt(serverId, 10)}`;
+    if (relativePath.startsWith(prefix)) {
+      relativePath = relativePath.slice(prefix.length);
+    }
+
+    try {
+      const { WebDAVClient } = require('./webdav');
+      const client = new WebDAVClient(cfg.server_url, cfg.username, cfg.password, 60.0);
+      const fileUrl = client.buildFileUrl(relativePath);
+      const authHeaders = client.getAuthHeaders();
+
+      // 下载整个文件到临时目录（需要完整文件才能解析封面）
+      const fs = require('fs');
+      const os = require('os');
+      const tmpDir = path.join(os.tmpdir(), 'carminium-webdav-covers');
+      try { fs.mkdirSync(tmpDir, { recursive: true }); } catch { /* ignore */ }
+
+      const safeName = (track.title || trackId).replace(/[^a-zA-Z0-9._-]/g, '_');
+      const tmpFile = path.join(tmpDir, `cover_${trackId}_${Date.now()}_${safeName}.tmp`);
+
+      try {
+        // 下载文件
+        const { body, statusCode } = await this._httpGetBuffer(fileUrl, authHeaders, 120.0);
+        if (statusCode >= 400 || !body || body.length === 0) {
+          this._sendError(res, 404);
+          return;
+        }
+
+        fs.writeFileSync(tmpFile, body);
+
+        // 使用 music-metadata 异步提取封面
+        const coverData = await this._extractCoverAsync(tmpFile);
+        if (coverData) {
+          // 缓存到 library
+          try {
+            this._library.storeCoverData(trackId, coverData);
+          } catch { /* ignore */ }
+
+          // 返回缩放后的封面
+          this._sendResizedCover(req, res, trackId, coverData, size, method);
+        } else {
+          this._sendError(res, 404);
+        }
+      } finally {
+        try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+      }
+    } catch (e) {
+      console.warn('[cover-server] WebDAV cover extraction failed:', e && e.message);
+      this._sendError(res, 404);
+    }
+  }
+
+  /**
+   * 下载远程文件到 Buffer（用于封面提取）。
+   */
+  _httpGetBuffer(url, authHeaders, timeoutSec) {
+    return new Promise((resolve, reject) => {
+      const lib = url.startsWith('https:') ? https : http;
+      const urlObj = new URL(url);
+      const tlsOpts = urlObj.protocol === 'https:' ? { rejectUnauthorized: false } : {};
+
+      const req = lib.request({
+        hostname: urlObj.hostname,
+        port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+        path: urlObj.pathname + urlObj.search,
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Carminium/1.0',
+          'Accept-Encoding': 'identity',
+          'Connection': 'close',
+          ...authHeaders,
+        },
+        ...tlsOpts,
+      }, (resp) => {
+        if ([301, 302, 303, 307, 308].includes(resp.statusCode) && resp.headers.location) {
+          resp.resume();
+          let newUrl = resp.headers.location;
+          if (newUrl.startsWith('/')) {
+            newUrl = urlObj.protocol + '//' + urlObj.host + newUrl;
+          }
+          this._httpGetBuffer(newUrl, authHeaders, timeoutSec).then(resolve, reject);
+          return;
+        }
+        const chunks = [];
+        resp.on('data', (chunk) => chunks.push(chunk));
+        resp.on('end', () => {
+          resolve({ body: Buffer.concat(chunks), statusCode: resp.statusCode, headers: resp.headers });
+        });
+      });
+      req.on('error', reject);
+      req.setTimeout(Math.round(timeoutSec * 1000), () => {
+        req.destroy(new Error('timeout'));
+      });
+      req.end();
+    });
+  }
+
+  /**
+   * 从本地文件异步提取内嵌封面图（使用 music-metadata）。
+   * @returns {Promise<Buffer|null>} JPEG 封面数据或 null
+   */
+  async _extractCoverAsync(filePath) {
+    try {
+      const mm = require('music-metadata');
+      let parseFile = mm.parseFile || null;
+      if (!parseFile && typeof mm.loadMusicMetadata === 'function') {
+        const api = await mm.loadMusicMetadata();
+        parseFile = api.parseFile;
+      }
+      if (!parseFile) return null;
+
+      const metadata = await parseFile(filePath);
+      const common = metadata.common;
+      if (common.picture && common.picture.length > 0) {
+        const pic = common.picture[0];
+        // 返回 JPEG 或原始格式数据
+        if (pic.data && pic.data.length > 0) {
+          return Buffer.from(pic.data);
+        }
+      }
+      return null;
+    } catch (e) {
+      console.warn('[cover-server] cover extraction failed:', e && e.message);
+      return null;
+    }
+  }
+
   // ── Media（支持 Range 请求）────────────────────────────────────────────
 
   _resolveTrackPath(trackId) {
     const track = this._library.getTrack(trackId);
     if (!track) return null;
+    // Subsonic 和 WebDAV 曲目没有本地路径
     if (track.source === 'subsonic') return null;
+    if (track.source === 'webdav') return null;
+    // SMB 曲目有本地路径（挂载点路径），直接使用
     const filePath = track.path || '';
     if (!filePath || !fs.existsSync(filePath)) return null;
     return filePath;
@@ -351,6 +532,11 @@ class CoverHTTPServer {
       const track = this._library.getTrack(trackId);
       if (track && track.source === 'subsonic') {
         this._proxySubsonicStreamForTrack(req, res, track, method);
+        return;
+      }
+      // WebDAV 曲目：代理到 WebDAV 服务器
+      if (track && track.source === 'webdav') {
+        this._proxyWebDAVStreamForTrack(req, res, track, method);
         return;
       }
       this._sendError(res, 404);
@@ -744,6 +930,139 @@ class CoverHTTPServer {
 
     proxyReq.on('error', () => {
       try { this._sendError(res, 502, 'Subsonic stream failed'); } catch { /* ignore */ }
+    });
+    proxyReq.setTimeout(120000, () => {
+      proxyReq.destroy(new Error('timeout'));
+    });
+    proxyReq.end();
+  }
+
+  // ── WebDAV 流式代理 ────────────────────────────────────────────────────
+
+  _handleWebDAVStream(req, res, raw, method) {
+    // raw 格式: <server_id>/<relative_path>
+    const slashIdx = raw.indexOf('/');
+    if (slashIdx < 0) {
+      this._sendError(res, 404);
+      return;
+    }
+    const sidStr = raw.slice(0, slashIdx);
+    const relativePath = raw.slice(slashIdx + 1);
+    let serverId;
+    try { serverId = parseInt(sidStr, 10); } catch {
+      this._sendError(res, 404);
+      return;
+    }
+
+    const cfg = this._library.getWebDAVServer(serverId);
+    if (!cfg) {
+      this._sendError(res, 404);
+      return;
+    }
+
+    const { WebDAVClient } = require('./webdav');
+    const client = new WebDAVClient(cfg.server_url, cfg.username, cfg.password, 120.0);
+    const fileUrl = client.buildFileUrl('/' + relativePath);
+    const authHeaders = client.getAuthHeaders();
+
+    this._proxyHttpGet(req, res, fileUrl, authHeaders, method, 'WebDAV stream failed');
+  }
+
+  async _proxyWebDAVStreamForTrack(req, res, track, method) {
+    const serverId = track.server_id;
+    if (serverId === null || serverId === undefined) {
+      this._sendError(res, 404);
+      return;
+    }
+
+    const cfg = this._library.getWebDAVServer(parseInt(serverId, 10));
+    if (!cfg) {
+      this._sendError(res, 404);
+      return;
+    }
+
+    // track.path 格式: webdav://<serverId><relativePath>
+    let relativePath = track.path || '';
+    const prefix = `webdav://${parseInt(serverId, 10)}`;
+    if (relativePath.startsWith(prefix)) {
+      relativePath = relativePath.slice(prefix.length);
+    }
+
+    const { WebDAVClient } = require('./webdav');
+    const client = new WebDAVClient(cfg.server_url, cfg.username, cfg.password, 120.0);
+    const fileUrl = client.buildFileUrl(relativePath);
+    const authHeaders = client.getAuthHeaders();
+
+    this._proxyHttpGet(req, res, fileUrl, authHeaders, method, 'WebDAV stream failed');
+  }
+
+  /**
+   * 通用 HTTP GET 流式代理：将远程 HTTP 资源流式转发给客户端。
+   * 支持 Range 请求透传和超时处理。
+   */
+  _proxyHttpGet(req, res, url, authHeaders, method, errorLabel) {
+    const lib = url.startsWith('https:') ? require('https') : require('http');
+    const urlObj = new URL(url);
+    const tlsOpts = urlObj.protocol === 'https:' ? { rejectUnauthorized: false } : {};
+
+    const proxyReq = lib.request({
+      hostname: urlObj.hostname,
+      port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+      path: urlObj.pathname + urlObj.search,
+      method: method === 'HEAD' ? 'HEAD' : 'GET',
+      headers: {
+        'User-Agent': 'Carminium/1.0',
+        'Accept-Encoding': 'identity',
+        'Connection': 'close',
+        ...authHeaders,
+        // 透传 Range 请求头
+        ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {}),
+      },
+      ...tlsOpts,
+    }, (upstream) => {
+      const contentType = upstream.headers['content-type'] || 'audio/mpeg';
+      const contentLength = upstream.headers['content-length'];
+      const contentRange = upstream.headers['content-range'];
+      const acceptRanges = upstream.headers['accept-ranges'];
+
+      const headers = {
+        'Content-Type': contentType,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Access-Control-Allow-Origin': '*',
+      };
+      if (contentLength) headers['Content-Length'] = contentLength;
+      if (contentRange) headers['Content-Range'] = contentRange;
+      if (acceptRanges) headers['Accept-Ranges'] = acceptRanges;
+
+      const statusCode = upstream.statusCode >= 400 ? 502 : upstream.statusCode;
+
+      if (method === 'HEAD') {
+        this._sendHeaders(res, statusCode, headers);
+        upstream.destroy();
+        return;
+      }
+
+      if (upstream.statusCode >= 400) {
+        this._sendError(res, 502, errorLabel || 'Stream failed');
+        upstream.destroy();
+        return;
+      }
+
+      this._sendHeaders(res, statusCode, headers);
+      upstream.on('data', (chunk) => {
+        if (!res.write(chunk)) {
+          upstream.pause();
+          res.once('drain', () => upstream.resume());
+        }
+      });
+      upstream.on('end', () => res.end());
+      upstream.on('error', () => {
+        try { res.end(); } catch { /* ignore */ }
+      });
+    });
+
+    proxyReq.on('error', () => {
+      try { this._sendError(res, 502, errorLabel || 'Stream failed'); } catch { /* ignore */ }
     });
     proxyReq.setTimeout(120000, () => {
       proxyReq.destroy(new Error('timeout'));

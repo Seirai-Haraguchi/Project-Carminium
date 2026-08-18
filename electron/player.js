@@ -408,6 +408,69 @@ class MusicPlayer extends EventEmitter {
     }
   }
 
+  /**
+   * 将队列中 fromIndex 位置的曲目移动到 toIndex 位置。
+   * 不允许移动当前正在播放的曲目（与 removeFromQueue 一致）。
+   * 自动维护 _current_index / _shuffle_history。
+   */
+  reorderQueue(fromIndex, toIndex) {
+    if (fromIndex < 0 || fromIndex >= this._queue.length) return;
+    if (toIndex < 0 || toIndex >= this._queue.length) return;
+    if (fromIndex === toIndex) return;
+    if (fromIndex === this._current_index) return; // 不允许移动当前播放曲
+
+    const moved = this._queue.splice(fromIndex, 1)[0];
+    this._queue.splice(toIndex, 0, moved);
+
+    // 同步 _original_queue：在 original 队列中找到对应曲目并执行相同的移动
+    try {
+      const origIdx = this._original_queue.findIndex((t) => t.id === moved.id);
+      if (origIdx >= 0) {
+        const origMoved = this._original_queue.splice(origIdx, 1)[0];
+        // 在 original 队列中找到目标位置的前驱曲目
+        // toIndex 指的是 shuffled 队列中的目标位置，splice 之后该位置上的曲已经在那里
+        // 对于 original_queue，我们简单地按相同方向移动
+        let origTo = origIdx;
+        if (toIndex > fromIndex) {
+          origTo = Math.min(origIdx + (toIndex - fromIndex), this._original_queue.length);
+        } else {
+          origTo = Math.max(0, origIdx - (fromIndex - toIndex));
+        }
+        this._original_queue.splice(Math.min(origTo, this._original_queue.length), 0, origMoved);
+      }
+    } catch {
+      // ignore
+    }
+
+    // 更新 current_index
+    if (fromIndex < this._current_index && toIndex >= this._current_index) {
+      this._current_index--;
+    } else if (fromIndex > this._current_index && toIndex <= this._current_index) {
+      this._current_index++;
+    }
+
+    // 更新 shuffle_history
+    this._shuffle_history = this._shuffle_history.map((h) => {
+      if (h === fromIndex) return toIndex;
+      if (fromIndex < h && toIndex >= h) return h - 1;
+      if (fromIndex > h && toIndex <= h) return h + 1;
+      return h;
+    });
+
+    this._emitQueueChanged();
+
+    // 如果移动后下一曲发生变化，需要重新预加载
+    if (toIndex === this._current_index + 1 || fromIndex === this._current_index + 1) {
+      if (this._renderer && this._renderer.hasNextPreloaded()) {
+        this._renderer.cancelPreloadNext();
+        this.emit('audio_control', JSON.stringify({ action: 'clear_next' }));
+      }
+      if (this._automixEnabled || this._gaplessEnabled) {
+        this._preloadNextTrack();
+      }
+    }
+  }
+
   getQueue() {
     return [...this._queue];
   }
@@ -478,15 +541,50 @@ class MusicPlayer extends EventEmitter {
         return localTrack.path; // 直接返回本地文件路径
       }
     }
-    if (track.source !== 'subsonic') return track.path || '';
-    const p = track.path || '';
-    if (!p.startsWith('subsonic://')) return p;
-    const parts = p.slice('subsonic://'.length).split('/');
-    if (parts.length < 2) return p;
-    const serverId = parts[0];
-    const subsonicId = parts.slice(1).join('/');
-    if (!this._media_base_url) return p;
-    return `${this._media_base_url}/subsonic/stream/${serverId}/${subsonicId}`;
+    // WebDAV 曲目：如果本地库存在相同歌曲，优先使用本地文件
+    if (track.source === 'webdav' && this._library) {
+      const localTrack = this._library.findLocalTrackForSubsonic(track);
+      if (localTrack && localTrack.path) {
+        return localTrack.path;
+      }
+    }
+    // SMB 曲目：挂载后有本地路径，直接使用
+    if (track.source === 'smb') {
+      return track.path || '';
+    }
+    // 非 Subsonic/WebDAV 曲目直接返回路径
+    if (track.source !== 'subsonic' && track.source !== 'webdav') return track.path || '';
+
+    // Subsonic 曲目路径解析
+    if (track.source === 'subsonic') {
+      const p = track.path || '';
+      if (!p.startsWith('subsonic://')) return p;
+      const parts = p.slice('subsonic://'.length).split('/');
+      if (parts.length < 2) return p;
+      const serverId = parts[0];
+      const subsonicId = parts.slice(1).join('/');
+      if (!this._media_base_url) return p;
+      return `${this._media_base_url}/subsonic/stream/${serverId}/${subsonicId}`;
+    }
+
+    // WebDAV 曲目路径解析
+    if (track.source === 'webdav') {
+      const p = track.path || '';
+      // path 格式: webdav://<serverId><relativePath>
+      // 需要转换为 cover-server 的 /webdav/stream/<serverId>/<relativePath> URL
+      const prefix = 'webdav://';
+      if (!p.startsWith(prefix)) return p;
+      const rest = p.slice(prefix.length); // <serverId><relativePath>
+      // 提取 serverId（数字部分）
+      const match = rest.match(/^(\d+)(.*)/);
+      if (!match) return p;
+      const serverId = match[1];
+      const relativePath = match[2];
+      if (!this._media_base_url) return p;
+      return `${this._media_base_url}/webdav/stream/${serverId}${relativePath}`;
+    }
+
+    return track.path || '';
   }
 
   /**
