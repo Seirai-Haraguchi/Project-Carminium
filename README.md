@@ -5,8 +5,9 @@
 <p>
   <span>专注于 Material You 设计的支持本地/Navidrome/WebDAV 的偏本地音乐播放器</span>
 </p>
+
 [![星标](https://img.shields.io/github/stars/Seirai-Haraguchi/Project-Carminium?style=for-the-badge&color=orange&label=%E6%98%9F%E6%A0%87)](https://github.com/Seirai-Haraguchi/Project-Carminium)
-[![当前测试版](https://img.shields.io/github/v/tag/Seirai-Haraguchi/Project-Carminium?include_prereleases&label=%E5%BD%93%E5%89%8D%E6%B5%8B%E8%AF%95%E7%89%88&color=yellow&style=for-the-badge)](https://github.com/Seirai-Haraguchi/Project-Carminium/releases)
+[![当前版本](https://img.shields.io/github/v/tag/Seirai-Haraguchi/Project-Carminium?include_prereleases&label=%E5%BD%93%E5%89%8D%E6%B5%8B%E8%AF%95%E7%89%88&color=yellow&style=for-the-badge)](https://github.com/Seirai-Haraguchi/Project-Carminium/releases)
 [![开源许可](https://img.shields.io/github/license/Seirai-Haraguchi/Project-Carminium?label=%E5%BC%80%E6%BA%90%E8%AE%B8%E5%8F%AF%E8%AF%81&style=for-the-badge)](https://github.com/Seirai-Haraguchi/Project-Carminium)
 [![下载量](https://img.shields.io/github/downloads/Seirai-Haraguchi/Project-Carminium/total.svg?label=%E4%B8%8B%E8%BD%BD%E9%87%8F&color=darkgreen&style=for-the-badge)](https://github.com/Seirai-Haraguchi/Project-Carminium/releases)
 </div>
