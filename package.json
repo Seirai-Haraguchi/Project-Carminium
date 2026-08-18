@@ -1,6 +1,6 @@
 {
   "name": "Carminium",
-  "version": "1.0.12-0.20260818",
+  "version": "1.0.17-5.20260819",
   "description": "Carminium",
   "main": "electron/main.js",
   "author": {
