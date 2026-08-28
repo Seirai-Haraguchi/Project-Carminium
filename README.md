@@ -17,6 +17,9 @@
 [![下载量](https://img.shields.io/github/downloads/Seirai-Haraguchi/Project-Carminium/total.svg?label=%E4%B8%8B%E8%BD%BD%E9%87%8F&color=darkgreen&style=for-the-badge)](https://github.com/Seirai-Haraguchi/Project-Carminium/releases)
 </div>
 
+> [!NOTE]
+> 2026.8.19 更新
+> 由于作者未来要和生活对线（实际上是手头没钱要打零工做兼职来填充空余时间了），故 Carminium 更新的频率会放缓，更新只有季节性的大节点才会进行。如有任何贡献者欲做出贡献，欢迎提交 Pull Requests。
 
 ## 概述
 
@@ -38,7 +41,7 @@ Project Carminium 是一款以设计性和使用性为核心的音乐播放器�
 
 ### 支持播放的音乐格式
 
-基本上所有。（如果有播不出来的，Issue 谢谢）
+应该是大多数基本上所有。（如果有播不出来的，Issue 谢谢）
 
 ## 界面截图
 
