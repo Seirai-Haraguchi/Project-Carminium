@@ -46,6 +46,7 @@
     queueList: document.getElementById('np-queue-list'),
     pivotTabs: document.querySelectorAll('.np-pivot-tab'),
     pivotIndicator: document.getElementById('np-pivot-indicator'),
+    contentSegs: document.querySelectorAll('.np-content-seg'),
     panels: document.querySelectorAll('.np-panels .np-panel'),
     miniInfo: document.getElementById('np-mini-info'),
     miniInfoCover: document.getElementById('np-mini-cover'),
@@ -150,6 +151,9 @@ let _lastKnownPositionMs = 0;
 
   // デフォルト復元ビュー：'side' | 'fullscreen'
   let _npDefaultView = 'side';
+
+  // 全窗口视图内容布局：'solo'（单正在播放）| 'duo'（正在播放+歌词/播放列表）| 'lyrics'（单歌词）
+  let _npContentMode = 'duo';
 
   // 歌词功能区状态
   let lyricsShowTranslation = true;
@@ -391,6 +395,8 @@ let _lastKnownPositionMs = 0;
         waveProgress = s.wave_progress !== false;
         lyricsCreditFilters = s.lyrics_credit_filters || '';
         _npDefaultView = s.np_default_view || 'side';
+        // 全窗口视图内容布局（solo/duo/lyrics），同步分段控件状态（无需回写持久化）
+        if (s.np_content_mode) setContentMode(s.np_content_mode, false);
         _videoBgEnabled = !!s.video_background;
         if (_videoBg) _videoBg.setEnabled(_videoBgEnabled);
         _applyLyricsLayout();
@@ -685,6 +691,13 @@ let _lastKnownPositionMs = 0;
       updatePivotIndicator();
     });
     window.addEventListener('resize', updatePivotIndicator);
+
+    // 内容切换（全窗口视图布局模式）
+    els.contentSegs.forEach(function (seg) {
+      seg.addEventListener('click', function () {
+        setContentMode(seg.getAttribute('data-mode'));
+      });
+    });
 
     // Split button — 全屏播放
     els.btnFullscreen.addEventListener('click', function () {
@@ -2800,18 +2813,15 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
     document.body.classList.toggle('np-fullscreen', enteringFullscreen);
     if (_videoBg) _videoBg.onFullscreenChange();
 
-    // 全屏时左侧始终保留音乐信息，右侧展示歌词或待播列表。
+    // 全屏时按内容模式布局：solo 仅左栏 / duo 左栏+右侧歌词·列表 / lyrics 歌词独占。
     if (enteringFullscreen) {
-      const activeTab = document.querySelector('.np-pivot-tab.active');
-      const activeTabName = activeTab ? activeTab.getAttribute('data-tab') : 'lyrics';
-      switchTab(activeTabName === 'info' ? 'lyrics' : activeTabName, true);
+      _applyContentModePanels(true);
       // 启动鼓点驱动背景流动
       _startBeatLoop();
       // 进入全屏时 CSS display:contents + grid-area 切换可能使面板未能渲染，
       // 延迟一帧后强制刷新 panel active 状态。
       requestAnimationFrame(function () {
-        var tabName = activeTabName === 'info' ? 'lyrics' : activeTabName;
-        switchTab(tabName, true); // 重新激活确保 grid-area 生效
+        _applyContentModePanels(true); // 重新激活确保 grid-area 生效
       });
     } else {
       const activeTab = document.querySelector('.np-pivot-tab.active');
@@ -2833,12 +2843,8 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
     setTimeout(function () {
       pane.classList.remove('fs-transitioning');
       if (enteringFullscreen) {
-        // 全屏模式下：确保右侧面板（歌词或待播列表）处于激活状态
-        var rightActive = false;
-        els.panels.forEach(function (p) {
-          if (p.classList.contains('active') && p.getAttribute('data-panel') !== 'info') rightActive = true;
-        });
-        if (!rightActive) switchTab('lyrics', true);
+        // 全屏模式下：按内容模式确保对应面板处于激活状态
+        _applyContentModePanels(true);
       } else {
         // 非全屏模式：确保至少有一个面板处于激活状态
         var anyActive = false;
@@ -2868,9 +2874,7 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
       if (!pane.classList.contains('fullscreen')) {
         pane.classList.add('fullscreen');
         document.body.classList.add('np-fullscreen');
-        var activeTab = document.querySelector('.np-pivot-tab.active');
-        var activeTabName = activeTab ? activeTab.getAttribute('data-tab') : 'lyrics';
-        switchTab(activeTabName === 'info' ? 'lyrics' : activeTabName, true);
+        _applyContentModePanels(true);
         _startBeatLoop();
       }
       pane.classList.add('theater');
@@ -3084,16 +3088,13 @@ if (_videoBg) _videoBg.onFullscreenChange();
           mp.classList.remove('mini-leaving');
         }
 
-        // 全画面タブ設定：info パネルは全画面で常にアクティブ
-        const activeTab = document.querySelector('.np-pivot-tab.active');
-        const activeTabName = activeTab ? activeTab.getAttribute('data-tab') : 'lyrics';
-        switchTab(activeTabName === 'info' ? 'lyrics' : activeTabName, true);
+        // 全画面パネル設定：按内容模式规范（info パネルは全画面で常にアクティブ）
+        _applyContentModePanels(true);
         _startBeatLoop();
         if (_videoBg) _videoBg.onFullscreenChange();
         // 延迟一帧后强制刷新 panel active 状态（display:contents + grid-area 切换）
         requestAnimationFrame(function () {
-          var tabName = activeTabName === 'info' ? 'lyrics' : activeTabName;
-          switchTab(tabName, true);
+          _applyContentModePanels(true);
         });
       }, 120));
 
@@ -3101,12 +3102,8 @@ if (_videoBg) _videoBg.onFullscreenChange();
       _expandTimers.push(setTimeout(function () {
         document.body.classList.remove('player-expanding');
         pane.classList.remove('fs-transitioning');
-        // 确保右侧面板处于激活状态
-        var rightActive = false;
-        els.panels.forEach(function (p) {
-          if (p.classList.contains('active') && p.getAttribute('data-panel') !== 'info') rightActive = true;
-        });
-        if (!rightActive) switchTab('lyrics', true);
+        // 按内容模式确保对应面板处于激活状态
+        _applyContentModePanels(true);
       }, 440));
     } else {
       // ── 收折（全画面 → 直接底欄） ──
@@ -3118,9 +3115,8 @@ if (_videoBg) _videoBg.onFullscreenChange();
       // collapsing でフェードアウト（fullscreen は残したまま → position:fixed を維持）
       pane.classList.add('collapsing');
 
-      // switchTab は fullscreen がまだ残っている状態で呼ぶ
-      const activeTab = document.querySelector('.np-pivot-tab.active');
-      switchTab(activeTab ? activeTab.getAttribute('data-tab') : 'info', true);
+      // 面板激活状态在 fullscreen 仍保留时按内容模式规范化
+      _applyContentModePanels(true);
       _stopBeatLoop();
       if (_videoBg) _videoBg.onFullscreenChange();
 
@@ -3187,6 +3183,50 @@ if (_videoBg) _videoBg.onFullscreenChange();
     var tabRect = activeTab.getBoundingClientRect();
     els.pivotIndicator.style.left = (tabRect.left - parentRect.left) + 'px';
     els.pivotIndicator.style.width = tabRect.width + 'px';
+  }
+
+  // ── 内容切换（全窗口视图布局模式）─────────────────────────────────
+  // solo: 单正在播放（左栏内容居中独占）
+  // duo : 正在播放+歌词/播放列表（默认双列）
+  // lyrics: 单歌词（歌词独占内容区，信息面板由 CSS 隐藏但保持 active 以便恢复）
+  // persist=false 时仅同步 UI 状态（设置加载回放场景），不回写存储。
+  function setContentMode(mode, persist) {
+    if (mode !== 'solo' && mode !== 'lyrics') mode = 'duo';
+    _npContentMode = mode;
+    var pane = document.getElementById('now-playing-pane');
+    if (pane) {
+      pane.classList.remove('np-content-solo', 'np-content-duo', 'np-content-lyrics');
+      pane.classList.add('np-content-' + mode);
+    }
+    els.contentSegs.forEach(function (seg) {
+      var isActive = seg.getAttribute('data-mode') === mode;
+      seg.classList.toggle('active', isActive);
+      seg.setAttribute('aria-checked', isActive ? 'true' : 'false');
+    });
+    // 全窗口视图下立即按新模式规范面板激活状态；侧边栏模式不受影响
+    if (pane && pane.classList.contains('fullscreen')) {
+      _applyContentModePanels(true);
+    }
+    if (persist !== false) {
+      App.utils.call('save_settings', JSON.stringify({ np_content_mode: mode }));
+    }
+  }
+
+  // 按当前内容模式规范全屏面板激活状态（info 面板在全屏下始终保持 active）：
+  // solo → 仅 info；lyrics → info + lyrics；duo → info + 当前右侧标签（info 标签映射为 lyrics）
+  function _applyContentModePanels(forceFullscreen) {
+    var pane = document.getElementById('now-playing-pane');
+    var isFullscreen = forceFullscreen !== undefined ? forceFullscreen : (pane && pane.classList.contains('fullscreen'));
+    if (!isFullscreen) return;
+    if (_npContentMode === 'solo') {
+      switchTab('info', true);
+    } else if (_npContentMode === 'lyrics') {
+      switchTab('lyrics', true);
+    } else {
+      var activeTab = document.querySelector('.np-pivot-tab.active');
+      var tabName = activeTab ? activeTab.getAttribute('data-tab') : 'lyrics';
+      switchTab(tabName === 'info' ? 'lyrics' : tabName, true);
+    }
   }
 
   // ── 歌词功能区：搜索 / 翻译 / 罗马音 ────────────────────────────────────────

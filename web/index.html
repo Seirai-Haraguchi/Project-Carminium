@@ -142,6 +142,18 @@
         </button>
         <!-- 手柄提示（全窗口视图时显示） -->
         <div class="np-gamepad-hints" id="np-gamepad-hints" style="display:none;"></div>
+        <!-- 内容切换（全窗口视图布局：单正在播放 / 正在播放+歌词·列表 / 单歌词） -->
+        <div class="np-content-switch" id="np-content-switch" role="radiogroup" data-i18n-aria-label="np.content.label">
+          <button class="np-content-seg" data-mode="solo" role="radio" aria-checked="false" data-i18n-title="np.content.solo">
+            <span class="material-symbols-rounded">album</span>
+          </button>
+          <button class="np-content-seg active" data-mode="duo" role="radio" aria-checked="true" data-i18n-title="np.content.duo">
+            <span class="material-symbols-rounded">dock_to_right</span>
+          </button>
+          <button class="np-content-seg" data-mode="lyrics" role="radio" aria-checked="false" data-i18n-title="np.content.lyrics">
+            <span class="material-symbols-rounded">lyrics</span>
+          </button>
+        </div>
         <div class="split-button" id="np-split-btn">
           <button class="split-btn-main" id="btn-fullscreen" data-i18n-title="np.fullView">
             <span class="material-symbols-rounded">fullscreen</span>

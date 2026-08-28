@@ -2524,6 +2524,118 @@ padding: 0;
 /* 旧スライドインジケーターは使用しない（pills では不要） */
 .np-pivot-indicator { display: none; }
 
+/* ── 19c. 内容切换分段控件（仅全窗口视图顶栏显示） ──────────────── */
+/* 单正在播放 / 正在播放+歌词·播放列表 / 单歌词 三种布局模式，
+   pill 样式与 .np-pivot-tab / .np-collapse-btn 保持一致 */
+.np-content-switch {
+  display: none; /* 侧边栏模式不显示（三种布局均为全窗口概念） */
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.now-playing-pane.fullscreen .np-content-switch {
+  display: flex;
+  margin-left: auto; /* 顶栏 space-between 下把自身+Split按钮推向右侧 */
+}
+.np-content-seg {
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: transparent;
+  border-radius: var(--shape-full);
+  color: var(--md-on-surface-variant);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.18s ease, color 0.18s ease;
+}
+.np-content-seg:hover {
+  background: color-mix(in srgb, var(--md-on-surface) 8%, transparent);
+  color: var(--md-on-surface);
+}
+.np-content-seg.active {
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+}
+.np-content-seg .material-symbols-rounded {
+  font-size: 22px;
+  font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 22;
+  transition: font-variation-settings 0.18s ease;
+}
+.np-content-seg.active .material-symbols-rounded {
+  font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 22;
+}
+
+/* ── 19d. 全窗口视图内容布局模式 ────────────────────────────── */
+/* 列宽与双列模式严格一致：solo 沿用左栏 minmax(280px,360px)，
+   lyrics 沿用右栏 minmax(360px,480px)，控制区一律与左栏同宽，
+   独立展示时元素尺寸不发生漂移。
+   np-content-solo：单列居中（封面+曲目信息+控制），隐藏 Pivot
+   np-content-lyrics：歌词独占内容区，信息面板隐藏
+   np-content-duo（默认）：沿用 19 节双列网格，无需覆盖 */
+/* 顶栏与双列模式的网格块同宽并居中（360 左列 + 12 列距 + 480 右列），
+   三种内容模式下顶栏按钮位置逐像素一致，不贴窗口边缘 */
+.now-playing-pane.fullscreen.np-content-solo .np-top-bar,
+.now-playing-pane.fullscreen.np-content-lyrics .np-top-bar {
+  width: min(100%, 852px);
+  justify-self: center;
+}
+.now-playing-pane.fullscreen.np-content-solo {
+  grid-template-columns: 1fr minmax(280px, 360px) 1fr;
+  grid-template-rows: auto 1fr auto auto auto;
+  grid-template-areas:
+    "topbar topbar topbar"
+    ".      info      ."
+    ".      main      ."
+    ".      secondary ."
+    ".      volume    .";
+}
+.now-playing-pane.fullscreen.np-content-solo .np-pivot,
+.now-playing-pane.fullscreen.np-content-lyrics .np-pivot { display: none; }
+.now-playing-pane.fullscreen.np-content-solo .np-panel--info.active {
+  justify-content: center; /* 单列内容纵向居中，经典 Now Playing 排版 */
+}
+/* 影院模式下控制区隐藏后，封面信息同样扩展占满（沿用 19b 的行跨越） */
+.now-playing-pane.theater.controls-hidden.np-content-solo .np-panel--info.active {
+  justify-content: center;
+  padding-top: 0;
+}
+
+.now-playing-pane.fullscreen.np-content-lyrics {
+  grid-template-columns: 1fr minmax(360px, 480px) 1fr;
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas:
+    "topbar topbar topbar"
+    ".      lyrics     ."
+    ".      main       .";
+}
+/* 单歌词模式隐藏功能键与音量行，仅保留主播放控制，
+   网格行随元素塌陷（避免空轨道残留 gap），歌词区向下扩展 */
+.now-playing-pane.fullscreen.np-content-lyrics .np-secondary-controls,
+.now-playing-pane.fullscreen.np-content-lyrics .np-volume {
+  display: none;
+}
+.now-playing-pane.fullscreen.np-content-lyrics .np-panel--info.active {
+  display: none; /* 单歌词模式不显示信息面板（JS 仍保持其 active 状态以便退出时恢复） */
+}
+.now-playing-pane.fullscreen.np-content-lyrics .np-panel--lyrics.active {
+  grid-area: lyrics;
+  padding-top: 0; /* 无 Pivot 占位 */
+}
+.now-playing-pane.fullscreen.np-content-lyrics .np-lyrics {
+  padding: 14% 36px 32%;
+}
+.now-playing-pane.fullscreen.np-content-lyrics .np-main-controls {
+  width: min(100%, 360px); /* 与双列模式左栏（正在播放栏）同宽 */
+  margin-left: auto;
+  margin-right: auto;
+}
+/* 影院模式下控制区隐藏后，歌词扩展占满全高 */
+.now-playing-pane.theater.controls-hidden.np-content-lyrics .np-panel--lyrics.active {
+  grid-row: 2 / -1;
+}
+
 /* Panels container */
 .np-panels {
   flex: 1;
