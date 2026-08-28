@@ -3185,6 +3185,62 @@ if (_videoBg) _videoBg.onFullscreenChange();
     els.pivotIndicator.style.width = tabRect.width + 'px';
   }
 
+  // ── 内容模式切换的 FLIP 平移动画 ──────────────────────────────────
+  // 切换前记录可见面板/Pivot/控制行的位置，布局切换后反向平移并动画回落。
+  // 缓动用 MD3 emphasized-decelerate（先快后缓的非线性曲线）；
+  // 切换后新出现的元素以淡入+上滑补场，消失的元素直接跳过。
+  // 动画中途再次切换时快照取自当前动画位置，可自然打断衔接。
+  function _captureContentFlip() {
+    var pane = document.getElementById('now-playing-pane');
+    if (!pane || !pane.classList.contains('fullscreen')) return null;
+    if (pane.classList.contains('fs-transitioning')) return null; // 全屏进入过渡中不采集
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return null;
+    var candidates = [
+      pane.querySelector('.np-panel--info.active'),
+      pane.querySelector('.np-panel--lyrics.active'),
+      pane.querySelector('.np-panel--queue.active'),
+      pane.querySelector('.np-pivot'),
+      pane.querySelector('.np-main-controls'),
+      pane.querySelector('.np-secondary-controls'),
+      pane.querySelector('.np-volume')
+    ];
+    var before = new Map();
+    candidates.forEach(function (el) {
+      if (el && window.getComputedStyle(el).display !== 'none') before.set(el, el.getBoundingClientRect());
+    });
+    return { candidates: candidates, before: before };
+  }
+
+  function _playContentFlip(state) {
+    if (!state) return;
+    var EASE = 'cubic-bezier(0.05, 0.7, 0.1, 1)';
+    state.candidates.forEach(function (el) {
+      if (!el) return;
+      var visibleNow = window.getComputedStyle(el).display !== 'none';
+      var firstRect = state.before.get(el);
+      if (!firstRect) {
+        if (visibleNow) {
+          el.animate([
+            { opacity: 0, transform: 'translateY(14px)' },
+            { opacity: 1, transform: 'translateY(0)' }
+          ], { duration: 200, delay: 50, easing: EASE, fill: 'backwards' });
+        }
+        return; // 切换后仍隐藏：无需处理
+      }
+      if (!visibleNow) return;
+      var last = el.getBoundingClientRect();
+      var dx = firstRect.left - last.left;
+      var dy = firstRect.top - last.top;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+      el.style.willChange = 'transform';
+      var anim = el.animate([
+        { transform: 'translate(' + dx + 'px, ' + dy + 'px)' },
+        { transform: 'translate(0px, 0px)' }
+      ], { duration: 260, easing: EASE, fill: 'none' });
+      anim.onfinish = function () { el.style.willChange = ''; };
+    });
+  }
+
   // ── 内容切换（全窗口视图布局模式）─────────────────────────────────
   // solo: 单正在播放（左栏内容居中独占）
   // duo : 正在播放+歌词/播放列表（默认双列）
@@ -3192,8 +3248,11 @@ if (_videoBg) _videoBg.onFullscreenChange();
   // persist=false 时仅同步 UI 状态（设置加载回放场景），不回写存储。
   function setContentMode(mode, persist) {
     if (mode !== 'solo' && mode !== 'lyrics') mode = 'duo';
-    _npContentMode = mode;
+    var changed = mode !== _npContentMode;
     var pane = document.getElementById('now-playing-pane');
+    // 布局切换前捕获 FLIP 快照（内部自校验：全屏、非过渡中、无减弱动效偏好）
+    var flipState = changed ? _captureContentFlip() : null;
+    _npContentMode = mode;
     if (pane) {
       pane.classList.remove('np-content-solo', 'np-content-duo', 'np-content-lyrics');
       pane.classList.add('np-content-' + mode);
@@ -3207,6 +3266,7 @@ if (_videoBg) _videoBg.onFullscreenChange();
     if (pane && pane.classList.contains('fullscreen')) {
       _applyContentModePanels(true);
     }
+    if (flipState) _playContentFlip(flipState);
     if (persist !== false) {
       App.utils.call('save_settings', JSON.stringify({ np_content_mode: mode }));
     }

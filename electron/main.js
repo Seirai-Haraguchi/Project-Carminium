@@ -1284,6 +1284,8 @@ async function initializeApp() {
 
     // 非阻塞回填 genre（异步执行，不阻止启动）
     library.backfillGenres().catch(e => console.warn('[main] genre backfill failed:', e.message));
+    // 非阻塞回填别名标题（osu! 风格 ASCII/Unicode 双标题，用于搜索）
+    library.backfillAliasTitles().catch(e => console.warn('[main] alias title backfill failed:', e.message));
 
     try {
       wasapi = NativeRenderer ? new NativeRenderer() : null;

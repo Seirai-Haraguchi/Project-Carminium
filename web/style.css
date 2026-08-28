@@ -2526,20 +2526,46 @@ padding: 0;
 
 /* ── 19c. 内容切换分段控件（仅全窗口视图顶栏显示） ──────────────── */
 /* 单正在播放 / 正在播放+歌词·播放列表 / 单歌词 三种布局模式，
-   pill 样式与 .np-pivot-tab / .np-collapse-btn 保持一致 */
+   MD3 轨道式（switch track）：胶囊轨道（surface-container-high，
+   与 .np-control-pill 一致）+ 滑块（secondary-container，
+   与 .np-pivot-tab.active 一致）随选中段平移 */
 .np-content-switch {
   display: none; /* 侧边栏模式不显示（三种布局均为全窗口概念） */
+  position: relative;
   align-items: center;
-  gap: 4px;
+  height: 40px;
+  padding: 4px;
+  border-radius: var(--shape-full);
+  background: var(--md-surface-container-high);
   flex-shrink: 0;
 }
 .now-playing-pane.fullscreen .np-content-switch {
   display: flex;
-  margin-left: auto; /* 顶栏 space-between 下把自身+Split按钮推向右侧 */
+  position: absolute; /* 顶栏正中央，不随两侧按钮宽度偏移 */
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
 }
-.np-content-seg {
+/* 滑块：位置由面板上的 np-content-* 类驱动，默认为中段（duo） */
+.np-content-thumb {
+  position: absolute;
+  top: 4px;
+  left: 44px; /* duo 段位（4px 轨道内边距 + 40px 第一段宽） */
   width: 40px;
-  height: 40px;
+  height: 32px;
+  border-radius: var(--shape-full);
+  background: var(--md-secondary-container);
+  /* 弹簧式非线性缓动：轻微过冲后回正（0.3, 0, 0.2, 1.1） */
+  transition: left 260ms cubic-bezier(0.3, 0, 0.2, 1.1);
+}
+.now-playing-pane.np-content-solo .np-content-thumb { left: 4px; }
+.now-playing-pane.np-content-duo .np-content-thumb { left: 44px; }
+.now-playing-pane.np-content-lyrics .np-content-thumb { left: 84px; }
+.np-content-seg {
+  position: relative;
+  z-index: 1; /* 图标浮于滑块之上 */
+  width: 40px;
+  height: 32px;
   border: none;
   background: transparent;
   border-radius: var(--shape-full);
@@ -2548,23 +2574,21 @@ padding: 0;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background-color 0.18s ease, color 0.18s ease;
+  transition: color 0.18s ease;
 }
 .np-content-seg:hover {
-  background: color-mix(in srgb, var(--md-on-surface) 8%, transparent);
   color: var(--md-on-surface);
 }
 .np-content-seg.active {
-  background: var(--md-secondary-container);
   color: var(--md-on-secondary-container);
 }
 .np-content-seg .material-symbols-rounded {
-  font-size: 22px;
-  font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 22;
+  font-size: 20px;
+  font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 20;
   transition: font-variation-settings 0.18s ease;
 }
 .np-content-seg.active .material-symbols-rounded {
-  font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 22;
+  font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 20;
 }
 
 /* ── 19d. 全窗口视图内容布局模式 ────────────────────────────── */
@@ -2594,11 +2618,11 @@ padding: 0;
 .now-playing-pane.fullscreen.np-content-solo .np-pivot,
 .now-playing-pane.fullscreen.np-content-lyrics .np-pivot { display: none; }
 .now-playing-pane.fullscreen.np-content-solo .np-panel--info.active {
-  justify-content: center; /* 单列内容纵向居中，经典 Now Playing 排版 */
+  justify-content: flex-start; /* 与双列模式左栏同：内容靠顶，不居中 */
 }
 /* 影院模式下控制区隐藏后，封面信息同样扩展占满（沿用 19b 的行跨越） */
 .now-playing-pane.theater.controls-hidden.np-content-solo .np-panel--info.active {
-  justify-content: center;
+  justify-content: flex-start;
   padding-top: 0;
 }
 
@@ -2621,7 +2645,7 @@ padding: 0;
 }
 .now-playing-pane.fullscreen.np-content-lyrics .np-panel--lyrics.active {
   grid-area: lyrics;
-  padding-top: 0; /* 无 Pivot 占位 */
+  padding-top: 48px; /* 与双列模式一致：Pivot 标签虽隐藏，但内容顶部起位不变 */
 }
 .now-playing-pane.fullscreen.np-content-lyrics .np-lyrics {
   padding: 14% 36px 32%;
@@ -7423,6 +7447,8 @@ body.np-fullscreen .title-bar-center {
 
 body.gamepad-connected .now-playing-pane.fullscreen .np-gamepad-hints {
   opacity: 1;
+  /* 内容切换轨道占据顶栏正中，连接手柄时提示下移一行避让 */
+  top: calc(100% + 6px);
 }
 
 body.gamepad-connected .now-playing-pane:not(.fullscreen) .np-gamepad-hints {

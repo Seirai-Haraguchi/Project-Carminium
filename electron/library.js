@@ -27,6 +27,14 @@ async function _ensureParseFile() {
 
 const SUPPORTED_EXT = new Set(['.mp3', '.flac', '.ogg', '.wav', '.m4a', '.aac', '.opus', '.wma']);
 
+// 别名标题的自定义标签名（类似 osu! 谱面的 Title / TitleUnicode 双标题约定：
+// 一首曲子同时有罗马字（ASCII）标题和本地化 Unicode 标题，搜索任意一个都能命中）。
+// 兼容 ID3v2 TXXX 帧、Vorbis/APE 自定义字段、MP4 freeform（----:xxxx:NAME）。
+const ALIAS_TITLE_KEYS = [
+  'ASCII_TITLE', 'LOCALIZED_TITLE', 'TITLE_UNICODE', 'UNICODE_TITLE',
+  'ROMAJI_TITLE', 'ALT_TITLE',
+];
+
 const FEAT_PATTERNS = ['feat.', 'ft.', 'vs.', 'with'];
 
 const CREATE_SQL = `
@@ -52,9 +60,10 @@ CREATE TABLE IF NOT EXISTS tracks (
     year         INTEGER,
     duration_ms  INTEGER,
     file_size    INTEGER,
-    has_cover    INTEGER DEFAULT 0,
-    lyrics       TEXT,
-    added_at     REAL NOT NULL
+    has_cover   INTEGER DEFAULT 0,
+    lyrics      TEXT,
+    alias_title TEXT,
+    added_at    REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS liked_tracks (
@@ -176,6 +185,7 @@ class MusicLibrary {
       try { this._db.exec(sql); } catch { /* already exists */ }
     };
     tryAlter('ALTER TABLE tracks ADD COLUMN lyrics TEXT');
+    tryAlter('ALTER TABLE tracks ADD COLUMN alias_title TEXT');
 tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     for (const [col, def] of [['created_at', '0'], ['updated_at', '0']]) {
       tryAlter(`ALTER TABLE playlists ADD COLUMN ${col} REAL NOT NULL DEFAULT ${def}`);
@@ -399,8 +409,8 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       `INSERT OR IGNORE INTO tracks
        (id, path, folder_id, title, artist, album, album_artist,
         track_number, disc_number, year, duration_ms, file_size,
-        has_cover, lyrics, genre, added_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        has_cover, lyrics, genre, alias_title, added_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
       tid, filePath, fid,
       meta.title || path.basename(filePath, path.extname(filePath)),
@@ -415,6 +425,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       meta.has_cover ? 1 : 0,
       meta.lyrics || null,
       meta.genre || null,
+      meta.alias_title || null,
       addedAt
     );
   }
@@ -426,7 +437,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     this._db.prepare(
       `UPDATE tracks SET title=?, artist=?, album=?, album_artist=?,
        track_number=?, disc_number=?, year=?, duration_ms=?, file_size=?,
-       has_cover=?, lyrics=?, genre=? WHERE path=?`
+       has_cover=?, lyrics=?, genre=?, alias_title=? WHERE path=?`
     ).run(
       meta.title || path.basename(filePath, path.extname(filePath)),
       meta.artist || null,
@@ -440,6 +451,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       meta.has_cover ? 1 : 0,
       meta.lyrics || null,
       meta.genre || null,
+      meta.alias_title || null,
       filePath
     );
   }
@@ -608,10 +620,49 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       meta.has_cover = !!(common.picture && common.picture.length > 0);
       meta.genre = (common.genre && common.genre.length > 0) ? common.genre[0] : null;
     meta.lyrics = this._extractLrcSync(filePath, metadata);
+      meta.alias_title = this._extractAliasTitle(metadata, meta.title);
     } catch (e) {
       console.error(`[MusicLibrary] Failed to parse metadata: ${filePath}`, e.message || e);
     }
     return meta;
+  }
+
+  /**
+   * 从原生标签中提取别名标题（osu! 风格双标题）。
+   * 遍历 music-metadata 的 native 标签：
+   *   - ID3v2 TXXX 帧：music-metadata 将其展开为 { id: 'TXXX:ASCII_TITLE', value: '...' }
+   *   - Vorbis/APE 自定义字段：{ id: 'ASCII_TITLE', value: '...' }
+   *   - MP4 freeform：{ id: '----:com.apple.iTunes:ASCII_TITLE', value: '...' }
+   * 返回第一个与主标题不同的非空候选值，找不到返回 null。
+   */
+  _extractAliasTitle(metadata, title) {
+    if (!metadata || !metadata.native) return null;
+    const found = [];
+    for (const tags of Object.values(metadata.native)) {
+      if (!Array.isArray(tags)) continue;
+      for (const tag of tags) {
+        if (!tag || !tag.id) continue;
+        let name = String(tag.id);
+        let value = tag.value;
+        if (name.toUpperCase() === 'TXXX') {
+          // 兜底：未展开形态，value = { description, text }
+          if (!value || typeof value !== 'object') continue;
+          name = String(value.description || '');
+          value = Array.isArray(value.text) ? value.text[0] : value.text;
+        } else if (name.toUpperCase().startsWith('TXXX:')) {
+          name = name.slice(5);
+        }
+        if (Array.isArray(value)) value = value[0];
+        const key = name.trim().toUpperCase();
+        if (!key) continue;
+        if (!ALIAS_TITLE_KEYS.some((k) => key === k || key.endsWith(':' + k))) continue;
+        if (typeof value !== 'string') continue;
+        const v = value.trim();
+        if (!v || v === title) continue;
+        if (!found.includes(v)) found.push(v);
+      }
+    }
+    return found.length > 0 ? found[0] : null;
   }
 
   _extractLrcSync(filePath, metadata = null) {
@@ -1057,6 +1108,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       t.sort_letter = makeFirstLetter(t.title);
       t.artist_sort_key = makeSortKey(t.artist);
       t.album_sort_key = makeSortKey(t.album);
+      t.alias_sort_key = makeSortKey(t.alias_title);
       t.artists = this._splitArtists(t.artist);
     }
     return tracks;
@@ -1164,9 +1216,9 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     const q = `%${query}%`;
     const { clause, params } = this._dedupExcludeClause();
     return this._db.prepare(
-      `SELECT * FROM tracks WHERE (title LIKE ? OR artist LIKE ? OR album LIKE ?)${clause}
+      `SELECT * FROM tracks WHERE (title LIKE ? OR artist LIKE ? OR album LIKE ? OR alias_title LIKE ?)${clause}
        ORDER BY LOWER(COALESCE(artist,'')), LOWER(COALESCE(album,'')), track_number`
-    ).all(q, q, q, ...params);
+    ).all(q, q, q, q, ...params);
   }
 
   getTrack(trackId) {
@@ -1228,6 +1280,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       t.sort_key = makeSortKey(t.title);
       t.artist_sort_key = makeSortKey(t.artist);
       t.album_sort_key = makeSortKey(t.album);
+      t.alias_sort_key = makeSortKey(t.alias_title);
       t.artists = this._splitArtists(t.artist);
     }
     return deduped;
@@ -1262,6 +1315,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       t.sort_key = makeSortKey(t.title);
       t.artist_sort_key = makeSortKey(t.artist);
       t.album_sort_key = makeSortKey(t.album);
+      t.alias_sort_key = makeSortKey(t.alias_title);
       t.artists = this._splitArtists(t.artist);
     }
     return deduped;
@@ -1294,6 +1348,36 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     }
     if (updated > 0) {
       console.log(`[MusicLibrary] Backfilled genre for ${updated} tracks`);
+    }
+  }
+
+  // ── Alias title backfill (async, called after init) ─────────────────────
+
+  /**
+   * 回填别名标题：为 alias_title IS NULL 的本地曲目解析一次文件。
+   * 与 genre 回填不同：无别名的曲目也写入 ''（而非保持 NULL），
+   * 这样 NULL 始终表示"未检查过"，避免每次启动重复解析全库。
+   */
+  async backfillAliasTitles() {
+    const rows = this._db.prepare(
+      "SELECT id, path FROM tracks WHERE alias_title IS NULL AND source IS NULL"
+    ).all();
+    if (rows.length === 0) return;
+    const parseFile = await _ensureParseFile();
+    if (!parseFile) return;
+    let updated = 0;
+    for (const row of rows) {
+      if (!fs.existsSync(row.path)) continue;
+      try {
+        const metadata = await parseFile(row.path);
+        const title = metadata.common.title || null;
+        const alias = this._extractAliasTitle(metadata, title);
+        this._db.prepare('UPDATE tracks SET alias_title=? WHERE id=?').run(alias || '', row.id);
+        if (alias) updated++;
+      } catch { /* ignore */ }
+    }
+    if (updated > 0) {
+      console.log(`[MusicLibrary] Backfilled alias title for ${updated} tracks`);
     }
   }
 
@@ -1702,6 +1786,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       t.sort_key = makeSortKey(t.title);
       t.artist_sort_key = makeSortKey(t.artist);
       t.album_sort_key = makeSortKey(t.album);
+      t.alias_sort_key = makeSortKey(t.alias_title);
       t.artists = this._splitArtists(t.artist);
     }
     return rows;

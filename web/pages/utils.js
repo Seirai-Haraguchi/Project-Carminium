@@ -549,6 +549,8 @@
       { text: 'title',  key: 'sort_key',         textVal: track.title,  keyVal: track.sort_key },
       { text: 'artist', key: 'artist_sort_key',  textVal: track.artist, keyVal: track.artist_sort_key },
       { text: 'album',  key: 'album_sort_key',   textVal: track.album,  keyVal: track.album_sort_key },
+      // 别名标题（osu! 风格 ASCII/Unicode 双标题），搜任一名字都能命中
+      { text: 'alias_title', key: 'alias_sort_key', textVal: track.alias_title, keyVal: track.alias_sort_key },
     ];
 
     for (var i = 0; i < fields.length; i++) {
