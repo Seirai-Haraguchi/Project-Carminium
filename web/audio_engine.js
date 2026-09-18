@@ -28,15 +28,28 @@
 
   // ── 等功率曲线预计算 ──────────────────────────────────────────────────────
 
-  function computeEqualPowerCurves(length) {
+  /**
+   * 预计算等功率交叉淡化曲线。
+   *
+   * 曲线为「相对曲线」（0→1 等功率），实际写入 GainNode 前需乘以源侧
+   * 有效音量 amplitude，否则缓冲区幅度 1.0 会让过渡结束的瞬间跳到满音量，
+   * 与音量设置不符（过渡期听起来比设置音量小，结束后突然变响）。
+   *
+   * @param {number} length - 帧数
+   * @param {number} [amplitude=1] - 源侧有效音量（线性 0-1），用于缩放曲线幅度
+   */
+  function computeEqualPowerCurves(length, amplitude) {
+    const amp = (typeof amplitude === 'number' && isFinite(amplitude) && amplitude >= 0)
+      ? Math.min(1, amplitude)
+      : 1;
     const fadeOut = new Float32Array(length);
     const fadeIn = new Float32Array(length);
     for (let i = 0; i < length; i++) {
       const progress = i / (length - 1);
-      fadeOut[i] = Math.cos(progress * Math.PI / 2);
-      fadeIn[i] = Math.sin(progress * Math.PI / 2);
+      fadeOut[i] = Math.cos(progress * Math.PI / 2) * amp;
+      fadeIn[i] = Math.sin(progress * Math.PI / 2) * amp;
     }
-    return { fadeOut, fadeIn };
+    return { fadeOut, fadeIn, amplitude: amp };
   }
 
   // ── Airy transition wash targets ──────────────────────────────────────────
@@ -45,9 +58,19 @@
   // starts inside the same wash and slowly recovers the full frequency
   // range, dynamics and clarity as the track settles in.
   // Frequencies in Hz, threshold in dB, ratio is N:1, makeup is linear gain.
+  // makeup 用于补偿「带限 + 压缩」造成的响度损失，使过渡期间听感响度与
+  // 音量设置保持一致（这是「过渡期音量偏低」的直接成因）。
+  //
+  // 实测（1/3 倍频程粉噪积分，见 _verify_wash.js）：
+  //   HP190 + LP1050 带限单独造成 -7.73 dB；-30dB@4.5:1 压缩再压 ~2~3 dB。
+  //   旧值 1.3 (+2.28 dB) 净亏约 -5.4 dB → 过渡期明显比设置音量轻。
+  //
+  // 取值权衡：makeup 作用在压缩器之后，取满（~4.9）会让峰值顶到末级限幅器
+  // (threshold -1dB, 20:1) 而削波。这里取带限补偿为主、压缩部分补偿的值，
+  // 让过渡期响度贴近设置音量，同时保留 wash 的"软"质感与限幅余量。
   var WASH_NEUTRAL = { lowpass: 19500, highpass: 22, threshold: 0, ratio: 1.0, makeup: 1.0 };
-  var WASH_OUT_DEEP = { lowpass: 1050, highpass: 190, threshold: -30, ratio: 4.5, makeup: 1.3 };
-  var WASH_IN_START = { lowpass: 1500, highpass: 150, threshold: -24, ratio: 3.0, makeup: 1.22 };
+  var WASH_OUT_DEEP = { lowpass: 1050, highpass: 190, threshold: -30, ratio: 4.5, makeup: 3.4 };
+  var WASH_IN_START = { lowpass: 1500, highpass: 150, threshold: -24, ratio: 3.0, makeup: 3.1 };
 
   // ── AudioEngine ────────────────────────────────────────────────────────────
 
@@ -199,6 +222,16 @@
       this._tempoAdjustActive = 0;
       /** @type {number} 用户调节的播放速率（变速变调），1.0 = 原速。仅 Buffer 模式生效 */
       this._userRate = 1.0;
+
+      // ── 过渡实时重排（音量变更时按进度重建曲线）──
+      /** @type {GainNode|null} 当前过渡的 outgoing deck gain（fadeOut 曲线持有者） */
+      this._crossfadeOutNode = null;
+      /** @type {GainNode|null} 当前过渡的 incoming deck gain（fadeIn 曲线持有者） */
+      this._crossfadeInNode = null;
+      /** @type {number} 当前过渡的起始 AudioContext 时间（秒） */
+      this._crossfadeStartCtxTime = -1;
+      /** @type {number} 当前过渡的时长（秒） */
+      this._crossfadeDurationSec = 0;
 
       // ── 预调度无缝切换 ──
       /** @type {AudioBufferSourceNode|null} 预调度的 gapless 下一曲源 */
@@ -429,7 +462,7 @@
 
       this._currentStreamingNode = this._createStreamingWorkletNode('current');
       this._currentStreamingGain = this._ctx.createGain();
-      this._currentStreamingGain.gain.value = this._volume;
+      this._currentStreamingGain.gain.value = this._effectiveVolume();
       this._currentStreamingNode.connect(this._currentStreamingGain);
       this._currentStreamingGain.connect(this._effectsInput || this._outputNode);
     }
@@ -702,7 +735,7 @@
     _createAndStartSource(buffer, offsetMs, generation, isMain) {
       const source = new AudioBufferSourceNode(this._ctx, { buffer: buffer });
       const gain = this._ctx.createGain();
-      gain.gain.value = this._volume;
+      gain.gain.value = this._effectiveVolume();
 
       source.connect(gain);
       gain.connect(this._effectsInput || this._outputNode);
@@ -827,6 +860,7 @@
       this._crossfadePending = false;
       this._crossfadePendingSince = 0;
       this._tempoAdjustActive = 0;
+      this._clearCrossfadeTracking();
       this._cancelGaplessSchedule();
       // _transitionPlan 由 setTransitionPlan() / clearNextState() 管理
       // _nextIsStreaming 是 next 曲目的模式标志，由 setNextInfo() 设置
@@ -885,6 +919,7 @@
       this._crossfadePending = false;
       this._crossfadePendingSince = 0;
       this._tempoAdjustActive = 0;
+      this._clearCrossfadeTracking();
       this._cancelGaplessSchedule();
 
       // 停止 crossfade 用的 next 源节点（如果正在播放）
@@ -949,19 +984,127 @@
 
     // ── 音量 ────────────────────────────────────────────────────────────────
 
+    /**
+     * 当前应施加到源侧增益的实际音量（线性 0-1）。
+     * 听觉保护启用时，音量被限制在安全范围内。
+     */
+    _effectiveVolume() {
+      if (this._hearingProtectionEnabled) {
+        return Math.min(this._volume, this._SAFETY_MAX_GAIN);
+      }
+      return this._volume;
+    }
+
     setVolume(level) {
       this._volume = Math.max(0, Math.min(1, level));
-      // 听觉保护启用时，音量被限制在安全范围
-      var effectiveVol = this._volume;
-      if (this._hearingProtectionEnabled) {
-        effectiveVol = Math.min(this._volume, this._SAFETY_MAX_GAIN);
+      var effectiveVol = this._effectiveVolume();
+      // 音量作用于所有源侧 deck 增益（bus 增益），过渡期间也不例外。
+      //
+      // 背景（本次修复的核心）：交叉淡化期间 next deck 的 gain 由等功率曲线
+      // 绝对驱动，而曲线原先恒定以 1.0 收尾。于是过渡结束的瞬间音量从
+      // 「设置音量」跳到「满音量」——用户反馈的「过渡时音量低、过渡后变满音量」。
+      // 现在曲线按 _effectiveVolume() 缩放（见 computeEqualPowerCurves），
+      // 过渡终点严格落在设置音量上。
+      //
+      // 过渡进行中若用户改音量：已 setValueCurveAtTime 的曲线无法局部改写，
+      // 这里用「保持相对进度、重排剩余曲线」的方式在 t0 处重新调度，做到
+      // 拖动滑块时过渡响度实时跟随，且不会跳变。
+      if (this._crossfadeActive) {
+        this._rescaleActiveCrossfade(effectiveVol);
+        this._cachedCrossfadeCurves = null;
+        return;
       }
       if (this._currentGain) {
         this._currentGain.gain.value = effectiveVol;
       }
-      if (this._currentStreamingGain && !this._crossfadeActive) {
+      if (this._currentStreamingGain) {
         this._currentStreamingGain.gain.value = effectiveVol;
       }
+      if (this._nextGain) {
+        this._nextGain.gain.value = effectiveVol;
+      }
+      if (this._nextStreamingGain) {
+        this._nextStreamingGain.gain.value = effectiveVol;
+      }
+      // gapless 预调度源的 gain 不会走 crossfade 曲线，直接跟随音量
+      if (this._gaplessScheduledGain) {
+        this._gaplessScheduledGain.gain.value = effectiveVol;
+      }
+      // 音量变化后，过渡曲线缓存作废（幅度需要按新音量重建）
+      this._cachedCrossfadeCurves = null;
+    }
+
+    /**
+     * 过渡进行中用户改变音量：按当前进度重排剩余曲线。
+     *
+     * setValueCurveAtTime 一旦调度便无法局部修改，只能在该参数上重新调度。
+     * 做法：取已知的过渡起止时间（_crossfadeStartCtxTime / _crossfadeDurationSec），
+     * 重建一条「从当前相对进度续接、剩余段按新音量收尾」的曲线，
+     * 以 cancelScheduledValues 清掉旧的，再重排。
+     *
+     * 这样拖动滑块时过渡响度实时跟随，且过渡终点严格等于新音量，不产生跳变。
+     *
+     * @param {number} amplitude - 新的源侧有效音量（线性 0-1）
+     */
+    _rescaleActiveCrossfade(amplitude) {
+      if (!this._ctx) return;
+      var t0 = this._crossfadeStartCtxTime;
+      var duration = this._crossfadeDurationSec;
+      if (!(duration > 0) || !(t0 >= 0)) return;
+
+      var now = this._ctx.currentTime;
+      var elapsed = Math.max(0, Math.min(duration, now - t0));
+      var progress = duration > 0 ? elapsed / duration : 1;
+      var tail = Math.max(0.01, duration - elapsed);
+
+      // 关键：曲线必须从「当前进度」处续接，而不是从头重放。
+      // setValueCurveAtTime 会把参数从 arr[0] 驱动到 arr[末尾]，若直接传入
+      // 剩余段的完整曲线，fadeIn 会从 0 重新爬升（响度骤降）、fadeOut 会从满值
+      // 重新下坠（响度骤升）。因此这里截取曲线中 [progress, 1] 的子段作为剩余段。
+      var full = computeEqualPowerCurves(
+        Math.max(2, Math.round(duration * this._ctx.sampleRate)), amplitude
+      );
+      var outTail = this._subCurve(full.fadeOut, progress);
+      var inTail = this._subCurve(full.fadeIn, progress);
+
+      var outNode = this._crossfadeOutNode;
+      var inNode = this._crossfadeInNode;
+      try {
+        if (outNode) {
+          outNode.gain.cancelScheduledValues(now);
+          outNode.gain.setValueCurveAtTime(outTail, now, tail);
+        }
+        if (inNode) {
+          inNode.gain.cancelScheduledValues(now);
+          inNode.gain.setValueCurveAtTime(inTail, now, tail);
+        }
+      } catch (e) {
+        // 重排失败（时间参数非法等）时退化为直接设值，至少保证音量正确
+        try {
+          if (outNode) outNode.gain.value = amplitude;
+          if (inNode) inNode.gain.value = amplitude;
+        } catch (_) {}
+      }
+    }
+
+    /**
+     * 截取曲线在 [fromProgress, 1] 区间的子段（含两端点）。
+     *
+     * 用于过渡中途重排：让新曲线从当前相对进度处无缝续接，而不是从 0 重放。
+     * 返回至少 2 个样本，保证 setValueCurveAtTime 参数合法。
+     *
+     * @param {Float32Array} curve - 完整曲线
+     * @param {number} fromProgress - 起始相对进度（0-1）
+     * @returns {Float32Array} 子段曲线
+     */
+    _subCurve(curve, fromProgress) {
+      var n = curve.length;
+      if (n < 2) return new Float32Array([curve[0] || 0, curve[0] || 0]);
+      var p = Math.max(0, Math.min(1, fromProgress));
+      var startIdx = Math.min(n - 2, Math.floor(p * (n - 1)));
+      var out = new Float32Array(n - startIdx);
+      for (var i = 0; i < out.length; i++) out[i] = curve[startIdx + i];
+      return out;
     }
 
     // ── 次曲信息 ────────────────────────────────────────────────────────────
@@ -1157,6 +1300,7 @@
 
       this._nextSource = nextSrc;
       this._nextGain = nextGain;
+      this._trackCrossfade(this._currentStreamingGain, nextGain, now, cfSec);
 
       console.log('[AudioEngine] Streaming→Buffer crossfade start:', cfMs, 'ms');
       if (this.onCrossfadeStart) this.onCrossfadeStart();
@@ -1242,6 +1386,7 @@
 
       this._currentGain.gain.setValueCurveAtTime(fadeOut, now, cfSec);
       nextGain.gain.setValueCurveAtTime(fadeIn, now, cfSec);
+      this._trackCrossfade(this._currentGain, nextGain, now, cfSec);
 
       console.log('[AudioEngine] Buffer crossfade start:', cfMs, 'ms');
       if (this.onCrossfadeStart) this.onCrossfadeStart();
@@ -1293,6 +1438,7 @@
       }
       // 下一曲 gain fade in（从 0 开始）
       this._nextStreamingGain.gain.setValueCurveAtTime(fadeIn, now, cfSec);
+      this._trackCrossfade(this._currentStreamingGain, this._nextStreamingGain, now, cfSec);
 
       console.log('[AudioEngine] Streaming crossfade start:', cfMs, 'ms');
       if (this.onCrossfadeStart) this.onCrossfadeStart();
@@ -1350,6 +1496,7 @@
         this._nextStreamingGain.gain.value = 0;
         this._nextStreamingGain.gain.setValueCurveAtTime(fadeIn, now, cfSec);
       }
+      this._trackCrossfade(this._currentGain, this._nextStreamingGain, now, cfSec);
 
       console.log('[AudioEngine] Buffer→Streaming crossfade start:', cfMs, 'ms');
       if (this.onCrossfadeStart) this.onCrossfadeStart();
@@ -1520,6 +1667,8 @@
       this._pendingBufferToStreamingCrossfade = false;
       this._crossfadePending = false;
       this._crossfadePendingSince = 0;
+      // 过渡结束：清除曲线重排追踪（gain 已在此后统一写回 _effectiveVolume）
+      this._clearCrossfadeTracking();
 
       // Airy wash：outgoing deck 即将销毁，其 wash 链一并释放；
       // incoming deck 的 wash 提升为 current，恢复自动化在音频线程继续。
@@ -1553,6 +1702,15 @@
         this._currentGain = this._nextGain;
         this._currentBuffer = this._nextBuffer;
         this._sourceStartCtxTime = this._ctx.currentTime;
+        // 关键：nextGain 在 crossfade 期间由 fadeIn 曲线绝对驱动，曲线终点为
+        // 缩放后的音量值；这里显式取消自动化并写回当前有效音量，避免调度残留
+        // 或过渡后调音量导致的偏移（用户反馈的「过渡后变满音量」）。
+        if (this._currentGain) {
+          try {
+            this._currentGain.gain.cancelScheduledValues(this._ctx.currentTime);
+          } catch (_) {}
+          this._currentGain.gain.value = this._effectiveVolume();
+        }
       }
 
       // ── 位置补偿 ──
@@ -1641,10 +1799,12 @@
         try { this._currentStreamingNode.port.postMessage({ type: 'resume' }); } catch (_) {}
       }
 
-      // 设置 gain 为当前音量（crossfade 自动化已结束）
+      // 设置 gain 为当前有效音量（crossfade 自动化已结束）
+      // 注意：必须用 _effectiveVolume()（含听觉保护上限），且不能直接用
+      // _volume —— 否则过渡刚结束的瞬间会跳过听觉保护跳回满音量。
       if (this._currentStreamingGain) {
         this._currentStreamingGain.gain.cancelScheduledValues(this._ctx.currentTime);
-        this._currentStreamingGain.gain.value = this._volume;
+        this._currentStreamingGain.gain.value = this._effectiveVolume();
       }
 
       // 重新绑定 onmessage 为 'current' 角色
@@ -1701,7 +1861,7 @@
 
       var nextSrc = new AudioBufferSourceNode(this._ctx, { buffer: this._nextBuffer });
       var nextGain = this._ctx.createGain();
-      nextGain.gain.value = this._volume;
+      nextGain.gain.value = this._effectiveVolume();
       nextSrc.connect(nextGain);
       nextGain.connect(this._effectsInput || this._outputNode);
 
@@ -2233,7 +2393,7 @@
       if (cfMs > 0 && this._ctx) {
         var cfFrames = Math.round((cfMs / 1000) * this._ctx.sampleRate);
         if (cfFrames > 0) {
-          this._cachedCrossfadeCurves = computeEqualPowerCurves(cfFrames);
+          this._cachedCrossfadeCurves = computeEqualPowerCurves(cfFrames, this._effectiveVolume());
         }
       }
       if (plan) {
@@ -2441,16 +2601,50 @@
 
     /**
      * 获取等功率曲线（优先使用预计算缓存，避免 startCrossfade 时同步分配大数组导致主线程顿卡）。
+     *
+     * 曲线幅度按「源侧有效音量」缩放：GainNode 在交叉淡化期间由曲线绝对驱动，
+     * 若曲线终点为 1.0，则过渡结束的瞬间音量会跳到满音量，与用户设置不符。
+     * 缓存键包含帧数与幅度，任一变化即重建。
+     *
      * @param {number} cfFrames - 需要的帧数
-     * @returns {{fadeOut:Float32Array, fadeIn:Float32Array}}
+     * @returns {{fadeOut:Float32Array, fadeIn:Float32Array, amplitude:number}}
      */
     _getCrossfadeCurves(cfFrames) {
-      if (this._cachedCrossfadeCurves && this._cachedCrossfadeCurves.fadeOut.length === cfFrames) {
-        return this._cachedCrossfadeCurves;
+      var amp = this._effectiveVolume();
+      var cached = this._cachedCrossfadeCurves;
+      if (cached && cached.fadeOut.length === cfFrames &&
+          Math.abs((cached.amplitude === undefined ? 1 : cached.amplitude) - amp) < 1e-6) {
+        return cached;
       }
-      // 缓存未命中（duration 变更等），同步计算并更新缓存
-      this._cachedCrossfadeCurves = computeEqualPowerCurves(cfFrames);
+      // 缓存未命中（duration / 音量变更等），同步计算并更新缓存
+      this._cachedCrossfadeCurves = computeEqualPowerCurves(cfFrames, amp);
       return this._cachedCrossfadeCurves;
+    }
+
+    /**
+     * 记录当前过渡的曲线持有节点与时间基准，供音量变更时实时重排
+     * （见 _rescaleActiveCrossfade）。
+     *
+     * @param {GainNode|null} outNode - outgoing deck gain（fadeOut 曲线）
+     * @param {GainNode|null} inNode - incoming deck gain（fadeIn 曲线）
+     * @param {number} t0 - 过渡起始 AudioContext 时间（秒）
+     * @param {number} cfSec - 过渡时长（秒）
+     */
+    _trackCrossfade(outNode, inNode, t0, cfSec) {
+      this._crossfadeOutNode = outNode || null;
+      this._crossfadeInNode = inNode || null;
+      this._crossfadeStartCtxTime = (typeof t0 === 'number' && isFinite(t0)) ? t0 : -1;
+      this._crossfadeDurationSec = (typeof cfSec === 'number' && isFinite(cfSec) && cfSec > 0) ? cfSec : 0;
+    }
+
+    /**
+     * 清理过渡追踪状态（过渡结束时调用）。
+     */
+    _clearCrossfadeTracking() {
+      this._crossfadeOutNode = null;
+      this._crossfadeInNode = null;
+      this._crossfadeStartCtxTime = -1;
+      this._crossfadeDurationSec = 0;
     }
 
     /**
