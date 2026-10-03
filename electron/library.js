@@ -37,6 +37,29 @@ const ALIAS_TITLE_KEYS = [
 
 const FEAT_PATTERNS = ['feat.', 'ft.', 'vs.', 'with'];
 
+// 提取内嵌封面时预读的文件头字节数。
+// 24MB 足以覆盖 ID3v2 / FLAC PICTURE / MP4 covr / Ogg 图形块等常见布局，
+// 同时把单次同步读取的分配量从「整个音频文件（可达 100MB）」降到有界值。
+// 头部未命中时仍会回退整文件读取，因此不改变提取结果。
+const COVER_HEAD_READ_BYTES = 24 * 1024 * 1024;
+
+// 艺术家分隔符正则缓存：_splitArtists 对全库每首曲目调用一次，
+// 原本每次都 new RegExp（1 万首 = 1 万次正则编译）。分隔符是设置项，
+// 实际取值极少，按字符串缓存编译结果即可。
+const _artistSepRegexCache = new Map();
+function _getArtistSepRegex(seps) {
+  let re = _artistSepRegexCache.get(seps);
+  if (!re) {
+    re = new RegExp('[' + seps.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\x00]');
+    // 设置项数量有界（用户可自定义），但仍设上限防止异常扩张
+    if (_artistSepRegexCache.size > 16) {
+      _artistSepRegexCache.delete(_artistSepRegexCache.keys().next().value);
+    }
+    _artistSepRegexCache.set(seps, re);
+  }
+  return re;
+}
+
 const CREATE_SQL = `
 PRAGMA foreign_keys = ON;
 
@@ -171,7 +194,9 @@ class MusicLibrary {
     //   - 内存未命中 → 磁盘缓存命中？读磁盘 + 提升到内存 → 返回
     //   - 磁盘未命中 → 读音频文件 + 提取 → 写磁盘 + 写内存 → 返回
     this._coverDataCache = new Map();  // track_id → Buffer（内存热缓存）
-    this._coverDataCacheMax = 20;       // 内存上限（收紧，大库下防止 RSS 激增）
+    this._coverDataCacheMax = 48;       // 内存条数上限
+    this._coverDataCacheBytes = 0;      // 当前缓存字节数
+    this._coverDataCacheByteMax = 32 * 1024 * 1024; // 字节预算 32MB（硬上限，防止大图撑爆 RSS）
     this._coverCacheDir = path.join(settings.dataDir, 'cover_cache');
     try {
       fs.mkdirSync(this._coverCacheDir, { recursive: true });
@@ -737,18 +762,20 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     if (!row.path) return null;
 
     // ── 2. 磁盘缓存命中 ──
-    // 跨重启有效，避免每次启动都重新读音频文件提取
+    // 跨重启有效，避免每次启动都重新读音频文件提取。
+    // 直接用 readFileSync 判定：读成功 = 已有缓存记录；ENOENT = 从未缓存。
+    // 原实现是 existsSync + readFileSync 两次系统调用，且两者之间存在竞态。
     const diskPath = this._coverCachePath(trackId);
     let data = null;
+    let hasDiskRecord = false;
     try {
-      if (fs.existsSync(diskPath)) {
-        data = fs.readFileSync(diskPath);
-        if (data && data.length === 0) data = null;  // 空文件 = 标记无封面
-      }
-    } catch { /* 磁盘读取失败，继续走提取 */ }
+      const buf = fs.readFileSync(diskPath);
+      hasDiskRecord = true;
+      data = (buf && buf.length === 0) ? null : buf;  // 空文件 = 已确认无封面
+    } catch { /* ENOENT / IO 错误 → 视为无缓存记录，走提取 */ }
 
     // ── 3. 提取并写入磁盘缓存 ──
-    if (data === null) {
+    if (!hasDiskRecord) {
       data = this._extractCoverSync(row.path);
       // 写入磁盘缓存（null 写空文件作为"无封面"标记，避免反复读音频文件）
       try {
@@ -757,13 +784,32 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     }
 
     // ── 4. 写入内存 LRU ──
-    if (this._coverDataCache.size >= this._coverDataCacheMax) {
-      const oldest = this._coverDataCache.keys().next();
-      if (!oldest.done) this._coverDataCache.delete(oldest.value);
-    }
-    this._coverDataCache.set(trackId, data);
+    this._putCoverCache(trackId, data);
 
     return data;
+  }
+
+  /**
+   * 写入封面内存 LRU，同时维护字节预算。
+   * 条数与字节数双阈值：条数控制索引开销，字节数防止大图（FLAC 内嵌可达
+   * 数 MB）把主进程 RSS 推高。淘汰按插入顺序（Map 迭代序 = LRU）。
+   */
+  _putCoverCache(trackId, data) {
+    const prev = this._coverDataCache.get(trackId);
+    if (prev !== undefined) {
+      this._coverDataCacheBytes -= prev ? prev.length : 0;
+      this._coverDataCache.delete(trackId);
+    }
+    this._coverDataCache.set(trackId, data);
+    this._coverDataCacheBytes += data ? data.length : 0;
+    while (this._coverDataCache.size > this._coverDataCacheMax ||
+           this._coverDataCacheBytes > this._coverDataCacheByteMax) {
+      const oldest = this._coverDataCache.keys().next();
+      if (oldest.done) break;
+      const old = this._coverDataCache.get(oldest.value);
+      this._coverDataCacheBytes -= old ? old.length : 0;
+      this._coverDataCache.delete(oldest.value);
+    }
   }
 
   /**
@@ -778,11 +824,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       fs.writeFileSync(diskPath, data);
     } catch { /* 磁盘写入失败，忽略 */ }
     // 同时更新内存 LRU
-    if (this._coverDataCache.size >= this._coverDataCacheMax) {
-      const oldest = this._coverDataCache.keys().next();
-      if (!oldest.done) this._coverDataCache.delete(oldest.value);
-    }
-    this._coverDataCache.set(trackId, data);
+    this._putCoverCache(trackId, data);
   }
 
   /**
@@ -802,10 +844,15 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
    */
   clearCoverDataCache(trackId) {
     if (trackId) {
-      this._coverDataCache.delete(trackId);
+      const prev = this._coverDataCache.get(trackId);
+      if (prev !== undefined) {
+        this._coverDataCacheBytes -= prev ? prev.length : 0;
+        this._coverDataCache.delete(trackId);
+      }
       try { fs.unlinkSync(this._coverCachePath(trackId)); } catch { /* ignore */ }
     } else {
       this._coverDataCache.clear();
+      this._coverDataCacheBytes = 0;
       // 清空整个磁盘缓存目录
       try {
         const files = fs.readdirSync(this._coverCacheDir);
@@ -816,29 +863,57 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     }
   }
 
+  /**
+   * 提取内嵌封面（同步）。
+   *
+   * 性能：原实现 fs.readFileSync 整个音频文件（FLAC 常 30-100MB），
+   * 在主进程事件循环上同步分配这么大的 Buffer，会长时间阻塞 IPC
+   * （PCM 转发 / 播放控制）与并发封面请求 —— 这是列表快速滚动时
+   * 出现偶发卡顿的直接原因之一。
+   *
+   * 优化：只读取文件头部。封面元数据在四种格式里都位于文件前部：
+   *   MP3 → ID3v2 标签（文件头，含 APIC 帧）
+   *   FLAC → fLaC 后的 metadata blocks（PICTURE 为 block type 6）
+   *   MP4 → moov/trak/.../covr（moov 通常在文件头）
+   *   OGG → Vorbis comment 头（含 METADATA_BLOCK_PICTURE）
+   * 因此读前 _COVER_HEAD_BYTES 即可覆盖绝大多数情况；
+   * 若头部未找到封面，回退到整文件读取，保证不漏封面（仅在罕见布局时发生）。
+   */
   _extractCoverSync(filePath) {
     try {
-      // music-metadata is async, but better-sqlite3 is sync.
-      // We need a synchronous way to extract cover art.
-      // For MP3: parse ID3v2 APIC frame
-      // For FLAC: parse picture block
-      // For MP4: parse covr atom
-      // This is complex, so we'll use a simplified approach:
-      // Read the file and use music-metadata's parseBuffer (async) — but we need sync.
-      //
-      // Alternative: use a simple ID3/FLAC/MP4 picture extractor.
       const ext = path.extname(filePath).toLowerCase();
-      const buf = fs.readFileSync(filePath);
+      const supported = ext === '.mp3' || ext === '.flac' ||
+        ext === '.m4a' || ext === '.aac' || ext === '.mp4' ||
+        ext === '.ogg' || ext === '.opus';
+      if (!supported) return null;
 
-      if (ext === '.mp3') {
-        return _extractMp3Cover(buf);
-      } else if (ext === '.flac') {
-        return _extractFlacCover(buf);
-      } else if (ext === '.m4a' || ext === '.aac' || ext === '.mp4') {
-        return _extractMp4Cover(buf);
-      } else if (ext === '.ogg' || ext === '.opus') {
-        return _extractOggCover(buf);
+      const extract = (buf) => {
+        if (ext === '.mp3') return _extractMp3Cover(buf);
+        if (ext === '.flac') return _extractFlacCover(buf);
+        if (ext === '.m4a' || ext === '.aac' || ext === '.mp4') return _extractMp4Cover(buf);
+        if (ext === '.ogg' || ext === '.opus') return _extractOggCover(buf);
+        return null;
+      };
+
+      const stat = fs.statSync(filePath);
+      const headSize = Math.min(stat.size, COVER_HEAD_READ_BYTES);
+      const fd = fs.openSync(filePath, 'r');
+      let head;
+      try {
+        head = Buffer.allocUnsafe(headSize);
+        fs.readSync(fd, head, 0, headSize, 0);
+      } finally {
+        fs.closeSync(fd);
       }
+
+      const found = extract(head);
+      if (found) return found;
+
+      // 头部没找到（moov 在文件尾等布局）→ 回退整文件读取，行为与原实现一致
+      if (stat.size > headSize) {
+        return extract(fs.readFileSync(filePath));
+      }
+      return null;
     } catch {
       // ignore
     }
@@ -869,8 +944,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
     }
 
-    const sepRegex = new RegExp('[' + seps.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\x00]');
-    const parts = text.split(sepRegex);
+    const parts = text.split(_getArtistSepRegex(seps));
     const result = [];
     const seen = new Set();
     for (const p of parts) {
@@ -1073,7 +1147,10 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
   _invalidateDedupCache() {
     this._dedupCache = null;
     this._dedupLocalPathCache = null;
-    if (this._coverDataCache) this._coverDataCache.clear();
+    if (this._coverDataCache) {
+      this._coverDataCache.clear();
+      this._coverDataCacheBytes = 0;
+    }
   }
 
   /**
@@ -1099,19 +1176,59 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return { clause: ` AND id NOT IN ${placeholders}`, params: Array.from(dupIds) };
   }
 
-  getAllTracks() {
-    const rows = this._db.prepare('SELECT * FROM tracks ORDER BY added_at').all();
+  getAllTracks(opts) {
+    // 列表负载默认剔除 lyrics：它是全表唯一的大文本列（内嵌 LRC 常 2-8KB/首），
+    // 1 万首即 20-80MB。它只在「正在播放」时被读取（now_playing 判断
+    // track.lyrics 决定 embedded/自动搜索），而播放入口拿到的 track 一律经
+    // 主进程按 id 从 DB 回填（见 bridge 的 _hydrateTrackLyrics），
+    // 因此列表侧不携带它不影响任何歌词显示路径。
+    // 调用方若确实需要全字段（导出/标签编辑等）可传 { withLyrics: true }。
+    const withLyrics = !!(opts && opts.withLyrics);
+    const sql = withLyrics
+      ? 'SELECT * FROM tracks ORDER BY added_at'
+      : `SELECT id, path, title, artist, album, album_artist, track_number,
+                disc_number, year, duration_ms, file_size, has_cover,
+                alias_title, added_at, source
+         FROM tracks ORDER BY added_at`;
+    const rows = this._db.prepare(sql).all();
     const tracks = this._dedupeTracks(rows);
-    tracks.sort((a, b) => makeSortKey(a.title).localeCompare(makeSortKey(b.title)));
+    // 先算排序键再排序：原实现把 makeSortKey 放在比较器里，n log n 次调用；
+    // 且比较器用的就是 t.sort_key，先算后比得到完全相同的顺序。
     for (const t of tracks) {
       t.sort_key = makeSortKey(t.title);
-      t.sort_letter = makeFirstLetter(t.title);
       t.artist_sort_key = makeSortKey(t.artist);
-      t.album_sort_key = makeSortKey(t.album);
-      t.alias_sort_key = makeSortKey(t.alias_title);
       t.artists = this._splitArtists(t.artist);
     }
+    tracks.sort((a, b) => a.sort_key.localeCompare(b.sort_key));
+    for (const t of tracks) {
+      t.sort_letter = makeFirstLetter(t.title);
+      t.album_sort_key = makeSortKey(t.album);
+      t.alias_sort_key = makeSortKey(t.alias_title);
+    }
     return tracks;
+  }
+
+  /**
+   * 按 id 批量取歌词（供播放入口回填列表剥离掉的 lyrics 字段）。
+   * 单次 IN 查询，避免逐条 getTrack 的 N 次往返。
+   * @param {string[]} trackIds
+   * @returns {Map<string,string>} 仅包含 lyrics 非空的条目
+   */
+  getLyricsByIds(trackIds) {
+    const out = new Map();
+    if (!trackIds || trackIds.length === 0) return out;
+    // SQLite 变量上限 999，分批查询
+    const CHUNK = 900;
+    for (let i = 0; i < trackIds.length; i += CHUNK) {
+      const slice = trackIds.slice(i, i + CHUNK);
+      const rows = this._db.prepare(
+        `SELECT id, lyrics FROM tracks
+         WHERE lyrics IS NOT NULL AND lyrics <> ''
+           AND id IN (${slice.map(() => '?').join(',')})`
+      ).all(...slice);
+      for (const r of rows) out.set(r.id, r.lyrics);
+    }
+    return out;
   }
 
   getAlbums() {
@@ -1122,19 +1239,40 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
        FROM tracks WHERE album IS NOT NULL${clause}
        GROUP BY album, COALESCE(album_artist, artist)`
     ).all(...params);
+
+    // 封面曲目：原实现对每个专辑单独查一次（N+1，2000 专辑 = 2001 次查询）。
+    // 改为一次查询取每个 album 的首个 has_cover 曲目。
+    //
+    // 选曲语义必须与原SQL 完全一致：原语句 `... WHERE album=? AND has_cover=1
+    // LIMIT 1` 无 ORDER BY，SQLite 走 rowid 顺序（已实测：全库逐专辑比对，
+    // `ORDER BY rowid LIMIT 1` 与原语句 100% 命中同一首）。
+    // 因此这里用 MIN(rowid) 关联，而不是 MIN(id) —— id 是 TEXT，
+    // 字符串序（'v201' < 'v81'）与 rowid 序不一致，会选到另一首曲目。
+    const coverRows = this._db.prepare(
+      `SELECT t.album AS album, t.id AS cover_id FROM tracks t
+       JOIN (SELECT album, MIN(rowid) AS rid FROM tracks
+             WHERE album IS NOT NULL AND has_cover=1${clause}
+             GROUP BY album) m
+         ON m.album = t.album AND m.rid = t.rowid`
+    ).all(...params);
+    const coverMap = new Map();
+    for (const c of coverRows) {
+      if (!coverMap.has(c.album)) coverMap.set(c.album, c.cover_id);
+    }
+
     const result = [];
     for (const r of rows) {
-      const cover = this._db.prepare(
-        'SELECT id FROM tracks WHERE album=? AND has_cover=1 LIMIT 1'
-      ).get(r.album);
-      r.cover_track_id = cover ? cover.id : null;
+      r.cover_track_id = coverMap.get(r.album) || null;
       result.push(r);
     }
-    result.sort((a, b) => makeSortKey(a.album).localeCompare(makeSortKey(b.album)));
+    // 先算排序键再排序（与 getAllTracks 同样去掉比较器内的重复计算）
     for (const a of result) {
       a.sort_key = makeSortKey(a.album);
-      a.sort_letter = makeFirstLetter(a.album);
       a.album_artist_sort_key = makeSortKey(a.album_artist);
+    }
+    result.sort((a, b) => a.sort_key.localeCompare(b.sort_key));
+    for (const a of result) {
+      a.sort_letter = makeFirstLetter(a.album);
     }
     return result;
   }
@@ -1173,9 +1311,12 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
         cover_track_id: info._cover_id,
       });
     }
-    artists.sort((a, b) => makeSortKey(a.name).localeCompare(makeSortKey(b.name)));
+    // 先算排序键再排序（去掉比较器内的重复 makeSortKey 调用）
     for (const a of artists) {
       a.sort_key = makeSortKey(a.name);
+    }
+    artists.sort((a, b) => a.sort_key.localeCompare(b.sort_key));
+    for (const a of artists) {
       a.sort_letter = makeFirstLetter(a.name);
     }
     return artists;

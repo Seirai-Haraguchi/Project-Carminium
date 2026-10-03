@@ -206,7 +206,6 @@
         '--md-surface-container-lowest', '--md-surface-container-low', '--md-surface-container',
         '--md-surface-container-high', '--md-surface-container-highest',
         '--md-outline-variant',
-        '--bg-tint-1', '--bg-tint-2', '--bg-tint-3',
         // 视频背景暗色变体
         '--md-primary-vd', '--md-on-primary-vd', '--md-primary-container-vd', '--md-on-primary-container-vd',
         '--md-secondary-vd', '--md-on-secondary-vd', '--md-secondary-container-vd', '--md-on-secondary-container-vd',
@@ -215,7 +214,6 @@
         '--md-surface-container-lowest-vd', '--md-surface-container-low-vd', '--md-surface-container-vd',
         '--md-surface-container-high-vd', '--md-surface-container-highest-vd',
         '--md-outline-variant-vd',
-        '--bg-tint-1-vd', '--bg-tint-2-vd', '--bg-tint-3-vd',
       ];
       for (var pi = 0; pi < props.length; pi++) root.style.removeProperty(props[pi]);
       return;
@@ -272,11 +270,6 @@
     // ── Outline variant ──
     root.style.setProperty('--md-outline-variant', 'hsl(' + h1 + ', ' + Math.max(0, bgSat - 2) + '%, ' + (isDark ? 22 : 88) + '%)');
 
-    // ── 背景氛围渐变 ──
-    root.style.setProperty('--bg-tint-1', 'hsla(' + h1 + ', ' + Math.min(sat + 8, 100) + '%, ' + (isDark ? 28 : 92) + '%, 0.5)');
-    root.style.setProperty('--bg-tint-2', 'hsla(' + h2 + ', ' + Math.min(sat2 + 10, 100) + '%, ' + (isDark ? 22 : 92) + '%, 0.35)');
-    root.style.setProperty('--bg-tint-3', 'hsla(' + h3 + ', ' + Math.min(sat3 + 10, 100) + '%, ' + (isDark ? 18 : 94) + '%, 0.25)');
-
     // ── 视频背景暗色变体（始终暗色模式，用于全窗口视图视频背景可读性）──
     // 色相/饱和度与主配色一致，亮度固定为暗色模式值
     var vdBgSat = sc.bgSat.d;
@@ -307,10 +300,6 @@
     root.style.setProperty('--md-surface-container-highest-vd', 'hsl(' + h1 + ', ' + (vdBgSat + 4) + '%, 22%)');
 
     root.style.setProperty('--md-outline-variant-vd', 'hsl(' + h1 + ', ' + Math.max(0, vdBgSat - 2) + '%, 22%)');
-
-    root.style.setProperty('--bg-tint-1-vd', 'hsla(' + h1 + ', ' + Math.min(sat + 8, 100) + '%, 28%, 0.5)');
-    root.style.setProperty('--bg-tint-2-vd', 'hsla(' + h2 + ', ' + Math.min(sat2 + 10, 100) + '%, 22%, 0.35)');
-    root.style.setProperty('--bg-tint-3-vd', 'hsla(' + h3 + ', ' + Math.min(sat3 + 10, 100) + '%, 18%, 0.25)');
   };
 
   // ── A-Z 分组工具 ───────────────────────────────────────────────────────────
@@ -1482,7 +1471,7 @@
       el.classList.remove('show');
       setTimeout(function () {
         if (el.parentNode) el.parentNode.removeChild(el);
-      }, 250);
+      }, 400); // ≥ M3E spatial 弹簧时长（350ms），避免退场动画被截断
     }, 3000);
   };
 

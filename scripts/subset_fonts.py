@@ -66,6 +66,13 @@ EXTRAS = {
     'format_align_center', 'schedule', 'auto_awesome', 'album',
     'person', 'lyrics', 'skip_previous', 'skip_next', 'check_circle',
     'progress_activity', 'api', 'play_circle',
+    # 设置页 M3E list-item leading icon（ROW_ICONS 映射，提取器抓不到 key: 'name' 形式）
+    'contrast', 'wallpaper', 'text_fields', 'movie', 'view_agenda',
+    'speaker', 'equalizer', 'piano', 'compress', 'hearing', 'mic',
+    'call_split', 'bolt', 'link', 'subtitles', 'sports_esports',
+    'play_pause', 'cleaning_services',
+    # 关于页 leading icon
+    'computer', 'new_releases', 'troubleshoot',
 }
 
 # 排除误匹配（非图标的 textContent 赋值等）

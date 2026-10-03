@@ -80,7 +80,10 @@ class Bridge extends EventEmitter {
         }
         // library 的封面原始数据缓存
         if (this._lib && this._lib._coverDataCache) {
-          try { this._lib._coverDataCache.clear(); } catch (e) { /* ignore */ }
+          try {
+            this._lib._coverDataCache.clear();
+            this._lib._coverDataCacheBytes = 0;
+          } catch (e) { /* ignore */ }
         }
         // 轨道 JSON 缓存（大库下可达 5-20MB）
         this._allTracksJson = null;
@@ -251,6 +254,42 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
   }
 
   // ── Player signal handlers ───────────────────────────────────────────────
+
+  /**
+   * 为播放入口（play_from_list / play_track）补回列表负载中被剔除的 lyrics。
+   *
+   * 背景：getAllTracks() 为控制负载体积不再 SELECT lyrics（全表唯一大文本列），
+   * 而播放队列的 track 对象直接来自前端传来的列表 JSON。若不回填，
+   * now_playing 判断 track.lyrics 就会误判为「无内嵌歌词」而触发自动搜索，
+   * 造成歌词显示回归。
+   *
+   * 只补 lyrics 这一个字段（单次批量 IN 查询），其余字段原样透传，
+   * 因此播放链路拿到的 track 与优化前完全一致。
+   */
+  _hydrateTrackLyrics(tracks) {
+    if (!Array.isArray(tracks)) return;
+    let need = null;
+    for (const t of tracks) {
+      if (t && t.id && t.lyrics === undefined) {
+        (need || (need = [])).push(t.id);
+      }
+    }
+    if (!need) return;
+    let map;
+    try {
+      map = this._lib.getLyricsByIds(need);
+    } catch {
+      return;
+    }
+    for (const t of tracks) {
+      if (t && t.id && t.lyrics === undefined) {
+        const v = map.get(t.id);
+        // 显式写 undefined 会被 JSON.stringify 丢弃，等价于「该曲无内嵌歌词」，
+        // 与优化前 lyrics 列为 NULL 的情况一致。
+        t.lyrics = v;
+      }
+    }
+  }
 
   _onTrackChanged(trackJson) {
     try {
@@ -465,6 +504,8 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
 
     ipcMain.handle('play_from_list', (_e, tracksJson, index) => {
       const tracks = JSON.parse(tracksJson);
+      // 列表负载已剔除 lyrics，播放前按 id 批量回填（见 _hydrateTrackLyrics）
+      this._hydrateTrackLyrics(tracks);
       this._player.playTracks(tracks, index);
     });
 
@@ -608,6 +649,20 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
         const names = JSON.parse(namesJson || '[]');
         if (this._coverServer && typeof this._coverServer.prefetchArtistImages === 'function') {
           return this._coverServer.prefetchArtistImages(names);
+        }
+        return { queued: 0, error: 'cover server unavailable' };
+      } catch (e) {
+        return { queued: 0, error: e && e.message };
+      }
+    });
+
+    // ── 艺人别名后台预热（供"用别名搜到这个人"）──
+    // 与头像预热同构：渲染进程传全部艺人名，后台节流队列逐个抓取落盘。
+    ipcMain.handle('prefetch_artist_aliases', (_e, namesJson) => {
+      try {
+        const names = JSON.parse(namesJson || '[]');
+        if (this._coverServer && typeof this._coverServer.prefetchArtistAliases === 'function') {
+          return this._coverServer.prefetchArtistAliases(names);
         }
         return { queued: 0, error: 'cover server unavailable' };
       } catch (e) {

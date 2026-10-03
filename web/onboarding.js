@@ -44,6 +44,35 @@
     { id: 'start',        icon: 'play_circle' },
   ];
 
+  // 设置行 leading icon（与设置页 ROW_ICONS 同源；引导页只用到其中一小部分）
+  var ROW_ICONS = {
+    theme: 'contrast',
+    color_scheme: 'palette',
+    wasapi_exclusive: 'speaker',
+    eq_enabled: 'graphic_eq',
+    dynamic_bass: 'piano',
+    compressor_enabled: 'compress',
+    vocal_enhance: 'mic',
+    shuffle: 'shuffle',
+    automix: 'auto_awesome',
+    gapless: 'link',
+    smtc_lyrics: 'subtitles',
+  };
+  function _rowIcon(bind) {
+    return ROW_ICONS[bind] || '';
+  }
+  function _iconHtml(bind) {
+    var name = _rowIcon(bind);
+    if (!name) return '';
+    return '<span class="material-symbols-rounded settings-row-icon" aria-hidden="true">' + name + '</span>';
+  }
+  function _bodyHtml(labelKey, subKey) {
+    return '<div class="settings-row-body">' +
+      '<p class="settings-row-label" data-i18n="' + labelKey + '">' + _t(labelKey) + '</p>' +
+      (subKey ? '<p class="settings-row-sub" data-i18n="' + subKey + '">' + _t(subKey) + '</p>' : '') +
+    '</div>';
+  }
+
   // 每种语言以原生文字 + 国旗 emoji 显示
   // 一个中国原则：简体中文和繁体中文均使用中华人民共和国国旗 🇨🇳
   // Windows 的 Segoe UI Emoji 不渲染国旗 emoji，故在 style.css 注册本地
@@ -478,26 +507,26 @@
 
     content.innerHTML =
       '<div class="settings-group-header" data-i18n="onboarding.library.addLibrary">' + _t('onboarding.library.addLibrary') + '</div>' +
-      '<div class="settings-section-body">' +
+      '<div class="md-seglist">' +
         '<div class="settings-row" id="ob-add-folder" style="cursor:pointer;">' +
-          '<div style="display:flex;align-items:center;gap:16px;">' +
-            '<span class="material-symbols-rounded" style="font-size:24px;color:var(--md-primary);flex-shrink:0;">create_new_folder</span>' +
-            '<div>' +
-              '<p class="settings-row-label" data-i18n="onboarding.library.addLocal">' + _t('onboarding.library.addLocal') + '</p>' +
-              '<p class="settings-row-sub" data-i18n="onboarding.library.addLocalSub">' + _t('onboarding.library.addLocalSub') + '</p>' +
-            '</div>' +
+          '<span class="material-symbols-rounded settings-row-icon" aria-hidden="true">create_new_folder</span>' +
+          '<div class="settings-row-body">' +
+            '<p class="settings-row-label" data-i18n="onboarding.library.addLocal">' + _t('onboarding.library.addLocal') + '</p>' +
+            '<p class="settings-row-sub" data-i18n="onboarding.library.addLocalSub">' + _t('onboarding.library.addLocalSub') + '</p>' +
           '</div>' +
-          '<span class="material-symbols-rounded" style="color:var(--md-on-surface-variant);">chevron_right</span>' +
+          '<div class="settings-row-trailing">' +
+            '<span class="material-symbols-rounded" style="color:var(--md-on-surface-variant);">chevron_right</span>' +
+          '</div>' +
         '</div>' +
         '<div class="settings-row" id="ob-add-subsonic" style="cursor:pointer;">' +
-          '<div style="display:flex;align-items:center;gap:16px;">' +
-            '<span class="material-symbols-rounded" style="font-size:24px;color:var(--md-primary);flex-shrink:0;">cloud</span>' +
-            '<div>' +
-              '<p class="settings-row-label" data-i18n="onboarding.library.addSubsonic">' + _t('onboarding.library.addSubsonic') + '</p>' +
-              '<p class="settings-row-sub" data-i18n="onboarding.library.addSubsonicSub">' + _t('onboarding.library.addSubsonicSub') + '</p>' +
-            '</div>' +
+          '<span class="material-symbols-rounded settings-row-icon" aria-hidden="true">cloud</span>' +
+          '<div class="settings-row-body">' +
+            '<p class="settings-row-label" data-i18n="onboarding.library.addSubsonic">' + _t('onboarding.library.addSubsonic') + '</p>' +
+            '<p class="settings-row-sub" data-i18n="onboarding.library.addSubsonicSub">' + _t('onboarding.library.addSubsonicSub') + '</p>' +
           '</div>' +
-          '<span class="material-symbols-rounded" style="color:var(--md-on-surface-variant);">chevron_right</span>' +
+          '<div class="settings-row-trailing">' +
+            '<span class="material-symbols-rounded" style="color:var(--md-on-surface-variant);">chevron_right</span>' +
+          '</div>' +
         '</div>' +
       '</div>' +
       '<div class="settings-group-header" data-i18n="onboarding.library.current">' + _t('onboarding.library.current') + '</div>' +
@@ -624,31 +653,31 @@
 
     content.innerHTML =
       '<div class="settings-group-header" data-i18n="settings.group.global">' + _t('settings.group.global') + '</div>' +
-      '<div class="settings-section-body">' +
+      '<div class="md-seglist">' +
         '<div class="settings-row" data-bind="theme">' +
-          '<div>' +
-            '<p class="settings-row-label" data-i18n="settings.theme.label">' + _t('settings.theme.label') + '</p>' +
-            '<p class="settings-row-sub" data-i18n="settings.theme.sub">' + _t('settings.theme.sub') + '</p>' +
-          '</div>' +
-          '<div class="md-dropdown" data-bind="theme">' +
-            '<button class="md-dropdown-trigger" type="button" aria-haspopup="true" aria-expanded="false">' +
-              '<span class="md-dropdown-value">—</span>' +
-              '<span class="material-symbols-rounded md-dropdown-arrow">arrow_drop_down</span>' +
-            '</button>' +
-            '<div class="md-dropdown-menu" role="menu">' + themeOptsHtml + '</div>' +
+          _iconHtml('theme') +
+          _bodyHtml('settings.theme.label', 'settings.theme.sub') +
+          '<div class="settings-row-trailing">' +
+            '<div class="md-dropdown" data-bind="theme">' +
+              '<button class="md-dropdown-trigger" type="button" aria-haspopup="true" aria-expanded="false">' +
+                '<span class="md-dropdown-value">—</span>' +
+                '<span class="material-symbols-rounded md-dropdown-arrow">arrow_drop_down</span>' +
+              '</button>' +
+              '<div class="md-dropdown-menu" role="menu">' + themeOptsHtml + '</div>' +
+            '</div>' +
           '</div>' +
         '</div>' +
         '<div class="settings-row" data-bind="color_scheme">' +
-          '<div>' +
-            '<p class="settings-row-label" data-i18n="settings.colorScheme.label">' + _t('settings.colorScheme.label') + '</p>' +
-            '<p class="settings-row-sub" data-i18n="settings.colorScheme.sub">' + _t('settings.colorScheme.sub') + '</p>' +
-          '</div>' +
-          '<div class="md-dropdown" data-bind="color_scheme">' +
-            '<button class="md-dropdown-trigger" type="button" aria-haspopup="true" aria-expanded="false">' +
-              '<span class="md-dropdown-value">—</span>' +
-              '<span class="material-symbols-rounded md-dropdown-arrow">arrow_drop_down</span>' +
-            '</button>' +
-            '<div class="md-dropdown-menu" role="menu">' + schemeOptsHtml + '</div>' +
+          _iconHtml('color_scheme') +
+          _bodyHtml('settings.colorScheme.label', 'settings.colorScheme.sub') +
+          '<div class="settings-row-trailing">' +
+            '<div class="md-dropdown" data-bind="color_scheme">' +
+              '<button class="md-dropdown-trigger" type="button" aria-haspopup="true" aria-expanded="false">' +
+                '<span class="md-dropdown-value">—</span>' +
+                '<span class="material-symbols-rounded md-dropdown-arrow">arrow_drop_down</span>' +
+              '</button>' +
+              '<div class="md-dropdown-menu" role="menu">' + schemeOptsHtml + '</div>' +
+            '</div>' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -707,21 +736,21 @@
       var checked = _settings && _settings[t.bind] ? ' checked' : '';
       return '' +
         '<div class="settings-row" data-bind="' + t.bind + '">' +
-          '<div>' +
-            '<p class="settings-row-label" data-i18n="' + t.key + '.label">' + _t(t.key + '.label') + '</p>' +
-            '<p class="settings-row-sub" data-i18n="' + t.key + '.sub">' + _t(t.key + '.sub') + '</p>' +
+          _iconHtml(t.bind) +
+          _bodyHtml(t.key + '.label', t.key + '.sub') +
+          '<div class="settings-row-trailing">' +
+            '<label class="toggle">' +
+              '<input type="checkbox" data-bind="' + t.bind + '"' + checked + '>' +
+              '<div class="toggle-track"></div>' +
+              '<div class="toggle-thumb"></div>' +
+            '</label>' +
           '</div>' +
-          '<label class="toggle">' +
-            '<input type="checkbox" data-bind="' + t.bind + '"' + checked + '>' +
-            '<div class="toggle-track"></div>' +
-            '<div class="toggle-thumb"></div>' +
-          '</label>' +
         '</div>';
     }).join('');
 
     content.innerHTML =
       '<div class="settings-group-header" data-i18n="settings.group.audio">' + _t('settings.group.audio') + '</div>' +
-      '<div class="settings-section-body">' + rowsHtml + '</div>';
+      '<div class="md-seglist">' + rowsHtml + '</div>';
 
     actions.innerHTML = _buildActions({ next: true });
     _wireActions();
@@ -756,21 +785,21 @@
       var checked = _settings && _settings[t.bind] ? ' checked' : '';
       return '' +
         '<div class="settings-row" data-bind="' + t.bind + '">' +
-          '<div>' +
-            '<p class="settings-row-label" data-i18n="' + t.key + '.label">' + _t(t.key + '.label') + '</p>' +
-            '<p class="settings-row-sub" data-i18n="' + t.key + '.sub">' + _t(t.key + '.sub') + '</p>' +
+          _iconHtml(t.bind) +
+          _bodyHtml(t.key + '.label', t.key + '.sub') +
+          '<div class="settings-row-trailing">' +
+            '<label class="toggle">' +
+              '<input type="checkbox" data-bind="' + t.bind + '"' + checked + '>' +
+              '<div class="toggle-track"></div>' +
+              '<div class="toggle-thumb"></div>' +
+            '</label>' +
           '</div>' +
-          '<label class="toggle">' +
-            '<input type="checkbox" data-bind="' + t.bind + '"' + checked + '>' +
-            '<div class="toggle-track"></div>' +
-            '<div class="toggle-thumb"></div>' +
-          '</label>' +
         '</div>';
     }).join('');
 
     content.innerHTML =
       '<div class="settings-group-header" data-i18n="settings.group.automation">' + _t('settings.group.automation') + '</div>' +
-      '<div class="settings-section-body">' + rowsHtml + '</div>';
+      '<div class="md-seglist">' + rowsHtml + '</div>';
 
     actions.innerHTML = _buildActions({ next: true });
     _wireActions();
@@ -791,7 +820,7 @@
 
     content.innerHTML =
       '<div class="settings-group-header" data-i18n="onboarding.start.summary">' + _t('onboarding.start.summary') + '</div>' +
-      '<div class="settings-section-body">' +
+      '<div class="md-seglist">' +
         _summaryRow('translate', 'onboarding.step.language', langLabel) +
         _summaryRow('folder_open', 'onboarding.step.library', _t('onboarding.library.added', { count: _libraryCount })) +
         _summaryRow('palette', 'onboarding.step.personalize', _t('settings.theme.' + theme) + ' · ' + _t('settings.colorScheme.' + scheme)) +
@@ -804,11 +833,11 @@
   function _summaryRow(icon, labelKey, value) {
     return '' +
       '<div class="settings-row">' +
-        '<div style="display:flex;align-items:center;gap:14px;min-width:0;">' +
-          '<span class="material-symbols-rounded" style="font-size:20px;color:var(--md-primary);flex-shrink:0;">' + icon + '</span>' +
-          '<span class="settings-row-label" style="flex-shrink:0;" data-i18n="' + labelKey + '">' + _t(labelKey) + '</span>' +
+        '<span class="material-symbols-rounded settings-row-icon" aria-hidden="true">' + icon + '</span>' +
+        _bodyHtml(labelKey) +
+        '<div class="settings-row-trailing">' +
+          '<span class="settings-row-sub" style="font-weight:600;color:var(--md-on-surface);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _esc(value) + '</span>' +
         '</div>' +
-        '<span class="settings-row-sub" style="font-weight:600;color:var(--md-on-surface);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _esc(value) + '</span>' +
       '</div>';
   }
 

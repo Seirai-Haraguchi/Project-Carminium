@@ -215,10 +215,18 @@
 
     const searchInput = document.getElementById('music-search');
     searchInput.value = searchText;
+    // 防抖：每敲一个字符都会触发一次「过滤全库 + 排序 + 重建扁平列表」，
+    // 1 万首规模下单个字符约 15-40ms，连续输入时明显卡顿。
+    // 180ms 静默后才真正渲染，交互上与浏览器原生搜索框的体感一致。
+    var _searchDebounceTimer = null;
     searchInput.addEventListener('input', function (e) {
       searchText = e.target.value;
       filterStr = searchText.trim().toLowerCase();
-      _renderList();
+      if (_searchDebounceTimer) clearTimeout(_searchDebounceTimer);
+      _searchDebounceTimer = setTimeout(function () {
+        _searchDebounceTimer = null;
+        _renderList();
+      }, 180);
     });
 
     document.getElementById('btn-play-all').addEventListener('click', function () {
@@ -833,51 +841,69 @@
       _flatList.push({ type: 'row', track: track, displayNum: counter });
     });
 
-    if (_vl) { _vl.destroy(); _vl = null; }
-    ul.classList.add('az-list');
-    ul.innerHTML = '';
+    if (_vl && _vl.container === ul) {
+      // ── 复用已有实例 ──
+      // 原实现每次都 destroy + new：VirtualList 构造会新建 spacer/content
+      // 两个容器、重算整份偏移表，并把对象池（约 60 个已建节点）全部丢弃。
+      // 搜索每敲一个字符就走一遍。改为 setItems 后节点池得以保留，
+      // 且 _recycleAll 会正确重置范围缓存、_computeHeights 重算偏移表。
+      ul.classList.add('az-list');
 
-    // 重置滚动位置，避免新 VL 渲染顶部位移但视口仍在下方导致空白
-    var scrollContainer = document.getElementById('content-pane');
-    if (scrollContainer) scrollContainer.scrollTop = 0;
+      // 重置滚动位置，避免新 VL 渲染顶部位移但视口仍在下方导致空白
+      // （与原实现一致：换数据即回到顶部）
+      var scrollContainer = document.getElementById('content-pane');
+      if (scrollContainer) scrollContainer.scrollTop = 0;
 
-    _vl = new window.VirtualList({
-      container: ul,
-      scrollContainer: document.getElementById('content-pane'),
-      items: _flatList,
-      itemHeight: ROW_HEIGHT,
-      estimatedItemHeight: ROW_HEIGHT,
-      getHeight: function (item) { return item.type === 'header' ? HEADER_HEIGHT : ROW_HEIGHT; },
-      bufferSize: 8,
-      onRangeChange: function (items, startIndex, endIndex, direction) {
-        if (window.CoverCache && window.CoverCache.updateViewport) {
-          window.CoverCache.updateViewport(items, startIndex, endIndex, direction, 128);
-        }
-      },
-      onRecycle: function (el) {
-        if (window.CoverCache && window.CoverCache.releaseElement) {
-          window.CoverCache.releaseElement(el);
-        }
-      },
-      renderItem: function (item, index, el) {
-        if (item.type === 'header') {
-          el.className = 'az-section-header vl-item';
-          el.innerHTML = '<span class="az-section-letter">' + item.letter + '</span>';
-          el.removeAttribute('data-track-id');
-        } else {
-          const track = item.track;
-          const displayNum = item.displayNum;
-          const li = App.utils.trackRow(track, displayNum, function (clickedTrack, idx) {
-            const playIdx = _renderedTracks.indexOf(clickedTrack);
-            App.backend.play_from_list(JSON.stringify(_renderedTracks), playIdx);
-          }, true);
-          el.className = 'vl-track-row-wrapper';
-          el.innerHTML = '';
-          el.appendChild(li);
-          el.dataset.trackId = track.id;
-        }
-      },
-    });
+      _vl.setItems(_flatList);
+    } else {
+      // 容器已被换掉（离开页面再回来、或列表为空时销毁过）：
+      // 旧实例挂在已脱离文档的节点上，必须先销毁再基于新容器重建。
+      if (_vl) { _vl.destroy(); _vl = null; }
+      ul.classList.add('az-list');
+      ul.innerHTML = '';
+
+      // 重置滚动位置，避免新 VL 渲染顶部位移但视口仍在下方导致空白
+      var scrollContainer = document.getElementById('content-pane');
+      if (scrollContainer) scrollContainer.scrollTop = 0;
+
+      _vl = new window.VirtualList({
+        container: ul,
+        scrollContainer: document.getElementById('content-pane'),
+        items: _flatList,
+        itemHeight: ROW_HEIGHT,
+        estimatedItemHeight: ROW_HEIGHT,
+        getHeight: function (item) { return item.type === 'header' ? HEADER_HEIGHT : ROW_HEIGHT; },
+        bufferSize: 8,
+        onRangeChange: function (items, startIndex, endIndex, direction) {
+          if (window.CoverCache && window.CoverCache.updateViewport) {
+            window.CoverCache.updateViewport(items, startIndex, endIndex, direction, 128);
+          }
+        },
+        onRecycle: function (el) {
+          if (window.CoverCache && window.CoverCache.releaseElement) {
+            window.CoverCache.releaseElement(el);
+          }
+        },
+        renderItem: function (item, index, el) {
+          if (item.type === 'header') {
+            el.className = 'az-section-header vl-item';
+            el.innerHTML = '<span class="az-section-letter">' + item.letter + '</span>';
+            el.removeAttribute('data-track-id');
+          } else {
+            const track = item.track;
+            const displayNum = item.displayNum;
+            const li = App.utils.trackRow(track, displayNum, function (clickedTrack, idx) {
+              const playIdx = _renderedTracks.indexOf(clickedTrack);
+              App.backend.play_from_list(JSON.stringify(_renderedTracks), playIdx);
+            }, true);
+            el.className = 'vl-track-row-wrapper';
+            el.innerHTML = '';
+            el.appendChild(li);
+            el.dataset.trackId = track.id;
+          }
+        },
+      });
+    }
   }
 
 })();

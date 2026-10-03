@@ -780,6 +780,7 @@ let _lastKnownPositionMs = 0;
         var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
         if (els.miniProgressTrackFill) els.miniProgressTrackFill.style.width = (pct * 100) + '%';
         if (els.miniProgressThumb) els.miniProgressThumb.style.left = (pct * 100) + '%';
+        if (els.miniProgressBar) els.miniProgressBar.style.setProperty('--progress-val', (pct * 100) + '%');
         App.backend.seek(Math.floor(pct * duration));
       });
     }
@@ -1024,6 +1025,7 @@ let _lastKnownPositionMs = 0;
       pct = Math.max(0, Math.min(1, pct));
       els.barFill.style.width = (pct * 100) + '%';
       els.barThumb.style.left = (pct * 100) + '%';
+      els.barWrap.style.setProperty('--progress-val', (pct * 100) + '%');
       els.timeCur.textContent = App.utils.formatDuration(pct * duration);
       // 剩余时间显示为负值
       els.timeDur.textContent = '-' + App.utils.formatDuration(duration - pct * duration);
@@ -1124,6 +1126,7 @@ let _lastKnownPositionMs = 0;
       els.coverIcon.style.color = 'var(--md-on-surface-variant)';
       if (els.miniProgressTrackFill) els.miniProgressTrackFill.style.width = '0%';
       if (els.miniProgressThumb) els.miniProgressThumb.style.left = '0%';
+      if (els.miniProgressBar) els.miniProgressBar.style.setProperty('--progress-val', '0%');
       if (els.miniTimeCur) els.miniTimeCur.textContent = '0:00';
       if (els.miniTimeDur) els.miniTimeDur.textContent = '0:00';
       _setBgCover(null, null);
@@ -1168,6 +1171,7 @@ let _lastKnownPositionMs = 0;
     // 新曲：重置悬浮播放栏进度条
     if (!isSameTrack && els.miniProgressTrackFill) els.miniProgressTrackFill.style.width = '0%';
     if (!isSameTrack && els.miniProgressThumb) els.miniProgressThumb.style.left = '0%';
+    if (!isSameTrack && els.miniProgressBar) els.miniProgressBar.style.setProperty('--progress-val', '0%');
 
     els.title.textContent = track.title || App.i18n.t('common.unknownTrack');
     els.artist.textContent = track.artist || App.i18n.t('common.unknownArtist');
@@ -2368,6 +2372,7 @@ var clampedMs = Math.max(0, Math.min(ms, duration));
 const pct = Math.max(0, Math.min(1, clampedMs / duration));
 els.barFill.style.width = (pct * 100) + '%';
 els.barThumb.style.left = (pct * 100) + '%';
+els.barWrap.style.setProperty('--progress-val', (pct * 100) + '%');
 els.timeCur.textContent = App.utils.formatDuration(clampedMs);
 // 剩余时间显示为负值
 var remaining = duration - clampedMs;
@@ -2375,6 +2380,7 @@ els.timeDur.textContent = '-' + App.utils.formatDuration(remaining);
 // 悬浮播放栏居中进度条（复用正在播放页进度条样式）
 if (els.miniProgressTrackFill) els.miniProgressTrackFill.style.width = (pct * 100) + '%';
 if (els.miniProgressThumb) els.miniProgressThumb.style.left = (pct * 100) + '%';
+if (els.miniProgressBar) els.miniProgressBar.style.setProperty('--progress-val', (pct * 100) + '%');
 if (els.miniTimeCur) els.miniTimeCur.textContent = App.utils.formatDuration(clampedMs);
 if (els.miniTimeDur && duration) els.miniTimeDur.textContent = '-' + App.utils.formatDuration(remaining);
 // 过渡标记固定在过渡点位置，不跟随进度

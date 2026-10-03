@@ -98,6 +98,7 @@
     pct = Math.max(0, Math.min(1, pct));
     els.barFill.style.width = (pct * 100) + '%';
     els.barThumb.style.left = (pct * 100) + '%';
+    els.barWrap.style.setProperty('--progress-val', (pct * 100) + '%');
     els.timeCur.textContent = fmtTime(pct * duration);
     // 剩余时间显示为负值
     els.timeDur.textContent = '-' + fmtTime(duration - pct * duration);
@@ -302,6 +303,7 @@
       els.coverIcon.style.color = 'var(--md-on-surface-variant)';
       els.barFill.style.width = '0%';
       els.barThumb.style.left = '0%';
+      els.barWrap.style.setProperty('--progress-val', '0%');
 els.timeCur.textContent = '0:00';
 els.timeDur.textContent = '-0:00';
       App.utils.applyDynamicTheme(null);
@@ -576,6 +578,7 @@ if (duration) {
 var pct = (posMs / duration) * 100;
 els.barFill.style.width = Math.min(pct, 100) + '%';
 els.barThumb.style.left = Math.min(pct, 100) + '%';
+els.barWrap.style.setProperty('--progress-val', Math.min(pct, 100) + '%');
 // 剩余时间显示为负值
 els.timeDur.textContent = '-' + fmtTime(duration - posMs);
 }

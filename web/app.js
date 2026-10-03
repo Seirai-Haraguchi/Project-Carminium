@@ -146,6 +146,17 @@
     }
   };
 
+  // 后台预热艺人别名本地缓存（网易云译名/别名）：与头像预热同构、幂等。
+  // 预热完成后，艺人页搜索即可用别名（如"霉霉"）命中艺人。
+  App.prefetchArtistAliases = function () {
+    const list = (App.state && App.state.allArtists) || [];
+    if (!list.length) return;
+    const names = list.map(function (a) { return a && a.name; }).filter(Boolean);
+    if (names.length && window.__electronAPI && window.__electronAPI.invoke) {
+      window.__electronAPI.invoke('prefetch_artist_aliases', JSON.stringify(names)).catch(function () { /* ignore */ });
+    }
+  };
+
   // ── 1. 初始化 Bridge ──────────────────────────────────────────────────────
   // bridge.js 已在 HTML 中先于 app.js 加载，并定义了 App.backend Proxy 与
   // window.__bridge 事件分发器。此处仅需等待后端 API 就绪、初始化
@@ -276,6 +287,7 @@
           }
           App.refreshLibraryCache().then(function () {
             App.prefetchArtistImages();   // 新艺人入队，后台慢慢预热本地头像缓存
+            App.prefetchArtistAliases();  // 新艺人入队，后台预热别名（网易云译名）
             var _c = document.getElementById('page-container');
             if (App.state.currentPage === 'music') App.pages.music.render(_c);
             if (App.state.currentPage === 'your_mix' && App.pages.your_mix) App.pages.your_mix.render(_c);
@@ -378,6 +390,7 @@
         // 先拉取全量缓存，再拉取播放状态，最后渲染首页（按当前模式进入对应默认页）
         App.refreshLibraryCache().then(function () {
           App.prefetchArtistImages();   // 启动后后台慢慢预热本地艺人头像缓存
+          App.prefetchArtistAliases();  // 启动后后台预热艺人别名（限流严，进度慢属正常）
           return _fetchInitialState();
         }).then(function () {
           // 首次启动：未完成新手引导时进入引导流程，否则直接进入主界面

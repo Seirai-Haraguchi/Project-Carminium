@@ -16,6 +16,12 @@
   let _mixes = [];
   let _exploreData = null;
   let _recommendations = [];
+  // Hero 是否已消费探索卡（探索只有一张，独占一整节太空 → 优先放进 Hero）
+  let _heroTookExplore = false;
+  // Hero 已放进「相似类型新推荐」的卡片数，该 rail 从此索引续，避免整节重复
+  let _heroTookRecs = 0;
+  // Hero 保底用了第一个 daily mix（探索+推荐都空时），该 rail 从索引 1 续
+  let _heroTookLeadMix = false;
 
   // ── Apple Music 风格抽象图形生成器 ──────────────────────────────────────
   // 基于合集名称 + 类型生成确定性的渐变 + 几何图形 + 文字
@@ -117,20 +123,12 @@
       shapes += '<path d="M0,' + (80 + seed % 30) + ' Q80,' + (40 + seed % 40) + ' 160,' + (90 + seed % 20) + '" stroke="rgba(255,255,255,0.15)" stroke-width="20" fill="none" stroke-linecap="round" />';
     }
 
-    // 文字：合集名称首词（截短显示）
-    var displayName = name || '';
-    var words = displayName.split(/\s+/);
-    var displayText = words.length > 1 ? words.slice(0, 2).join(' ') : displayName.substring(0, 12);
-    if (displayText.length > 14) displayText = displayText.substring(0, 14) + '…';
-
-    // 文字大小根据长度调整
-    var fontSize = displayText.length > 8 ? 11 : (displayText.length > 4 ? 14 : 18);
-    var fontWeight = displayText.length > 8 ? 600 : 700;
-
+    // 不再在 SVG 内烤文字 —— 标题由卡片浮层（.ym-card-name）统一渲染，
+    // 烤死会造成「深爵士 / 深夜爵士」双行重复。
     // 唯一 ID 防止冲突
     var gid = 'amg' + seed;
 
-    var svg = '<svg viewBox="0 0 160 160" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block;">' +
+    return '<svg viewBox="0 0 160 160" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block;">' +
       '<defs>' +
         '<linearGradient id="' + gid + '" x1="0" y1="0" x2="1" y2="1">' +
           '<stop offset="0%" stop-color="' + c1 + '"/>' +
@@ -140,24 +138,7 @@
       '</defs>' +
       '<rect width="160" height="160" fill="url(#' + gid + ')"/>' +
       shapes +
-      // 底部渐变遮罩增强文字可读性
-      '<rect x="0" y="100" width="160" height="60" fill="rgba(0,0,0,0.25)"/>' +
-      '<text x="12" y="140" fill="white" font-family="Noto Sans SC, Roboto, sans-serif" font-size="' + fontSize + '" font-weight="' + fontWeight + '" style="text-shadow:0 1px 4px rgba(0,0,0,0.3);">' +
-        _escapeXml(displayText) +
-      '</text>' +
     '</svg>';
-
-    return svg;
-  }
-
-  function _escapeXml(str) {
-    if (!str) return '';
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&apos;');
   }
 
   // ── 渲染主入口 ───────────────────────────────────────────────────────────
@@ -172,90 +153,186 @@
     container.innerHTML = `
       <div class="ym-page">
         <div class="page-sticky-header">
-          <div class="page-header ym-header">
-            <div class="page-header-left ym-header-left">
-              <div class="ym-wave">
-                <svg class="ym-wave-svg" id="ym-wave-svg" viewBox="0 0 320 28" preserveAspectRatio="none" aria-hidden="true">
-                  <defs>
-                    <linearGradient id="ym-wave-grad" x1="0" y1="0" x2="1" y2="0">
-                      <stop offset="0"    style="stop-color:var(--md-primary);stop-opacity:0"/>
-                      <stop offset="0.18" style="stop-color:var(--md-primary);stop-opacity:1"/>
-                      <stop offset="0.82" style="stop-color:var(--md-tertiary);stop-opacity:1"/>
-                      <stop offset="1"    style="stop-color:var(--md-tertiary);stop-opacity:0"/>
-                    </linearGradient>
-                    <linearGradient id="ym-wave-fill-grad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0" style="stop-color:var(--md-primary);stop-opacity:0.14"/>
-                      <stop offset="1" style="stop-color:var(--md-primary);stop-opacity:0"/>
-                    </linearGradient>
-                    <filter id="ym-wave-blur" x="-25%" y="-120%" width="150%" height="340%">
-                      <feGaussianBlur stdDeviation="2.2"/>
-                    </filter>
-                  </defs>
-                  <path id="ym-wave-fill" fill="url(#ym-wave-fill-grad)" stroke="none"/>
-                  <path id="ym-wave-glow" fill="none" stroke="url(#ym-wave-grad)" stroke-width="3.5" stroke-linecap="round" filter="url(#ym-wave-blur)" opacity="0.22"/>
-                  <path id="ym-wave-main" fill="none" stroke="url(#ym-wave-grad)" stroke-width="2" stroke-linecap="round"/>
-                </svg>
-              </div>
-              <h1 class="page-title ym-title">${App.i18n.t('yourMix.title')}</h1>
-            </div>
-            <div class="ym-header-art" aria-hidden="true">
-              <span class="material-symbols-rounded ym-art-icon ym-art-disc">album</span>
-              <span class="material-symbols-rounded ym-art-icon ym-art-note">music_note</span>
-              <span class="material-symbols-rounded ym-art-icon ym-art-spark">auto_awesome</span>
+          <div class="page-header">
+            <div class="page-header-left">
+              <h1 class="page-title" id="ym-greeting"></h1>
+              <p class="page-subtitle" id="ym-subtitle"></p>
             </div>
           </div>
         </div>
 
+        <!-- 区块标题**不复用任何私有样式** —— 直接用全局
+             .section-heading / .section-title / .section-count
+             （与专辑页 / 所有音乐页同名同档）。
+             旧的自造 21px 标题 + 强调色短棒已删除：全站 section 标题是
+             13px uppercase 的 quiet label，探新没有理由长成另一副样子。 -->
+
+        <!-- 精选：1 张大卡 + 小卡，同一套 .album-grid 流式栅格 -->
+        <section class="ym-section" id="ym-hero-section">
+          <div class="section-heading">
+            <span class="section-title" data-i18n="yourMix.featured">今日精选</span>
+            <span class="section-count" data-i18n="yourMix.featuredDesc"></span>
+          </div>
+          <div class="ym-hero" id="ym-hero"></div>
+        </section>
+
         <!-- 每日合集 -->
         <section class="ym-section" id="ym-daily-mix-section">
-          <div class="ym-section-header">
-            <h2 class="ym-section-title" data-i18n="yourMix.dailyMix">每日合集</h2>
-            <span class="ym-section-desc" data-i18n="yourMix.dailyMixDesc">基于你的收听历史自动生成</span>
+          <div class="section-heading">
+            <span class="section-title" data-i18n="yourMix.dailyMix"></span>
+            <span class="section-count" data-i18n="yourMix.dailyMixDesc"></span>
           </div>
-          <div class="ym-mix-grid" id="ym-mix-grid"></div>
+          ${_railHTML('ym-mix-rail')}
         </section>
 
         <!-- 探索 -->
         <section class="ym-section" id="ym-explore-section">
-          <div class="ym-section-header">
-            <h2 class="ym-section-title" data-i18n="yourMix.explore">探索</h2>
-            <span class="ym-section-desc" data-i18n="yourMix.exploreDesc">发现你尚未听过的曲目</span>
+          <div class="section-heading">
+            <span class="section-title" data-i18n="yourMix.explore"></span>
+            <span class="section-count" data-i18n="yourMix.exploreDesc"></span>
           </div>
-          <div class="ym-mix-grid" id="ym-explore-grid"></div>
+          ${_railHTML('ym-explore-rail')}
         </section>
 
         <!-- 相似类型新推荐 -->
         <section class="ym-section" id="ym-recommend-section">
-          <div class="ym-section-header">
-            <h2 class="ym-section-title" data-i18n="yourMix.similarRecommend">相似类型新推荐</h2>
-            <span class="ym-section-desc" data-i18n="yourMix.similarRecommendDesc">基于你喜欢的流派推荐新曲目</span>
+          <div class="section-heading">
+            <span class="section-title" data-i18n="yourMix.similarRecommend"></span>
+            <span class="section-count" data-i18n="yourMix.similarRecommendDesc"></span>
           </div>
-          <div class="ym-mix-grid" id="ym-recommend-grid"></div>
+          ${_railHTML('ym-recommend-rail')}
         </section>
 
-        <!-- 最近播放前十首 -->
+        <!-- 最近播放：复用全局 .track-row 列表行，不另造卡片 -->
         <section class="ym-section" id="ym-recent-section">
-          <div class="ym-section-header">
-            <h2 class="ym-section-title" data-i18n="yourMix.recentPlays">最近播放</h2>
-            <span class="ym-section-desc" data-i18n="yourMix.recentPlaysDesc">最近播放的 10 首曲目</span>
+          <div class="section-heading">
+            <span class="section-title" data-i18n="yourMix.recentPlays"></span>
+            <span class="section-count" data-i18n="yourMix.recentPlaysDesc"></span>
           </div>
-          <ul class="track-list az-list ym-recent-list" id="ym-recent-list"></ul>
+          <ul class="track-list ym-recent-list" id="ym-recent-list"></ul>
         </section>
 
         <!-- 听歌统计 -->
         <section class="ym-section" id="ym-stats-section">
-          <div class="ym-section-header">
-            <h2 class="ym-section-title" data-i18n="yourMix.stats">听歌统计</h2>
-            <span class="ym-section-desc" data-i18n="yourMix.statsDesc">你的收听数据概览</span>
+          <div class="section-heading">
+            <span class="section-title" data-i18n="yourMix.stats"></span>
+            <span class="section-count" data-i18n="yourMix.statsDesc"></span>
           </div>
-          <div class="ym-stats-container" id="ym-stats-container"></div>
+          <div class="ym-stats-wrap" id="ym-stats-container"></div>
         </section>
       </div>
     `;
 
+    // 绑定 3 条横向轨道的翻页行为（最近播放是列表，不进 rail）
+    ['ym-mix-rail', 'ym-explore-rail', 'ym-recommend-rail'].forEach(_initRail);
+
+    _renderGreeting();
     _loadData();
-    _startWave();
   };
+
+  // ── 问候语 ─────────────────────────────────────────────────────────────────
+  // 标题就是 .page-header-left 的 .page-title + .page-subtitle（与其他页同构）。
+  // 副标题放一句随时段变化的说明，主标题只放问候语本身。
+
+  var _greetingBound = false;
+
+  /** 当前时段的问候文案 key */
+  function _greetingKey() {
+    var h = new Date().getHours();
+    if (h >= 5 && h < 9)   return 'yourMix.greetMorning';
+    if (h >= 9 && h < 12)  return 'yourMix.greetForenoon';
+    if (h >= 12 && h < 14) return 'yourMix.greetNoon';
+    if (h >= 14 && h < 18) return 'yourMix.greetAfternoon';
+    if (h >= 18 && h < 23) return 'yourMix.greetEvening';
+    if (h >= 23)           return 'yourMix.greetLate';
+    return 'yourMix.greetLateNight';   // 0:00–4:59
+  }
+
+  /** 当前时段对应的副标题 key */
+  function _greetingSubKey() {
+    var h = new Date().getHours();
+    if (h >= 5 && h < 12)  return 'yourMix.greetSubMorning';
+    if (h >= 12 && h < 18) return 'yourMix.greetSubAfternoon';
+    if (h >= 18 && h < 23) return 'yourMix.greetSubEvening';
+    return 'yourMix.greetSubNight';
+  }
+
+  /** 把问候语写进标题（复用 .page-title / .page-subtitle） */
+  function _renderGreeting() {
+    var el = document.getElementById('ym-greeting');
+    if (!el) return;
+    el.textContent = App.i18n.t(_greetingKey());
+
+    var sub = document.getElementById('ym-subtitle');
+    if (sub) sub.textContent = App.i18n.t(_greetingSubKey());
+
+    if (_greetingBound) return;
+    _greetingBound = true;
+  }
+
+  /** 横向卡片轨骨架：轨道 + 左右翻页箭头 */
+  function _railHTML(railId) {
+    return `
+      <div class="ym-rail-wrap" data-rail-wrap>
+        <div class="ym-rail" id="${railId}"></div>
+        <button class="ym-rail-btn ym-rail-btn--prev" type="button" tabindex="-1"
+                aria-label="${App.i18n.t('yourMix.scrollPrev')}">
+          <span class="material-symbols-rounded">chevron_right</span>
+        </button>
+        <button class="ym-rail-btn ym-rail-btn--next" type="button" tabindex="-1"
+                aria-label="${App.i18n.t('yourMix.scrollNext')}">
+          <span class="material-symbols-rounded">chevron_right</span>
+        </button>
+      </div>
+    `;
+  }
+
+  /**
+   * 绑定一条横向轨道的翻页行为。
+   * 箭头仅在「可滚动」时可见（首尾自动禁用），滚动中同步按钮态。
+   */
+  function _initRail(railId) {
+    var rail = document.getElementById(railId);
+    if (!rail) return;
+    var wrap = rail.closest('[data-rail-wrap]');
+    if (!wrap) return;
+    var prev = wrap.querySelector('.ym-rail-btn--prev');
+    var next = wrap.querySelector('.ym-rail-btn--next');
+
+    function step() {
+      // 一屏 ≈ 4 张卡（196 + 16 gap），让翻页有「翻页」感而非微移
+      return Math.max(rail.clientWidth * 0.82, 320);
+    }
+
+    function sync() {
+      var max = rail.scrollWidth - rail.clientWidth;
+      // 1px 容差：fractional 布局下末尾 scrollLeft 可能差不到 1px
+      var over = max > 1;
+      var atStart = rail.scrollLeft <= 1;
+      var atEnd = rail.scrollLeft >= max - 1;
+      prev.classList.toggle('can-scroll', over && !atStart);
+      next.classList.toggle('can-scroll', over && !atEnd);
+      wrap.classList.toggle('has-more', over && !atEnd);
+    }
+
+    prev.addEventListener('click', function () { rail.scrollLeft -= step(); });
+    next.addEventListener('click', function () { rail.scrollLeft += step(); });
+    rail.addEventListener('scroll', sync, { passive: true });
+    // 字体/封面异步加载会改变 scrollWidth → 尺寸变化时重算
+    if (window.ResizeObserver) {
+      var ro = new ResizeObserver(sync);
+      ro.observe(rail);
+    }
+    // 内容注入后同步一次
+    requestAnimationFrame(sync);
+    rail._ymSync = sync;
+  }
+
+  /** 卡片列表注入后刷新所属轨道的箭头态 */
+  function _syncRail(railId) {
+    var rail = document.getElementById(railId);
+    if (rail && rail._ymSync) rail._ymSync();
+  }
 
   function _loadData() {
     // 并行加载历史记录、统计数据、每日合集、探索、推荐
@@ -271,22 +348,42 @@
       _mixes = JSON.parse(results[2]);
       _exploreData = JSON.parse(results[3]);
       _recommendations = JSON.parse(results[4]);
+      // Hero 优先：它决定哪些卡片已被消费（探索 / 推荐），须先于各 rail 渲染
+      if (!_renderHero()) {
+        _showEmpty('ym-hero', 'auto_awesome', 'yourMix.emptyTitle', 'yourMix.emptyHistory');
+      }
       _renderDailyMix();
       _renderExplore();
       _renderRecommendations();
       _renderRecent();
       _renderStats();
+      _tintAll();
     }).catch(function (err) {
       console.error('[your_mix] load failed:', err);
+    });
+  }
+
+  /**
+   * Material You「内容取色」：让每张卡从自己的封面长出强调色。
+   * 必须在所有卡片注入后统一调用（rail 内的 img 可能还在加载，
+   * card_color 内部对未完成的 img 挂 load 监听）。
+   */
+  function _tintAll() {
+    if (!window.CardColor) return;
+    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    ['ym-hero', 'ym-mix-rail', 'ym-explore-rail', 'ym-recommend-rail'].forEach(function (id) {
+      window.CardColor.tintCards(document.getElementById(id), isDark);
     });
   }
 
   // ── 每日合集 ───────────────────────────────────────────────────────────────
 
   var _mixTypeConfig = {
-    artist: { icon: 'person', label: 'yourMix.typeArtist' },
-    genre:  { icon: 'graphic_eq', label: 'yourMix.typeGenre' },
-    album:  { icon: 'album', label: 'yourMix.typeAlbum' },
+    artist:  { icon: 'person', label: 'yourMix.typeArtist' },
+    genre:   { icon: 'graphic_eq', label: 'yourMix.typeGenre' },
+    album:   { icon: 'album', label: 'yourMix.typeAlbum' },
+    explore: { icon: 'auto_awesome', label: 'yourMix.exploreBadge' },
+    recommend: { icon: 'insights', label: 'yourMix.recommendBadge' },
   };
 
   // 取合集中第一个有封面的曲目
@@ -314,10 +411,11 @@
     return result;
   }
 
-  // 生成流派合集的几何裁切拼贴封面（2×2 多专辑图布局）
-  // 取流派内最多4张不同专辑的封面，裁切拼成 Apple Music 风格的几何网格
-  function _buildGenreMosaicCover(mix, size) {
-    var fallbackSVG = _generateAbstractArt(mix.name || '', 'genre');
+  // 生成拼贴封面（2×2 多专辑图布局）
+  // 取合集内最多4张不同专辑的封面，裁切拼成几何网格。
+  // artType：无可用封面时的抽象图形配色类型（genre / recommend / explore）。
+  function _buildGenreMosaicCover(mix, size, artType) {
+    var fallbackSVG = _generateAbstractArt(mix.name || '', artType || 'genre');
     if (!mix.tracks || !window.coverUrl) return fallbackSVG;
 
     var coverTracks = _distinctAlbumCoverTracks(mix.tracks, 4);
@@ -380,74 +478,185 @@
   }
 
   function _renderDailyMix() {
-    var grid = document.getElementById('ym-mix-grid');
-    if (!grid) return;
-    grid.innerHTML = '';
+    var rail = document.getElementById('ym-mix-rail');
+    if (rail) rail.innerHTML = '';
 
     if (!_mixes || _mixes.length === 0) {
-      grid.innerHTML = _emptyMixHTML();
+      _hideSection('ym-daily-mix-section');
+      _syncRail('ym-mix-rail');
       return;
     }
 
-    _mixes.forEach(function (mix, idx) {
-      var card = _buildMixCard(mix, idx);
-      grid.appendChild(card);
+    // Hero 保底那张 daily mix 不再重复
+    _mixes.slice(_heroTookLeadMix ? 1 : 0).forEach(function (mix) {
+      rail.appendChild(_buildMixCard(_mixPick(mix)));
     });
+    if (_heroTookLeadMix && _mixes.length === 1) {
+      // 只有一张且已被 Hero 用掉 → 整节无内容，隐藏
+      _hideSection('ym-daily-mix-section');
+    }
+    _syncRail('ym-mix-rail');
   }
 
-  function _buildMixCard(mix, index) {
-    var tracks = mix.tracks;
-    var card = document.createElement('div');
-    card.className = 'ym-mix-card ym-mix-' + mix.type;
+  /**
+   * Hero 精选区：1 张大卡（占 2×2）+ 最多 4 张小卡。
+   * 内容分配原则 —— 每张卡只出现一次，不与下方 rail 整节重复：
+   *   大卡 ← 探索卡（「你没听过的」，最该被看见）；没有则让第一个推荐上大字
+   *   小卡 ← 推荐的第 2~5 个（余下的留给「相似类型新推荐」rail）
+   * 探索 + 推荐都空时，只拿第一个 daily mix 当大卡且**不补位小卡** ——
+   * 补位会让同一批卡在下方「每日合集」rail 里整节再来一遍。
+   * @returns {boolean} 是否渲染出卡片（false = 全空，交给调用方显示引导空态）
+   */
+  function _renderHero() {
+    var host = document.getElementById('ym-hero');
+    if (!host) return false;
+    host.innerHTML = '';
 
-    var cfg = _mixTypeConfig[mix.type] || _mixTypeConfig.artist;
+    var recs = _recommendations || [];
+    var picks = [];
 
-    // 封面：艺人头像 / 专辑封面，无图时回退抽象图形
-    var coverHTML = _buildMixCoverHTML(mix, mix.type, 512);
+    if (_exploreData && _exploreData.tracks && _exploreData.tracks.length) {
+      var exName = _exploreData.title || App.i18n.t('yourMix.explore');
+      picks.push({
+        type: 'explore',
+        name: exName,
+        tracks: _exploreData.tracks,
+        coverHTML: _buildGenreMosaicCover(
+          { name: exName, type: 'explore', tracks: _exploreData.tracks }, 512, 'explore'),
+        mix: { type: 'explore', name: exName, tracks: _exploreData.tracks }
+      });
+    }
+    var recPickCount = 0;
+    for (var i = 0; i < recs.length; i++) {
+      picks.push(_recommendPick(recs[i]));
+      recPickCount++;
+    }
+
+    if (!picks.length) {
+      // 保底：只用一个 daily mix 撑大卡位
+      if (_mixes && _mixes.length) {
+        picks.push(_mixPick(_mixes[0]));
+        _heroTookLeadMix = true;
+      } else {
+        return false;
+      }
+    }
+
+    var lead = picks[0];
+    var small = picks.slice(1, 5);
+
+    host.appendChild(_buildMixCard(lead, { lead: true }));
+    small.forEach(function (p) { host.appendChild(_buildMixCard(p)); });
+    _heroTookExplore = lead.type === 'explore';
+    // Hero 用掉的推荐数（不含 daily mix 保底那张），该 rail 从此索引续
+    _heroTookRecs = Math.min(4, Math.max(0, recPickCount - (_heroTookExplore ? 0 : 1)));
+    // 列数 / 稀疏 / 独占这三种情况**全部由 CSS 栅格处理**
+    // （auto-fill 收拢 + `.ym-card--lead:only-child`），JS 不再切状态类。
+
+    return true;
+  }
+
+  function _mixPick(m) {
+    return {
+      type: m.type,
+      name: m.name,
+      tracks: m.tracks || [],
+      coverHTML: _buildMixCoverHTML(m, m.type, 512),
+      mix: m
+    };
+  }
+
+  /**
+   * 推荐 / 探索卡的封面。
+   * 这些合集没有自己的封面资源，但曲目里有真实封面 ——
+   * 用 genre 拼贴（同 _buildGenreMosaicCover）而不是抽象图形 SVG。
+   * 理由（Material You）：整页卡片都该有真实内容，UI 才能从内容取色；
+   * 抽象图形是「无色可取」的兜底，混在真封面里会割裂。
+   */
+  function _recommendPick(r) {
+    var fakeMix = { name: r.name, type: 'genre', tracks: r.tracks || [] };
+    return {
+      type: 'recommend',
+      name: r.name,
+      tracks: r.tracks || [],
+      coverHTML: _buildGenreMosaicCover(fakeMix, 512, 'recommend'),
+      mix: { type: 'genre', name: r.name, tracks: r.tracks || [] }
+    };
+  }
+
+  function _hideSection(id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  }
+
+  function _showEmpty(containerId, icon, titleKey, subKey) {
+    var host = document.getElementById(containerId);
+    if (!host) return;
+    host.innerHTML = _emptyMixHTML(icon, titleKey, subKey);
+  }
+
+  /** 构建一张通用卡片（Hero / 每日合集 / 探索 / 推荐 共用） */
+  function _buildMixCard(pick, opts) {
+    opts = opts || {};
+    var tracks = pick.tracks || [];
+    var cfg = _mixTypeConfig[pick.type] || { icon: 'auto_awesome', label: 'yourMix.exploreBadge' };
+
+    // 底色 / 圆角 / hover 起落 / 按下形变**全部来自 .album-card**（专辑页同一套）。
+    // 探新只挂两个变量：--ym-card-w（rail 固定宽）与卡级取色 --ym-a*。
+    var card = document.createElement('article');
+    card.className = 'album-card ym-card'
+      + (opts.lead ? ' ym-card--lead' : '')
+      + (opts.wide ? ' ym-card--wide' : '');
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
 
     card.innerHTML = `
-      <div class="ym-mix-cover ym-mix-cover-art">
-        ${coverHTML}
-        <div class="ym-mix-overlay">
-          <button class="ym-mix-play-btn" type="button" aria-label="${App.i18n.t('yourMix.play')}">
-            <span class="material-symbols-rounded">play_arrow</span>
-          </button>
-        </div>
-      </div>
-      <div class="ym-mix-info">
-        <span class="ym-mix-type-badge">
-          <span class="material-symbols-rounded ym-mix-type-icon">${cfg.icon}</span>
+      <div class="album-cover ym-card-art">
+        ${pick.coverHTML}
+        <span class="ym-card-badge">
+          <span class="material-symbols-rounded">${cfg.icon}</span>
           ${App.i18n.t(cfg.label)}
         </span>
-        <p class="ym-mix-name">${App.utils.esc(mix.name)}</p>
-        <p class="ym-mix-meta">${App.i18n.t('music.trackCount', { count: tracks.length })}</p>
+        <button class="ym-card-play" type="button" tabindex="-1" aria-label="${App.i18n.t('yourMix.play')}">
+          <span class="material-symbols-rounded">play_arrow</span>
+        </button>
+      </div>
+      <div class="album-info ym-card-text">
+        <p class="album-name ym-card-name">${App.utils.esc(pick.name)}</p>
+        <p class="album-meta ym-card-meta">${App.i18n.t('music.trackCount', { count: tracks.length })}</p>
       </div>
     `;
 
-    // 点击播放
-    var playBtn = card.querySelector('.ym-mix-play-btn');
-    var cover = card.querySelector('.ym-mix-cover');
-    var playHandler = function (e) {
+    var play = function (e) {
       e.stopPropagation();
-      if (tracks.length > 0) {
-        App.backend.play_from_list(JSON.stringify(tracks), 0);
-      }
+      if (tracks.length > 0) App.backend.play_from_list(JSON.stringify(tracks), 0);
     };
-    playBtn.addEventListener('click', playHandler);
+    card.querySelector('.ym-card-play').addEventListener('click', play);
 
-    // 点击卡片打开合集详情视图
-    card.addEventListener('click', function () {
-      App.navigate('your_mix', { mix_detail: true, mix: JSON.stringify(mix) });
+    var open = function () {
+      if (!pick.mix) return;
+      App.navigate('your_mix', { mix_detail: true, mix: JSON.stringify(pick.mix) });
+    };
+    card.addEventListener('click', open);
+    card.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
     });
 
     return card;
   }
 
-  function _emptyMixHTML() {
+  function _emptyMixHTML(icon, titleKey, subKey) {
+    // 复用全站 `.empty-state`（专辑页 / 搜索无结果 / 歌单空 用的是同一套），
+    // 不另造 `.ym-empty-section`，也不另造图标类 ——
+    // 结构固定为 `.empty-icon + .empty-title + .empty-sub`，
+    // 与 albums.js:257 / history.js:103 / playlists.js:394 逐字同构。
+    // 图标尺寸的收敛交给 CSS 的 `.ym-hero > .empty-state .empty-icon`
+    //（Hero 位只有卡片宽，72px 图标会溢出卡片比例）。
     return `
-      <div class="ym-empty-section">
-        <span class="material-symbols-rounded ym-empty-icon">auto_awesome</span>
-        <p>${App.i18n.t('yourMix.emptyMix')}</p>
+      <div class="empty-state">
+        <span class="material-symbols-rounded empty-icon">${icon || 'auto_awesome'}</span>
+        <h2 class="empty-title">${App.i18n.t(titleKey || 'yourMix.emptyMix')}</h2>
+        <p class="empty-sub">${App.i18n.t(subKey || 'yourMix.emptyMixHint')}</p>
       </div>
     `;
   }
@@ -455,139 +664,54 @@
   // ── 探索 ───────────────────────────────────────────────────────────────────
 
   function _renderExplore() {
-    var grid = document.getElementById('ym-explore-grid');
-    if (!grid) return;
-    grid.innerHTML = '';
+    var rail = document.getElementById('ym-explore-rail');
+    if (!rail) return;
+    rail.innerHTML = '';
 
+    // 探索只有一张卡，独占一整节太空 —— 它已被放进 Hero 大卡位，这里不再重复
+    if (_heroTookExplore) {
+      _hideSection('ym-explore-section');
+      _syncRail('ym-explore-rail');
+      return;
+    }
     if (!_exploreData || !_exploreData.tracks || _exploreData.tracks.length === 0) {
-      grid.innerHTML = `
-        <div class="ym-empty-section">
-          <span class="material-symbols-rounded ym-empty-icon">auto_awesome</span>
-          <p>${App.i18n.t('yourMix.emptyExplore')}</p>
-        </div>
-      `;
+      _hideSection('ym-explore-section');
+      _syncRail('ym-explore-rail');
       return;
     }
 
-    var card = _buildExploreCard(_exploreData);
-    grid.appendChild(card);
-  }
-
-  function _buildExploreCard(data) {
-    var tracks = data.tracks;
-    var card = document.createElement('div');
-    card.className = 'ym-mix-card ym-mix-explore';
-
-    var coverHTML = _generateAbstractArt(data.title || 'Explore', 'explore');
-
-    card.innerHTML = `
-      <div class="ym-mix-cover ym-mix-cover-art">
-        ${coverHTML}
-        <div class="ym-mix-overlay">
-          <button class="ym-mix-play-btn" type="button" aria-label="${App.i18n.t('yourMix.play')}">
-            <span class="material-symbols-rounded">play_arrow</span>
-          </button>
-        </div>
-      </div>
-      <div class="ym-mix-info">
-        <span class="ym-mix-type-badge">
-          <span class="material-symbols-rounded ym-mix-type-icon">auto_awesome</span>
-          ${App.i18n.t('yourMix.exploreBadge')}
-        </span>
-        <p class="ym-mix-name">${App.utils.esc(data.title || App.i18n.t('yourMix.explore'))}</p>
-        <p class="ym-mix-meta">${App.i18n.t('music.trackCount', { count: tracks.length })}</p>
-      </div>
-    `;
-
-    var playBtn = card.querySelector('.ym-mix-play-btn');
-    var playHandler = function (e) {
-      e.stopPropagation();
-      if (tracks.length > 0) {
-        App.backend.play_from_list(JSON.stringify(tracks), 0);
-      }
-    };
-    playBtn.addEventListener('click', playHandler);
-
-    card.addEventListener('click', function () {
-      var mixData = {
-        type: 'explore',
-        name: data.title || App.i18n.t('yourMix.explore'),
-        tracks: tracks,
-      };
-      App.navigate('your_mix', { mix_detail: true, mix: JSON.stringify(mixData) });
-    });
-
-    return card;
+    // Hero 没能取到探索卡（理论上不会），退化为一张通栏卡
+    var exName = _exploreData.title || App.i18n.t('yourMix.explore');
+    rail.appendChild(_buildMixCard({
+      type: 'explore',
+      name: exName,
+      tracks: _exploreData.tracks,
+      coverHTML: _buildGenreMosaicCover(
+        { name: exName, type: 'explore', tracks: _exploreData.tracks }, 512, 'explore'),
+      mix: { type: 'explore', name: exName, tracks: _exploreData.tracks }
+    }, { wide: true }));
+    _syncRail('ym-explore-rail');
   }
 
   // ── 相似类型新推荐 ─────────────────────────────────────────────────────────
 
   function _renderRecommendations() {
-    var grid = document.getElementById('ym-recommend-grid');
-    if (!grid) return;
-    grid.innerHTML = '';
+    var rail = document.getElementById('ym-recommend-rail');
+    if (!rail) return;
+    rail.innerHTML = '';
 
-    if (!_recommendations || _recommendations.length === 0) {
-      grid.innerHTML = `
-        <div class="ym-empty-section">
-          <span class="material-symbols-rounded ym-empty-icon">insights</span>
-          <p>${App.i18n.t('yourMix.emptyRecommend')}</p>
-        </div>
-      `;
+    // Hero 已经展示过前几张，这里从续接索引开始，避免整节重复
+    var rest = (_recommendations || []).slice(_heroTookRecs);
+    if (rest.length === 0) {
+      _hideSection('ym-recommend-section');
+      _syncRail('ym-recommend-rail');
       return;
     }
 
-    _recommendations.forEach(function (rec, idx) {
-      var card = _buildRecommendCard(rec, idx);
-      grid.appendChild(card);
+    rest.forEach(function (rec) {
+      rail.appendChild(_buildMixCard(_recommendPick(rec)));
     });
-  }
-
-  function _buildRecommendCard(rec, index) {
-    var tracks = rec.tracks;
-    var card = document.createElement('div');
-    card.className = 'ym-mix-card ym-mix-recommend';
-
-    var coverHTML = _generateAbstractArt(rec.name, 'recommend');
-
-    card.innerHTML = `
-      <div class="ym-mix-cover ym-mix-cover-art">
-        ${coverHTML}
-        <div class="ym-mix-overlay">
-          <button class="ym-mix-play-btn" type="button" aria-label="${App.i18n.t('yourMix.play')}">
-            <span class="material-symbols-rounded">play_arrow</span>
-          </button>
-        </div>
-      </div>
-      <div class="ym-mix-info">
-        <span class="ym-mix-type-badge">
-          <span class="material-symbols-rounded ym-mix-type-icon">insights</span>
-          ${App.i18n.t('yourMix.recommendBadge')}
-        </span>
-        <p class="ym-mix-name">${App.utils.esc(rec.name)}</p>
-        <p class="ym-mix-meta">${App.i18n.t('music.trackCount', { count: tracks.length })}</p>
-      </div>
-    `;
-
-    var playBtn = card.querySelector('.ym-mix-play-btn');
-    var playHandler = function (e) {
-      e.stopPropagation();
-      if (tracks.length > 0) {
-        App.backend.play_from_list(JSON.stringify(tracks), 0);
-      }
-    };
-    playBtn.addEventListener('click', playHandler);
-
-    card.addEventListener('click', function () {
-      var mixData = {
-        type: 'genre',
-        name: rec.name,
-        tracks: tracks,
-      };
-      App.navigate('your_mix', { mix_detail: true, mix: JSON.stringify(mixData) });
-    });
-
-    return card;
+    _syncRail('ym-recommend-rail');
   }
 
   // ── 合集详情视图 ───────────────────────────────────────────────────────────
@@ -597,7 +721,10 @@
     try {
       mix = JSON.parse(params.mix);
     } catch (e) {
-      container.innerHTML = '<div class="empty-state"><p>' + App.i18n.t('common.error') + '</p></div>';
+      container.innerHTML = '<div class="empty-state">'
+        + '<span class="material-symbols-rounded empty-icon">error</span>'
+        + '<h2 class="empty-title">' + App.i18n.t('common.error') + '</h2>'
+        + '</div>';
       return;
     }
 
@@ -631,7 +758,7 @@
             </div>
           </div>
         </div>
-        <div class="playlist-search-wrapper" style="padding: 0 12px 12px;">
+        <div class="playlist-search-wrapper">
           <div class="search-bar">
             <span class="material-symbols-rounded">search</span>
             <input type="text" id="ym-mix-detail-search" placeholder="${App.i18n.t('common.search')}" aria-label="${App.i18n.t('common.search')}">
@@ -643,9 +770,15 @@
 
     var searchInput = document.getElementById('ym-mix-detail-search');
     var filterStr = '';
+    // 防抖：每敲一个字符都会全量过滤 + 重建列表 DOM。
+    var _searchDebounceTimer = null;
     searchInput.addEventListener('input', function (e) {
       filterStr = e.target.value.trim().toLowerCase();
-      _renderDetailList(tracks, filterStr);
+      if (_searchDebounceTimer) clearTimeout(_searchDebounceTimer);
+      _searchDebounceTimer = setTimeout(function () {
+        _searchDebounceTimer = null;
+        _renderDetailList(tracks, filterStr);
+      }, 180);
     });
 
     document.getElementById('ym-mix-detail-play').addEventListener('click', function () {
@@ -690,33 +823,28 @@
     ul.appendChild(frag);
   }
 
-  // ── 最近播放前十首 ─────────────────────────────────────────────────────────
+  // ── 最近播放 ───────────────────────────────────────────────────────────────
 
   function _renderRecent() {
-    var ul = document.getElementById('ym-recent-list');
-    if (!ul) return;
-    ul.innerHTML = '';
+    var host = document.getElementById('ym-recent-list');
+    if (!host) return;
+    host.innerHTML = '';
 
     var recent = _historyTracks.slice(0, 10);
-
     if (recent.length === 0) {
-      ul.innerHTML = `
-        <div class="ym-empty-section">
-          <span class="material-symbols-rounded ym-empty-icon">history</span>
-          <p>${App.i18n.t('yourMix.emptyRecent')}</p>
-        </div>
-      `;
+      _hideSection('ym-recent-section');
       return;
     }
 
+    // 直接用项目既有的 .track-row 列表行（App.utils.trackRow）——
+    // 「最近播放 10 首」本质是曲目列表，不是卡片墙，不该另造一套卡片样式。
     var frag = document.createDocumentFragment();
-    recent.forEach(function (track, idx) {
-      var li = App.utils.trackRow(track, idx + 1, function (clickedTrack, playIdx) {
-        App.backend.play_from_list(JSON.stringify(recent), playIdx);
-      }, true);
-      frag.appendChild(li);
+    recent.forEach(function (track, i) {
+      frag.appendChild(App.utils.trackRow(track, i + 1, function (clicked, idx) {
+        App.backend.play_from_list(JSON.stringify(recent), idx);
+      }, true));
     });
-    ul.appendChild(frag);
+    host.appendChild(frag);
   }
 
   // ── 听歌统计 ───────────────────────────────────────────────────────────────
@@ -726,7 +854,11 @@
     if (!container) return;
     container.innerHTML = '';
 
-    if (!_stats) return;
+    if (!_stats || _stats.totalPlays === 0) {
+      // 整个统计节没有内容 → 隐藏（Hero 的空态已给出引导，不必再堆一个）
+      _hideSection('ym-stats-section');
+      return;
+    }
 
     // 统计概览卡片
     var overview = document.createElement('div');
@@ -735,19 +867,25 @@
     var totalHours = (_stats.totalDurationMs / 3600000).toFixed(1);
     overview.innerHTML = `
       <div class="ym-stat-card">
-        <span class="material-symbols-rounded ym-stat-icon">play_circle</span>
+        <div class="ym-stat-head">
+          <span class="material-symbols-rounded ym-stat-icon">play_circle</span>
+          <span class="ym-stat-label">${App.i18n.t('yourMix.totalPlays')}</span>
+        </div>
         <div class="ym-stat-value">${_stats.totalPlays}</div>
-        <div class="ym-stat-label">${App.i18n.t('yourMix.totalPlays')}</div>
       </div>
       <div class="ym-stat-card">
-        <span class="material-symbols-rounded ym-stat-icon">music_note</span>
+        <div class="ym-stat-head">
+          <span class="material-symbols-rounded ym-stat-icon">music_note</span>
+          <span class="ym-stat-label">${App.i18n.t('yourMix.uniqueTracks')}</span>
+        </div>
         <div class="ym-stat-value">${_stats.uniqueTracks}</div>
-        <div class="ym-stat-label">${App.i18n.t('yourMix.uniqueTracks')}</div>
       </div>
       <div class="ym-stat-card">
-        <span class="material-symbols-rounded ym-stat-icon">schedule</span>
+        <div class="ym-stat-head">
+          <span class="material-symbols-rounded ym-stat-icon">schedule</span>
+          <span class="ym-stat-label">${App.i18n.t('yourMix.totalListenTime')}</span>
+        </div>
         <div class="ym-stat-value">${totalHours}<span class="ym-stat-unit">${App.i18n.t('yourMix.hours')}</span></div>
-        <div class="ym-stat-label">${App.i18n.t('yourMix.totalListenTime')}</div>
       </div>
     `;
     container.appendChild(overview);
@@ -788,16 +926,6 @@
 
     if (listsRow.children.length > 0) {
       container.appendChild(listsRow);
-    }
-
-    // 无统计数据时
-    if (_stats.totalPlays === 0) {
-      container.innerHTML = `
-        <div class="ym-empty-section">
-          <span class="material-symbols-rounded ym-empty-icon">insights</span>
-          <p>${App.i18n.t('yourMix.emptyStats')}</p>
-        </div>
-      `;
     }
   }
 
@@ -879,115 +1007,15 @@
     return div;
   }
 
-  // ── 头部音浪（渐变 / 发光 / BPM 律动 / 氛围色）─────────────────────────────
-
-  var _waveRaf = 0;
-  var _bpmCache = {};
-  var _bpmPending = {};
-
-  function _currentBpm() {
-    var t = App.state.currentTrack;
-    if (!t || !t.id) return 0;
-    if (_bpmCache[t.id] !== undefined) return _bpmCache[t.id];
-    if (!_bpmPending[t.id] && window.__electronAPI && window.__electronAPI.invoke) {
-      _bpmPending[t.id] = true;
-      window.__electronAPI.invoke('get_track_analysis', t.id).then(function (a) {
-        _bpmCache[t.id] = (a && a.bpm > 0) ? a.bpm : 0;
-      }).catch(function () { _bpmCache[t.id] = 0; });
-    }
-    return 0;
-  }
-
-  function _stopWave() {
-    if (_waveRaf) { cancelAnimationFrame(_waveRaf); _waveRaf = 0; }
-  }
-
-  function _startWave() {
-    _stopWave();
-    var svg = document.getElementById('ym-wave-svg');
-    if (!svg) return;
-    var mainPath = document.getElementById('ym-wave-main');
-    var glowPath = document.getElementById('ym-wave-glow');
-    var fillPath = document.getElementById('ym-wave-fill');
-    var artEl = document.querySelector('.ym-header-art');
-
-    var W = 320, H = 28, MID = 12;
-    var st = { phase: 0, beatPhase: 0, breath: 0, amp: 1.6, glow: 0.22, last: 0 };
-
-    function buildWave(amp, phase) {
-      var d = '';
-      for (var x = 0; x <= W; x += 8) {
-        var env = Math.sin((x / W) * Math.PI);
-        var y = MID + (Math.sin(x * 0.045 + phase) * 0.72 +
-                       Math.sin(x * 0.021 - phase * 0.62) * 0.28) * amp * env;
-        d += (x === 0 ? 'M' : 'L') + x.toFixed(1) + ' ' + y.toFixed(2);
-      }
-      return d;
-    }
-
-    function draw(d) {
-      mainPath.setAttribute('d', d);
-      glowPath.setAttribute('d', d);
-      glowPath.setAttribute('opacity', st.glow.toFixed(3));
-      fillPath.setAttribute('d', d + 'L' + W + ' ' + H + 'L0 ' + H + 'Z');
-    }
-
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      draw(buildWave(2, 0));
-      return;
-    }
-
-    function frame(ts) {
-      if (!document.getElementById('ym-wave-svg')) { _waveRaf = 0; return; }
-      if (!st.last) st.last = ts;
-      var dt = Math.min(0.05, (ts - st.last) / 1000);
-      st.last = ts;
-
-      var playing = App.state.playbackState === 'playing';
-      var bpm = playing ? _currentBpm() : 0;
-
-      var targetAmp, targetGlow, speed;
-      if (playing && bpm > 0) {
-        st.beatPhase += dt * bpm / 60;
-        var pulse = Math.pow(1 - (st.beatPhase % 1), 2.4);
-        targetAmp = 1.8 + pulse * 4.0;
-        targetGlow = 0.22 + pulse * 0.33;
-        speed = 2.4;
-      } else if (playing) {
-        st.breath += dt;
-        targetAmp = 2.2 + Math.sin(st.breath * Math.PI / 1.4) * 1.0;
-        targetGlow = 0.3;
-        speed = 1.8;
-      } else {
-        targetAmp = 1.6;
-        targetGlow = 0.22;
-        speed = 1.0;
-      }
-      st.phase += dt * speed;
-      var k = Math.min(1, dt * 9);
-      st.amp += (targetAmp - st.amp) * k;
-      st.glow += (targetGlow - st.glow) * k;
-
-      draw(buildWave(st.amp, st.phase));
-
-      if (artEl) {
-        var pulseAmt = playing ? Math.max(0, (st.amp - 1.8) / 4.0) : 0;
-        artEl.style.transform = 'scale(' + (1 + Math.min(1, pulseAmt) * 0.05).toFixed(3) + ')';
-      }
-
-      _waveRaf = requestAnimationFrame(frame);
-    }
-    _waveRaf = requestAnimationFrame(frame);
-  }
-
   // ── 播放状态更新 ─────────────────────────────────────────────────────────────
 
   page.updatePlayState = function () {
     var currentId = App.state.currentTrack ? App.state.currentTrack.id : null;
 
-    var ul = document.getElementById('ym-recent-list');
-    if (ul) {
-      Array.from(ul.children).forEach(function (li) {
+    // 最近播放是 .track-row 列表（复用全局样式）
+    var list = document.getElementById('ym-recent-list');
+    if (list) {
+      Array.from(list.children).forEach(function (li) {
         if (li.dataset.trackId === currentId) {
           li.classList.add('playing');
         } else {
@@ -1010,7 +1038,7 @@
   };
 
   page.onHistoryChanged = function () {
-    if (document.getElementById('ym-mix-grid')) {
+    if (document.getElementById('ym-mix-rail')) {
       _loadData();
     }
   };

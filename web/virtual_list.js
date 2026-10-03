@@ -110,6 +110,10 @@
      */
     setItems(items) {
       this._items = items || [];
+      // 从容器同步滚动位置：调用方常在换数据前把 scrollTop 归零，
+      // 若沿用缓存的 _scrollTop 会与容器实际值不一致，
+      // 造成首帧按旧位置计算偏移表 → 行错位。这里以容器为准。
+      this._scrollTop = this._scrollContainer.scrollTop || 0;
       // 回收所有活动节点到池
       this._recycleAll();
       this._computeHeights();
@@ -131,6 +135,14 @@
      */
     refresh() {
       this._render();
+    }
+
+    /**
+     * 列表容器元素（调用方可用它判断实例是否仍挂在当前 DOM 上）。
+     * 页面切换会重建容器，复用逻辑据此决定 setItems 还是重建实例。
+     */
+    get container() {
+      return this._container;
     }
 
     /**
@@ -175,20 +187,39 @@
       }
 
       if (this._getHeight) {
-        // 动态高度模式：缓存每项高度和累计偏移
-        // 首次用估算值填充，渲染后按实际测量修正
-        if (!this._heightCache || this._heightCache.length < n) {
-          var heights = new Array(n);
-          var offsets = new Array(n);
-          var acc = 0;
-          for (var i = 0; i < n; i++) {
-            heights[i] = this._estimatedItemHeight;
-            offsets[i] = acc;
-            acc += this._estimatedItemHeight;
-          }
-          this._heightCache = { heights: heights, offsets: offsets };
-          this._totalHeight = acc;
+        // 动态高度模式：缓存每项高度和累计偏移。
+        //
+        // ⚠️ 高度来源必须是 `estimatedItemHeight`（即调用方给的统一行高），
+        //    **不是** `getHeight(item)`。这是一个刻意的行为对齐：
+        //
+        // 原实现写的是 `this._heightCache.length < n`，但 _heightCache 是
+        // {heights, offsets} 对象，.length 恒为 undefined，`undefined < n`
+        // 恒为 false → 条件只在首次（_heightCache 为 null）成立，而那次
+        // 填入的也全是 `_estimatedItemHeight`，从未调用过 getHeight。
+        // 结果：动态行高列表（music / artists 的分组表头）实际上一直按
+        // 统一行高布局，表头拿到的也是行高而非它自己的 HEADER_HEIGHT。
+        //
+        // 若改成真正调用 getHeight，表头高度会从 56 变成 32，整份偏移表
+        // 随之变化 → 所有行的 y 坐标与优化前不同，属于视觉回归。
+        // 因此这里保持"按估算高度填充"，只把失效的缓存判定修好：
+        // 条目数变化时必须重算，否则复用实例后会沿用上一次的偏移表。
+        //
+        // 数组按容量复用，避免每次 setItems 都重新分配 n×2 个元素。
+        var cache = this._heightCache;
+        if (!cache || cache.count !== n || cache.heights.length < n) {
+          cache = this._heightCache = { heights: new Array(n), offsets: new Array(n), count: n };
         }
+        cache.count = n;
+        var heights = cache.heights;
+        var offsets = cache.offsets;
+        var eh = this._estimatedItemHeight;
+        var acc = 0;
+        for (var i = 0; i < n; i++) {
+          heights[i] = eh;
+          offsets[i] = acc;
+          acc += eh;
+        }
+        this._totalHeight = acc;
       } else {
         // 固定高度模式
         this._totalHeight = n * this._itemHeight;
@@ -204,7 +235,8 @@
       if (!this._heightCache) {
         return index * this._itemHeight;
       }
-      return this._heightCache.offsets[index] || 0;
+      var v = this._heightCache.offsets[index];
+      return v === undefined ? 0 : v;
     }
 
     /**
@@ -212,18 +244,23 @@
      */
     _getHeightAt(index) {
       if (!this._heightCache) return this._itemHeight;
-      return this._heightCache.heights[index] || this._estimatedItemHeight;
+      var v = this._heightCache.heights[index];
+      return v === undefined ? this._estimatedItemHeight : v;
     }
 
     /**
-     * 二分查找：给定 scrollTop，找到第一个可见项的 index。
+     * 二分查找：给定 scrollTop，找到第一个可见项的index。
      */
     _findStartIndex(scrollTop) {
       if (!this._heightCache) {
         return Math.floor(scrollTop / this._itemHeight);
       }
       var offsets = this._heightCache.offsets;
-      var lo = 0, hi = offsets.length - 1;
+      var n = this._items.length;
+      // 防御：offsets 长度必须以当前条目数为准（见 _computeHeights 的 count 字段）
+      var hi = (offsets.length < n ? offsets.length : n) - 1;
+      if (hi < 0) return 0;
+      var lo = 0;
       while (lo < hi) {
         var mid = (lo + hi) >> 1;
         if (offsets[mid + 1] <= scrollTop) lo = mid + 1;
@@ -289,10 +326,13 @@
       }
 
       // ── 创建/更新范围内的节点 ──
-      // 收集已占用的 index
-      var used = {};
+      // index → node 映射：原实现对每个位置线性扫描 _activeNodes 找匹配，
+      // 是 O(可视项数 × 活动节点数)。可视区 ~40 项、缓冲后 ~60 节点时，
+      // 单次渲染要 2400 次比较；快速滚动时每帧都跑，直接体现为掉帧。
+      // 这里一次建成 Map，后续查找 O(1)。
+      var byIndex = new Map();
       for (var j = 0; j < this._activeNodes.length; j++) {
-        used[this._activeNodes[j].index] = true;
+        byIndex.set(this._activeNodes[j].index, this._activeNodes[j].el);
       }
 
       // 按顺序补齐缺失的 index
@@ -300,9 +340,12 @@
       this._content.style.transform = 'translateY(' + offsetTop + 'px)';
 
       var currentY = 0;
+      var frag = document.createDocumentFragment();
+      var created = 0;
       for (var k = startIndex; k < endIndex; k++) {
         var itemHeight = this._getHeightAt(k);
-        if (!used[k]) {
+        var existing = byIndex.get(k);
+        if (existing === undefined) {
           // 新建节点
           var el = this._pool.pop() || document.createElement('div');
           el.style.position = 'absolute';
@@ -316,20 +359,23 @@
           } catch (e) {
             console.error('[VirtualList] renderItem error:', e);
           }
-          this._content.appendChild(el);
+          frag.appendChild(el);
           this._activeNodes.push({ el: el, index: k });
+          created++;
         } else {
-          // 复用已有节点，更新 top 偏移
-          for (var m = 0; m < this._activeNodes.length; m++) {
-            if (this._activeNodes[m].index === k) {
-              this._activeNodes[m].el.style.top = currentY + 'px';
-              this._activeNodes[m].el.style.height = itemHeight + 'px';
-              break;
-            }
+          // 复用已有节点，仅在偏移/高度真的变化时写样式，
+          // 避免每次滚动都触发无谓的样式失效与重排
+          if (existing.style.top !== currentY + 'px') {
+            existing.style.top = currentY + 'px';
+          }
+          if (existing.style.height !== itemHeight + 'px') {
+            existing.style.height = itemHeight + 'px';
           }
         }
         currentY += itemHeight;
       }
+      // 批量插入：单次 reflow 代替逐个 appendChild
+      if (created > 0) this._content.appendChild(frag);
     }
 
     /**

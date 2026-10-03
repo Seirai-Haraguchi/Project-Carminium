@@ -20,8 +20,37 @@
   var COVER_SIZE = 300;           // 统一缩放尺寸
   var COVER_QUALITY = 0.82;        // JPEG 压缩质量
   var PREFETCH_MARGIN = 6;         // 视口前后预加载数量
-  var COVER_POOL_MAX = 20;         // 最大缓存数量（限制可回收封面 Blob 常驻内存）
+  var COVER_POOL_MAX = 240;        // 缓存条目上限（多数为 URL 字符串，代价极小）
+  var COLOR_CACHE_MAX = 200;      // 16 色占位数据上限（每条 16×RGB，是真实 JS 内存）
   var PREFETCH_CONCURRENCY = 3;    // 并发预加载数量
+
+  // 缓存条目类型：
+  //   'ready'      → entry.url 是可直接赋给 <img>.src 的地址
+  //   'loading'    → 加载中
+  //   'error'      → 处理失败（canvas 被污染等）
+  //   'no-cover'   → 该曲目无封面
+  //
+  // ── 为什么大部分情况可以跳过前端 canvas 重编码 ──
+  // 消费方（.track-mini-cover / .np-cover / .album-cover）的 CSS 统一是
+  // `object-fit: cover`，即展示时浏览器本就会居中裁剪为正方形。
+  // 因此当服务端返回的图**已经是目标边长的正方形**时，前端再做一次
+  // 「canvas 居中裁剪 + JPEG 重编码 + createObjectURL」是纯重复劳动：
+  // 多一次全图解码、一次画布分配、一次 JPEG 编码，外加一份 Blob 驻留内存。
+  //
+  // 注意 cover-server 的 sharp 用的是 `fit: 'inside'`（保持宽高比），
+  // 所以非正方形原图返回的仍是矩形 —— 这种情况必须保留 canvas 归一化，
+  // 否则会依赖 CSS 二次缩放，清晰度与原实现不一致。
+  // 故判定基于**实际像素尺寸**而非请求参数。
+  function _isSquareAtTarget(img, size) {
+    if (size === 'max' || size === 'original') return false;
+    var w = img.naturalWidth || img.width;
+    var h = img.naturalHeight || img.height;
+    if (!w || !h) return false;
+    if (w !== h) return false;
+    var target = size || COVER_SIZE;
+    // 允许 1px 误差（JPEG 尺寸取整）；服务端 withoutEnlargement 保证不会超过 target
+    return Math.abs(w - target) <= 1;
+  }
 
   // ── 状态 ──────────────────────────────────────────────────────
 
@@ -68,7 +97,14 @@
 
   /**
    * 根据窗口大小动态计算池容量。
-   * 每张约 300×300 JPEG ≈ 30KB，上限 60 张 ≈ 1.8MB
+   *
+   * 语义说明：优化后大多数条目是「直连服务端的 HTTP URL 字符串」，
+   * 本身几乎不占渲染进程内存（实际位图由 Chromium 图像缓存按窗口需求管理），
+   * 池容量不再等价于内存预算，而是「避免重复请求的地址记忆窗口」。
+   * 因此上限从 20 放宽到 240：长列表来回滚动时命中率显著提升，
+   * 而代价仅是几百个短字符串（~30KB 量级）。
+   * Blob 条目（仅非正方形/'max' 归一化时产生）仍按同一上限淘汰，
+   * 该路径占比极低，且受 _maxPoolSize 约束不会无限增长。
    */
   function _recalcPoolSize() {
     var w = window.innerWidth;
@@ -77,15 +113,21 @@
     var cols = Math.max(3, Math.floor(w / 176));
     var rows = Math.ceil(h / 200) + PREFETCH_MARGIN * 2;
     var calculated = cols * rows;
-    _maxPoolSize = Math.min(COVER_POOL_MAX, Math.max(20, calculated));
+    _maxPoolSize = Math.min(COVER_POOL_MAX, Math.max(60, calculated * 3));
   }
 
   /**
    * 淘汰最久未使用的缓存项。
    * pin 的 track_id 不会被淘汰。
+   *
+   * 原实现每淘汰一条就全表 forEach 一次判断「是否还有可淘汰项」，
+   * 在 pin/visible 保护较多时退化为 O(n²)。这里改为：先把受保护的条目
+   * 轮转到末尾并计数，若一条都轮转过仍无淘汰对象才退出。
    */
   function _evict() {
+    var guard = _blobCache.size + 1;
     while (_blobCache.size >= _maxPoolSize) {
+      if (guard-- <= 0) break;   // 全部条目都被保护：允许池软上限被突破
       // Map 的迭代顺序 = 插入顺序，最前面的是最旧的
       var oldest = _blobCache.keys().next();
       if (oldest.done) break;
@@ -95,20 +137,22 @@
         var pinnedEntry = _blobCache.get(key);
         _blobCache.delete(key);
         _blobCache.set(key, pinnedEntry);
-        // If every entry is protected, allow the pool to exceed its soft
-        // target rather than looping forever or evicting visible artwork.
-        var hasEvictable = false;
-        _blobCache.forEach(function (candidate, candidateKey) {
-          if (!_isPinned(candidateKey) && !_isVisible(candidateKey)) hasEvictable = true;
-        });
-        if (!hasEvictable) break;
         continue;
       }
       var entry = _blobCache.get(key);
-      if (entry && entry.url) {
-        try { URL.revokeObjectURL(entry.url); } catch (e) { /* ignore */ }
-      }
+      _releaseEntry(entry);
       _blobCache.delete(key);
+    }
+  }
+
+  /**
+   * 释放缓存条目持有的资源。
+   * 只有 canvas 归一化产生的 Blob URL 需要 revoke；
+   * 直连服务端的 HTTP URL 由 Chromium 自己的 HTTP 缓存管理，revoke 是 no-op。
+   */
+  function _releaseEntry(entry) {
+    if (entry && entry.blob && entry.url) {
+      try { URL.revokeObjectURL(entry.url); } catch (e) { /* ignore */ }
     }
   }
 
@@ -251,7 +295,13 @@
   // ── 核心加载逻辑 ──────────────────────────────────────────────
 
   /**
-   * 加载单张封面图片，处理为 Blob URL 并缓存。
+   * 加载单张封面图片，得到可直接用于 <img>.src 的地址并缓存。
+   *
+   * 流程：new Image() 预载 → 服务端按 ?size 缩放 →
+   *   · 数值 size：直接复用该 URL（CSS object-fit:cover 负责方形裁剪）
+   *   · 'max'/'original'：canvas 归一化为方形 JPEG Blob（调用方需要方形图）
+   * 两种分支都会顺带提取 16 色（仅在该曲目尚无色彩缓存时）。
+   *
    * @param {string} trackId
    * @param {Function} callback  (url | null)
    * @param {number|string} [size] 目标尺寸；缺省回落到 COVER_SIZE
@@ -288,7 +338,7 @@
     // 加载图片
     var img = new Image();
     img.crossOrigin = 'anonymous';
-    img.loading = 'eager';
+    img.decoding = 'async';
     var url = window.coverUrl(trackId, size);
     var done = false;
 
@@ -297,12 +347,8 @@
       done = true;
       _loadingQueue.delete(key);
 
-      // 处理为指定尺寸的 JPEG Blob
-      _processImage(img, size).then(function (blob) {
-        var blobUrl = URL.createObjectURL(blob);
-        _blobCache.set(key, { url: blobUrl, timestamp: _now(), status: 'ready' });
-
-        // 提取 16 色并存入缓存（色彩与尺寸无关，按 track_id 存储，仅上报一次）
+      // 色彩与尺寸无关：每个曲目只提取一次并复用（原先每次加载都重算中位切割）
+      if (!_colorCache.has(trackId)) {
         var colors = _extractColors(img);
         if (colors) {
           _colorCache.set(trackId, colors);
@@ -311,11 +357,25 @@
             _reportColors(trackId, colors);
           }
         }
+      }
 
+      if (_isSquareAtTarget(img, size)) {
+        // 服务端已输出目标尺寸的正方形 JPEG，直接复用地址：
+        // 省掉一次全图解码 + 画布分配 + JPEG 编码 + Blob URL 驻留。
+        _blobCache.set(key, { url: url, timestamp: _now(), status: 'ready' });
+        _flushCallbacks(key, url);
+        return;
+      }
+
+      // 非正方形 / size='max'：canvas 归一化为方形（与优化前完全一致）
+      _processImage(img, size).then(function (blob) {
+        var blobUrl = URL.createObjectURL(blob);
+        _blobCache.set(key, { url: blobUrl, timestamp: _now(), status: 'ready', blob: true });
         _flushCallbacks(key, blobUrl);
       }).catch(function () {
-        _blobCache.set(key, { url: null, timestamp: _now(), status: 'error' });
-        _flushCallbacks(key, null);
+        // canvas 不可用时回退到原地址：CSS object-fit:cover 仍会做方形裁剪
+        _blobCache.set(key, { url: url, timestamp: _now(), status: 'ready' });
+        _flushCallbacks(key, url);
       });
     };
 
@@ -539,9 +599,7 @@
         pinnedEntries.push({ key: key, entry: entry });
         return;
       }
-      if (entry && entry.url) {
-        try { URL.revokeObjectURL(entry.url); } catch (e) { /* ignore */ }
-      }
+      _releaseEntry(entry);
     });
     _blobCache.clear();
     // 恢复 pinned 条目
@@ -557,9 +615,7 @@
    */
   function clearAll() {
     _blobCache.forEach(function (entry) {
-      if (entry && entry.url) {
-        try { URL.revokeObjectURL(entry.url); } catch (e) { /* ignore */ }
-      }
+      _releaseEntry(entry);
     });
     _blobCache.clear();
     _loadingQueue.clear();
@@ -582,14 +638,16 @@
       // pin 的条目不清理（当前播放曲目等）
       if (_isPinned(key) || _isVisible(key)) return;
       if (entry.url && (now - entry.timestamp) > STALE_THRESHOLD_MS) {
-        try { URL.revokeObjectURL(entry.url); } catch (e) { /* ignore */ }
+        _releaseEntry(entry);
         _blobCache.delete(key);
         cleaned++;
       }
     });
     // 同时清理过大的 colorCache
-    if (_colorCache.size > _maxPoolSize * 2) {
-      var toRemove = _colorCache.size - _maxPoolSize;
+    // 色彩条目是真实的 JS 内存（每条 16 个 RGB 数组），上限独立于 URL 池，
+    // 不能跟着 _maxPoolSize 一起放大，否则长列表滚动会让它无界增长。
+    if (_colorCache.size > COLOR_CACHE_MAX) {
+      var toRemove = _colorCache.size - COLOR_CACHE_MAX;
       var iter = _colorCache.keys();
       for (var i = 0; i < toRemove; i++) {
         var k = iter.next().value;

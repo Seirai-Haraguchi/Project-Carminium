@@ -39,10 +39,16 @@ container.innerHTML = `
 
     const searchInput = document.getElementById('folder-search');
     searchInput.value = searchText;
+    // 防抖：每敲一个字符都会全量过滤 + 重建列表 DOM。
+    var _searchDebounceTimer = null;
     searchInput.addEventListener('input', function (e) {
       searchText = e.target.value;
       filterStr = searchText.trim().toLowerCase();
-      _renderList();
+      if (_searchDebounceTimer) clearTimeout(_searchDebounceTimer);
+      _searchDebounceTimer = setTimeout(function () {
+        _searchDebounceTimer = null;
+        _renderList();
+      }, 180);
     });
 
     document.getElementById('btn-add-folder').addEventListener('click', function () {
@@ -431,6 +437,7 @@ container.innerHTML = `
         barWrap.style.display = '';
         var pct = Math.min(100, Math.round((done / total) * 100));
         barFill.style.width = pct + '%';
+        barWrap.style.setProperty('--progress-val', pct + '%');
       }
     }
 
@@ -489,6 +496,7 @@ container.innerHTML = `
             ? App.i18n.t('folders.syncNoTracksHint')
             : App.i18n.t('folders.indexedTracks', { count: t });
           barFill.style.width = '100%';
+          barWrap.style.setProperty('--progress-val', '100%');
           currentEl.style.display = 'none';
           // 建议用户重启程序以避免潜在的缓存/状态不一致问题
           var restartHint = document.createElement('p');

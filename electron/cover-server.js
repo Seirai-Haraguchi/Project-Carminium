@@ -188,6 +188,17 @@ class CoverHTTPServer {
       } else if (pathname.startsWith('/artist-image/')) {
         const name = decodeURIComponent(pathname.slice('/artist-image/'.length));
         this._handleArtistImage(req, res, name, method);
+      } else if (pathname.startsWith('/artist-banner/')) {
+        const name = decodeURIComponent(pathname.slice('/artist-banner/'.length));
+        this._handleArtistBanner(req, res, name, method);
+      } else if (pathname.startsWith('/artist-bio/')) {
+        const name = decodeURIComponent(pathname.slice('/artist-bio/'.length));
+        this._handleArtistBio(req, res, name, method);
+      } else if (pathname.startsWith('/artist-alias-search/')) {
+        this._handleArtistAliasSearch(req, res, pathname.slice('/artist-alias-search/'.length), method);
+      } else if (pathname.startsWith('/artist-aliases/')) {
+        const name = decodeURIComponent(pathname.slice('/artist-aliases/'.length));
+        this._handleArtistAliases(req, res, name, method);
       } else {
         this._sendError(res, 404);
       }
@@ -1116,12 +1127,88 @@ class CoverHTTPServer {
   }
 
   async _handleArtistImage(req, res, name, method) {
+    await this._handleArtistImageCommon(req, res, name, method, '.jpg', (n) => this._fetchArtistImage(n));
+  }
+
+  /** 横版艺人头图（Apple Music 式横幅）：独立缓存 .wide.jpg，按需抓取、不参与后台预热 */
+  async _handleArtistBanner(req, res, name, method) {
+    await this._handleArtistImageCommon(req, res, name, method, '.wide.jpg', (n) => this._fetchArtistBanner(n));
+  }
+
+  /**
+   * 艺人简介（纯文本）：独立缓存 .bio.txt，按需抓取、不参与后台预热。
+   * 命中 200 text/plain；确认无简介 404（负缓存期内直接 404）。
+   */
+  async _handleArtistBio(req, res, name, method) {
+    const norm = (name || '').trim();
+    if (!norm) { this._sendError(res, 400); return; }
+
+    const key = crypto.createHash('md5').update(norm.toLowerCase()).digest('hex');
+    const cacheFile = path.join(this._getArtistImageCacheDir(), key + '.bio.txt');
+
+    if (!this._artistInflight) this._artistInflight = {};
+
+    // 1) 磁盘缓存命中
+    if (fs.existsSync(cacheFile)) {
+      try {
+        const text = fs.readFileSync(cacheFile, 'utf-8');
+        if (text) { this._sendImage(res, Buffer.from(text, 'utf-8'), method, 'text/plain; charset=utf-8'); return; }
+      } catch (e) { /* 读取失败则重新抓取 */ }
+    }
+
+    // 2) 负缓存命中：TTL 内已知无简介，直接 404
+    if (this._artistMissFresh(cacheFile)) {
+      this._sendError(res, 404);
+      return;
+    }
+
+    // 3) 并发去重（inflight 键与头像/横幅按类型隔离）
+    const inflightKey = 'bio:' + key;
+    if (this._artistInflight[inflightKey]) {
+      try {
+        const buf = await this._artistInflight[inflightKey];
+        if (buf) { this._sendImage(res, buf, method, 'text/plain; charset=utf-8'); return; }
+      } catch (e) { /* fallthrough → 404 */ }
+      this._sendError(res, 404);
+      return;
+    }
+
+    this._artistInflight[inflightKey] = (async () => {
+      let text = null;
+      try {
+        text = await this._fetchArtistBio(norm);
+      } catch (e) {
+        // 瞬时故障：不写负缓存，下次请求重试
+        console.error('[artist-bio] fetch failed:', e && e.message);
+      }
+      try {
+        if (text) {
+          fs.writeFileSync(cacheFile, text, 'utf-8');
+          try { fs.unlinkSync(cacheFile + '.miss'); } catch (e) { /* 无 miss 文件 */ }
+        } else {
+          fs.writeFileSync(cacheFile + '.miss', String(Date.now()));
+        }
+      } catch (e) { /* ignore */ }
+      return text ? Buffer.from(text, 'utf-8') : null;
+    })();
+
+    try {
+      const buf = await this._artistInflight[inflightKey];
+      if (buf) { this._sendImage(res, buf, method, 'text/plain; charset=utf-8'); return; }
+    } catch (e) { /* ignore */ }
+    finally {
+      delete this._artistInflight[inflightKey];
+    }
+    this._sendError(res, 404);
+  }
+
+  async _handleArtistImageCommon(req, res, name, method, ext, fetchFn) {
     const norm = (name || '').trim();
     if (!norm) { this._sendError(res, 400); return; }
 
     const key = crypto.createHash('md5').update(norm.toLowerCase()).digest('hex');
     const dir = this._getArtistImageCacheDir();
-    const cacheFile = path.join(dir, key + '.jpg');
+    const cacheFile = path.join(dir, key + ext);
 
     if (!this._artistInflight) this._artistInflight = {};
 
@@ -1140,20 +1227,22 @@ class CoverHTTPServer {
       return;
     }
 
-    // 并发去重：同一艺人同时只抓一次（后台预热与详情页请求共用）
-    if (this._artistInflight[key]) {
+    // 并发去重：同一艺人同一类型（头像/横幅）同时只抓一次；
+    // inflight 键按 ext 区分，避免头像与横幅并发时互相串图
+    const inflightKey = ext + ':' + key;
+    if (this._artistInflight[inflightKey]) {
       try {
-        const buf = await this._artistInflight[key];
+        const buf = await this._artistInflight[inflightKey];
         if (buf) { this._sendImage(res, buf, method); return; }
       } catch (e) { /* fallthrough → 404 */ }
       this._sendError(res, 404);
       return;
     }
 
-    this._artistInflight[key] = (async () => {
+    this._artistInflight[inflightKey] = (async () => {
       let img = null;
       try {
-        img = await this._fetchArtistImage(norm);
+        img = await fetchFn(norm);
         this._artistCacheStore(cacheFile, img); // 命中写图 / 确认 miss 写负缓存
       } catch (e) {
         // 瞬时故障（限流/断网）：不写负缓存，下次请求重试
@@ -1163,11 +1252,11 @@ class CoverHTTPServer {
     })();
 
     try {
-      const buf = await this._artistInflight[key];
+      const buf = await this._artistInflight[inflightKey];
       if (buf) { this._sendImage(res, buf, method); return; }
     } catch (e) { /* ignore */ }
     finally {
-      delete this._artistInflight[key];
+      delete this._artistInflight[inflightKey];
     }
     this._sendError(res, 404);
   }
@@ -1189,7 +1278,7 @@ class CoverHTTPServer {
 
     // 网易云音乐（免 key）：POST 搜索艺人（type=100）→ img/img1v1Url
     // （126.net CDN，?param= 控制尺寸；头像场景 500y500 足够，约 30-150KB，
-    // 比 1024y1024 的 1.7MB 快一个数量级）
+    // 比 1024y1024 的 1.7MB 快一个数量级。方图只用于 208px 头像，不铺横幅）
     const fromNetease = async () => {
       const ne = await this._httpPostFormJson(
         'https://music.163.com/api/search/get/web',
@@ -1315,6 +1404,394 @@ class CoverHTTPServer {
     }
     if (sawError) throw new Error('transient sources'); // 有源报错：不确认 miss，防毒化负缓存
     return null; // 确认无图：所有下探均干净落空
+  }
+
+  /**
+   * 抓取横版艺人头图（Apple Music 式横幅用）。只走 TheAudioDB：
+   * strArtistFanart/2/3 为 1280x720 横版剧照，strArtistBanner 为横幅条，
+   * 其余源（网易云/iTunes/Deezer）只有方形头像，对横幅无意义。
+   * 独立于 _fetchArtistImage：banner 按需抓取，不进后台预热（TheAudioDB
+   * 公共测试 key 限流严格，避免全库预热打爆配额）。
+   */
+  async _fetchArtistBanner(name, timeoutMs = 6000) {
+    const adb = await this._httpJson(
+      'https://www.theaudiodb.com/api/v1/json/123/search.php?s=' + encodeURIComponent(name),
+      null, timeoutMs
+    );
+    const a = adb && adb.artists && adb.artists[0];
+    const art = a && (a.strArtistFanart || a.strArtistFanart2 || a.strArtistFanart3 || a.strArtistBanner);
+    if (!art) return null;
+    const img = await this._httpGet(art, 0, timeoutMs);
+    if (img && img.contentType && img.contentType.startsWith('image/')) return img;
+    return null;
+  }
+
+  /**
+   * 抓取艺人简介（纯文本，≤2000 字符）。分层取源，国内优先：
+   *   第 0 源 百度百科 openapi（国内直连快、简中、覆盖中日西艺人）；
+   *   第 1 源 网易云：search type=100 → id → /api/artist/desc/{id}（限流凶，命中靠运气）；
+   *   第 2 源 TheAudioDB strBiography*（动态匹配语言字段，CN → EN → 其他）；
+   *   第 3 源 Wikipedia REST 摘要（zh → en，墙内常超时，仅兜底）。
+   * 返回值语义与头像抓取一致：null=确认无简介，throw=瞬时故障（不写负缓存）。
+   */
+  async _fetchArtistBio(name, timeoutMs = 6000) {
+    let sawError = false;
+    const q = encodeURIComponent(name);
+
+    // 百度百科 openapi（免 key）：abstract 为简中摘要，覆盖华语/欧美/日本艺人
+    try {
+      const bk = await this._httpJson(
+        'https://baike.baidu.com/api/openapi/BaikeLemmaCardApi?scope=103&format=json&appid=379020&bk_length=600&bk_key=' + q,
+        { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Carminium/1.0' },
+        timeoutMs
+      );
+      if (bk && bk.errCode) {
+        // 明确查无词条（如多义词接口失败）：干净落空
+      } else if (bk && (bk.abstract || bk.desc)) {
+        const txt = String(bk.abstract || bk.desc || '').trim();
+        if (txt.length > 40) return this._cleanBioText(txt);
+      }
+    } catch (e) { sawError = true; }
+
+    // 网易云：搜索拿艺人 id，再拉取 desc（briefDesc 简中为主，introduction 为分段长文）
+    try {
+      const ne = await this._httpPostFormJson(
+        'https://music.163.com/api/search/get/web',
+        { s: name, type: 100, offset: 0, total: 'true', limit: 1 },
+        {
+          'Referer': 'https://music.163.com/',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Carminium/1.0',
+        },
+        timeoutMs
+      );
+      // 限流时 HTTP 200 但 body code=405 —— 必须当错误抛，防毒化负缓存
+      if (!ne || ne.code !== 200) throw new Error('netease code ' + (ne && ne.code));
+      const a = ne.result && ne.result.artists && ne.result.artists[0];
+      const id = a && a.id;
+      if (id) {
+        const desc = await this._httpJson('https://music.163.com/api/artist/desc/' + id, null, timeoutMs);
+        if (desc && desc.code && desc.code !== 200) throw new Error('netease desc code ' + desc.code);
+        if (desc) {
+          let txt = (typeof desc.briefDesc === 'string' ? desc.briefDesc : '').trim();
+          if (!txt && Array.isArray(desc.introduction)) {
+            txt = desc.introduction
+              .map((x) => (x && typeof x.txt === 'string' ? x.txt : ''))
+              .filter((s) => s.trim())
+              .join('\n\n')
+              .trim();
+          }
+          if (txt && txt.length > 40) return this._cleanBioText(txt);
+        }
+      }
+    } catch (e) { sawError = true; }
+
+    // TheAudioDB：search.php 与横幅/头像同源，一次响应含全部 strBiography* 字段
+    try {
+      const adb = await this._httpJson(
+        'https://www.theaudiodb.com/api/v1/json/123/search.php?s=' + q,
+        null, timeoutMs
+      );
+      const a = adb && adb.artists && adb.artists[0];
+      if (a) {
+        const rank = (k) => {
+          const suf = k.slice('strBiography'.length).toUpperCase();
+          const pref = ['CN', 'ZH', 'EN'];
+          const i = pref.indexOf(suf);
+          return i === -1 ? pref.length : i;
+        };
+        const keys = Object.keys(a)
+          .filter((k) => /^strBiography/.test(k) && typeof a[k] === 'string' && a[k].trim().length > 40)
+          .sort((x, y) => rank(x) - rank(y));
+        if (keys.length > 0) return this._cleanBioText(a[keys[0]]);
+      }
+    } catch (e) { sawError = true; }
+
+    // Wikipedia 摘要（zh → en）
+    for (const lang of ['zh', 'en']) {
+      try {
+        const sum = await this._httpJson(
+          'https://' + lang + '.wikipedia.org/api/rest_v1/page/summary/' + q,
+          null, timeoutMs
+        );
+        if (sum && sum.type === 'standard' && sum.extract && sum.extract.trim().length > 40) {
+          return this._cleanBioText(sum.extract);
+        }
+      } catch (e) { sawError = true; }
+    }
+
+    if (sawError) throw new Error('transient sources'); // 有源报错：不确认 miss，防毒化负缓存
+    return null; // 确认无简介
+  }
+
+  /** 简介清洗：去 HTML 标签/实体、压缩空行、超长时按段落/句号截断到 ~2000 字符 */
+  _cleanBioText(raw) {
+    let t = String(raw || '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|div|li)>/gi, '\n\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&#0?39;/g, "'")
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    if (t.length > 2000) {
+      t = t.slice(0, 2000);
+      const cut = Math.max(t.lastIndexOf('\n'), t.lastIndexOf('。'), t.lastIndexOf('. '));
+      if (cut > 800) t = t.slice(0, cut + 1);
+      t = t.trimEnd() + '…';
+    }
+    return t;
+  }
+
+  // ── 艺人别名（供"用别名搜到这个人"）────────────────────────────────────
+  // 数据源：网易云 artist.alias（译名/别名，国内直连快）为主，TheAudioDB
+  // strArtistAlias（存在时）为辅。缓存 <md5>.alias.json = {name, aliases}，
+  // 无别名写 .miss 负缓存。后台预热并发压到 2、间隔 500ms（网易云搜索限流严）。
+
+  /** 抓取艺人别名：返回去重后的别名字符串数组；null=确认无别名；throw=瞬时故障 */
+  async _fetchArtistAliases(name, timeoutMs = 7000) {
+    let sawError = false;
+    let raw = [];
+    const MB_UA = { 'User-Agent': 'Carminium/1.0 (desktop music player)' };
+
+    // MusicBrainz aliases（直连可用，译名/别名数据最全，含中日韩英）。
+    // 注意：搜索词不带引号（带引号对部分名失效）；MB 政策限速 ~1 req/s。
+    try {
+      const s = await this._httpJson(
+        'https://musicbrainz.org/ws/2/artist/?query=' + encodeURIComponent(name) + '&fmt=json&limit=1',
+        MB_UA, timeoutMs
+      );
+      const id = s && s.artists && s.artists[0] && s.artists[0].id;
+      if (id) {
+        const d = await this._httpJson(
+          'https://musicbrainz.org/ws/2/artist/' + id + '?inc=aliases&fmt=json',
+          MB_UA, timeoutMs
+        );
+        if (d && Array.isArray(d.aliases)) {
+          raw = raw.concat(d.aliases.map((a) => a && a.name).filter(Boolean));
+        }
+      }
+    } catch (e) { sawError = true; }
+
+    // 网易云：search type=100 的 artist 对象自带 alias[]（译名/别名）。
+    // 该搜索接口限流凶（405 频发），失败仅忽略——MB 已是主力。
+    try {
+      const ne = await this._httpPostFormJson(
+        'https://music.163.com/api/search/get/web',
+        { s: name, type: 100, offset: 0, total: 'true', limit: 1 },
+        {
+          'Referer': 'https://music.163.com/',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Carminium/1.0',
+        },
+        timeoutMs
+      );
+      if (!ne || ne.code !== 200) throw new Error('netease code ' + (ne && ne.code));
+      const a = ne.result && ne.result.artists && ne.result.artists[0];
+      if (a && Array.isArray(a.alias)) raw = raw.concat(a.alias);
+    } catch (e) { /* 网易云限流常见：不置 sawError，MB 已是主力 */ }
+
+    // TheAudioDB：strArtistAlias（逗号/分号分隔），字段不存在则跳过
+    try {
+      const adb = await this._httpJson(
+        'https://www.theaudiodb.com/api/v1/json/123/search.php?s=' + encodeURIComponent(name),
+        null, timeoutMs
+      );
+      const a = adb && adb.artists && adb.artists[0];
+      if (a && typeof a.strArtistAlias === 'string' && a.strArtistAlias.trim()) {
+        raw = raw.concat(a.strArtistAlias.split(/[,;、|]+/));
+      }
+    } catch (e) { sawError = true; }
+
+    const aliases = this._cleanAliases(name, raw);
+    if (aliases.length > 0) return aliases;
+    if (sawError) throw new Error('transient sources'); // 防瞬时故障被误判成"无别名"
+    return null;
+  }
+
+  /** 别名清洗：去重、剔除与本名相同的项、封顶 20 条 */
+  _cleanAliases(name, arr) {
+    const norm = String(name || '').trim().toLowerCase();
+    const out = [];
+    const seen = new Set();
+    for (const item of (Array.isArray(arr) ? arr : [])) {
+      const s = String(item || '').replace(/\s+/g, ' ').trim();
+      if (!s) continue;
+      const k = s.toLowerCase();
+      if (k === norm || seen.has(k)) continue;
+      seen.add(k);
+      out.push(s);
+      if (out.length >= 20) break;
+    }
+    return out;
+  }
+
+  /** 别名索引：aliasLower → Set(artistName)，惰性扫描缓存目录构建；写新文件后置空重建 */
+  _getAliasIndex() {
+    if (this._aliasIndex) return this._aliasIndex;
+    const idx = new Map();
+    try {
+      const dir = this._getArtistImageCacheDir();
+      const files = fs.readdirSync(dir).filter((f) => f.endsWith('.alias.json'));
+      for (const f of files) {
+        try {
+          const obj = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'));
+          const name = obj && obj.name;
+          const als = obj && obj.aliases;
+          if (!name || !Array.isArray(als)) continue;
+          for (const al of als) {
+            const k = String(al).trim().toLowerCase();
+            if (!k) continue;
+            if (!idx.has(k)) idx.set(k, new Set());
+            idx.get(k).add(name);
+          }
+        } catch (e) { /* 跳过损坏文件 */ }
+      }
+    } catch (e) { /* 目录不可读：返回空索引 */ }
+    this._aliasIndex = idx;
+    return idx;
+  }
+
+  /** 别名搜索：返回命中别名的艺人名列表（≤50，按索引序） */
+  _handleArtistAliasSearch(req, res, query, method) {
+    const qStr = decodeURIComponent(query || '').trim().toLowerCase();
+    if (!qStr) {
+      this._sendImage(res, Buffer.from('[]', 'utf-8'), method, 'application/json; charset=utf-8');
+      return;
+    }
+    const idx = this._getAliasIndex();
+    const names = [];
+    const seen = new Set();
+    for (const [alias, set] of idx) {
+      if (!alias.includes(qStr)) continue;
+      for (const n of set) {
+        if (!seen.has(n)) { seen.add(n); names.push(n); }
+        if (names.length >= 50) break;
+      }
+      if (names.length >= 50) break;
+    }
+    this._sendImage(res, Buffer.from(JSON.stringify(names), 'utf-8'), method, 'application/json; charset=utf-8');
+  }
+
+  /**
+   * 单艺人别名（详情页显示用）：GET /artist-aliases/NAME → JSON {name, aliases}。
+   * 与预热共用 <md5>.alias.json 缓存与 .miss 负缓存；命中后置空搜索索引。
+   */
+  async _handleArtistAliases(req, res, name, method) {
+    const norm = (name || '').trim();
+    if (!norm) { this._sendError(res, 400); return; }
+
+    const key = crypto.createHash('md5').update(norm.toLowerCase()).digest('hex');
+    const cacheFile = path.join(this._getArtistImageCacheDir(), key + '.alias.json');
+    const sendJson = (obj) => this._sendImage(
+      res, Buffer.from(JSON.stringify(obj), 'utf-8'), method, 'application/json; charset=utf-8'
+    );
+
+    if (!this._artistInflight) this._artistInflight = {};
+
+    // 1) 磁盘缓存命中
+    if (fs.existsSync(cacheFile)) {
+      try {
+        const obj = JSON.parse(fs.readFileSync(cacheFile, 'utf-8'));
+        if (obj && Array.isArray(obj.aliases)) { sendJson(obj); return; }
+      } catch (e) { /* 读取失败则重新抓取 */ }
+    }
+
+    // 2) 负缓存命中：TTL 内已知无别名，直接返回空集
+    if (this._artistMissFresh(cacheFile)) { sendJson({ name: norm, aliases: [] }); return; }
+
+    // 3) 并发去重
+    const inflightKey = 'alias:' + key;
+    if (this._artistInflight[inflightKey]) {
+      try {
+        const buf = await this._artistInflight[inflightKey];
+        if (buf) { sendJson(JSON.parse(buf.toString('utf-8'))); return; }
+      } catch (e) { /* fallthrough */ }
+      sendJson({ name: norm, aliases: [] });
+      return;
+    }
+
+    this._artistInflight[inflightKey] = (async () => {
+      let aliases = null;
+      try {
+        aliases = await this._fetchArtistAliases(norm);
+      } catch (e) {
+        console.error('[artist-alias] fetch failed:', e && e.message);
+      }
+      try {
+        if (aliases && aliases.length) {
+          fs.writeFileSync(cacheFile, JSON.stringify({ name: norm, aliases: aliases }), 'utf-8');
+          try { fs.unlinkSync(cacheFile + '.miss'); } catch (e) { /* 无 */ }
+          this._aliasIndex = null;
+        } else {
+          fs.writeFileSync(cacheFile + '.miss', String(Date.now()));
+        }
+      } catch (e) { /* ignore */ }
+      return JSON.stringify({ name: norm, aliases: aliases || [] });
+    })();
+
+    try {
+      const jsonStr = await this._artistInflight[inflightKey];
+      sendJson(JSON.parse(jsonStr));
+    } catch (e) {
+      sendJson({ name: norm, aliases: [] });
+    }
+    finally {
+      delete this._artistInflight[inflightKey];
+    }
+  }
+
+  // 后台预热别名（幂等）：并发 1 + 1100ms 间隔——MusicBrainz 政策要求
+  // 平均 ≤1 req/s，每艺人消耗 2 请求（search + lookup），宁慢勿封
+  prefetchArtistAliases(names) {
+    if (!Array.isArray(names) || names.length === 0) return { queued: 0 };
+    if (!this._aliasPrefetchSet) this._aliasPrefetchSet = new Set();
+    if (!this._aliasPrefetchQueue) this._aliasPrefetchQueue = [];
+    if (this._aliasPrefetchActive == null) this._aliasPrefetchActive = 0;
+
+    const dir = this._getArtistImageCacheDir();
+    let added = 0;
+    for (let i = 0; i < names.length; i++) {
+      const norm = (names[i] || '').trim();
+      if (!norm) continue;
+      const key = crypto.createHash('md5').update(norm.toLowerCase()).digest('hex');
+      if (this._aliasPrefetchSet.has(key)) continue;
+      const cacheFile = path.join(dir, key + '.alias.json');
+      if (fs.existsSync(cacheFile)) { this._aliasPrefetchSet.add(key); continue; }
+      if (this._artistMissFresh(cacheFile)) { this._aliasPrefetchSet.add(key); continue; }
+      this._aliasPrefetchSet.add(key);
+      this._aliasPrefetchQueue.push({ name: norm, cacheFile: cacheFile });
+      added++;
+    }
+    if (added > 0) this._pumpAliasPrefetch();
+    return { queued: added, pending: this._aliasPrefetchQueue.length };
+  }
+
+  _pumpAliasPrefetch() {
+    while (this._aliasPrefetchActive < 1 && this._aliasPrefetchQueue.length > 0) {
+      const item = this._aliasPrefetchQueue.shift();
+      this._aliasPrefetchActive++;
+      this._fetchArtistAliases(item.name)
+        .then((aliases) => {
+          try {
+            if (aliases && aliases.length) {
+              fs.writeFileSync(item.cacheFile, JSON.stringify({ name: item.name, aliases: aliases }), 'utf-8');
+              try { fs.unlinkSync(item.cacheFile + '.miss'); } catch (e) { /* 无 */ }
+              this._aliasIndex = null; // 索引置空，下次搜索重建
+            } else {
+              fs.writeFileSync(item.cacheFile + '.miss', String(Date.now()));
+            }
+          } catch (e) { /* ignore */ }
+        })
+        .catch(() => { /* 瞬时故障：留待下次启动重试 */ })
+        .then(() => {
+          this._aliasPrefetchActive--;
+          setTimeout(() => this._pumpAliasPrefetch(), 1100);
+        });
+    }
   }
 
   /** 竞速：任一 promise 成功且结果非空即 resolve；全部失败/为空则 reject */

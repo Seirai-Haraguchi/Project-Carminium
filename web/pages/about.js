@@ -65,62 +65,68 @@
   };
 
   // 生成关于页主体内容（版本信息 + 操作），供 render / renderInto 复用
+  // 行结构遵循 M3E segmented list item：leading icon 槽 + body 槽 + trailing 槽
   function _renderAboutBody() {
     return '' +
       // ── 版本信息 ──
       '<div class="settings-group">' +
         '<div class="settings-group-header" data-i18n="about.versionInfo">版本信息</div>' +
-        '<div class="settings-row about-version-card" id="about-version-card">' +
-          '<div class="about-version-left">' +
+        // 段一：版本卡 + 其下的展开区（展开区跟随卡片，故同段）
+        '<div class="md-seglist">' +
+          '<div class="settings-row about-version-card" id="about-version-card">' +
             '<img class="about-app-icon" src="logo.svg" alt="">' +
-            '<p class="settings-row-label">Carminium</p>' +
+            '<div class="settings-row-body">' +
+              '<p class="settings-row-label">Carminium</p>' +
+              '<span class="settings-row-sub" id="about-version-text" data-i18n="common.loading">加载中…</span>' +
+            '</div>' +
+            '<div class="settings-row-trailing">' + CHEVRON_SVG + '</div>' +
           '</div>' +
-          '<div class="about-version-right">' +
-            '<span class="settings-row-sub" id="about-version-text" data-i18n="common.loading">加载中…</span>' +
-            CHEVRON_SVG +
-          '</div>' +
-        '</div>' +
-        '<div class="about-version-expander" id="about-version-expander">' +
-          '<div class="about-version-expander-inner">' +
-            '<p class="about-copyright">COPYRIGHT © 2025–2026 Seirai Haraguchi</p>' +
-            '<p class="about-license" data-i18n="about.license">本程序根据 GNU General Public License v3.0 获得许可</p>' +
-            '<div class="about-links">' +
-              '<a class="btn-filled" href="' + GITHUB_REPO + '" target="_blank" rel="noopener noreferrer">' +
-                '<span data-i18n="about.githubRepo">GitHub 仓库</span>' +
-                '<span class="material-symbols-rounded">open_in_new</span>' +
-              '</a>' +
+          '<div class="about-version-expander" id="about-version-expander">' +
+            '<div class="about-version-expander-inner">' +
+              '<p class="about-copyright">COPYRIGHT © 2025–2026 Seirai Haraguchi</p>' +
+              '<p class="about-license" data-i18n="about.license">本程序根据 GNU General Public License v3.0 获得许可</p>' +
+              '<div class="about-links">' +
+                '<a class="btn-filled" href="' + GITHUB_REPO + '" target="_blank" rel="noopener noreferrer">' +
+                  '<span data-i18n="about.githubRepo">GitHub 仓库</span>' +
+                  '<span class="material-symbols-rounded">open_in_new</span>' +
+                '</a>' +
+              '</div>' +
             '</div>' +
           '</div>' +
         '</div>' +
-        // ── 平台信息 ──
-        '<div class="settings-row about-info-row" id="about-platform-row">' +
-          '<div><p class="settings-row-label" data-i18n="about.platform">平台</p></div>' +
-          '<span class="settings-row-sub" id="about-platform-text">—</span>' +
-        '</div>' +
-        '<div class="settings-row about-info-row" id="about-arch-row">' +
-          '<div><p class="settings-row-label" data-i18n="about.arch">架构</p></div>' +
-          '<span class="settings-row-sub" id="about-arch-text">—</span>' +
-        '</div>' +
-        '<div class="settings-row about-info-row" id="about-os-version-row">' +
-          '<div><p class="settings-row-label" data-i18n="about.osVersion">系统版本</p></div>' +
-          '<span class="settings-row-sub" id="about-os-version-text">—</span>' +
+        // 段二：平台信息（不可交互，独立成段）
+        '<div class="md-seglist">' +
+          '<div class="settings-row about-info-row" id="about-platform-row">' +
+            '<div class="settings-row-body"><p class="settings-row-label" data-i18n="about.platform">平台</p></div>' +
+            '<div class="settings-row-trailing"><span class="settings-row-sub" id="about-platform-text">—</span></div>' +
+          '</div>' +
+          '<div class="settings-row about-info-row" id="about-arch-row">' +
+            '<div class="settings-row-body"><p class="settings-row-label" data-i18n="about.arch">架构</p></div>' +
+            '<div class="settings-row-trailing"><span class="settings-row-sub" id="about-arch-text">—</span></div>' +
+          '</div>' +
+          '<div class="settings-row about-info-row" id="about-os-version-row">' +
+            '<div class="settings-row-body"><p class="settings-row-label" data-i18n="about.osVersion">系统版本</p></div>' +
+            '<div class="settings-row-trailing"><span class="settings-row-sub" id="about-os-version-text">—</span></div>' +
+          '</div>' +
         '</div>' +
       '</div>' +
 
       // ── 操作 ──
       '<div class="settings-group">' +
         '<div class="settings-group-header" data-i18n="about.actions">操作</div>' +
-        '<div class="settings-row about-action-row" id="about-release">' +
-          '<div><p class="settings-row-label" data-i18n="about.viewRelease">查看 Release</p></div>' +
-          CHEVRON_SVG +
-        '</div>' +
-        '<div class="settings-row about-action-row" id="about-feedback">' +
-          '<div><p class="settings-row-label" data-i18n="about.feedback">问题反馈</p></div>' +
-          CHEVRON_SVG +
-        '</div>' +
-        '<div class="settings-row about-action-row" id="about-diagnostic">' +
-          '<div><p class="settings-row-label" data-i18n="about.diagnostic">诊断信息</p></div>' +
-          CHEVRON_SVG +
+        '<div class="md-seglist">' +
+          '<div class="settings-row about-action-row" id="about-release">' +
+            '<div class="settings-row-body"><p class="settings-row-label" data-i18n="about.viewRelease">查看 Release</p></div>' +
+            '<div class="settings-row-trailing">' + CHEVRON_SVG + '</div>' +
+          '</div>' +
+          '<div class="settings-row about-action-row" id="about-feedback">' +
+            '<div class="settings-row-body"><p class="settings-row-label" data-i18n="about.feedback">问题反馈</p></div>' +
+            '<div class="settings-row-trailing">' + CHEVRON_SVG + '</div>' +
+          '</div>' +
+          '<div class="settings-row about-action-row" id="about-diagnostic">' +
+            '<div class="settings-row-body"><p class="settings-row-label" data-i18n="about.diagnostic">诊断信息</p></div>' +
+            '<div class="settings-row-trailing">' + CHEVRON_SVG + '</div>' +
+          '</div>' +
         '</div>' +
       '</div>';
   }

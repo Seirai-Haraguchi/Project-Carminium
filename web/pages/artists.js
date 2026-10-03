@@ -13,11 +13,45 @@
   let searchText = '';
   let sortMode = 'az'; // 'az', 'za', 'albums', 'tracks'
 
+  // ── 别名搜索（"用别名搜到这个人"）──
+  // 本名匹配在前端同步完成；别名命中由 cover-server 的别名索引异步返回，
+  // 防抖 250ms + 序号防陈旧，命中后并入结果列表重渲染。
+  let _aliasMatchNames = null;  // Set<艺人名小写>：别名命中的艺人
+  let _aliasMatchQuery = '';    // _aliasMatchNames 对应的 filterStr
+  let _aliasFetchTimer = null;
+  let _aliasFetchSeq = 0;
+
   // ── 虚拟滚动实例 ──
   let _vl = null;
   // _flatList: [{ type:'header', letter } | { type:'row', artist }]
   let _flatList = [];
   const ROW_HEIGHT = 64; // 艺术家行比曲目行稍高（头像 + padding）
+
+  // ── 艺人头像探测结果缓存 ──
+  // 原实现每次行被渲染都 new Image() 探测一次。长列表来回滚动时，
+  // 同一艺人被反复探测 → 每次都产生一次图片请求/解码与 promise 回调。
+  // 服务端对 /artist-image/ 返回 max-age=86400，Chromium HTTP 缓存本身能挡住
+  // 网络往返，但解码与 JS 回调仍重复发生。这里按艺人名缓存结论：
+  //   'ok'   → 已确认在线有图，直接贴图
+  //   'miss' → 已确认无图，永久保持纯色 + 首字母（不再发探测）
+  // 键为艺人名；艺人名即缓存键，与服务端 md5(lower(name)) 一致。
+  const _avatarProbeCache = new Map();
+
+  function _avatarProbeState(name, url) {
+    const v = _avatarProbeCache.get(name);
+    if (v === 'ok') return 'ok';
+    if (v === 'miss') return 'miss';
+    return 'unknown';
+  }
+
+  function _applyAvatar(avEl, name, url) {
+    if (!avEl || avEl.dataset.artist !== name) return;
+    avEl.style.background = '';
+    avEl.style.backgroundImage = 'url(' + url + ')';
+    avEl.style.backgroundSize = 'cover';
+    avEl.style.backgroundPosition = 'center';
+    avEl.innerHTML = '';
+  }
   const HEADER_HEIGHT = 32;
 
   // 排序选项配置
@@ -63,10 +97,17 @@
 
     const searchInput = document.getElementById('artist-search');
     searchInput.value = searchText;
+    // 防抖：每敲一个字符都会触发「过滤全量艺人 + 排序 + 重建扁平列表」，
+    // 与music 页同理。180ms 静默后才渲染，交互体感与原生搜索框一致。
+    var _searchDebounceTimer = null;
     searchInput.addEventListener('input', function (e) {
       searchText = e.target.value;
       filterStr = searchText.trim().toLowerCase();
-      _renderList(container);
+      if (_searchDebounceTimer) clearTimeout(_searchDebounceTimer);
+      _searchDebounceTimer = setTimeout(function () {
+        _searchDebounceTimer = null;
+        _renderList(container);
+      }, 180);
     });
 
     // 排序下拉菜单事件
@@ -245,6 +286,43 @@
       { text: 'name', key: 'sort_key' },
     ])) : allArtists;
 
+    // ── 别名命中合并 ──
+    if (filterStr) {
+      if (_aliasMatchQuery !== filterStr) {
+        // 新查询：重置别名命中并发起防抖检索
+        _aliasMatchNames = null;
+        _aliasMatchQuery = filterStr;
+        const seq = ++_aliasFetchSeq;
+        const q = filterStr;
+        if (_aliasFetchTimer) clearTimeout(_aliasFetchTimer);
+        _aliasFetchTimer = setTimeout(function () {
+          if (typeof window.__coverBase !== 'string') return;
+          fetch(window.__coverBase + '/artist-alias-search/' + encodeURIComponent(q))
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function (names) {
+              if (seq !== _aliasFetchSeq) return;  // 输入已变化，丢弃陈旧结果
+              _aliasMatchNames = new Set((names || []).map(function (n) { return String(n).toLowerCase(); }));
+              if (filterStr === q) _renderList(container);  // 仍在同一查询：并入重渲染
+            })
+            .catch(function () { /* 别名服务不可用：仅本名搜索 */ });
+        }, 250);
+      }
+      if (_aliasMatchNames && _aliasMatchNames.size) {
+        const have = {};
+        list.forEach(function (a) { have[a.name || ''] = true; });
+        allArtists.forEach(function (a) {
+          const n = a.name || '';
+          if (!have[n] && _aliasMatchNames.has(n.toLowerCase())) list.push(a);
+        });
+      }
+    } else {
+      // 清空搜索：复位别名状态
+      _aliasMatchNames = null;
+      _aliasMatchQuery = '';
+      _aliasFetchSeq++;
+      if (_aliasFetchTimer) { clearTimeout(_aliasFetchTimer); _aliasFetchTimer = null; }
+    }
+
     // 应用排序
     list = _sortArtists(list);
 
@@ -280,8 +358,23 @@
     });
 
     // ── 销毁旧实例，清空容器 ──
-    if (_vl) { _vl.destroy(); _vl = null; }
-    listEl.innerHTML = '';
+    // 复用策略与 music 页一致：优先 setItems 复用节点池，避免搜索/排序时
+    // 反复重建 spacer/content 并丢弃约 60 个已建节点。
+    // ⚠️ 必须校验 container 身份：离开页面再回来时列表元素是新的，
+    // 旧实例挂在已脱离文档的节点上，直接 setItems 会让列表渲染到旧容器里
+    // （表现为新列表空白 / content 层缺失）。
+    const canReuse = _vl && _vl.container === listEl;
+    if (!canReuse && _vl) { _vl.destroy(); _vl = null; }
+    if (!canReuse) listEl.innerHTML = '';
+
+    // 重置滚动位置（与原实现一致：换数据即回到顶部）
+    const scRoll = document.getElementById('content-pane');
+    if (scRoll) scRoll.scrollTop = 0;
+
+    if (canReuse) {
+      _vl.setItems(_flatList);
+      return;
+    }
 
     // ── 创建虚拟列表 ──
     _vl = new window.VirtualList({
@@ -320,17 +413,23 @@
           const url = (window.artistImageUrl && name) ? window.artistImageUrl(name) : null;
           const avEl = el.querySelector('.artist-avatar');
           if (url && avEl) {
-            const probe = new Image();
-            probe.onload = function () {
-              // 行可能已被回收给别的艺术家，只有仍是同一人才替换
-              if (avEl.dataset.artist !== name) return;
-              avEl.style.background = '';
-              avEl.style.backgroundImage = 'url(' + url + ')';
-              avEl.style.backgroundSize = 'cover';
-              avEl.style.backgroundPosition = 'center';
-              avEl.innerHTML = '';
-            };
-            probe.src = url;   // onerror 不处理：保留纯色 + 首字母占位
+            const state = _avatarProbeState(name, url);
+            if (state === 'ok') {
+              // 已确认在线有图：直接贴图，跳过一次 Image 探测往返
+              _applyAvatar(avEl, name, url);
+            } else if (state === 'miss') {
+              // 已确认无图：保持纯色 + 首字母，不再发起探测
+            } else {
+              const probe = new Image();
+              probe.onload = function () {
+                _avatarProbeCache.set(name, 'ok');
+                // 行可能已被回收给别的艺术家，只有仍是同一人才替换
+                if (avEl.dataset.artist !== name) return;
+                _applyAvatar(avEl, name, url);
+              };
+              probe.onerror = function () { _avatarProbeCache.set(name, 'miss'); };
+              probe.src = url;
+            }
           }
 
           el.onclick = function () { _renderDetail(container, artist); };
@@ -361,6 +460,7 @@
           <p class="detail-type" data-i18n="artists.title">艺术家</p>
           <h1 class="detail-name">${App.utils.esc(artist.name)}</h1>
           <p class="detail-sub">${App.i18n.t('artists.albumCount', { count: artist.album_count })} · ${App.i18n.t('music.trackCount', { count: artist.track_count })}</p>
+          <p class="detail-alias" id="detail-alias" hidden></p>
           <div class="detail-actions">
             <button class="detail-play-btn" id="btn-play-artist">
               <span class="material-symbols-rounded">play_arrow</span><span data-i18n="artists.playAll">播放全部</span>
@@ -372,12 +472,16 @@
         <div class="np-pivot artist-pivot" role="tablist">
           <button class="np-pivot-tab active" data-tab="songs" role="tab" aria-selected="true" data-i18n="artists.songs">歌曲</button>
           <button class="np-pivot-tab" data-tab="albums" role="tab" aria-selected="false" data-i18n="artists.albums">专辑</button>
+          <button class="np-pivot-tab" data-tab="about" role="tab" aria-selected="false" data-i18n="artists.about" id="artist-about-tab" style="display:none">简介</button>
         </div>
         <div class="artist-panel active" data-panel="songs" id="artist-panel-songs">
           <ul class="track-list" id="artist-songs-list"></ul>
         </div>
         <div class="artist-panel" data-panel="albums" id="artist-panel-albums" hidden>
           <div class="album-grid artist-album-grid" id="artist-album-grid"></div>
+        </div>
+        <div class="artist-panel" data-panel="about" id="artist-panel-about" hidden>
+          <p class="artist-bio-text" id="artist-bio-text"></p>
         </div>
       </div>
     `;
@@ -387,6 +491,7 @@
 
     const blurEl = document.getElementById('detail-cover-blur');
     const mainEl = document.getElementById('detail-avatar');
+    const headerEl = container.querySelector('.detail-header');
 
     // 占位：纯色 + 首字母（在线头像加载前/失败后的干净状态，不使用专辑封面）
     const placeholderColor = App.utils.hashColor(artist.name);
@@ -409,30 +514,6 @@
     });
     _allArtistTracks = tracks;  // 供下方歌曲预览使用（模块级，跨函数可见）
     _currentArtistName = artist.name;  // 供专辑点击跳转使用
-
-    // ── 在线艺人头像（优先真实照片；失败/超时则保持干净占位，绝不回退到专辑拼贴）──
-    var aUrl = (window.artistImageUrl && artist.name) ? window.artistImageUrl(artist.name) : null;
-    if (aUrl) {
-      var probe = new Image();
-      probe.onload = function () {
-        mainEl.style.background = '';
-        mainEl.style.backgroundImage = 'url(' + aUrl + ')';
-        mainEl.style.backgroundSize = 'cover';
-        mainEl.style.backgroundPosition = 'center';
-        mainEl.innerHTML = '';
-        if (blurEl) {
-          blurEl.style.background = '';
-          blurEl.style.backgroundImage = 'url(' + aUrl + ')';
-          blurEl.style.backgroundSize = 'cover';
-          blurEl.style.backgroundPosition = 'center';
-          blurEl.style.backgroundRepeat = 'no-repeat';
-        }
-      };
-      probe.onerror = function () {
-        // 抓取失败：保留纯色 + 首字母占位，不使用任何专辑封面
-      };
-      probe.src = aUrl;
-    }
 
     // ── 按专辑分组 ──
     var albumMap = {};
@@ -467,6 +548,117 @@
     document.getElementById('btn-play-artist').addEventListener('click', function () {
       App.backend.play_from_list(JSON.stringify(tracks), 0);
     });
+
+    // ── Apple Music 式横幅头图（hero）──
+    // 只在拿到真正的横版艺人图（/artist-banner/，TheAudioDB Fanart 1280x720）时触发；
+    // 方形头像绝不放大铺横幅（居中裁切会切掉头部/人脸），保持原紧凑头部。
+    var heroApplied = false;
+    var applyHero = function (url) {
+      if (heroApplied) {
+        // 已是 hero：新的横版源到达时原地升级替换背景
+        if (!url) return;
+        var imgEl = headerEl.querySelector('.detail-hero-img');
+        if (imgEl) imgEl.style.backgroundImage = 'url(' + url + ')';
+        return;
+      }
+      heroApplied = true;
+      headerEl.classList.add('hero');
+      var heroImg = document.createElement('div');
+      heroImg.className = 'detail-hero-img';
+      heroImg.style.background = placeholderColor; // 加载期兜底底色
+      if (url) heroImg.style.backgroundImage = 'url(' + url + ')';
+      headerEl.insertBefore(heroImg, headerEl.firstChild);
+    };
+
+    var aUrl = (window.artistImageUrl && artist.name) ? window.artistImageUrl(artist.name) : null;
+    var bUrl = (artist.name && typeof window.__coverBase === 'string')
+      ? window.__coverBase + '/artist-banner/' + encodeURIComponent(artist.name)
+      : null;
+
+    // ── 主色提取（别名 chips 晕染用）：从横版图/头像提取主色写入 --artist-rgb ──
+    // crossOrigin='anonymous' 必须在 src 之前设置，否则 canvas 被污染、
+    // extractDominantColor 的 getImageData 抛 SecurityError（cover-server 已带 ACAO:*）。
+    var applyArtistColor = function (imgEl) {
+      if (!imgEl || !App.utils.extractDominantColor) return;
+      try {
+        var rgb = App.utils.extractDominantColor(imgEl);
+        if (rgb) headerEl.style.setProperty('--artist-rgb', rgb.join(', '));
+      } catch (e) { /* 提取失败：chips 用中性兜底色 */ }
+    };
+
+    // 横版源探测（本地缓存命中时几乎即时；未缓存走 TheAudioDB 抓取）。
+    // 加横纵比保险：宽必须明显大于高，防止异常方图混入导致裁人。
+    if (bUrl) {
+      var bProbe = new Image();
+      bProbe.crossOrigin = 'anonymous';
+      bProbe.onload = function () {
+        if (bProbe.naturalWidth >= bProbe.naturalHeight) applyHero(bUrl);
+        applyArtistColor(bProbe);
+      };
+      bProbe.onerror = function () { /* 无横版图：保持方形头部 */ };
+      bProbe.src = bUrl;
+    }
+
+    // 头像探测：仅用于原方形头部（环境光晕 + 圆形头像），不参与 hero
+    if (aUrl) {
+      var probe = new Image();
+      probe.crossOrigin = 'anonymous';
+      probe.onload = function () {
+        applyArtistColor(probe);
+        mainEl.style.background = '';
+        mainEl.style.backgroundImage = 'url(' + aUrl + ')';
+        mainEl.style.backgroundSize = 'cover';
+        mainEl.style.backgroundPosition = 'center';
+        mainEl.innerHTML = '';
+        if (blurEl) {
+          blurEl.style.background = '';
+          blurEl.style.backgroundImage = 'url(' + aUrl + ')';
+          blurEl.style.backgroundSize = 'cover';
+          blurEl.style.backgroundPosition = 'center';
+          blurEl.style.backgroundRepeat = 'no-repeat';
+        }
+      };
+      probe.onerror = function () {
+        // 抓取失败：保留纯色 + 首字母占位，不使用任何专辑封面
+      };
+      probe.src = aUrl;
+    }
+
+    // ── 艺人别名（显示在头部；数据源 MusicBrainz/网易云，cover-server 落盘缓存）──
+    var aliasEl = document.getElementById('detail-alias');
+    if (aliasEl && artist.name && typeof window.__coverBase === 'string') {
+      fetch(window.__coverBase + '/artist-aliases/' + encodeURIComponent(artist.name))
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (obj) {
+          var aliases = (obj && obj.aliases) || [];
+          if (!aliases.length || !aliasEl.isConnected) return;
+          aliasEl.innerHTML = aliases.map(function (a) {
+            return '<span class="alias-chip">' + App.utils.esc(String(a)) + '</span>';
+          }).join('');
+          aliasEl.hidden = false;
+        })
+        .catch(function () { /* 无别名：保持隐藏 */ });
+    }
+
+    // ── 艺人简介（在线获取；cover-server 落盘缓存，百度百科 → 网易云 → TheAudioDB → Wikipedia）──
+    // 页签默认隐藏，抓到简介才显示；无简介/失败则保持隐藏，不打扰界面
+    var aboutTab = document.getElementById('artist-about-tab');
+    var bioEl = document.getElementById('artist-bio-text');
+    if (bioEl && artist.name && typeof window.__coverBase === 'string') {
+      fetch(window.__coverBase + '/artist-bio/' + encodeURIComponent(artist.name))
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.text();
+        })
+        .then(function (text) {
+          if (!text || !text.trim()) throw new Error('empty');
+          // 页面可能已被切换/重渲染，只在元素仍连接时填充
+          if (!bioEl.isConnected) return;
+          bioEl.textContent = text.trim();
+          if (aboutTab) aboutTab.style.display = '';
+        })
+        .catch(function () { /* 无简介：页签保持隐藏 */ });
+    }
   }
 
   // ── Pivot（复用正在播放页面的 .np-pivot pill 样式）──

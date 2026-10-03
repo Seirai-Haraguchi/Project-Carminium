@@ -228,10 +228,12 @@
   --md-inverse-on-surface:    #F0F0F4;
   --md-inverse-primary:       #9ECAFF;
 
-  /* State layers (opaque overlays on surface) */
-  --md-state-hover:   rgba(25, 28, 32, 0.08);
-  --md-state-pressed: rgba(25, 28, 32, 0.12);
-  --md-state-focused: rgba(25, 28, 32, 0.12);
+  /* State layers（叠在 surface 上的不透明覆盖层）
+     不透明度统一由顶层 --md-sys-state-*-state-layer-opacity 控制
+     （M3：hover 8% / pressed 10% / focus 10%），此处仅绑定颜色 */
+  --md-state-hover:   color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity), transparent);
+  --md-state-pressed: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-pressed-state-layer-opacity), transparent);
+  --md-state-focused: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-focus-state-layer-opacity), transparent);
 
   /* Scrollbar */
   --scrollbar-thumb: rgba(0,0,0,0.18);
@@ -288,42 +290,299 @@
   --md-inverse-on-surface:    #2E3135;
   --md-inverse-primary:       #0061A4;
 
-  /* State layers */
-  --md-state-hover:   rgba(226, 226, 233, 0.08);
-  --md-state-pressed: rgba(226, 226, 233, 0.12);
-  --md-state-focused: rgba(226, 226, 233, 0.12);
+  /* State layers（同浅色主题，颜色随 on-surface 变化） */
+  --md-state-hover:   color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity), transparent);
+  --md-state-pressed: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-pressed-state-layer-opacity), transparent);
+  --md-state-focused: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-focus-state-layer-opacity), transparent);
 
   /* Scrollbar */
   --scrollbar-thumb: rgba(255,255,255,0.18);
   --scrollbar-track: transparent;
 }
 
-/* ── 4. Shape & Motion ────────────────────────────────────── */
+/* ── 4. Shape & Motion（M3E / Material 3 Expressive 令牌层）────
+   命名对齐 m3e（matraic/m3e）与 M3 官方 sys token：
+     --md-sys-shape-corner-*   形状阶
+     --md-sys-motion-*         时长 / 缓动 / 弹簧
+     --md-sys-state-*          状态层不透明度
+     --md-sys-elevation-*      高度（仅用于临时浮层）
+   旧的短名（--shape-* / --motion-* / --ease-*）保留为别名，
+   全文件 120+ 处引用无需改动，且自动跟随新令牌升级。 */
 :root {
   /* 'Google Sans Flex' 原远程链接一直 400（轴参数非法），从未真正加载，已移除；
      'Noto Color Emoji Flags' 为本地国旗子集（unicode-range 触发式加载），
      其余 emoji 由系统彩色 emoji 字体回退（Windows: Segoe UI Emoji）。 */
   --ui-font: 'Roboto', 'Google Sans Flex', 'Google Sans', 'Noto Sans SC', 'Noto Sans', 'Segoe UI Variable', 'Segoe UI', system-ui, 'Noto Color Emoji Flags', sans-serif;
 
-  --shape-xs:   4px;
-  --shape-sm:   8px;
-  --shape-md:   12px;
-  --shape-lg:   16px;
-  --shape-xl:   28px;
-  --shape-full: 9999px;
+  /* ── Shape scale（M3 全阶；Expressive 补齐 large+/xl+/xxl 三档）── */
+  --md-sys-shape-corner-none:                 0;
+  --md-sys-shape-corner-extra-small:          4px;
+  --md-sys-shape-corner-small:                8px;
+  --md-sys-shape-corner-medium:               12px;
+  --md-sys-shape-corner-large:                16px;
+  --md-sys-shape-corner-large-increased:      20px;
+  --md-sys-shape-corner-extra-large:          28px;
+  --md-sys-shape-corner-extra-large-increased:32px;
+  --md-sys-shape-corner-extra-extra-large:    48px;
+  --md-sys-shape-corner-full:                 9999px;
+  /* 非对称形状（朝向 start / end / top） */
+  --md-sys-shape-corner-extra-small-top:   var(--md-sys-shape-corner-extra-small) var(--md-sys-shape-corner-extra-small) 0 0;
+  --md-sys-shape-corner-small-top:         var(--md-sys-shape-corner-small) var(--md-sys-shape-corner-small) 0 0;
+  --md-sys-shape-corner-large-top:         var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) 0 0;
+  --md-sys-shape-corner-medium-start:      0 var(--md-sys-shape-corner-medium) var(--md-sys-shape-corner-medium) 0;
+  --md-sys-shape-corner-large-start:       var(--md-sys-shape-corner-large) 0 0 var(--md-sys-shape-corner-large);
+  --md-sys-shape-corner-large-end:         0 var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) 0;
+  --md-sys-shape-corner-extra-large-top:   var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large) 0 0;
 
-  --motion-short:    150ms;
-  --motion-medium:   250ms;
-  --motion-long:     400ms;
-  --ease-standard:   cubic-bezier(0.2, 0, 0, 1);
-  --ease-decel:      cubic-bezier(0.05, 0.7, 0.1, 1);
-  --ease-accel:      cubic-bezier(0.3, 0, 0.8, 0.15);
+  /* 旧短名别名（保持兼容） */
+  --shape-xs:      var(--md-sys-shape-corner-extra-small);
+  --shape-sm:      var(--md-sys-shape-corner-small);
+  --shape-md:      var(--md-sys-shape-corner-medium);
+  --shape-lg:      var(--md-sys-shape-corner-large);
+  --shape-lg-plus: var(--md-sys-shape-corner-large-increased);
+  --shape-xl:      var(--md-sys-shape-corner-extra-large);
+  --shape-xl-plus: var(--md-sys-shape-corner-extra-large-increased);
+  --shape-xxl:     var(--md-sys-shape-corner-extra-extra-large);
+  --shape-full:    var(--md-sys-shape-corner-full);
 
-  /* Material 3 Expressive ambient backdrop — pulls hues from the Monet palette */
-  --md-ambient:
-    radial-gradient(130% 130% at 0% 0%,   color-mix(in srgb, var(--md-primary)  16%, transparent) 0%, transparent 55%),
-    radial-gradient(120% 120% at 100% 100%, color-mix(in srgb, var(--md-tertiary) 18%, transparent) 0%, transparent 55%),
-    radial-gradient(100% 100% at 100% 0%,    color-mix(in srgb, var(--md-secondary) 12%, transparent) 0%, transparent 50%);
+  /* 组件形变（M3E 签名交互：按下时圆角向对向形状"变形"）
+     m3e 的 --m3e-{button,icon-button}-shape-pressed-morph 默认均为 corner-small */
+  --pressed-morph-shape: var(--md-sys-shape-corner-small);
+
+  /* Islands 浮岛圆角：导航/内容/正在播放/底栏四岛统一，改一处即可。
+     12px(medium) → 16px(large)：Expressive 偏好更大的容器圆角。 */
+  --island-radius: var(--md-sys-shape-corner-large);
+
+  /* ── Typescale 语义度量（M3；用于列表/设置行/支持文字）── */
+  --md-sys-typescale-body-large-size:        16px;
+  --md-sys-typescale-body-large-line:        24px;
+  --md-sys-typescale-body-large-tracking:    0.5px;
+  --md-sys-typescale-body-medium-size:       14px;
+  --md-sys-typescale-body-medium-line:       20px;
+  --md-sys-typescale-body-medium-tracking:   0.25px;
+  --md-sys-typescale-title-small-size:       14px;
+  --md-sys-typescale-title-small-line:       20px;
+  --md-sys-typescale-title-small-tracking:   0.1px;
+
+  /* ── Slider 组件度量（M3 规范，实测自 m3e m3e-slider）──
+     尺寸档 track 高 / handle 高：XS 16/44 · S 24/44 · M 40/52 · L 56/68 · XL 96/108
+     handle 宽恒为 4px，按下收窄到 2px；handle 与两侧轨道各留 6px 空隙
+     （m3e 的 handle wrapper = handle 4px + 两侧 6px padding）。
+     轨道圆角 XS/S=8 · M=12 · L=16 · XL=28，与 ShapeToken 的 Start／End 非对称值一致。 */
+  --md-comp-slider-track-height:        16px;  /* XS 档，项目内统一使用 */
+  --md-comp-slider-track-shape:         8px;
+  --md-comp-slider-handle-width:        4px;
+  --md-comp-slider-handle-width-pressed:2px;
+  --md-comp-slider-handle-height:       44px;  /* 规范 XS/S 档 = 44px（实测 handle 高 = host 高） */
+  /* 轨道在 handle 两侧让出的空隙（单侧）：m3e 的 handle wrapper 半宽 */
+  --md-comp-slider-track-gap:           6px;
+  --md-comp-slider-stop-size:           4px;   /* 轨道末端 stop indicator（M3E 新增） */
+  /* stop 圆点内缩：实测 m3e 圆点中心距轨道右端 8px = gap(6) + 半径(2)，即右缘留出一个 gap。
+     若贴到 right:0（旧实现）圆点会压在轨道边缘上，与官方不一致。 */
+  --md-comp-slider-stop-inset:          calc(var(--md-comp-slider-track-gap) + var(--md-comp-slider-stop-size) / 2);
+
+  /* ── Linear progress 组件度量（实测自 m3e m3e-linear-progress-indicator）──
+     thickness 4px · 圆角 corner-extra-small(4px) · 末端 4dp stop 圆点
+     实测（m3e 2.8.3，1× 截图逐像素）：活跃段 0→pct，之后留 6px 断口才接不活跃轨道，
+     不活跃轨道末端再内缩 8px 给 stop 点让位，stop 点贴容器右端（100% 时与活跃段末端重合）。
+     wavy 变体：amplitude 3px、wavelength 40px；
+     path 半振幅 = amplitude + thickness/2 = 5px，故总高 = thickness + amplitude*2 + 描边余量。 */
+  --md-comp-progress-thickness:        4px;
+  --md-comp-progress-shape:            var(--md-sys-shape-corner-extra-small);
+  --md-comp-progress-stop-size:        4px;
+  --md-comp-progress-track-gap:        6px;  /* 活跃段 ↔ 不活跃轨道 的断口 */
+  --md-comp-progress-stop-inset:       8px;  /* 不活跃轨道末端内缩，给 stop 点让位 */
+  /* 进度条上的拖动 handle 是本项目自加的交互元素（M3 进度指示器本身没有 handle）。
+     高度按**宿主场景**伸缩（旧的全局写死 28px 骑在 4px 细轨道上，像一根文本光标）：
+     底栏/悬浮窗 16px → 正在播放页右栏 20px → 全屏 24px。
+     高度始终略大于波形（14px），使 handle 能"压住"波形；宽度恒 4px、按下收窄到 2px。 */
+  --md-comp-progress-handle-height:            16px; /* 基准：底栏迷你播放器 / 悬浮窗（compact 场景） */
+  --md-comp-progress-handle-height-pane:       20px; /* 正在播放页右栏（浮岛内） */
+  --md-comp-progress-handle-height-fullscreen: 24px; /* 全屏 / 影院模式（画面与控件同比放大） */
+  --md-comp-progress-wave-wavelength:  40px;
+  --md-comp-progress-wave-amplitude:   3px;
+  --md-comp-progress-wave-height:      14px;
+  /* 波形 mask：一个波长（40px）的 SVG tile，中心线 y=7、半振幅 5px（= amplitude + thickness/2），
+     描边 4px 圆头；tile 高 14px = 2*半振幅 + 描边。重复铺贴时边界圆头正好拼合，波形连续。 */
+  --md-comp-progress-wave-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='14' viewBox='0 0 40 14'%3E%3Cpath d='M 0 7 Q 10 12 20 7 Q 30 2 40 7' fill='none' stroke='black' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E");
+
+  /* ── List / 设置行度量（M3E list item，实测自 m3e m3e-list-item）──
+     one-line 56dp · two-line（带支持文字）72dp；leading/trailing 留白 16dp。
+     行高保持 M3E 原型值 —— 它自带呼吸空间；「卡片显挤」要靠缩小卡内控件
+     （下拉/开关/输入框）解决，压行高只会更挤。
+     形状与状态层由下方 .md-seglist 统一接管（分段列表不画分隔线，
+     故 divider-inset / item-shape 系列已随之移除）。 */
+  --md-comp-list-min-height:           56px;
+  --md-comp-list-min-height-2line:     72px;
+  --md-comp-list-item-padding-block:   10px;
+  --md-comp-list-item-padding-inline:  16px;
+  --md-comp-list-padding-block:        14px;
+  --md-comp-list-padding-inline:       24px;
+  --md-comp-list-icon-size:            20px;
+
+  /* ── Segmented list（M3E m3e-list variant="segmented"，实测自源码）──
+     分段列表：项间留 2dp 缝，段内圆角 extraSmall(4)，一段的首/末项外侧
+     圆角放大到 large(16)，hover/press 整项形变到 medium(12)、focus 到
+     large(16)、selected 固定 large(16)。项内图标↔文字间距 10dp
+     （原型 space150=12dp，随行高一起收紧）。段内不画分隔线 —— 靠缝隙分层。 */
+  --md-comp-seglist-gap:               2px;
+  --md-comp-seglist-container-shape:   var(--md-sys-shape-corner-large);
+  --md-comp-seglist-item-shape:        var(--md-sys-shape-corner-extra-small);
+  --md-comp-seglist-item-hover-shape:  var(--md-sys-shape-corner-medium);
+  --md-comp-seglist-item-focus-shape:  var(--md-sys-shape-corner-large);
+  --md-comp-seglist-item-selected-shape:var(--md-sys-shape-corner-large);
+  --md-comp-seglist-item-container:    var(--md-surface-container-low);
+  --md-comp-seglist-item-selected-container: var(--md-secondary-container);
+  --md-comp-seglist-item-spacing:      12px;
+  /* 分段列表的段落外缘留白。桌面端 = 12px，别取 16px ——
+     16px 与行内 padding-inline(16) 等值，2dp 段缝在视觉上会与项内缘
+     连成一线，卡片读起来"缩进到文字里"、右侧够不到岛边。
+     与 DPI 无关：段缝 2px 是物理值，外缘却随缩放变厚，故桌面端一律 12。 */
+  --md-comp-seglist-inset:             12px;
+  /* 卡内控件尺寸：**回到 M3E 化之前的原版（commit 2dbd256）**。
+     2026-10-04 用户明确「只有旧版比例更好看」，故撤销 2026-10-03 那轮
+     「桌面端收小控件」的改动 —— 见 docs 记忆 2026-10-03.md。
+     ⚠️ 历史教训仍在：控件不宜占到行高的 70%+；但用户已看过两种比例并选定这一版，
+     后续不要凭「占比 >50%」的判据再把它自动收小。
+     下拉/输入/快捷键 chip 的尺寸已直接写回各规则（旧版内联值），此处只留被复用的三项。 */
+  --md-comp-settings-switch-w:         56px;   /* 旧版 .toggle = 56×34 */
+  --md-comp-settings-switch-h:         34px;
+  --md-comp-settings-input-min-width:  240px;  /* 旧版 .settings-font-input min-width */
+  /* 设置行文字：**比 M3 typescale 原型小一档**（2026-10-04 用户要求「缩小字体大小」）。
+     主文案 body-large(16) → 14，支持文案 body-medium(14) → 12。
+     ⚠️ 只作用于设置/关于页的行文字，不改全局 typescale 令牌（其他页面仍用 16/14）。 */
+  --md-comp-settings-label-size:       14px;
+  --md-comp-settings-label-line:       20px;
+  --md-comp-settings-sub-size:         12px;
+  --md-comp-settings-sub-line:         16px;
+
+  /* ── Navigation rail（M3E nav-rail compact，实测自 m3e m3e-nav-rail）──
+     rail 宽 96dp · 指示器 56×32 · 图标 24dp · 标签 label-medium 12/500/16/0.5 · 项间距 8dp。 */
+  --m3e-nav-rail-width:                 96px;
+  --m3e-nav-item-indicator-width:       56px;
+  --m3e-nav-item-indicator-height:      32px;
+  --m3e-nav-item-icon-size:             24px;
+  --m3e-nav-item-label-size:            12px;
+  --m3e-nav-item-label-line:            16px;
+  --m3e-nav-item-label-tracking:        0.5px;
+  --m3e-nav-item-label-weight:          500;
+  --m3e-nav-item-gap:                   8px;
+
+  /* ── Navigation drawer（M3E navigation drawer item）──
+     项高 48dp · 全胶囊指示器 · 图标 24dp · 标签 label-large 14/500。
+     ⚠️ 项高沿革（同一问题被用户反复裁定，别再"好心"调高/调低）：
+       56（M3E 原型）→ 64（2026-10-04 早，用户报「每一项压扁」）
+       → **48（2026-10-04 晚，用户报「太高了！」，追问后明确「要比 56px 还窄」）**。
+     48 已是 = 图标 24 + 上下各 12，仍留得住 8px 段缝，是导航项的下限。 */
+  --m3e-nav-drawer-width:               248px;
+  --m3e-nav-drawer-item-height:         48px;
+  --m3e-nav-drawer-item-gap:            4px;
+  --m3e-nav-drawer-padding-inline:      12px;
+
+  /* ── Motion · Duration（M3 全阶）── */
+  --md-sys-motion-duration-short-1:      50ms;
+  --md-sys-motion-duration-short-2:     100ms;
+  --md-sys-motion-duration-short-3:     150ms;
+  --md-sys-motion-duration-short-4:     200ms;
+  --md-sys-motion-duration-medium-1:    250ms;
+  --md-sys-motion-duration-medium-2:    300ms;
+  --md-sys-motion-duration-medium-3:    350ms;
+  --md-sys-motion-duration-medium-4:    400ms;
+  --md-sys-motion-duration-long-1:      450ms;
+  --md-sys-motion-duration-long-2:      500ms;
+  --md-sys-motion-duration-long-3:      550ms;
+  --md-sys-motion-duration-long-4:      600ms;
+  --md-sys-motion-duration-extra-long-1:700ms;
+  --md-sys-motion-duration-extra-long-2:800ms;
+  --md-sys-motion-duration-extra-long-3:900ms;
+  --md-sys-motion-duration-extra-long-4:1000ms;
+
+  /* ── Motion · Easing（M3 缓动）── */
+  --md-sys-motion-easing-standard:             cubic-bezier(0.2, 0, 0, 1);
+  --md-sys-motion-easing-standard-decelerate:  cubic-bezier(0, 0, 0, 1);
+  --md-sys-motion-easing-standard-accelerate:  cubic-bezier(0.3, 0, 1, 1);
+  --md-sys-motion-easing-emphasized:           cubic-bezier(0.2, 0, 0, 1);
+  --md-sys-motion-easing-emphasized-decelerate:cubic-bezier(0.05, 0.7, 0.1, 1);
+  --md-sys-motion-easing-emphasized-accelerate:cubic-bezier(0.3, 0, 0.8, 0.15);
+
+  /* ── Motion · Spring（M3E 弹簧；此处取 motion="expressive" 的值）──
+     spatial = 位移/尺寸/形变；effects = 颜色/透明度/滤镜。
+     值为「时长 + 缓动」简写，可直接用于 transition / animation 的时序位。 */
+  --md-sys-motion-spring-fast-spatial:    350ms cubic-bezier(0.42, 1.67, 0.21, 0.90);
+  --md-sys-motion-spring-default-spatial: 500ms cubic-bezier(0.38, 1.21, 0.22, 1.00);
+  --md-sys-motion-spring-slow-spatial:    650ms cubic-bezier(0.39, 1.29, 0.35, 0.98);
+  --md-sys-motion-spring-fast-effects:    150ms cubic-bezier(0.31, 0.94, 0.34, 1.00);
+  --md-sys-motion-spring-default-effects: 200ms cubic-bezier(0.34, 0.80, 0.34, 1.00);
+  --md-sys-motion-spring-slow-effects:    300ms cubic-bezier(0.34, 0.88, 0.34, 1.00);
+
+  /* 语义别名：写 transition 时用这两个，语义更清楚 */
+  --motion-spatial-fast:    var(--md-sys-motion-spring-fast-spatial);
+  --motion-spatial-default: var(--md-sys-motion-spring-default-spatial);
+  --motion-spatial-slow:    var(--md-sys-motion-spring-slow-spatial);
+  --motion-effects-fast:    var(--md-sys-motion-spring-fast-effects);
+  --motion-effects-default: var(--md-sys-motion-spring-default-effects);
+  --motion-effects-slow:    var(--md-sys-motion-spring-slow-effects);
+
+  /* 兼容别名（原有引用不动，但语义与 M3 对齐） */
+  --motion-short:    var(--md-sys-motion-duration-short-3);
+  --motion-medium:   var(--md-sys-motion-duration-medium-1);
+  --motion-long:     var(--md-sys-motion-duration-medium-4);
+  --ease-standard:   var(--md-sys-motion-easing-emphasized);
+  --ease-decel:      var(--md-sys-motion-easing-emphasized-decelerate);
+  --ease-accel:      var(--md-sys-motion-easing-emphasized-accelerate);
+  /* 单个缓动曲线形式的弹簧（需要拆分 duration / easing 时用） */
+  --ease-spring:     cubic-bezier(0.38, 1.21, 0.22, 1.00);
+
+  /* ── State layer 不透明度（M3 规范：hover 8% / focus 10% / pressed 10%）── */
+  --md-sys-state-hover-state-layer-opacity:   8%;
+  --md-sys-state-focus-state-layer-opacity:  10%;
+  --md-sys-state-pressed-state-layer-opacity:10%;
+
+  /* ── Focus ring（M3E strong-focus：3px、secondary 色、外扩 2px、带生长动画）── */
+  --m3e-focus-ring-color:          var(--md-secondary);
+  --m3e-focus-ring-thickness:      3px;
+  --m3e-focus-ring-outward-offset: 2px;
+  --m3e-focus-ring-growth-factor:  2;
+
+  /* ── Typography（M3E emphasized 字重；Roboto 只提供 400/500/700，
+        600 会被字重回退规则解析为 700，故统一改用令牌，避免隐式取整 ── */
+  --md-sys-typescale-emphasized-display-font-weight: 500;
+  --md-sys-typescale-emphasized-headline-font-weight:500;
+  --md-sys-typescale-emphasized-title-font-weight:   700;
+  --md-sys-typescale-emphasized-body-font-weight:    500;
+  --md-sys-typescale-emphasized-label-font-weight:   700;
+
+  /* ── Elevation（M3 三级阴影：umbra 20% / penumbra 14% / ambient 12%）
+        仅用于**临时浮层**（菜单 / 对话框 / Toast / 气泡）；浮岛仍按既定规则
+        只用圆角 + 描边 + 色阶，不用投影。 ── */
+  --md-sys-color-shadow: #000000;
+  --md-sys-elevation-level0: none;
+  --md-sys-elevation-level1:
+    color-mix(in srgb, var(--md-sys-color-shadow) 20%, transparent) 0 2px 1px -1px,
+    color-mix(in srgb, var(--md-sys-color-shadow) 14%, transparent) 0 1px 1px 0,
+    color-mix(in srgb, var(--md-sys-color-shadow) 12%, transparent) 0 1px 3px 0;
+  --md-sys-elevation-level2:
+    color-mix(in srgb, var(--md-sys-color-shadow) 20%, transparent) 0 3px 3px -2px,
+    color-mix(in srgb, var(--md-sys-color-shadow) 14%, transparent) 0 3px 4px 0,
+    color-mix(in srgb, var(--md-sys-color-shadow) 12%, transparent) 0 1px 8px 0;
+  --md-sys-elevation-level3:
+    color-mix(in srgb, var(--md-sys-color-shadow) 20%, transparent) 0 3px 5px -1px,
+    color-mix(in srgb, var(--md-sys-color-shadow) 14%, transparent) 0 6px 10px 0,
+    color-mix(in srgb, var(--md-sys-color-shadow) 12%, transparent) 0 1px 18px 0;
+  --md-sys-elevation-level4:
+    color-mix(in srgb, var(--md-sys-color-shadow) 20%, transparent) 0 5px 5px -3px,
+    color-mix(in srgb, var(--md-sys-color-shadow) 14%, transparent) 0 8px 10px 1px,
+    color-mix(in srgb, var(--md-sys-color-shadow) 12%, transparent) 0 3px 14px 2px;
+  --md-sys-elevation-level5:
+    color-mix(in srgb, var(--md-sys-color-shadow) 20%, transparent) 0 7px 8px -4px,
+    color-mix(in srgb, var(--md-sys-color-shadow) 14%, transparent) 0 12px 17px 2px,
+    color-mix(in srgb, var(--md-sys-color-shadow) 12%, transparent) 0 5px 22px 4px;
+}
+
+/* M3E 强焦点环的生长动画（decelerate 展开至目标粗细） */
+@keyframes m3e-focus-ring-in {
+  from { outline-width: calc(var(--m3e-focus-ring-thickness) / var(--m3e-focus-ring-growth-factor)); }
+  to   { outline-width: var(--m3e-focus-ring-thickness); }
 }
 
 /* ── 5. Reset & Base ──────────────────────────────────────── */
@@ -341,11 +600,14 @@ body {
   font-size: 14px;
   line-height: 1.5;
   color: var(--md-on-surface);
-  background: var(--md-ambient), var(--md-background);
-  background-attachment: fixed;
+  /* 纯 M3E：背景只用色阶，不用氛围渐变（旧的 --md-ambient radial 光晕已移除）
+     ⚠️ 不用 background-attachment: fixed —— 它会把背景提升成 viewport 级绘制层，
+     Chromium 在滚动合成时该层会盖到滚动内容之上（卡片看起来「没有底色」），
+     而且每帧都要重绘整屏底。body 本身不滚动（overflow:hidden），
+     更不需要 fixed 来钉住背景。 */
+  background-color: var(--md-background);
   -webkit-font-smoothing: antialiased;
-  transition: background-color var(--motion-medium) var(--ease-standard),
-              color var(--motion-medium) var(--ease-standard);
+  transition: color var(--motion-medium) var(--ease-standard);
 }
 
 button {
@@ -356,9 +618,16 @@ button {
   color: inherit;
   outline: none;
 }
+/* 焦点环走 M3E strong-focus：3px、secondary 色、外扩 2px，带生长动画 */
 button:focus-visible {
-  outline: 2px solid var(--md-primary);
-  outline-offset: 2px;
+  outline: var(--m3e-focus-ring-thickness) solid var(--m3e-focus-ring-color);
+  outline-offset: var(--m3e-focus-ring-outward-offset);
+  animation: m3e-focus-ring-in var(--md-sys-motion-duration-long-2) var(--md-sys-motion-easing-emphasized-decelerate);
+}
+/* 其余可聚焦元素（非 button）补齐同一规格，低特异度，具体组件规则仍可覆盖 */
+:where(a, input, select, textarea, [tabindex]):focus-visible {
+  outline: var(--m3e-focus-ring-thickness) solid var(--m3e-focus-ring-color);
+  outline-offset: var(--m3e-focus-ring-outward-offset);
 }
 
 img { display: block; }
@@ -373,6 +642,17 @@ a   { color: var(--md-primary); text-decoration: none; }
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--md-outline); }
 
+/* 尊重「减少动态效果」偏好：把弹簧/过渡压到极限（M3E 对 reduced-motion 的处理）。
+   页面内两处更细粒度的 reduced-motion 覆盖仍然生效（它们只是在此之上再关动画）。 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ── 6. App Shell (Three Columns) ────────────────────────── */
 .app-shell {
   display: grid;
@@ -382,11 +662,10 @@ a   { color: var(--md-primary); text-decoration: none; }
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background:
-    radial-gradient(ellipse at top left, var(--bg-tint-1, transparent) 0%, transparent 50%),
-    radial-gradient(ellipse at bottom right, var(--bg-tint-2, transparent) 0%, transparent 50%),
-    radial-gradient(ellipse at center, var(--bg-tint-3, transparent) 0%, transparent 60%),
-    var(--md-surface);
+  /* 纯 M3E：壳层与岛内都只用色阶（surface / surface-container-*），
+     不叠任何氛围渐变——渐变一旦放在岛下的公共层，就会从缝隙漏出、
+     在岛边缘形成被直角切断的亮带。 */
+  background: var(--md-surface);
   transition:
     background-color var(--motion-medium) var(--ease-standard);
   /* grid-template-columns 不再过渡：展开/收折时直接切换到最终尺寸 */
@@ -405,7 +684,7 @@ body.is-resizing *::after {
 /* ── App Root：标题栏横跨顶部 + 下方（侧边栏 | 主区） ── */
 .app-root {
   display: grid;
-  grid-template-columns: 96px 1fr;
+  grid-template-columns: var(--m3e-nav-rail-width) 1fr;
   grid-template-rows: 36px 1fr;
   grid-template-areas:
     "title title"
@@ -428,18 +707,19 @@ body.is-resizing *::after {
 }
 
 /* ── 7. Navigation Rail ────────────────────────────────── */
+/* Islands：导航栏为左侧独立浮岛——悬浮于窗口边缘，纯圆角（M3 不用描边也不用投影） */
 .nav-drawer {
   display: flex;
   flex-direction: column;
   align-items: center;
   flex-shrink: 0;
-  width: 96px;
+  margin: 4px 8px 8px; /* 顶部对齐标题栏、底部留出窗口呼吸感 */
   background: color-mix(in srgb, var(--md-surface-container-low) 84%, transparent);
   backdrop-filter: blur(2px);
-  height: 100%;
+  border-radius: var(--island-radius);
   overflow: hidden;
-  padding: 24px 0;
-  border-right: 1px solid var(--md-outline-variant);
+  clip-path: inset(0 round var(--island-radius));
+  padding: 16px 0;
   gap: 12px;
 }
 
@@ -454,45 +734,73 @@ body.is-resizing *::after {
   flex: 1;
 }
 
+/* M3E nav-rail item：指示器 56×32 + 标签 label-medium(12/500/16/0.5)，
+   指示器↔标签 4dp、项高 64dp（触控目标），横向由 rail 96dp 居中。 */
 .nav-item {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
   width: 100%;
-  padding: 8px 0;
+  min-height: 64px;
+  padding: 4px 0;
+  border: none;
+  background: transparent;
   border-radius: 0;
   position: relative;
   color: var(--md-on-surface-variant);
-  transition: color var(--motion-short) var(--ease-standard);
+  font-family: inherit;
+  cursor: pointer;
+  transition: color var(--motion-effects-fast);
 }
 .nav-item:hover, .nav-item:focus-visible {
   color: var(--md-on-surface);
+}
+/* 焦点环：M3E 由内向外生长（spatial 弹簧） */
+.nav-item:focus-visible .nav-indicator {
+  outline: var(--m3e-focus-ring-thickness) solid var(--m3e-focus-ring-color);
+  outline-offset: var(--m3e-focus-ring-outward-offset);
+  animation: m3e-focus-ring-in var(--md-sys-motion-duration-long-2) var(--md-sys-motion-easing-emphasized-decelerate);
 }
 
 .nav-indicator {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 56px;
-  height: 32px;
-  border-radius: 16px;
+  width: var(--m3e-nav-item-indicator-width);
+  height: var(--m3e-nav-item-indicator-height);
+  border-radius: var(--md-sys-shape-corner-full);
   flex-shrink: 0;
-  transition: background var(--motion-short) var(--ease-standard);
+  /* M3E 动效分工：颜色 = effects 弹簧，形变/缩放 = spatial 弹簧 */
+  transition: background var(--motion-effects-fast),
+              color var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast),
+              transform var(--motion-spatial-fast);
+  transform-origin: center;
+}
+.nav-indicator .material-symbols-rounded {
+  font-size: var(--m3e-nav-item-icon-size);
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
 
 .nav-label {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
-  line-height: 1;
+  font-size: var(--m3e-nav-item-label-size);
+  font-weight: var(--m3e-nav-item-label-weight);
+  letter-spacing: var(--m3e-nav-item-label-tracking);
+  line-height: var(--m3e-nav-item-label-line);
 }
 
 /* Active state */
 .nav-item.active .nav-indicator {
   background: var(--md-secondary-container);
   color: var(--md-on-secondary-container);
+  animation: nav-indicator-in var(--motion-spatial-fast);
+}
+/* 选中指示器回弹进入（M3E 导航选中反馈） */
+@keyframes nav-indicator-in {
+  from { transform: scale(0.72); }
+  to   { transform: scale(1); }
 }
 .nav-item.active {
   color: var(--md-on-surface);
@@ -507,8 +815,12 @@ body.is-resizing *::after {
 }
 .nav-item:not(.active):hover { color: var(--md-on-surface); }
 
-/* Pressed */
-.nav-item:active .nav-indicator { background: var(--md-state-pressed); }
+/* Pressed：M3E 按压回弹——指示器由胶囊形变为圆角矩形并微缩（spatial 弹簧驱动） */
+.nav-item:active .nav-indicator {
+  background: var(--md-state-pressed);
+  border-radius: var(--pressed-morph-shape);
+  transform: scale(0.9);
+}
 
 /* Danger (quit) */
 .nav-item--danger { color: var(--md-error); }
@@ -533,13 +845,15 @@ body.is-resizing *::after {
   flex-direction: column;
   background: var(--md-surface-container);
   border: 1px solid var(--md-outline-variant);
-  border-radius: 16px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+  border-radius: var(--md-sys-shape-corner-large);
+  /* 临时浮层：用 M3 高度令牌（level2）替代手写 rgba 阴影 */
+  box-shadow: var(--md-sys-elevation-level2);
   overflow: hidden;
-  animation: nav-submenu-in 160ms cubic-bezier(0.2, 0, 0, 1);
+  /* 出场用 M3E spatial 弹簧（轻微过冲） */
+  animation: nav-submenu-in var(--motion-spatial-fast);
 }
 @keyframes nav-submenu-in {
-  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  from { opacity: 0; transform: translateY(-6px) scale(0.96); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 .nav-submenu[hidden] { display: none; }
@@ -553,7 +867,7 @@ body.is-resizing *::after {
 }
 .nav-submenu-title {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: var(--md-sys-typescale-emphasized-label-font-weight);
   color: var(--md-on-surface-variant);
   letter-spacing: 0.4px;
   text-transform: uppercase;
@@ -563,14 +877,18 @@ body.is-resizing *::after {
   height: 32px;
   border: none;
   background: transparent;
-  border-radius: 50%;
+  border-radius: var(--md-sys-shape-corner-full);
   color: var(--md-on-surface-variant);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background var(--motion-short) var(--ease-standard), color var(--motion-short) var(--ease-standard);
+  /* M3E 形变：圆形 → 按下瞬间收成小圆角方块，松开回弹 */
+  transition: background var(--motion-effects-fast),
+              color var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast);
 }
+.nav-submenu-add:active { border-radius: var(--pressed-morph-shape); }
 .nav-submenu-add:hover {
   background: var(--md-state-hover);
   color: var(--md-primary);
@@ -669,15 +987,18 @@ body.is-resizing *::after {
   height: 32px;
   border: none;
   background: transparent;
-  border-radius: 50%;
+  border-radius: var(--md-sys-shape-corner-full);
   color: var(--md-on-surface-variant);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background var(--motion-short) var(--ease-standard), color var(--motion-short) var(--ease-standard);
+  transition: background var(--motion-effects-fast),
+              color var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast);
   flex-shrink: 0;
 }
+.track-action-btn:active { border-radius: var(--pressed-morph-shape); }
 .track-action-btn:hover {
   background: var(--md-state-hover);
   color: var(--md-error);
@@ -692,12 +1013,21 @@ body.is-resizing *::after {
 }
 
 /* ── 8. Content Pane ─────────────────────────────────────── */
+/* Islands：中部内容区浮岛——四周留缝、纯圆角（M3 不用描边也不用投影） */
 .content-pane {
+  /* 纯 M3E：只用色阶，无氛围渐变 */
   background: var(--md-surface-container-lowest);
-  height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
   position: relative;
+  /* 顶部与导航岛顶对齐；左右缝由相邻岛的外边距形成
+     注意：不设 height:100%，靠栅格默认 stretch 填满，避免 100%+margin 溢出裁掉底圆角 */
+  margin: 4px 0 8px 0;
+  border-radius: var(--island-radius);
+  /* sticky header 带 backdrop-filter、详情页 hero 是自带背景的整块叠层，
+     Chromium 下这类层会溢出祖先圆角裁切出方角，补一层圆角 clip 兜住
+     （所有 fixed 弹层都挂在 body，不受影响） */
+  clip-path: inset(0 round var(--island-radius));
 }
 
 /* ── 虚拟滚动适配 ──
@@ -723,6 +1053,23 @@ body.is-resizing *::after {
   gap: 12px;
   padding: 6px 12px;
   min-height: 56px;
+}
+
+/* Islands：内容岛内的「整块背景叠层」必须自己跟随岛的上缘圆角，
+   否则吸顶头 / 全宽 hero 这类自带背景的方块会在岛顶露出直角
+   （祖先的 overflow / clip-path 对 backdrop-filter、mix-blend-mode 层不可靠）。 */
+/* Islands：岛内滚动条轨道是方形的（thumb 才是圆角胶囊），轨道底色会在
+   圆角处露出直角小块——两个滚动岛内改为透明轨道，只保留圆角 thumb */
+.content-pane::-webkit-scrollbar-track,
+.now-playing-pane::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.content-pane .page-header,
+.content-pane .page-sticky-header,
+.content-pane .detail-header.hero {
+  border-top-left-radius: var(--island-radius);
+  border-top-right-radius: var(--island-radius);
 }
 
 .page-container {
@@ -787,7 +1134,7 @@ body.is-resizing *::after {
 }
 .page-eyebrow {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--md-sys-typescale-emphasized-label-font-weight);
   letter-spacing: 1px;
   text-transform: uppercase;
   color: var(--md-primary);
@@ -795,7 +1142,8 @@ body.is-resizing *::after {
 }
 .page-title {
   font-size: 28px;
-  font-weight: 600;
+  /* M3E emphasized headline = 500（大字轻 / 小字重，Expressive 的字重对比） */
+  font-weight: var(--md-sys-typescale-emphasized-headline-font-weight);
   letter-spacing: -0.3px;
   color: var(--md-on-surface);
   line-height: 1.2;
@@ -833,17 +1181,21 @@ body.is-resizing *::after {
   align-items: center;
   gap: 10px;
   background: var(--md-surface-container);
-  border-radius: var(--shape-full);
+  border-radius: var(--md-sys-shape-corner-full);
   padding: 0 20px;
   margin: 0 28px 20px;
   height: 48px;
   border: 1px solid var(--md-outline-variant);
-  transition: border-color var(--motion-short) var(--ease-standard),
-              background var(--motion-short) var(--ease-standard);
+  transition: background var(--motion-effects-fast),
+              border-color var(--motion-effects-fast);
+}
+/* M3 Search Bar：悬停 = on-surface 8% 状态层；聚焦 = on-surface 描边 + 表面提亮 */
+.search-bar:hover {
+  background: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity), var(--md-surface-container));
 }
 .search-bar:focus-within {
   background: var(--md-surface-container-lowest);
-  border-color: var(--md-primary);
+  border-color: var(--md-on-surface);
 }
 .search-bar .material-symbols-rounded { color: var(--md-on-surface-variant); font-size: 20px; }
 .search-bar input {
@@ -868,25 +1220,26 @@ body.is-resizing *::after {
   align-items: center;
   gap: 8px;
   padding: 10px 16px;
-  border-radius: var(--shape-lg);
+  border-radius: var(--md-sys-shape-corner-large);
   border: none;
   background: var(--md-surface-container-highest);
   color: var(--md-on-surface);
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: background var(--motion-short) var(--ease-standard);
+  transition: background var(--motion-effects-fast);
   user-select: none;
   outline: none;
 }
+/* M3 filled 容器：状态层叠在容器色之上（而不是换成另一个 surface 色） */
 .md-select-trigger:hover {
-  background: var(--md-surface-variant);
+  background: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity), var(--md-surface-container-highest));
 }
-.md-select-trigger:focus {
-  background: var(--md-surface-variant);
+.md-select-trigger:focus-visible {
+  background: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-focus-state-layer-opacity), var(--md-surface-container-highest));
 }
 .md-select-trigger:active {
-  background: var(--md-outline-variant);
+  background: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-pressed-state-layer-opacity), var(--md-surface-container-highest));
 }
 .md-select-icon {
   font-size: 18px;
@@ -898,7 +1251,7 @@ body.is-resizing *::after {
 .md-select-arrow {
   font-size: 18px;
   color: var(--md-on-surface-variant);
-  transition: transform var(--motion-short) var(--ease-standard);
+  transition: transform var(--motion-spatial-fast);
 }
 .md-select-menu.open ~ .md-select-trigger .md-select-arrow,
 .md-select-trigger[aria-expanded="true"] .md-select-arrow {
@@ -912,17 +1265,18 @@ body.is-resizing *::after {
   max-height: 320px;
   overflow-y: auto;
   background: var(--md-surface-container);
-  border-radius: var(--shape-lg);
+  border-radius: var(--md-sys-shape-corner-large);
   border: none;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+  /* M3 弹出层高度：level2 */
+  box-shadow: var(--md-sys-elevation-level2);
   padding: 8px 0;
   opacity: 0;
   visibility: hidden;
   transform: translateY(-8px) scale(0.96);
   transform-origin: top right;
-  transition: opacity var(--motion-short) var(--ease-standard),
-              transform var(--motion-short) var(--ease-standard),
-              visibility var(--motion-short);
+  transition: opacity var(--motion-effects-fast),
+              transform var(--motion-spatial-fast),
+              visibility var(--motion-spatial-fast);
   z-index: 100;
 }
 .md-select-menu.open {
@@ -938,29 +1292,30 @@ body.is-resizing *::after {
   cursor: pointer;
   font-size: 14px;
   color: var(--md-on-surface);
-  transition: background var(--motion-short) var(--ease-standard);
+  transition: background var(--motion-effects-fast);
   position: relative;
 }
 .md-select-option:hover {
   background: var(--md-state-hover);
 }
+/* M3 菜单选中项使用 secondary-container（而非 primary-container） */
 .md-select-option.selected {
-  background: var(--md-primary-container);
-  color: var(--md-on-primary-container);
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
 }
 .md-select-option-icon {
   font-size: 20px;
   color: var(--md-on-surface-variant);
 }
 .md-select-option.selected .md-select-option-icon {
-  color: var(--md-on-primary-container);
+  color: var(--md-on-secondary-container);
 }
 .md-select-option-text {
   flex: 1;
 }
 .md-select-check {
   font-size: 18px;
-  color: var(--md-on-primary-container);
+  color: var(--md-on-secondary-container);
 }
 
 /* Page header right section */
@@ -1085,15 +1440,16 @@ body.is-resizing *::after {
 
 .album-card {
   cursor: pointer;
-  border-radius: var(--shape-lg);
+  border-radius: var(--md-sys-shape-corner-large);
   overflow: hidden;
   background: var(--md-surface-container);
-  transition: transform var(--motion-short) var(--ease-standard);
+  /* M3E spatial 弹簧：卡片起落有轻微过冲 */
+  transition: transform var(--motion-spatial-default);
 }
 .album-card:hover {
-  transform: translateY(-2px);
+  transform: translateY(-4px);
 }
-.album-card:active { transform: scale(0.98); }
+.album-card:active { transform: translateY(-1px) scale(0.98); }
 
 .album-cover {
   width: 100%;
@@ -1221,7 +1577,7 @@ body.is-resizing *::after {
 }
 .section-title {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: var(--md-sys-typescale-emphasized-label-font-weight);
   letter-spacing: 0.5px;
   text-transform: uppercase;
   color: var(--md-on-surface-variant);
@@ -1247,10 +1603,13 @@ body.is-resizing *::after {
   opacity: 0.4;
   font-variation-settings: 'FILL' 0, 'wght' 200, 'GRAD' 0, 'opsz' 48;
 }
-.empty-title { font-size: 20px; font-weight: 600; color: var(--md-on-surface); }
+.empty-title { font-size: 20px; font-weight: var(--md-sys-typescale-emphasized-headline-font-weight); color: var(--md-on-surface); }
 .empty-body  { font-size: 14px; color: var(--md-on-surface-variant); max-width: 360px; line-height: 1.6; }
 
 /* ── 17. Buttons ─────────────────────────────────────────── */
+/* M3E 按钮三件套：① 状态层用「颜色×规范不透明度」而不是 filter: brightness
+   （M3 的做法，深色主题下也不会把色相拉飞）；② 按下时圆角向对向形状"变形"；
+   ③ 时序走 M3E 弹簧（形变 = spatial，颜色 = effects）。 */
 /* Filled button */
 .btn-filled {
   display: inline-flex;
@@ -1258,17 +1617,27 @@ body.is-resizing *::after {
   gap: 8px;
   height: 40px;
   padding: 0 24px;
-  border-radius: var(--shape-full);
+  border-radius: var(--md-sys-shape-corner-full);
   background: var(--md-primary);
   color: var(--md-on-primary);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: var(--md-sys-typescale-emphasized-label-font-weight);
   letter-spacing: 0.1px;
-  transition: filter var(--motion-short) var(--ease-standard),
-              transform var(--motion-short) var(--ease-standard);
+  transition: background var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast),
+              transform var(--motion-spatial-fast);
 }
-.btn-filled:hover  { filter: brightness(1.08); }
-.btn-filled:active { transform: scale(0.97); }
+.btn-filled:hover  {
+  background: color-mix(in srgb, var(--md-on-primary) var(--md-sys-state-hover-state-layer-opacity), var(--md-primary));
+}
+.btn-filled:focus-visible {
+  background: color-mix(in srgb, var(--md-on-primary) var(--md-sys-state-focus-state-layer-opacity), var(--md-primary));
+}
+.btn-filled:active {
+  background: color-mix(in srgb, var(--md-on-primary) var(--md-sys-state-pressed-state-layer-opacity), var(--md-primary));
+  border-radius: var(--pressed-morph-shape);
+  transform: scale(0.97);
+}
 .btn-filled .material-symbols-rounded { font-size: 18px; }
 
 /* Outlined button */
@@ -1278,17 +1647,24 @@ body.is-resizing *::after {
   gap: 8px;
   height: 40px;
   padding: 0 24px;
-  border-radius: var(--shape-full);
+  border-radius: var(--md-sys-shape-corner-full);
   border: 1px solid var(--md-outline);
   color: var(--md-primary);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: var(--md-sys-typescale-emphasized-label-font-weight);
   letter-spacing: 0.1px;
-  transition: background var(--motion-short) var(--ease-standard),
-              transform var(--motion-short) var(--ease-standard);
+  transition: background var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast),
+              transform var(--motion-spatial-fast);
 }
-.btn-outlined:hover  { background: color-mix(in srgb, var(--md-primary) 8%, transparent); }
-.btn-outlined:active { transform: scale(0.97); }
+.btn-outlined:hover  {
+  background: color-mix(in srgb, var(--md-primary) var(--md-sys-state-hover-state-layer-opacity), transparent);
+}
+.btn-outlined:active {
+  background: color-mix(in srgb, var(--md-primary) var(--md-sys-state-pressed-state-layer-opacity), transparent);
+  border-radius: var(--pressed-morph-shape);
+  transform: scale(0.97);
+}
 .btn-outlined .material-symbols-rounded { font-size: 18px; }
 
 /* Text button */
@@ -1298,13 +1674,20 @@ body.is-resizing *::after {
   gap: 6px;
   height: 36px;
   padding: 0 12px;
-  border-radius: var(--shape-full);
+  border-radius: var(--md-sys-shape-corner-full);
   color: var(--md-primary);
   font-size: 14px;
-  font-weight: 600;
-  transition: background var(--motion-short) var(--ease-standard);
+  font-weight: var(--md-sys-typescale-emphasized-label-font-weight);
+  transition: background var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast);
 }
-.btn-text:hover { background: color-mix(in srgb, var(--md-primary) 8%, transparent); }
+.btn-text:hover {
+  background: color-mix(in srgb, var(--md-primary) var(--md-sys-state-hover-state-layer-opacity), transparent);
+}
+.btn-text:active {
+  background: color-mix(in srgb, var(--md-primary) var(--md-sys-state-pressed-state-layer-opacity), transparent);
+  border-radius: var(--pressed-morph-shape);
+}
 
 /* Icon button */
 .icon-btn {
@@ -1315,15 +1698,16 @@ body.is-resizing *::after {
   height: 40px;
   border: none;
   background: transparent;
-  border-radius: var(--shape-full);
+  border-radius: var(--md-sys-shape-corner-full);
   color: var(--md-on-surface-variant);
   cursor: pointer;
-  transition: background var(--motion-short) var(--ease-standard),
-              color var(--motion-short) var(--ease-standard);
+  transition: background var(--motion-effects-fast),
+              color var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast);
   flex-shrink: 0;
 }
 .icon-btn:hover   { background: var(--md-state-hover); color: var(--md-on-surface); }
-.icon-btn:active  { background: var(--md-state-pressed); }
+.icon-btn:active  { background: var(--md-state-pressed); border-radius: var(--pressed-morph-shape); }
 .icon-btn.active  { color: var(--md-primary); }
 
 /* ── 18. Chips ───────────────────────────────────────────── */
@@ -1333,17 +1717,19 @@ body.is-resizing *::after {
   gap: 6px;
   height: 32px;
   padding: 0 12px;
-  border-radius: var(--shape-full);
+  border-radius: var(--md-sys-shape-corner-full);
   border: 1px solid var(--md-outline-variant);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: var(--md-sys-typescale-emphasized-label-font-weight);
   color: var(--md-on-surface-variant);
   cursor: pointer;
-  transition: background var(--motion-short) var(--ease-standard),
-              color var(--motion-short) var(--ease-standard),
-              border-color var(--motion-short) var(--ease-standard);
+  transition: background var(--motion-effects-fast),
+              color var(--motion-effects-fast),
+              border-color var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast);
 }
 .chip:hover  { background: var(--md-state-hover); color: var(--md-on-surface); }
+.chip:active { border-radius: var(--pressed-morph-shape); }
 .chip.active {
   background: var(--md-secondary-container);
   border-color: var(--md-secondary-container);
@@ -1358,15 +1744,17 @@ body.is-resizing *::after {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--shape-full);
+  border-radius: var(--md-sys-shape-corner-full);
   border: none;
   background: transparent;
   color: var(--md-on-surface-variant);
   cursor: pointer;
-  transition: background var(--motion-short) var(--ease-standard),
-              color var(--motion-short) var(--ease-standard);
+  transition: background var(--motion-effects-fast),
+              color var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast);
 }
 .music-filter-btn:hover { background: var(--md-state-hover); color: var(--md-on-surface); }
+.music-filter-btn:active { border-radius: var(--pressed-morph-shape); }
 .music-filter-btn .material-symbols-rounded { font-size: 20px; }
 .music-filter-btn.active { color: var(--md-primary); }
 
@@ -1417,11 +1805,11 @@ body.is-resizing *::after {
   flex-direction: column;
   background: var(--md-surface-container-low);
   color: var(--md-on-surface);
-  border-radius: 28px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  box-shadow: var(--md-sys-elevation-level3);
   border: 1px solid var(--md-outline-variant);
   transform: scale(0.96);
-  transition: transform 0.18s cubic-bezier(0.2, 0, 0, 1);
+  transition: transform var(--motion-spatial-default);
   overflow: hidden;
 }
 .mf-dialog-overlay.open .mf-dialog { transform: scale(1); }
@@ -1434,7 +1822,7 @@ body.is-resizing *::after {
 }
 .mf-dialog-title {
   font-size: 24px;
-  font-weight: 400;
+  font-weight: var(--md-sys-typescale-emphasized-headline-font-weight);
   color: var(--md-on-surface);
   line-height: 1.3;
   margin: 0;
@@ -1536,9 +1924,9 @@ body.is-resizing *::after {
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  border-radius: var(--shape-medium);
+  border-radius: var(--shape-md);
   cursor: pointer;
-  transition: background var(--motion-short) var(--ease-standard);
+  transition: background var(--motion-effects-fast);
 }
 .mf-check-item:hover { background: var(--md-state-hover); }
 .mf-check-item.checked { background: var(--md-secondary-container); }
@@ -1594,22 +1982,36 @@ body.is-resizing *::after {
 }
 
 /* ── 19. Now Playing Panel ───────────────────────────────── */
+/* Islands：右侧「正在播放」浮岛——与内容区之间留 8px 缝 */
 .now-playing-pane {
-background: var(--md-surface-container-low);
-height: 100%;
-overflow-y: auto;
-  border-left: 1px solid var(--md-outline-variant);
+  background: var(--md-surface-container-low);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   padding: 0;
   position: relative;
+  /* 不设 height:100%，靠栅格默认 stretch 填满，避免 100%+margin 溢出裁掉底圆角 */
+  margin: 4px 8px 8px 8px;
+  border-radius: var(--island-radius);
+  /* 同 content-pane：兜住 backdrop-filter 溢出圆角的情况 */
+  clip-path: inset(0 round var(--island-radius));
   /* width 由 grid 列宽控制，不再过渡 */
+}
+
+/* 影院/全窗口模式：整屏铺满，取消浮岛圆角与外边距 */
+.now-playing-pane.fullscreen {
+  margin: 0;
+  border-radius: 0;
+  clip-path: none;
 }
 
 .now-playing-pane.collapsed {
   transform: translateX(100%);
   opacity: 0;
   pointer-events: none;
+  margin: 0; /* 折叠时列宽为 0，清掉浮岛外边距避免溢出残留 */
+  border-radius: 0;
+  clip-path: none;
 }
 .now-playing-pane.collapsed > * {
   opacity: 0;
@@ -1632,6 +2034,10 @@ overflow-y: auto;
   position: absolute;
   inset: 0;
   z-index: 0;
+  /* Islands：跟随所在浮岛圆角（全窗口视图时父级为 0，自动变直角） */
+  border-radius: inherit;
+  /* 噪点层用 mix-blend-mode: overlay，隔离混合范围，防止溢出圆角外 */
+  isolation: isolate;
   overflow: hidden;
   pointer-events: none;
   opacity: 0;
@@ -1897,19 +2303,15 @@ z-index: 1;
   background: color-mix(in srgb, var(--md-surface-container-highest) 40%, transparent);
 }
 .now-playing-pane.fullscreen:has(.np-bg.video-active) .volume-slider {
-  background: linear-gradient(
-    to right,
-    var(--md-primary) 0%,
-    var(--md-primary) var(--volume-val, 50%),
-    color-mix(in srgb, var(--md-surface-container-highest) 35%, transparent) var(--volume-val, 50%),
-    color-mix(in srgb, var(--md-surface-container-highest) 35%, transparent) 100%
-  );
-}
-.now-playing-pane.fullscreen:has(.np-bg.video-active) .volume-slider::-webkit-slider-thumb {
-  border-color: color-mix(in srgb, var(--md-surface-container-low) 40%, transparent);
-}
-.now-playing-pane.fullscreen:has(.np-bg.video-active) .volume-slider::-moz-range-thumb {
-  border-color: color-mix(in srgb, var(--md-surface-container-low) 40%, transparent);
+  /* 视频背景上：不活跃轨道与 stop 点改为半透明，避免死板色块压住画面 */
+  background:
+    radial-gradient(circle at calc(100% - var(--md-comp-slider-stop-inset)) 50%,
+      color-mix(in srgb, var(--md-on-surface) 70%, transparent) 0 calc(var(--md-comp-slider-stop-size) / 2),
+      transparent calc(var(--md-comp-slider-stop-size) / 2)),
+    linear-gradient(to right,
+      var(--md-primary) 0 calc(var(--volume-val, 50%) - var(--md-comp-slider-track-gap)),
+      transparent    calc(var(--volume-val, 50%) - var(--md-comp-slider-track-gap))),
+    color-mix(in srgb, var(--md-secondary-container) 45%, transparent);
 }
 
 /* 将面板内容抬至氛围背景之上 */
@@ -1946,18 +2348,18 @@ z-index: 1;
 /* Mini Player (Bottom Bar) */
 .mini-player {
   position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 76px;
-  /* 模糊背景：直接用侧边栏容器色（不加封面取色混色） */
+  bottom: 8px;
+  left: 8px;
+  right: 8px;
+  height: 64px;
+  /* 模糊背景：直接用侧边栏容器色（不加封面取色混色），纯色阶 */
   background: color-mix(in srgb, var(--md-surface-container-low) 88%, transparent);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border-radius: 0; /* 不要圆角：直角扁平底栏 */
-  border-top: 1px solid color-mix(in srgb, var(--md-outline-variant) 55%, transparent);
+  /* Islands：底部播放栏浮岛——纯圆角，不用描边也不用投影（M3） */
+  border-radius: var(--island-radius);
   box-shadow: none; /* 不要阴影 */
-  overflow: hidden; /* 让顶部进度条贴合边缘 */
+  overflow: hidden; /* 让顶部进度条贴合边缘（并被圆角裁切） */
   display: flex;
   align-items: center;
   padding: 0 16px; /* 两侧内边距对称 */
@@ -1978,13 +2380,13 @@ z-index: 1;
   will-change: transform, opacity;
 }
 
-/* 底栏上滑进入 */
+/* 底栏上滑进入（浮岛有 8px 下边距，需多移 8px 才能完全出视口） */
 .mini-player.mini-entering {
   animation: mini-slide-up 220ms cubic-bezier(0.05, 0.7, 0.1, 1) forwards;
 }
 @keyframes mini-slide-up {
-  from { transform: translateY(100%); opacity: 0; }
-  to   { transform: translateY(0);    opacity: 1; }
+  from { transform: translateY(calc(100% + 8px)); opacity: 0; }
+  to   { transform: translateY(0);            opacity: 1; }
 }
 
 /* 底栏下沉离开 */
@@ -1992,14 +2394,15 @@ z-index: 1;
   animation: mini-slide-down 120ms cubic-bezier(0.3, 0, 0.8, 0.15) forwards;
 }
 @keyframes mini-slide-down {
-  from { transform: translateY(0);    opacity: 1; }
-  to   { transform: translateY(100%); opacity: 0; }
+  from { transform: translateY(0);                     opacity: 1; }
+  to   { transform: translateY(calc(100% + 8px));    opacity: 0; }
 }
 
-/* 底栏扩展到侧边栏宽度：桌面端侧边栏不延伸到播放栏之下，停靠在栏上方 */
+/* 底栏扩展到侧边栏宽度：桌面端侧边栏不延伸到播放栏之下，停靠在栏上方
+   （Island 化后：nav margin-top 4；底栏占 8+64=72；再留 8px 缝 → 高度 = 100% - 84px） */
 @media (min-width: 601px) {
   body.player-collapsed .nav-drawer {
-    height: calc(100% - 76px);
+    height: calc(100% - 84px);
   }
 }
 /* 顶部细进度条（点击可跳转） */
@@ -2077,7 +2480,8 @@ z-index: 1;
   text-align: center;
   letter-spacing: 0.2px;
 }
-/* 复用正在播放页进度条：让 .np-progress-bar 在底栏中生长并居中 */
+/* 复用正在播放页进度条：让 .np-progress-bar 在底栏中生长并居中
+   （handle 高度走基准档 16px，调档表见 .np-progress-bar 的场景调档） */
 .mini-progress-bar {
   margin-bottom: 0;
   flex: 1 1 auto;
@@ -2181,8 +2585,13 @@ z-index: 1;
 body.player-collapsed .app-shell {
   grid-template-columns: 1fr 0;
 }
+/* Islands：底栏浮岛出现时，内容岛与右岛同步上抬收在浮岛上方（留8px 缝） */
 body.player-collapsed .content-pane {
-  padding-bottom: 96px;
+  padding-bottom: 0;
+  margin-bottom: 80px; /* 底栏 8 + 64 + 缝 8 */
+  /* 右栏收折后栅格列宽为 0，内容岛会顶到窗口右缘、右侧圆角被切掉；
+     补一条右缝，让四边都保持 Islands 留白 */
+  margin-right: 8px;
 }
 body.player-collapsed .mini-player {
   display: flex;
@@ -2204,6 +2613,9 @@ body.player-collapsing .app-shell {
 /* 侧边面板从右侧滑入（展开时） */
 .now-playing-pane.expanding {
   animation: np-slide-in 200ms var(--ease-decel) both;
+  margin: 0;
+  border-radius: 0;
+  clip-path: none;
 }
 @keyframes np-slide-in {
   from { transform: translateX(100%); opacity: 0; }
@@ -2213,6 +2625,10 @@ body.player-collapsing .app-shell {
 /* 侧边面板向右侧滑出（收折时） */
 .now-playing-pane.collapsing {
   animation: np-slide-out 120ms var(--ease-accel) both;
+  /* 动画期间列宽已为 0：清掉浮岛外边距与圆角，避免边缘残留 */
+  margin: 0;
+  border-radius: 0;
+  clip-path: none;
 }
 @keyframes np-slide-out {
   from { transform: translateX(0);    opacity: 1; }
@@ -2553,10 +2969,10 @@ padding: 0;
   left: 44px; /* duo 段位（4px 轨道内边距 + 40px 第一段宽） */
   width: 40px;
   height: 32px;
-  border-radius: var(--shape-full);
+  border-radius: var(--md-sys-shape-corner-full);
   background: var(--md-secondary-container);
-  /* 弹簧式非线性缓动：轻微过冲后回正（0.3, 0, 0.2, 1.1） */
-  transition: left 260ms cubic-bezier(0.3, 0, 0.2, 1.1);
+  /* M3E spatial 弹簧（fast）：轻微过冲后回正，取代之前手写的 (0.3,0,0.2,1.1) */
+  transition: left var(--motion-spatial-fast);
 }
 .now-playing-pane.np-content-solo .np-content-thumb { left: 4px; }
 .now-playing-pane.np-content-duo .np-content-thumb { left: 44px; }
@@ -2568,13 +2984,13 @@ padding: 0;
   height: 32px;
   border: none;
   background: transparent;
-  border-radius: var(--shape-full);
+  border-radius: var(--md-sys-shape-corner-full);
   color: var(--md-on-surface-variant);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: color 0.18s ease;
+  transition: color var(--motion-effects-fast);
 }
 .np-content-seg:hover {
   color: var(--md-on-surface);
@@ -2585,7 +3001,7 @@ padding: 0;
 .np-content-seg .material-symbols-rounded {
   font-size: 20px;
   font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 20;
-  transition: font-variation-settings 0.18s ease;
+  transition: font-variation-settings var(--motion-effects-fast);
 }
 .np-content-seg.active .material-symbols-rounded {
   font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 20;
@@ -3147,16 +3563,16 @@ padding: 0;
   left: 0;
   min-width: 200px;
   background: var(--md-surface-container-high);
-  border-radius: var(--shape-lg);
+  border-radius: var(--md-sys-shape-corner-large);
   border: 1px solid var(--md-outline-variant);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--md-sys-elevation-level2);
   padding: 8px 0;
   z-index: 30;
   overflow: hidden;
   transform: scale(0.96);
   transform-origin: bottom left;
   opacity: 0;
-  transition: transform 0.18s cubic-bezier(0.2, 0, 0, 1),
+  transition: transform var(--motion-spatial-fast),
               opacity 0.18s cubic-bezier(0.2, 0, 0, 1);
 }
 .np-lyrics-source.dropdown-open .np-lyrics-source-dropdown {
@@ -3208,11 +3624,11 @@ padding: 0;
   z-index: 25;
   background: var(--md-surface-container);
   border: 1px solid var(--md-outline-variant);
-  border-radius: 16px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.18);
+  border-radius: var(--md-sys-shape-corner-large);
+  box-shadow: var(--md-sys-elevation-level2);
   overflow: hidden;
   transform-origin: bottom right;
-  animation: np-lyrics-popup-in 0.18s cubic-bezier(0.2, 0, 0, 1);
+  animation: np-lyrics-popup-in var(--motion-spatial-fast);
 }
 .np-lyrics-settings-popup.closing {
   animation: np-lyrics-popup-out 0.14s cubic-bezier(0.4, 0, 1, 1) forwards;
@@ -3884,76 +4300,137 @@ padding: 0;
   font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
 
-/* Progress */
+/* Progress — M3 linear progress indicator
+   规格（实测自 m3e m3e-linear-progress-indicator）：
+     · 轨道 thickness 4px，圆角 corner-extra-small(4px)
+     · inactive = secondary-container，active = primary
+     · 末端 stop indicator：固定贴右端的 4dp 圆点（M3E 新增），100% 时与 active 末端重合
+   wavy 变体按 M3 参数重做：wavelength 40px、amplitude 3px（path 半振幅 = amplitude + thickness/2），
+   描边 4px 圆头，走一个完整波长的平滑循环（1.5s linear）。 */
 .np-progress-wrap { padding: 0 20px 8px; flex-shrink: 0; min-height: 0; }
 .np-progress-bar {
-  height: 16px;
+  /* handle 高按场景伸缩：本变量是所有宿主唯一的调档入口，各宿主在下方覆盖，
+     不要在 .np-progress-thumb 上再写死高度。 */
+  --progress-handle-h: var(--md-comp-progress-handle-height);
+  height: 24px;                       /* 行高保持不变，handle 只做溢出绘制，避免影响各处布局 */
   display: flex;
   align-items: center;
   cursor: pointer;
   position: relative;
   margin-bottom: 4px;
 }
+/* 场景调档：底栏迷你播放器 / 悬浮窗走基准值，右栏与全屏逐级加大。
+   新增宿主时只需在这里加一条覆盖，不要在 .np-progress-thumb 上写死高度。 */
+.now-playing-pane .np-progress-bar {
+  --progress-handle-h: var(--md-comp-progress-handle-height-pane);
+}
+.now-playing-pane.fullscreen .np-progress-bar {
+  --progress-handle-h: var(--md-comp-progress-handle-height-fullscreen);
+}
 .np-progress-track {
   width: 100%;
-  height: 4px;
-  background: var(--md-surface-container-highest);
-  border-radius: var(--shape-full);
+  height: var(--md-comp-progress-thickness);
+  border-radius: var(--md-comp-progress-shape);
   position: relative;
-  transition: height var(--motion-short) var(--ease-standard);
+  /* M3 进度条：不活跃轨道从「活跃段末端 + 断口」起，到「容器末端 − stop 点让位」止。
+     --progress-val 由 JS 与 fill/thumb 同步写入；未写入时回退到 −gap，
+     使断口落在 0 处（等价于无断口），避免初始态左侧凭空多一个缺口。 */
+  background: linear-gradient(to right,
+    transparent 0
+      calc(var(--progress-val, calc(-1 * var(--md-comp-progress-track-gap))) + var(--md-comp-progress-track-gap)),
+    var(--md-secondary-container)
+      calc(var(--progress-val, calc(-1 * var(--md-comp-progress-track-gap))) + var(--md-comp-progress-track-gap))
+      calc(100% - var(--md-comp-progress-stop-inset)),
+    transparent calc(100% - var(--md-comp-progress-stop-inset)));
 }
-.np-progress-bar:hover .np-progress-track { height: 6px; }
+/* 轨道末端 stop indicator（M3E 进度条签名元素） */
+.np-progress-track::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: var(--md-comp-progress-stop-size);
+  height: var(--md-comp-progress-stop-size);
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-primary);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
 .np-progress-fill {
   position: absolute;
   top: 50%;
+  left: 0;
   transform: translateY(-50%);
-  height: 12px;
   width: 0%;
-  background: var(--md-primary);
   pointer-events: none;
-  
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='12' viewBox='0 0 32 12'%3E%3Cpath d='M 0 6 Q 4 1, 8 6 T 16 6 T 24 6 T 32 6' fill='none' stroke='black' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E");
+
+  /* wavy 形态：高 = thickness + amplitude*2 + 描边余量 */
+  height: var(--md-comp-progress-wave-height);
+  background: var(--md-primary);
+
+  -webkit-mask-image: var(--md-comp-progress-wave-mask);
   -webkit-mask-repeat: repeat-x;
   -webkit-mask-position: 0 center;
-  
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='12' viewBox='0 0 32 12'%3E%3Cpath d='M 0 6 Q 4 1, 8 6 T 16 6 T 24 6 T 32 6' fill='none' stroke='black' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E");
+  -webkit-mask-size: var(--md-comp-progress-wave-wavelength) var(--md-comp-progress-wave-height);
+
+  mask-image: var(--md-comp-progress-wave-mask);
   mask-repeat: repeat-x;
   mask-position: 0 center;
+  mask-size: var(--md-comp-progress-wave-wavelength) var(--md-comp-progress-wave-height);
 }
 
+/* flat 形态：与轨道同厚同形，无波形 */
 .np-progress-fill.flat {
-  height: 100%;
-  border-radius: var(--shape-full);
+  height: var(--md-comp-progress-thickness);
+  border-radius: var(--md-comp-progress-shape);
   -webkit-mask-image: none;
   mask-image: none;
   animation: none;
+}
+
+.np-progress-fill.playing {
+  animation: progress-wave-slide 1.5s linear infinite;
 }
 .np-progress-fill.flat.playing {
   animation: none;
 }
 
-.np-progress-fill.playing {
-  animation: squiggly-mask 3s linear infinite;
+@keyframes progress-wave-slide {
+  from {
+    -webkit-mask-position: 0 center;
+            mask-position: 0 center;
+  }
+  to {
+    -webkit-mask-position: calc(-1 * var(--md-comp-progress-wave-wavelength)) center;
+            mask-position: calc(-1 * var(--md-comp-progress-wave-wavelength)) center;
+  }
 }
 
-@keyframes squiggly-mask {
-  from { -webkit-mask-position: 0 center; mask-position: 0 center; }
-  to { -webkit-mask-position: -32px center; mask-position: -32px center; }
-}
-
+/* handle：M3 slider 的 4dp 竖条（宽度恒 4px，按下收窄到 2px）；
+   高度由宿主的 --progress-handle-h 决定（见 .np-progress-bar 的场景调档）。 */
 .np-progress-thumb {
-  width: 8px;
-  height: 24px;
-  border-radius: 4px;
+  width: var(--md-comp-slider-handle-width);
+  height: var(--progress-handle-h);
+  border-radius: var(--md-sys-shape-corner-full);
   background: var(--md-primary);
   position: absolute;
   top: 50%;
-  transform: translate(-50%, -50%) scale(0.6);
   left: 0%;
-  transition: transform var(--motion-short) var(--ease-standard);
+  transform: translate(-50%, -50%);
+  transition: height var(--md-sys-motion-spring-fast-spatial),
+              width var(--md-sys-motion-spring-fast-effects);
   pointer-events: none;
 }
-.np-progress-bar:hover .np-progress-thumb { transform: translate(-50%, -50%) scale(1); }
+.np-progress-bar:hover .np-progress-thumb {
+  height: calc(var(--progress-handle-h) + 4px);
+}
+.np-progress-bar:active .np-progress-thumb {
+  width: var(--md-comp-slider-handle-width-pressed);
+}
+.np-progress-bar:focus-visible .np-progress-thumb {
+  outline: var(--m3e-focus-ring-thickness) solid var(--m3e-focus-ring-color);
+  outline-offset: var(--m3e-focus-ring-outward-offset);
+}
 
 /* AutoMix 过渡文字（进度条下方） */
 .np-transition-label {
@@ -3990,7 +4467,7 @@ padding: 0;
 .np-control-pill {
   flex: 1;
   height: 48px;
-  border-radius: var(--shape-full);
+  border-radius: var(--md-sys-shape-corner-full);
   background: var(--md-surface-container-high);
   color: var(--md-on-surface);
   display: inline-flex;
@@ -3998,11 +4475,15 @@ padding: 0;
   justify-content: center;
   border: none;
   cursor: pointer;
-  transition: background var(--motion-short) var(--ease-standard),
-              transform var(--motion-short) var(--ease-standard);
+  transition: background var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast),
+              transform var(--motion-spatial-fast);
 }
 .np-control-pill:hover { background: var(--md-surface-container-highest); }
-.np-control-pill:active { transform: scale(0.97); }
+.np-control-pill:active {
+  transform: scale(0.97);
+  border-radius: var(--pressed-morph-shape);
+}
 .np-control-pill .material-symbols-rounded {
   font-size: 24px;
   font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
@@ -4011,7 +4492,7 @@ padding: 0;
 .np-play-pill {
   flex: 0 0 96px;
   height: 56px;
-  border-radius: 28px;
+  border-radius: var(--md-sys-shape-corner-extra-large);
   background: var(--md-primary);
   color: var(--md-on-primary);
   display: inline-flex;
@@ -4019,14 +4500,20 @@ padding: 0;
   justify-content: center;
   border: none;
   cursor: pointer;
-  transition: filter var(--motion-short) var(--ease-standard),
-              transform var(--motion-short) var(--ease-standard),
-              border-radius var(--motion-medium) var(--ease-standard);
+  /* M3E 形变：播放中胶囊 ↔ 暂停时更方的形状，全程由 spatial 弹簧驱动 */
+  transition: background var(--motion-effects-fast),
+              transform var(--motion-spatial-fast),
+              border-radius var(--motion-spatial-fast);
 }
-.np-play-pill:hover { filter: brightness(1.1); }
-.np-play-pill:active { transform: scale(0.97); }
+.np-play-pill:hover {
+  background: color-mix(in srgb, var(--md-on-primary) var(--md-sys-state-hover-state-layer-opacity), var(--md-primary));
+}
+.np-play-pill:active {
+  transform: scale(0.97);
+  border-radius: var(--pressed-morph-shape);
+}
 .np-play-pill.playing {
-  border-radius: 16px;
+  border-radius: var(--md-sys-shape-corner-large);
 }
 .np-play-pill .material-symbols-rounded {
   font-size: 28px;
@@ -4047,27 +4534,27 @@ padding: 0;
   min-height: 0;
 }
 
-/* 分段按钮：细微间距，独立圆角，选中状态变为完整胶囊 */
+/* 分段按钮：细微间距，独立圆角，选中状态形变为完整胶囊（spatial 弹簧） */
 .np-secondary-controls > button {
   flex: 1;
   height: 44px;
   border: none;
-  border-radius: var(--shape-sm);
+  border-radius: var(--md-sys-shape-corner-small);
   background: var(--md-surface-container-high);
   color: var(--md-on-surface);
   font-family: inherit;
   cursor: pointer;
-  transition: background var(--motion-short) var(--ease-standard),
-              color var(--motion-short) var(--ease-standard),
-              border-radius var(--motion-short) var(--ease-standard);
+  transition: background var(--motion-effects-fast),
+              color var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast);
 }
 
-/* 首尾保持外侧完全圆角 */
+/* 首尾保持外侧完全圆角（full=9999px 会被自动夹到 22px，与高度无关地维持胶囊） */
 .np-secondary-controls > button:first-child {
-  border-radius: 22px var(--shape-sm) var(--shape-sm) 22px;
+  border-radius: var(--md-sys-shape-corner-full) var(--md-sys-shape-corner-small) var(--md-sys-shape-corner-small) var(--md-sys-shape-corner-full);
 }
 .np-secondary-controls > button:last-child {
-  border-radius: var(--shape-sm) 22px 22px var(--shape-sm);
+  border-radius: var(--md-sys-shape-corner-small) var(--md-sys-shape-corner-full) var(--md-sys-shape-corner-full) var(--md-sys-shape-corner-small);
 }
 
 /* 交互状态：Hover */
@@ -4075,25 +4562,28 @@ padding: 0;
   background: var(--md-surface-container-highest);
   color: var(--md-on-surface);
 }
+.np-secondary-controls > button:active {
+  background: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-pressed-state-layer-opacity), var(--md-surface-container-high));
+}
 
 /* 交互状态：Active（选中状态变成完全胶囊，高优先级覆盖首尾圆角） */
 .np-secondary-controls > button.active {
-  border-radius: var(--shape-full);
+  border-radius: var(--md-sys-shape-corner-full);
   color: var(--md-on-secondary-container);
   background: var(--md-secondary-container);
 }
 .np-secondary-controls > button.active:hover {
-  background: color-mix(in srgb, var(--md-on-surface) 8%, var(--md-secondary-container));
+  background: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity), var(--md-secondary-container));
 }
 
 /* 交互状态：Liked */
 .np-secondary-controls > button.liked {
-  border-radius: var(--shape-full);
+  border-radius: var(--md-sys-shape-corner-full);
   color: var(--md-on-error-container);
   background: var(--md-error-container);
 }
 .np-secondary-controls > button.liked:hover {
-  background: color-mix(in srgb, var(--md-on-surface) 8%, var(--md-error-container));
+  background: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity), var(--md-error-container));
 }
 
 .np-secondary-controls > button .material-symbols-rounded { font-size: 20px; }
@@ -4132,17 +4622,17 @@ padding: 0;
   color: var(--md-on-surface);
   border-radius: 28px;                        /* M3 dialog 容器圆角 */
   padding: 24px 24px 0 24px;                  /* 顶部 24px，底部由 actions 自撑 */
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); /* 克制阴影 */
+  box-shadow: var(--md-sys-elevation-level3); /* M3 高度 level3 */
   border: 1px solid var(--md-outline-variant);
   transform: scale(0.96);
-  transition: transform 0.18s cubic-bezier(0.2, 0, 0, 1);
+  transition: transform var(--motion-spatial-default);
 }
 .cmd-dialog-overlay.open .cmd-dialog {
   transform: scale(1);
 }
 .cmd-dialog-title {
   font-size: 24px;                            /* M3 headline-large */
-  font-weight: 400;
+  font-weight: var(--md-sys-typescale-emphasized-headline-font-weight);
   color: var(--md-on-surface);
   line-height: 1.3;
   margin-bottom: 16px;
@@ -4226,10 +4716,10 @@ padding: 0;
   color: var(--md-on-surface);
   border-radius: 28px;
   padding: 24px 24px 16px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--md-sys-elevation-level3);
   border: 1px solid var(--md-outline-variant);
   transform: scale(0.96);
-  transition: transform 0.18s cubic-bezier(0.2, 0, 0, 1);
+  transition: transform var(--motion-spatial-default);
 }
 .sync-overlay.open .sync-overlay-card {
   transform: scale(1);
@@ -4266,24 +4756,44 @@ padding: 0;
   margin-bottom: 24px;
 }
 
-/* Progress Indicator 轨道（M3 Linear Progress） */
+/* Progress Indicator 轨道（M3 Linear Progress：4px / inactive=secondary-container / 末端 stop 圆点） */
 .sync-progress-track {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 .sync-progress-bar {
+  position: relative;
   width: 100%;
-  height: 4px;
-  background: color-mix(in srgb, var(--md-on-surface) 8%, transparent);
-  border-radius: 2px;
-  overflow: hidden;
+  height: var(--md-comp-progress-thickness);
+  border-radius: var(--md-comp-progress-shape);
+  /* 与 .np-progress-track 同构（M3 进度条：活跃段断口 + 末端 stop 点让位），
+     --progress-val 由 folders.js 与填充条宽度同步写入。 */
+  background: linear-gradient(to right,
+    transparent 0
+      calc(var(--progress-val, calc(-1 * var(--md-comp-progress-track-gap))) + var(--md-comp-progress-track-gap)),
+    var(--md-secondary-container)
+      calc(var(--progress-val, calc(-1 * var(--md-comp-progress-track-gap))) + var(--md-comp-progress-track-gap))
+      calc(100% - var(--md-comp-progress-stop-inset)),
+    transparent calc(100% - var(--md-comp-progress-stop-inset)));
+}
+.sync-progress-bar::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: var(--md-comp-progress-stop-size);
+  height: var(--md-comp-progress-stop-size);
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-primary);
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 .sync-progress-fill {
   height: 100%;
   background: var(--md-primary);
-  border-radius: 2px;
-  transition: width 0.3s cubic-bezier(0.2, 0, 0, 1);
+  border-radius: var(--md-comp-progress-shape);
+  transition: width var(--md-sys-motion-spring-fast-spatial);
 }
 
 /* 阶段标签 + 计数 */
@@ -4422,7 +4932,10 @@ select.cmd-text-field__input + .cmd-text-field__label {
 }
 
 /* ==============================================================
-   Volume - 重点修改区域：完美实现 M3 Expressive 分离式滑块 
+   Volume — M3 slider（XS 档）
+   形态照搬 m3e m3e-slider：不活跃轨道 secondary-container、活跃 primary、
+   handle 为 4px 宽竖条（按下收窄 2px）、轨道在 handle 两侧各让出空隙、
+   轨道末端 4dp stop indicator。
    ============================================================== */
 .np-volume {
   display: flex;
@@ -4438,42 +4951,64 @@ select.cmd-text-field__input + .cmd-text-field__label {
   flex: 1;
   -webkit-appearance: none;
   appearance: none;
-  height: 16px; /* 加粗轨道，符合 M3 Expressive 风格 */
-  border-radius: var(--shape-full);
-  /* 核心 1：利用 JS 传过来的 --volume-val 变量，绘制左右不同的轨道颜色 */
-  background: linear-gradient(
-    to right,
-    var(--md-primary) 0%,
-    var(--md-primary) var(--volume-val, 50%),
-    var(--md-surface-container-highest) var(--volume-val, 50%),
-    var(--md-surface-container-highest) 100%
-  );
+  height: var(--md-comp-slider-track-height);
+  border-radius: var(--md-comp-slider-track-shape);
   outline: none;
   cursor: pointer;
+  /* 三层背景：① 末端 stop 圆点 ② 活跃轨道（到 handle 左侧空隙为止） ③ 不活跃轨道底色 */
+  background:
+    radial-gradient(circle at calc(100% - var(--md-comp-slider-stop-inset)) 50%,
+      var(--md-on-secondary-container) 0 calc(var(--md-comp-slider-stop-size) / 2),
+      transparent calc(var(--md-comp-slider-stop-size) / 2)),
+    linear-gradient(to right,
+      var(--md-primary) 0 calc(var(--volume-val, 50%) - var(--md-comp-slider-track-gap)),
+      transparent    calc(var(--volume-val, 50%) - var(--md-comp-slider-track-gap))),
+    var(--md-secondary-container);
+  transition: filter var(--md-sys-motion-spring-fast-effects);
 }
 
 .volume-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 4px; /* 滑块（中间的竖线）宽度 */
-  height: 28px; /* 滑块高度，比轨道高 */
-  background: var(--md-primary); /* 竖线的颜色 */
-  border-radius: var(--shape-full);
-  /* 核心 2：用与面板背景相同的粗边框来“切割”出分离效果 */
-  border: 4px solid var(--md-surface-container-low);
-  box-sizing: content-box;
-  box-shadow: none; /* 清除默认阴影，防止出现奇怪的黑圈 */
+  width: var(--md-comp-slider-handle-width);
+  height: var(--md-comp-slider-handle-height);
+  background: var(--md-primary);
+  border-radius: var(--md-sys-shape-corner-full);
+  border: none;
+  box-shadow: none;
+  transition: width var(--md-sys-motion-spring-fast-effects),
+              height var(--md-sys-motion-spring-fast-spatial);
+}
+.volume-slider:hover::-webkit-slider-thumb {
+  height: calc(var(--md-comp-slider-handle-height) + 6px);
+}
+.volume-slider:active::-webkit-slider-thumb {
+  width: var(--md-comp-slider-handle-width-pressed);
+  height: calc(var(--md-comp-slider-handle-height) + 6px);
 }
 
-/* 兼容 Firefox */
+/* Firefox 等价实现 */
 .volume-slider::-moz-range-thumb {
-  width: 4px;
-  height: 28px;
+  width: var(--md-comp-slider-handle-width);
+  height: var(--md-comp-slider-handle-height);
   background: var(--md-primary);
-  border-radius: var(--shape-full);
-  border: 4px solid var(--md-surface-container-low);
-  box-sizing: content-box;
+  border-radius: var(--md-sys-shape-corner-full);
+  border: none;
   box-shadow: none;
+  transition: width var(--md-sys-motion-spring-fast-effects),
+              height var(--md-sys-motion-spring-fast-spatial);
+}
+.volume-slider:hover::-moz-range-thumb {
+  height: calc(var(--md-comp-slider-handle-height) + 6px);
+}
+.volume-slider:active::-moz-range-thumb {
+  width: var(--md-comp-slider-handle-width-pressed);
+  height: calc(var(--md-comp-slider-handle-height) + 6px);
+}
+.volume-slider::-moz-range-track {
+  height: var(--md-comp-slider-track-height);
+  background: transparent;
+  border: none;
 }
 
 .vol-label { 
@@ -4982,49 +5517,186 @@ select.cmd-text-field__input + .cmd-text-field__label {
   margin: 0 0 24px;
 }
 .settings-group-title {
-  font-size: 14px;
+  font-size: var(--md-sys-typescale-title-small-size);
   font-weight: 500;
   color: var(--md-on-surface-variant);
-  padding: 16px 28px 8px;
+  padding: 16px var(--md-comp-list-padding-inline) 8px;
 }
+
+/* ── M3E Segmented List（m3e-list variant="segmented"）────────────────
+   分段列表：项与项之间留 2dp 缝，靠缝隙而非分隔线分层。每项独立成卡：
+   段内四项圆角 extraSmall(4)，一段的首项顶角 / 末项底角放大到 large(16)，
+   于是整段读作一个"被切开的胶囊"。hover/press 时整项形变到 medium(12)、
+   focus 到 large(16)，但首项顶角与末项底角保持 large（外轮廓不参与形变）——
+   这正是 m3e ListItemElement 里 --_list-item-top/bottom-container-shape
+   优先于 hover/focus 形状的语义。selected 固定 large(16)。 */
+.md-seglist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--md-comp-seglist-gap);
+  margin-inline: var(--md-comp-seglist-inset);
+}
+/* 同一分组内被独立块（如 notice）切开的相邻两段：补回段缝。
+   没有这条，两段会紧贴 —— 上一段的末项(底角 large)与下一段的首项(顶角 large)
+   相对，读成一个"花生"形而不是一段。 */
+.md-seglist + .md-seglist {
+  margin-top: var(--md-comp-seglist-gap);
+}
+/* 每项的上下角半径默认值（4dp）；hover/selected 规则在其后覆盖 */
+.md-seglist > * {
+  --_seg-top: var(--md-comp-seglist-item-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-shape);
+  border-radius: var(--_seg-top) var(--_seg-top) var(--_seg-bottom) var(--_seg-bottom);
+  background-color: var(--md-comp-seglist-item-container);
+  /* 颜色走 effects 弹簧，形状走 spatial 弹簧（项目动效分工铁律） */
+  transition: background-color var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast);
+}
+/* hover / press：内角形变到 medium(12) */
+.md-seglist > *:hover {
+  --_seg-top: var(--md-comp-seglist-item-hover-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-hover-shape);
+  background-color: color-mix(in srgb,
+    var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity),
+    var(--md-comp-seglist-item-container));
+}
+.md-seglist > *:active {
+  --_seg-top: var(--md-comp-seglist-item-hover-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-hover-shape);
+  background-color: color-mix(in srgb,
+    var(--md-on-surface) var(--md-sys-state-pressed-state-layer-opacity),
+    var(--md-comp-seglist-item-container));
+}
+/* focus-within：整项到 large(16) */
+.md-seglist > *:focus-within {
+  --_seg-top: var(--md-comp-seglist-item-focus-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-focus-shape);
+}
+/* 段外两角：首项顶角、末项底角放大到 large(16)。
+   放在 hover/press 之后声明 —— 同特异性下靠后胜出，
+   于是 hover 时外角不参与形变，与 m3e 的 var() 回退顺序一致。 */
+.md-seglist > *:first-child { --_seg-top: var(--md-comp-seglist-container-shape); }
+.md-seglist > *:last-child  { --_seg-bottom: var(--md-comp-seglist-container-shape); }
+/* 选中态：四角逐 large(16) 填满，secondary-container 铺底 */
+.md-seglist > .selected,
+.md-seglist > [aria-selected='true'] {
+  --_seg-top: var(--md-comp-seglist-item-selected-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-selected-shape);
+  background-color: var(--md-comp-seglist-item-selected-container);
+  color: var(--md-on-secondary-container);
+}
+.md-seglist > .selected:hover,
+.md-seglist > [aria-selected='true']:hover {
+  background-color: color-mix(in srgb,
+    var(--md-on-secondary-container) var(--md-sys-state-hover-state-layer-opacity),
+    var(--md-comp-seglist-item-selected-container));
+}
+/* 禁用项：仅降透明度，不参与形状形变 */
+.md-seglist > .disabled {
+  opacity: 0.38;
+  pointer-events: none;
+}
+
+/* 独立块（notice / EQ / 内存面板）：不在 .md-seglist 内，
+   需自带卡片底色与 large 圆角，并加 16px inset 与分段列表对齐。
+   另加 6px 上下外边距 —— 否则 2dp 段缝会让它与上下段读作同一段。 */
+.settings-row-full {
+  margin: 6px var(--md-comp-seglist-inset);
+  border-radius: var(--md-comp-seglist-container-shape);
+  background-color: var(--md-comp-seglist-item-container);
+}
+
+/* 设置行 = M3E list item（实测自 m3e m3e-list-item）：
+   one-line 56dp / two-line 72dp（带支持文字）；leading icon 24dp + 16dp 间隙。
+   在分段列表里项内间距收到 12dp（m3e segmented 的 --m3e-list-item-between-space），
+   圆角与状态层由上面 .md-seglist > * 统一接管。 */
 .settings-row {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 28px;
-  min-height: 56px;
-  border-bottom: 1px solid var(--md-outline-variant);
-  gap: 16px;
-  transition: background-color var(--motion-short) var(--ease-standard);
+  padding: var(--md-comp-list-item-padding-block) var(--md-comp-list-item-padding-inline);
+  min-height: var(--md-comp-list-min-height);
+  gap: var(--md-comp-seglist-item-spacing);
 }
-.settings-row:last-child { border-bottom: none; }
-.settings-row:hover { background-color: var(--md-state-hover); }
-
-/* 分组标题 */
-.settings-group-header {
-  font-size: 14px;
-  font-weight: 600;
+.settings-row:has(.settings-row-sub) {
+  min-height: var(--md-comp-list-min-height-2line);
+}
+/* 前导图标槽（M3E list-item leading slot） */
+.settings-row-icon {
+  flex-shrink: 0;
+  font-size: var(--md-comp-list-icon-size);
   color: var(--md-on-surface-variant);
-  padding: 20px 28px 4px;
-  text-transform: none;
-  letter-spacing: 0;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  transition: color var(--motion-effects-fast);
+}
+.settings-row:hover .settings-row-icon,
+.settings-row:focus-within .settings-row-icon {
+  color: var(--md-on-surface);
+}
+/* 主文案 + 支持文案（M3E list-item headline / supporting-text slot） */
+.settings-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* 尾部控件槽（M3E list-item trailing slot）
+   2026-10-04 用户要求「往内部收一些」：尾部控件（下拉/开关/按钮）不再紧贴行内容右缘，
+   统一加 24px 右外边距，让控件与卡片右缘之间留出呼吸空间。
+   ⚠️ 这是**行内控件留白**，不是卡片外缘留白 —— 卡片仍撑到岛右缘（见 .settings-content > *）。 */
+.settings-row-trailing {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 24px;
+}
+/* 分段列表用 2dp 缝隙分层，不再绘制 M3 inset divider —— 见 .md-seglist */
+
+/* 分组标题 — M3E section header：与段内文字左缘对齐（inset 16 + 项内 16 = 32），
+   主色 + emphasized 字重 */
+.settings-group-header {
+  font-size: var(--md-sys-typescale-title-small-size);
+  line-height: var(--md-sys-typescale-title-small-line);
+  letter-spacing: var(--md-sys-typescale-title-small-tracking);
+  font-weight: var(--md-sys-typescale-emphasized-title-font-weight);
+  color: var(--md-primary);
+  padding: 28px calc(var(--md-comp-seglist-inset) + var(--md-comp-list-item-padding-inline)) 10px;
 }
 .settings-group-header:first-child {
-  padding-top: 0;
+  padding-top: 4px;
 }
-.settings-row-label { font-size: 14px; font-weight: 500; color: var(--md-on-surface); }
-.settings-row-sub   { font-size: 12px; color: var(--md-on-surface-variant); margin-top: 2px; }
+/* 主文案 · 支持文案：**比 M3 typescale 原型各小一档**（14 / 12）。
+   2026-10-04 用户要求「缩小字体大小」——原型 16/14 在满宽卡片里偏大。
+   字号走 --md-comp-settings-label-size / -sub-size，改档位只动上面令牌组。 */
+.settings-row-label {
+  font-size: var(--md-comp-settings-label-size);
+  line-height: var(--md-comp-settings-label-line);
+  letter-spacing: var(--md-sys-typescale-body-large-tracking);
+  font-weight: 400;
+  color: var(--md-on-surface);
+}
+.settings-row-sub {
+  font-size: var(--md-comp-settings-sub-size);
+  line-height: var(--md-comp-settings-sub-line);
+  letter-spacing: var(--md-sys-typescale-body-medium-tracking);
+  color: var(--md-on-surface-variant);
+}
 
-/* Toggle switch — Material 3 */
+/* Toggle switch — **M3E 化之前的原版几何**：56×34、轨道描边 2.5px、thumb 23px。
+   2026-10-03 曾按 52×32 等比缩到 44×26，2026-10-04 用户要求还原旧版比例，故回退。
+   几何链：thumb 23 → 26（按下）；开启时靠 right 定位（`calc(100% - 28px)`）。 */
 .toggle {
   position: relative;
-  width: 52px;
-  height: 32px;
+  width: var(--md-comp-settings-switch-w);
+  height: var(--md-comp-settings-switch-h);
   flex-shrink: 0;
   cursor: pointer;
 }
 .toggle input {
   position: absolute;
+  inset: 0;
   opacity: 0;
   width: 100%;
   height: 100%;
@@ -5032,27 +5704,23 @@ select.cmd-text-field__input + .cmd-text-field__label {
   cursor: pointer;
   z-index: 3;
 }
-/* Vintage pill switch — colors follow the Monet (Material You) token system */
-.toggle {
-  width: 56px;
-  height: 34px;
-}
 .toggle-track {
   position: absolute;
   inset: 0;
-  border-radius: var(--shape-full);
+  box-sizing: border-box;
+  border-radius: var(--md-sys-shape-corner-full);
   background: var(--md-surface-container-high);
   border: 2.5px solid var(--md-outline);
-  transition: background var(--motion-short) var(--ease-standard),
-              border-color var(--motion-short) var(--ease-standard);
+  transition: background-color var(--md-sys-motion-spring-fast-effects),
+              border-color var(--md-sys-motion-spring-fast-effects);
 }
 .toggle input:checked + .toggle-track {
   background: var(--md-primary);
   border-color: var(--md-primary);
 }
 .toggle input:focus-visible + .toggle-track {
-  outline: 2px solid var(--md-primary);
-  outline-offset: 2px;
+  outline: var(--m3e-focus-ring-thickness) solid var(--m3e-focus-ring-color);
+  outline-offset: var(--m3e-focus-ring-outward-offset);
 }
 .toggle-thumb {
   position: absolute;
@@ -5060,13 +5728,16 @@ select.cmd-text-field__input + .cmd-text-field__label {
   left: 5px;
   width: 23px;
   height: 23px;
-  border-radius: 50%;
+  border-radius: var(--md-sys-shape-corner-full);
   background: var(--md-outline);
   color: var(--md-surface-container-high);
   transform: translateY(-50%);
-  transition: left var(--motion-short) var(--ease-standard),
-              background var(--motion-short) var(--ease-standard),
-              color var(--motion-short) var(--ease-standard);
+  transition: left var(--md-sys-motion-spring-fast-spatial),
+              right var(--md-sys-motion-spring-fast-spatial),
+              width var(--md-sys-motion-spring-fast-effects),
+              height var(--md-sys-motion-spring-fast-effects),
+              background-color var(--md-sys-motion-spring-fast-effects),
+              color var(--md-sys-motion-spring-fast-effects);
   pointer-events: none;
   z-index: 2;
 }
@@ -5080,21 +5751,26 @@ select.cmd-text-field__input + .cmd-text-field__label {
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6.5 6.5l11 11M17.5 6.5l-11 11' stroke='black' stroke-width='3' stroke-linecap='round' fill='none'/%3E%3C/svg%3E");
           mask: center / 15px 15px no-repeat
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6.5 6.5l11 11M17.5 6.5l-11 11' stroke='black' stroke-width='3' stroke-linecap='round' fill='none'/%3E%3C/svg%3E");
-  transition: -webkit-mask-image var(--motion-short) var(--ease-standard),
-                  mask-image var(--motion-short) var(--ease-standard);
+  transition: -webkit-mask-size var(--md-sys-motion-spring-fast-effects),
+                  mask-size var(--md-sys-motion-spring-fast-effects);
 }
 .toggle input:checked ~ .toggle-thumb {
   left: calc(100% - 28px);
+  width: 23px;
+  height: 23px;
   background: var(--md-on-primary);
   color: var(--md-primary);
 }
 .toggle input:checked ~ .toggle-thumb::after {
+  -webkit-mask-size: 18px 18px;
+          mask-size: 18px 18px;
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5.5 12.5l4.2 4.2L18.5 7.5' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
           mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5.5 12.5l4.2 4.2L18.5 7.5' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
 }
-/* Pressed feedback: knob slightly grows */
+/* Pressed：handle 微微放大（旧版即如此） */
 .toggle input:active ~ .toggle-thumb {
   width: 26px;
+  height: 26px;
 }
 /* Disabled */
 .toggle input:disabled {
@@ -5105,11 +5781,17 @@ select.cmd-text-field__input + .cmd-text-field__label {
   opacity: 0.38;
 }
 
-/* Material dropdown (shared by device select and settings select) */
+/* Material dropdown (shared by device select and settings select)
+   触发器按 M3 outlined button：高 40dp、全圆角、1px outline、label 用 primary、
+   hover 8% / pressed 10% 状态层；菜单容器 corner-small(8dp) + elevation level3，
+   菜单项 48dp 高、corner-extra-small(4dp)、选中态 secondary-container。 */
 .md-dropdown {
   position: relative;
   display: inline-block;
 }
+/* Select 下拉触发器 — **M3E 化之前的原版**：宽 220–320 / padding 8×12 / 14px /
+   `corner-extra-small`(4px) 圆角 / `surface-container-highest` 底 / 文字用 on-surface。
+   （M3E 化那轮改成了 primary 描边胶囊 + 150–260 / 13px，2026-10-04 按用户要求回退。） */
 .md-dropdown-trigger {
   display: inline-flex;
   align-items: center;
@@ -5120,15 +5802,26 @@ select.cmd-text-field__input + .cmd-text-field__label {
   padding: 8px 12px;
   background: var(--md-surface-container-highest);
   border: 1px solid var(--md-outline-variant);
-  border-radius: var(--shape-xs);
+  border-radius: var(--md-sys-shape-corner-extra-small);
   font-size: 14px;
   font-family: inherit;
   color: var(--md-on-surface);
   cursor: pointer;
   outline: none;
   text-align: left;
+  transition: border-color var(--md-sys-motion-spring-fast-effects);
 }
-.md-dropdown-trigger:focus { border-color: var(--md-primary); }
+.md-dropdown-trigger:hover {
+  background: var(--md-surface-container-highest);
+  border-color: var(--md-outline);
+}
+.md-dropdown-trigger:active {
+  background: var(--md-surface-container-high);
+}
+.md-dropdown-trigger:focus-visible {
+  outline: var(--m3e-focus-ring-thickness) solid var(--m3e-focus-ring-color);
+  outline-offset: var(--m3e-focus-ring-outward-offset);
+}
 .md-dropdown-value {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5136,9 +5829,9 @@ select.cmd-text-field__input + .cmd-text-field__label {
 }
 .md-dropdown-arrow {
   flex-shrink: 0;
-  font-size: 18px;
+  font-size: 20px;
   color: var(--md-on-surface-variant);
-  transition: transform var(--motion-short) var(--ease-standard);
+  transition: transform var(--md-sys-motion-spring-fast-spatial);
 }
 .md-dropdown-trigger[aria-expanded="true"] .md-dropdown-arrow {
   transform: rotate(180deg);
@@ -5152,15 +5845,16 @@ select.cmd-text-field__input + .cmd-text-field__label {
   overflow-y: auto;
   background: var(--md-surface-container-highest);
   border: 1px solid var(--md-outline-variant);
-  border-radius: var(--shape-sm);
+  border-radius: var(--md-sys-shape-corner-small);
   padding: 8px 0;
+  box-shadow: var(--md-sys-elevation-level3);
   z-index: 99999;
   opacity: 0;
   visibility: hidden;
   transform: translateY(-4px);
-  transition: opacity var(--motion-short) var(--ease-standard),
-              transform var(--motion-short) var(--ease-standard),
-              visibility var(--motion-short);
+  transition: opacity var(--md-sys-motion-spring-fast-effects),
+              transform var(--md-sys-motion-spring-fast-spatial),
+              visibility var(--md-sys-motion-spring-fast-effects);
 }
 .md-dropdown-menu.open {
   opacity: 1;
@@ -5175,7 +5869,8 @@ select.cmd-text-field__input + .cmd-text-field__label {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: background-color var(--motion-short) var(--ease-standard);
+  transition: background-color var(--md-sys-motion-spring-fast-effects),
+              color var(--md-sys-motion-spring-fast-effects);
 }
 .md-dropdown-item:hover {
   background: var(--md-surface-container);
@@ -5185,31 +5880,42 @@ select.cmd-text-field__input + .cmd-text-field__label {
   background: var(--md-primary-container);
 }
 
-/* Settings — text input (font fallback strings) */
+/* Settings — text input（回到 M3E 化之前的原版 commit 2dbd256：
+   实心 surface-container-highest 底 + outline-variant 描边 + 4px 圆角，
+   padding 8×12、13px、min-width 240。聚焦只换描边色，不切描边宽度。 */
 .settings-font-input {
   background: var(--md-surface-container-highest);
   border: 1px solid var(--md-outline-variant);
-  border-radius: var(--shape-xs);
+  border-radius: var(--md-sys-shape-corner-extra-small);
   padding: 8px 12px;
   font-size: 13px;
   font-family: inherit;
   color: var(--md-on-surface);
   outline: none;
-  min-width: 240px;
-  transition: border-color var(--motion-short) var(--ease-standard);
+  min-width: var(--md-comp-settings-input-min-width);
+  transition: border-color var(--md-sys-motion-spring-fast-effects);
 }
-.settings-font-input:focus { border-color: var(--md-primary); }
+.settings-font-input:focus {
+  border-color: var(--md-primary);
+}
 .settings-font-input::placeholder { color: var(--md-on-surface-variant); opacity: 0.6; }
 
-/* Settings — text row 布局（label 在上，输入框在下，避免长字符串挤压） */
+/* Settings — text row 布局（leading icon 与标题同排，输入框另起一行，避免长字符串挤压） */
 .settings-row-text {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
+  align-items: flex-start;
 }
-.settings-row-text > div:first-child {
+.settings-row-text .settings-row-icon {
+  margin-top: 4px;
+}
+.settings-row-text .settings-row-body {
+  gap: 10px;
+}
+.settings-row-heading {
   display: flex;
   flex-direction: column;
+}
+.settings-row-text .settings-font-input {
+  width: 100%;
 }
 
 /* Settings — file_picker 行（输入框 + 浏览按钮） */
@@ -5230,7 +5936,7 @@ select.cmd-text-field__input + .cmd-text-field__label {
 
 /* Settings footer */
 .settings-footer {
-  padding: 16px 28px;
+  padding: 16px var(--md-comp-list-padding-inline);
 }
 .settings-footer-note {
   font-size: 12px;
@@ -5245,16 +5951,22 @@ select.cmd-text-field__input + .cmd-text-field__label {
   opacity: 0.7;
 }
 
-/* Settings — 独占模式不可用功能提示（遵循 design.md notice 规范） */
+/* Settings — 独占模式不可用功能提示（遵循 design.md notice 规范）
+   段内条件性提示：display:none 时不参与 flex gap，隐藏后该段自然合拢。
+   非交互块 —— 固定 large 圆角 + primary-container，不参与 hover 形变。 */
 .settings-notice {
   align-items: flex-start;
   gap: 12px;
-  padding: 12px 14px;
-  margin: 6px 0 2px;
-  border-radius: 12px;
+  padding: 14px 16px;
+  border-radius: var(--md-comp-seglist-container-shape);
   background: var(--md-primary-container);
   color: var(--md-on-primary-container);
   border: 1px solid color-mix(in srgb, var(--md-primary) 30%, transparent);
+}
+.settings-notice:hover,
+.settings-notice:active,
+.settings-notice:focus-within {
+  background: var(--md-primary-container);
 }
 .settings-notice-icon {
   flex-shrink: 0;
@@ -5365,19 +6077,9 @@ select.cmd-text-field__input + .cmd-text-field__label {
 /* 版本卡片行 */
 .about-version-card {
   cursor: pointer;
-  transition: background-color var(--motion-short) var(--ease-standard);
-}
-.about-version-card:hover {
-  background-color: var(--md-state-hover);
 }
 .about-version-card.expanded .about-chevron {
   transform: rotate(90deg);
-}
-.about-version-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-shrink: 0;
 }
 .about-app-icon {
   width: 28px;
@@ -5395,13 +6097,7 @@ select.cmd-text-field__input + .cmd-text-field__label {
   filter: grayscale(1) brightness(1.2);
   mix-blend-mode: screen;
 }
-.about-version-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
-.about-version-right .settings-row-sub {
+.about-version-card .settings-row-sub {
   white-space: nowrap;
 }
 .about-chevron {
@@ -5419,16 +6115,27 @@ select.cmd-text-field__input + .cmd-text-field__label {
   transition: max-height 0.2s cubic-bezier(0.4, 0, 0.2, 1),
               opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1),
               padding 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  padding: 0 28px;
+  padding: 0 var(--md-comp-list-item-padding-inline);
   border-top: 1px solid transparent;
   pointer-events: none;
+  /* 折叠时高度为 0，形状形变无意义 */
+  --_seg-top: var(--md-comp-seglist-item-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-shape);
 }
 .about-version-expander.active {
   max-height: 600px;
   opacity: 1;
-  padding: 16px 28px 20px;
+  padding: 16px var(--md-comp-list-item-padding-inline) 20px;
   border-top-color: var(--md-outline-variant);
   pointer-events: auto;
+}
+/* 折叠时展开区高度为 0，但段缝仍会留 2px 且吞掉版本卡的末项圆角。
+   用 -2px 外边距抵消缝隙，并让版本卡恢复整段圆角（:has 需 Chromium 105+）。 */
+.about-version-expander:not(.active) {
+  margin-top: -2px;
+}
+.md-seglist > .about-version-card:has(+ .about-version-expander:not(.active)) {
+  --_seg-bottom: var(--md-comp-seglist-container-shape);
 }
 .about-version-expander-inner {
   display: flex;
@@ -5463,10 +6170,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
 /* 操作行 */
 .about-action-row {
   cursor: pointer;
-  transition: background-color var(--motion-short) var(--ease-standard);
-}
-.about-action-row:hover {
-  background-color: var(--md-state-hover);
 }
 .about-action-row .about-chevron {
   margin-left: auto;
@@ -5477,9 +6180,8 @@ select.cmd-text-field__input + .cmd-text-field__label {
   cursor: default;
 }
 .about-info-row .settings-row-sub {
-  margin-left: auto;
   text-align: right;
-  max-width: 60%;
+  max-width: 320px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5625,6 +6327,87 @@ select.cmd-text-field__input + .cmd-text-field__label {
   font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 22;
 }
 
+/* ── 23b. Artist Hero — Apple Music 式横幅头图 ─────────────
+   触发条件由 artists.js 控制（横版图可用或头像 ≥900px）：
+   .detail-header.hero 全宽铺满艺人图，信息叠加于左下角渐变之上 */
+.detail-header.hero {
+  display: block;
+  position: relative;
+  height: clamp(280px, 42vh, 420px);
+  margin: 0 0 16px;
+  padding: 0;
+  border-bottom: none;
+  overflow: hidden;
+  isolation: isolate;
+}
+.detail-header.hero .detail-cover { display: none; }
+.detail-hero-img {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-size: cover;
+  background-position: center 28%;
+  background-repeat: no-repeat;
+  animation: hero-fade-in 480ms var(--ease-standard);
+}
+@keyframes hero-fade-in {
+  from { opacity: 0; transform: scale(1.02); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.detail-header.hero .detail-cover-gradient {
+  display: block;
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 68%;
+  z-index: 1;
+  background: linear-gradient(to top, rgba(0,0,0,0.74) 0%, rgba(0,0,0,0.36) 45%, rgba(0,0,0,0) 100%);
+  pointer-events: none;
+}
+.detail-header.hero .detail-meta {
+  position: absolute;
+  left: 28px;
+  right: 28px;
+  bottom: 22px;
+  z-index: 2;
+}
+.detail-header.hero .detail-type  { color: rgba(255,255,255,0.85); }
+.detail-header.hero .detail-name  {
+  color: #fff;
+  font-size: 40px;
+  text-shadow: 0 2px 14px rgba(0,0,0,0.4);
+}
+.detail-header.hero .detail-sub   { color: rgba(255,255,255,0.82); text-shadow: 0 1px 8px rgba(0,0,0,0.35); }
+.detail-header.hero .detail-actions { margin-top: 18px; }
+
+/* ── 23c. 艺人别名 chips（详情头部，MusicBrainz/网易云 数据） ──
+   毛玻璃模糊 + 艺人图主色晕染：--artist-rgb 由 artists.js 从
+   横版图/头像提取（utils.extractDominantColor），未提取到时用中性灰兜底。
+   纯 M3E：纯色半透明底 + 模糊，不做渐变流动/外晕发光。 */
+.detail-alias {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.detail-alias .alias-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: var(--shape-full);
+  background: rgba(var(--artist-rgb, 128, 128, 132), 0.26);
+  backdrop-filter: blur(14px) saturate(1.5);
+  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  color: var(--md-on-surface-variant);
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.detail-header.hero .detail-alias .alias-chip {
+  background: rgba(255, 255, 255, 0.20);
+  color: rgba(255,255,255,0.95);
+}
+
 /* ── 23a. Artist Detail — Pivot 两页（歌曲 / 专辑）───────── */
 .artist-detail-body {
   padding: 0 0 24px;
@@ -5649,6 +6432,18 @@ select.cmd-text-field__input + .cmd-text-field__label {
 /* 专辑页签：复用 .album-grid，调整内边距与页面其余列表（12px）对齐 */
 .artist-album-grid {
   padding: 4px 12px 24px;
+}
+
+/* 简介页签：在线艺人传记（TheAudioDB / Wikipedia），纯文本段落排版 */
+.artist-bio-text {
+  max-width: 860px;
+  margin: 0;
+  padding: 8px 24px 24px;
+  font-size: 14px;
+  line-height: 1.85;
+  color: var(--md-on-surface-variant);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 
 .artist-album-empty {
@@ -5679,7 +6474,7 @@ select.cmd-text-field__input + .cmd-text-field__label {
   width: 280px;                                /* M3 menu: 280px */
   background: var(--md-surface-container-high);
   border-radius: 16px;                         /* M3 menu 圆角 */
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); /* 克制阴影 */
+  box-shadow: var(--md-sys-elevation-level2);  /* M3 高度 level2 */
   border: 1px solid var(--md-outline-variant);
   overflow: hidden;
   transform: scale(0.96);
@@ -5758,7 +6553,7 @@ select.cmd-text-field__input + .cmd-text-field__label {
   transition: opacity var(--motion-short) var(--ease-standard);
 }
 .context-menu-item:hover::before {
-  opacity: 0.06;              /* M3 state-layer: 6% on-surface */
+  opacity: var(--md-sys-state-hover-state-layer-opacity);   /* M3 state-layer: hover 8% */
 }
 .context-menu-item:active {
   transform: scale(0.98);
@@ -5794,8 +6589,8 @@ select.cmd-text-field__input + .cmd-text-field__label {
   z-index: 10000;
   width: 240px;
   background: var(--md-surface-container-high);
-  border-radius: 16px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  border-radius: var(--md-sys-shape-corner-large);
+  box-shadow: var(--md-sys-elevation-level2);
   border: 1px solid var(--md-outline-variant);
   overflow: hidden;
   padding: 8px;
@@ -5879,22 +6674,27 @@ select.cmd-text-field__input + .cmd-text-field__label {
   outline-offset: -2px;
 }
 
-/* ── Toast 轻提示 ──────────────────────────────────────────────── */
+/* ── Toast 轻提示（M3 Snackbar 规范）─────────────────────────────
+   容器 = inverse-surface / 内容 = inverse-on-surface，圆角 extraSmall(4px)，
+   高度 level3，无描边；入场走 M3E spatial 弹簧。 */
 .toast-snackbar {
   position: fixed;
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%) translateY(80px);
-  background: var(--md-surface-container-highest);
-  color: var(--md-on-surface);
+  background: var(--md-inverse-surface);
+  color: var(--md-inverse-on-surface);
   padding: 12px 20px;
-  border-radius: 12px;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  border-radius: var(--md-sys-shape-corner-extra-small);
   font-size: 14px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-  border: 1px solid var(--md-outline-variant);
+  box-shadow: var(--md-sys-elevation-level3);
+  border: none;
   z-index: 10001;
   opacity: 0;
-  transition: transform 0.25s cubic-bezier(0.2, 0, 0, 1), opacity 0.25s ease;
+  transition: transform var(--motion-spatial-fast), opacity var(--motion-effects-default);
   pointer-events: none;
   max-width: 400px;
   text-align: center;
@@ -5904,7 +6704,7 @@ select.cmd-text-field__input + .cmd-text-field__label {
   opacity: 1;
 }
 
-/* ── Settings — Material You 阻尼滑块 ────────────────────────────── */
+/* ── Settings — M3 slider（XS 档，形态与音量条一致）────────────── */
 .settings-row-slider {
   gap: 16px;
 }
@@ -5915,10 +6715,10 @@ select.cmd-text-field__input + .cmd-text-field__label {
   flex-shrink: 0;
 }
 .settings-slider-value {
-  font-size: 13px;
+  font-size: var(--md-sys-typescale-body-medium-size);
   font-weight: 500;
   color: var(--md-on-surface-variant);
-  min-width: 40px;
+  min-width: 44px;
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -5926,55 +6726,54 @@ select.cmd-text-field__input + .cmd-text-field__label {
 .settings-slider {
   -webkit-appearance: none;
   appearance: none;
-  width: 140px;
-  height: 16px;
-  border-radius: var(--shape-full);
-  background: linear-gradient(
-    to right,
-    var(--md-primary) 0%,
-    var(--md-primary) var(--slider-val, 50%),
-    var(--md-surface-container-highest) var(--slider-val, 50%),
-    var(--md-surface-container-highest) 100%
-  );
+  width: 160px;
+  height: var(--md-comp-slider-track-height);
+  border-radius: var(--md-comp-slider-track-shape);
   outline: none;
   cursor: pointer;
-  transition: height 0.2s cubic-bezier(0.2, 0, 0, 1);
-}
-.settings-slider:hover {
-  height: 20px;
+  background:
+    radial-gradient(circle at calc(100% - var(--md-comp-slider-stop-inset)) 50%,
+      var(--md-on-secondary-container) 0 calc(var(--md-comp-slider-stop-size) / 2),
+      transparent calc(var(--md-comp-slider-stop-size) / 2)),
+    linear-gradient(to right,
+      var(--md-primary) 0 calc(var(--slider-val, 50%) - var(--md-comp-slider-track-gap)),
+      transparent    calc(var(--slider-val, 50%) - var(--md-comp-slider-track-gap))),
+    var(--md-secondary-container);
 }
 .settings-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 4px;
-  height: 28px;
+  width: var(--md-comp-slider-handle-width);
+  height: var(--md-comp-slider-handle-height);
   background: var(--md-primary);
-  border-radius: var(--shape-full);
-  border: 4px solid var(--md-surface-container-low);
-  box-sizing: content-box;
+  border-radius: var(--md-sys-shape-corner-full);
+  border: none;
   box-shadow: none;
-  transition: height 0.2s cubic-bezier(0.2, 0, 0, 1),
-              width 0.2s cubic-bezier(0.2, 0, 0, 1);
+  transition: width var(--md-sys-motion-spring-fast-effects),
+              height var(--md-sys-motion-spring-fast-spatial);
 }
 .settings-slider:hover::-webkit-slider-thumb {
-  height: 32px;
+  height: calc(var(--md-comp-slider-handle-height) + 6px);
 }
 .settings-slider:active::-webkit-slider-thumb {
-  width: 8px;
-  height: 36px;
+  width: var(--md-comp-slider-handle-width-pressed);
+  height: calc(var(--md-comp-slider-handle-height) + 6px);
 }
 .settings-slider::-moz-range-thumb {
-  width: 4px;
-  height: 28px;
+  width: var(--md-comp-slider-handle-width);
+  height: var(--md-comp-slider-handle-height);
   background: var(--md-primary);
-  border-radius: var(--shape-full);
-  border: 4px solid var(--md-surface-container-low);
-  box-sizing: content-box;
+  border-radius: var(--md-sys-shape-corner-full);
+  border: none;
   box-shadow: none;
 }
 .settings-slider:active::-moz-range-thumb {
-  width: 8px;
-  height: 36px;
+  width: var(--md-comp-slider-handle-width-pressed);
+}
+.settings-slider::-moz-range-track {
+  height: var(--md-comp-slider-track-height);
+  background: transparent;
+  border: none;
 }
 
 /* ── Settings — Material Select Dropdown ─────────────────────── */
@@ -5992,7 +6791,7 @@ select.cmd-text-field__input + .cmd-text-field__label {
   position: absolute;
   inset: 0;
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: var(--m3e-nav-drawer-width) minmax(0, 1fr);
   background: transparent;
   overflow: hidden;
 }
@@ -6000,6 +6799,10 @@ select.cmd-text-field__input + .cmd-text-field__label {
 /* ── 设置页激活时：隐藏侧边栏 + 禁用侧边播放器 ────────────────────── */
 body.settings-active .nav-drawer {
   display: none;
+}
+/* 导航岛隐藏后：内容岛补上左侧 8px 缝，保持与其他岛一致的留白 */
+body.settings-active .content-pane {
+  margin-left: 8px;
 }
 body.settings-active .app-root {
   grid-template-columns: 0 1fr;
@@ -6012,7 +6815,7 @@ body.settings-active .now-playing-pane {
   display: none;
 }
 body.settings-active .content-pane {
-  padding-bottom: 96px;
+  margin-bottom: 80px; /* 底栏浮岛 8 + 64 + 缝 8 */
 }
 body.settings-active .mini-player {
   display: flex;
@@ -6081,7 +6884,7 @@ body.settings-active.np-fullscreen .title-bar-center {
   height: 100%;
   background: var(--md-surface-container-lowest);
   border-radius: 30px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
+  box-shadow: var(--md-sys-elevation-level5); /* M3 高度 level5（模态容器） */
   overflow: hidden;
 }
 
@@ -6104,68 +6907,80 @@ body.settings-active.np-fullscreen .title-bar-center {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: var(--m3e-nav-drawer-width) minmax(0, 1fr);
   background: var(--md-surface-container-low);
   border-radius: 30px;
   overflow: hidden;
 }
 
-/* 左侧导航列 */
+/* 左侧导航列：分段列表的滚动容器（自身只负责滚动与底部留白） */
 .settings-nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 12px 10px;
-  border-right: 1px solid var(--md-outline-variant);
   overflow-y: auto;
   min-height: 0;
+  padding-bottom: 12px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.settings-nav::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
-/* 导航标题 */
+/* 导航标题 — M3 headline-small，左缘与段内文字对齐（inset 16 + 项内 16 = 32） */
 .settings-nav-header {
   display: flex;
   align-items: center;
-  padding: 28px 20px 12px;
+  padding: 28px 32px 14px;
   flex-shrink: 0;
 }
 .settings-nav-header-title {
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 24px;
+  font-weight: var(--md-sys-typescale-emphasized-headline-font-weight);
+  line-height: 32px;
   color: var(--md-on-surface);
   white-space: nowrap;
 }
+/* 导航项 = M3E segmented list item：项高 48dp（见 --m3e-nav-drawer-item-height）、
+   icon 24dp、label-large 14/500、icon↔label 12dp。
+   分段列表接管圆角/底色/形变，这里只留排版与焦点环。 */
 .settings-nav-item {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   width: 100%;
-  padding: 12px 16px;
+  min-height: var(--m3e-nav-drawer-item-height);
+  padding: 0 var(--md-comp-list-item-padding-inline);
   border: none;
-  border-radius: var(--shape-xl);
-  background: transparent;
   color: var(--md-on-surface-variant);
   font-family: inherit;
   font-size: 14px;
   font-weight: 500;
+  letter-spacing: 0.1px;
   text-align: left;
   cursor: pointer;
-  transition: background-color var(--motion-short) var(--ease-standard),
-              color var(--motion-short) var(--ease-standard);
+  transition: color var(--motion-effects-fast);
 }
-.settings-nav-item:hover {
-  background: var(--md-state-hover);
+.settings-nav-item:hover,
+.settings-nav-item.active {
   color: var(--md-on-surface);
 }
+.settings-nav-item:focus-visible {
+  outline: var(--m3e-focus-ring-thickness) solid var(--m3e-focus-ring-color);
+  outline-offset: calc(var(--m3e-focus-ring-outward-offset) * -1);
+}
 .settings-nav-item.active {
-  background: var(--md-secondary-container);
   color: var(--md-on-secondary-container);
 }
 .settings-nav-icon {
-  font-size: 22px;
+  font-size: var(--m3e-nav-item-icon-size);
   flex-shrink: 0;
   font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
 .settings-nav-item.active .settings-nav-icon {
+  color: var(--md-on-secondary-container);
   font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
 .settings-nav-label {
@@ -6179,7 +6994,7 @@ body.settings-active.np-fullscreen .title-bar-center {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  padding: 20px 0 20px;
+  padding: 14px 0 20px;
 }
 /* 隐藏右侧滚动条（仍可滚动），避免方头戳进弹窗圆角 */
 .settings-content {
@@ -6191,12 +7006,17 @@ body.settings-active.np-fullscreen .title-bar-center {
   width: 0;
   height: 0;
 }
-
-/* 顶部留白统一由内容列控制：归零首个子元素自带的顶部间距 */
-.settings-content .settings-section:first-child .settings-section-body > .settings-row:first-child {
-  padding-top: 0;
+/* 右侧内容列：卡片**撑到岛边**（2026-10-04 用户要求「卡片宽度延伸到右侧」）。
+   历史：① 曾挂 `max-width: 720px` → 1500 窗口下卡片右端 x=960、右侧空 540px；
+   ② 曾改为 `min(calc(100% - 248px), 1320px)`「右侧留一段与左栏等宽的收尾留白」
+      → 1500 窗口下卡片右端 x=1252、右侧仍空 248px（= 岛宽 17%），
+      用户判定「卡片宽度没有延伸到右侧」，要求撤掉这段留白。
+   现为**不封顶、不人为留白**：卡片右端 = 岛右缘 − .md-seglist inset(12)。
+   用户明确以「延伸到右侧」为准，故不再为配重/居中保留对称留白。
+   超宽窗口仍给 1320px 上限兜底（单行文本可读性），但该上限在 ≤1580 岛宽下不生效。 */
+.settings-content > * {
+  max-width: 1320px;
 }
-
 /* 内嵌「关于」页：隐藏其独立页头（返回按钮 + 大标题） */
 .settings-content .about-page > .page-header {
   display: none;
@@ -6204,15 +7024,14 @@ body.settings-active.np-fullscreen .title-bar-center {
 .settings-content .about-page {
   min-height: 0;
 }
-/* 内嵌关于页：添加与设置项一致的左右内边距 */
+/* 内嵌关于页：分组间距与设置项一致（段列表自带 16px inset） */
 .about-page-inline .settings-group {
-  padding: 0 28px;
-  margin: 0 0 24px;
+  margin: 0 0 8px;
 }
 
-/* 分类内容体 */
+/* 分类内容体：分组标题 + 若干 .md-seglist 依次排列 */
 .settings-section-body {
-  /* 行和分组标题直接排列在此容器内 */
+  padding-bottom: 20px;
 }
 
 /* ── Settings — 内存信息面板 ──────────────────────────────────────────── */
@@ -6220,7 +7039,7 @@ body.settings-active.np-fullscreen .title-bar-center {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 20px 28px;
+  padding: 16px var(--md-comp-list-item-padding-inline);
 }
 .settings-memory-stats {
   width: 100%;
@@ -6272,10 +7091,10 @@ body.settings-active.np-fullscreen .title-bar-center {
   font-size: 18px;
 }
 
-/* ── Settings — EQ 垂直滑块（全宽布局，参考音量条样式）──────────────── */
+/* ── Settings — EQ 垂直滑块（整段独立的宽卡）────────────────────────── */
 .settings-eq-fullwidth {
-  padding: 16px 28px 8px;
-  border-bottom: 1px solid var(--md-outline-variant);
+  position: relative;
+  padding: 18px var(--md-comp-list-item-padding-inline) 10px;
 }
 .settings-eq-bands {
   display: flex;
@@ -6308,14 +7127,13 @@ body.settings-active.np-fullscreen .title-bar-center {
   appearance: none;
   width: 120px;
   height: 8px;
-  border-radius: var(--shape-full);
-  background: linear-gradient(
-    to right,
-    var(--md-primary) 0%,
-    var(--md-primary) var(--slider-val, 50%),
-    var(--md-surface-container-highest) var(--slider-val, 50%),
-    var(--md-surface-container-highest) 100%
-  );
+  border-radius: var(--md-comp-slider-track-shape);
+  /* 垂直密集排列（16 条并排），沿用 M3 slider 的分层结构但收窄轨道 */
+  background:
+    linear-gradient(to right,
+      var(--md-primary) 0 calc(var(--slider-val, 50%) - 3px),
+      transparent    calc(var(--slider-val, 50%) - 3px)),
+    var(--md-secondary-container);
   outline: none;
   cursor: ns-resize;
   transform: rotate(-90deg);
@@ -6324,22 +7142,25 @@ body.settings-active.np-fullscreen .title-bar-center {
 .settings-eq-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 3px;
+  width: 4px;
   height: 22px;
   background: var(--md-primary);
-  border-radius: var(--shape-full);
-  border: 3px solid var(--md-surface-container-low);
-  box-sizing: content-box;
+  border-radius: var(--md-sys-shape-corner-full);
+  border: none;
   box-shadow: none;
 }
 .settings-eq-slider::-moz-range-thumb {
-  width: 3px;
+  width: 4px;
   height: 22px;
   background: var(--md-primary);
-  border-radius: var(--shape-full);
-  border: 3px solid var(--md-surface-container-low);
-  box-sizing: content-box;
+  border-radius: var(--md-sys-shape-corner-full);
+  border: none;
   box-shadow: none;
+}
+.settings-eq-slider::-moz-range-track {
+  height: 8px;
+  background: transparent;
+  border: none;
 }
 .settings-eq-band-label {
   font-size: 10px;
@@ -6360,14 +7181,15 @@ body.settings-active.np-fullscreen .title-bar-center {
   align-items: center;
   justify-content: space-between;
   height: 36px;
-  padding: 0 0 0 0;
-  background: var(--md-surface);
+  padding: 0 4px 0 0;
+  /* 标题栏不是独立的栏：底色透明、无分割线，控件直接落在应用背景上 */
+  background: transparent;
   color: var(--md-on-surface);
   user-select: none;
   -webkit-user-select: none;
   position: relative;
   z-index: 1000;
-  border-bottom: 1px solid var(--md-outline-variant, transparent);
+  border-bottom: none;
   transition: border-color var(--motion-short) var(--ease-standard);
 }
 
@@ -6375,7 +7197,8 @@ body.settings-active.np-fullscreen .title-bar-center {
   display: flex;
   align-items: center;
   gap: 0;
-  height: 100%;
+  height: 28px;
+  align-self: center;
   padding-left: 4px;
 }
 
@@ -6404,7 +7227,9 @@ body.settings-active.np-fullscreen .title-bar-center {
   -webkit-app-region: no-drag;
   display: flex;
   align-items: center;
-  height: 100%;
+  height: 28px;
+  align-self: center;
+  gap: 2px;
 }
 
 .title-bar-btn {
@@ -6416,8 +7241,9 @@ body.settings-active.np-fullscreen .title-bar-center {
   background: transparent;
   color: var(--md-on-surface);
   cursor: pointer;
-  height: 100%;
+  height: 28px;
   width: 46px;
+  border-radius: 6px;
   transition: background var(--motion-short) var(--ease-standard);
 }
 
@@ -6458,6 +7284,7 @@ body.settings-active.np-fullscreen .title-bar-center {
 .title-bar-close:hover {
   background: #e81123;
   color: #fff;
+  border-radius: 6px;
 }
 
 .title-bar-settings {
@@ -6605,170 +7432,371 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   padding-top: 12px;
 }
 
-/* ── Your Mix Page ─────────────────────────────────────────── */
+
+/* ── Your Mix Page ──────────────────────────────────────────────────────────
+   布局参考 Apple Music 主页：Hero 大卡 + 横向滚动的卡片架（shelf/rail）。
+   M3E 约束：层次只用圆角 + 1px outline + 色阶，不用 box-shadow；
+   唯一例外是浮在封面上的播放按钮（临时浮层）用 elevation。
+   卡片上的底部 scrim 是图片之上的可读性遮罩（内容层），不是装饰性氛围渐变。 */
 
 .ym-page {
-  padding-bottom: 32px;
+  --ym-gutter: 28px;   /* 与 .album-grid / .search-bar / .page-header 的 28px 对齐 */
+  --ym-rail-gap: 16px; /* 与 .album-grid gap 一致 */
+  /* 🔑 卡片宽度必须等于 `.album-grid` 在该宽度下实际算出的列宽，
+     否则「比例和专辑页一致」只是嘴上说说。
+     .album-grid = repeat(auto-fill, minmax(156px, 1fr)) + gap 16，其列宽
+       = (可用宽 - (n-1)·gap) / n ,  n = floor((可用宽 + gap) / (156 + gap))
+     这里用**同一条公式**在 rail 上复刻（rail 是滚动条带，子项定宽，
+     不能直接用 1fr）。列数 n 由下面针对本页的容器查询给出，
+     宽度公式与栅格解一致，于是 rail 卡 / hero 卡 / 专辑页卡永远同宽。 */
+  --ym-cols: 5;
+  /* 轨道可用宽 = 页宽 - 两侧 gutter。用 cqw 拿到本页宽度，
+     卡片占 1/n 列，列间留 gap。 */
+  --ym-card-w: calc(
+    (100cqw - var(--ym-gutter) * 2
+      - (var(--ym-cols) - 1) * var(--ym-rail-gap)) / var(--ym-cols)
+  );
+  /* 卡片圆角直接用 corner-large —— 与 .album-card 同一档，
+     不再走 --island-radius（那是浮岛的语义，探新页没有浮岛）。 */
+  --ym-card-radius: var(--md-sys-shape-corner-large);
+  padding: 0 0 40px;
 }
+/* 🔑 列数查询的参照容器**必须是 .ym-page 的祖先**，不能是它自己 ——
+   `.ym-page` 上的 `container-type: inline-size` 只让它成为**后代**的容器，
+   而下面 `@container ympage` 的规则目标恰恰是 `.ym-page` 本身，
+   属于「元素查自己」，规范不允许 → 查询恒不命中，`--ym-cols` 永远停在基值 5，
+   卡片宽度被钉死在「5 列」上（1064px 时 188.8px 恰好与专辑页巧合相等，
+   窗宽一变立刻发散：1404px 时 rail=256.8 而专辑页=178.9，差 +44%）。
+   改挂到 #page-container：.ym-page 成为它的后代，查询成立。
+   .ym-page 无内边距/外边距，宽度与 #page-container 相等，
+   故 `100cqw` 仍等于页宽，宽度公式不变。 */
+#page-container {
+  container-type: inline-size;
+  container-name: ympage;
+}
+/* 列数与 .album-grid 的 auto-fill 解析结果一一对应。
+   查询容器 = #page-container，故这里的 min-width 判定的是**页宽**；
+   而 .album-grid 的 auto-fill 判定的是**可用宽** = 页宽 - 2×28。
+   两者换算：专辑页取到 n 列 ⇔ 可用宽 ≥ 172n-16 ⇔ 页宽 ≥ 172n+40。
+   故阈值 = 172n+40（旧值 172n-16 是「可用宽」口径，挂在自身容器上时
+   因自查询失效从未生效，等于一直锁 5 列）。 */
+@container ympage (min-width: 212px) { .ym-page { --ym-cols: 1; } }
+@container ympage (min-width: 384px) { .ym-page { --ym-cols: 2; } }
+@container ympage (min-width: 556px) { .ym-page { --ym-cols: 3; } }
+@container ympage (min-width: 728px) { .ym-page { --ym-cols: 4; } }
+@container ympage (min-width: 900px) { .ym-page { --ym-cols: 5; } }
+@container ympage (min-width: 1072px) { .ym-page { --ym-cols: 6; } }
+@container ympage (min-width: 1244px) { .ym-page { --ym-cols: 7; } }
+@container ympage (min-width: 1416px) { .ym-page { --ym-cols: 8; } }
+@container ympage (min-width: 1588px) { .ym-page { --ym-cols: 9; } }
+@container ympage (min-width: 1760px) { .ym-page { --ym-cols: 10; } }
+@container ympage (min-width: 1932px) { .ym-page { --ym-cols: 11; } }
+@container ympage (min-width: 2104px) { .ym-page { --ym-cols: 12; } }
 
-/* ── Your Mix 头部 ─────────────────────────────────────── */
-.ym-header {
-  align-items: center;
-  padding-top: 16px;
-  padding-bottom: 2px;
-}
-.ym-header-left {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 230px;
-}
+/* ── Your Mix 头部 ─────────────────────────────────────────────────────── */
+/* 头部**不复用任何自定义样式** —— 直接用全局 `.page-header` / `.page-header-left` /
+   `.page-title` / `.page-subtitle`（与专辑页、所有音乐页完全同构）。
+   原先的 `.ym-header` / `.ym-header-left` / `.ym-title` 覆盖已删除：它们把
+   `.page-title` 从 28px 顶到 40px、把 `align-items` 从 `flex-end` 改成 `center`、
+   给左栏塞了 `min-width: 230px`，导致问候语标题和下方 section 标题的左边缘
+   与其它页面不在同一条垂直线上。 */
 
-.ym-title {
-  font-size: 38px;
-  font-weight: 800;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  line-height: 1.05;
-  font-stretch: ultra-expanded;
-  /* 字体不含 width 轴，用轻微 scaleX 补一点扩张感 */
-  transform: scaleX(1.07);
-  transform-origin: left center;
-}
+/* ── Section 骨架 ──────────────────────────────────────────────────────── */
+/* 区块标题**不定义任何私有样式** —— 直接用全局
+   `.section-heading > .section-title + .section-count`（专辑页同一套）。
+   旧实现造了 `.ym-section-head`(21px 标题 + 3px 强调色短棒 + 12px desc)，
+   与全站 13px uppercase 的 `.section-title` 完全不成比例，且短棒还会
+   把标题文字推右 13px 造成对齐问题。整块删除，问题随之消失。 */
 
-/* 标题上方音浪：渐变 / 微光 / 半透明，颜色随动态主题（封面氛围色） */
-.ym-wave {
-  width: 100%;
-  height: 24px;
-  margin-left: 1px;
-  opacity: 0.9;
-  pointer-events: none;
-  user-select: none;
-}
-.ym-wave-svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-  overflow: visible;
-}
+/* 区块之间的垂直节奏 = 全站间距基准 24px（`.album-grid` 的 padding-bottom 同值）。
+   旧实现用 32px，与全站其它页面的呼吸感不成体系。
+   首段紧接 sticky header，高度由 header 自身 padding 撑开，这里只留 8px 起点。 */
+.ym-section { margin-top: 24px; }
+.ym-section:first-of-type { margin-top: 8px; }
 
-/* 头部右侧单色插画（Material Symbols 图标组） */
-.ym-header-art {
+/* ── 横向卡片轨（rail）─────────────────────────────────────────────────── */
+
+.ym-rail-wrap {
   position: relative;
-  width: 104px;
-  height: 84px;
-  color: var(--md-primary);
-  flex-shrink: 0;
-  margin-left: auto;
-  margin-right: 8px;
-  user-select: none;
-  opacity: 0.8;
 }
-.ym-art-icon {
+/* 右侧渐隐提示还有内容可滚。
+   刻意做窄（28px）且末尾才接近实色：卡片上有徽章/标题，
+   遮罩太宽会把它们糊掉，反而像渲染错误。 */
+.ym-rail-wrap::after {
+  content: '';
   position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 28px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--motion-effects-fast);
+  background: linear-gradient(to right,
+    transparent,
+    color-mix(in srgb, var(--md-surface-container-lowest) 88%, transparent));
 }
-.ym-art-disc {
-  font-size: 62px;
-  right: 2px;
-  top: 12px;
-  opacity: 0.85;
-  font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 48;
-  animation: ym-art-spin 24s linear infinite;
-}
-.ym-art-note {
-  font-size: 26px;
-  left: 12px;
-  bottom: 10px;
-  opacity: 0.5;
-}
-.ym-art-spark {
-  font-size: 17px;
-  left: 22px;
-  top: 8px;
-  opacity: 0.35;
-}
-@keyframes ym-art-spin {
-  to { transform: rotate(360deg); }
-}
+.ym-rail-wrap.has-more::after { opacity: 1; }
 
-/* 标题与下方内容拉开 */
-#ym-daily-mix-section {
-  margin-top: 20px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ym-art-vinyl-spin { animation: none; }
-}
-
-.ym-section {
-  padding: 0 28px;
-  margin-bottom: 36px;
-}
-
-.ym-section:last-child {
-  margin-bottom: 0;
-}
-
-.ym-section-header {
+.ym-rail {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: var(--ym-rail-gap);
+  padding: 2px var(--ym-gutter) 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
 }
+.ym-rail::-webkit-scrollbar { height: 0; }
+/* ⚠️ `scroll-snap-align: start` 的 start 是**内容盒**的起点，
+   `.ym-rail` 有 28px 左内边距，而 `scroll-snap-type: x proximity` 会在
+   渲染后立刻把第一张卡吸到内容盒起点 → 轨道自动 scrollLeft=28，
+   首卡被裁掉 28px、与上方 .page-title / .section-title 的左缘错位。
+   用 `scroll-padding-left` 把吸附原点推回到 padding 内侧，首卡才落在 28px。 */
+.ym-rail { scroll-padding-left: var(--ym-gutter); }
+.ym-rail > * { scroll-snap-align: start; }
 
-.ym-section-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--md-on-surface);
-  margin: 0;
-}
-
-.ym-section-desc {
-  font-size: 12px;
-  color: var(--md-on-surface-variant);
-}
-
-/* ── Daily Mix Grid ────────────────────────────────────────── */
-
-.ym-mix-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-  gap: 12px;
-}
-
-.ym-mix-card {
-  cursor: pointer;
-  border-radius: var(--shape-lg);
-  overflow: hidden;
-  background: var(--md-surface-container);
-  transition: transform var(--motion-short) var(--ease-standard),
-              background var(--motion-short) var(--ease-standard);
-}
-.ym-mix-card:hover {
-  transform: translateY(-3px);
-}
-.ym-mix-card:hover .ym-mix-overlay {
-  opacity: 1;
-}
-.ym-mix-card:active { transform: scale(0.98); }
-
-.ym-mix-cover {
-  width: 100%;
-  aspect-ratio: 1;
-  background: var(--md-surface-container-high);
+/* 轨道两侧翻页箭头：M3 Filled Icon Button（surface-container-lowest + 状态层） */
+.ym-rail-btn {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  width: 40px;
+  height: 40px;
+  margin-top: -20px;
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
-  position: relative;
+  border: none;
+  border-radius: var(--shape-full);
+  background: var(--md-surface-container-lowest);
+  color: var(--md-on-surface);
+  outline: 1px solid color-mix(in srgb, var(--md-outline-variant) 55%, transparent);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  /* 状态层用 primary：M3 规定状态层色 = on-surface，但图标按钮用 primary 更贴合强调 */
+  --ym-rail-state: var(--md-primary);
+  transition: opacity var(--motion-effects-fast),
+              background var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast),
+              transform var(--motion-spatial-fast);
 }
-.ym-mix-cover img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.ym-rail-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--ym-rail-state);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-effects-fast);
+}
+.ym-rail-btn > .material-symbols-rounded { position: relative; font-size: 22px; }
+/* 字体子集里没有 chevron_left，用 chevron_right 旋转 180° 代替 */
+.ym-rail-btn--prev .material-symbols-rounded { transform: rotate(180deg); }
+.ym-rail-wrap:hover .ym-rail-btn.can-scroll,
+.ym-rail-wrap.ym-force-hover .ym-rail-btn.can-scroll { opacity: 1; pointer-events: auto; }
+.ym-rail-btn:hover::before { opacity: var(--md-sys-state-hover-state-layer-opacity); }
+.ym-rail-btn:active::before { opacity: var(--md-sys-state-pressed-state-layer-opacity); }
+.ym-rail-btn:active { border-radius: var(--pressed-morph-shape); transform: scale(0.92); }
+.ym-rail-btn--prev { left: 8px; }
+.ym-rail-btn--next { right: 8px; }
+
+/* ── 卡片 = .album-card + 探新专属扩展 ──────────────────────────────────
+   探新页**不重新发明卡片**：DOM 就是专辑页那一套
+   `.album-card > .album-cover + .album-info > .album-name/.album-meta`
+   （见 albums.js），几何、底色、hover 起落、按下形变全部由 .album-card
+   提供 —— 这里一条都不重复声明，否则「复用」就只是嘴上说说。
+
+   探新只加两样它没有的东西：
+     ① 卡级内容取色变量（--ym-a*，由 card_color.js 覆写）+ 固定卡宽
+     ② 封面上浮的类型徽章 / 播放按钮（.album-card 没有）
+     ↑ 这两样**随 .album-card 一起被裁切**（.album-card 自带 overflow:hidden），
+       不另外套一层带底色的壳 —— 双层容器会出现两层底色与双重描边。 */
+
+.ym-card {
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--ym-card-w);
+  /* Material You：强调色先回落到全局 primary，取到封面主色后由 JS 覆写为卡级色阶 */
+  --ym-a: var(--md-primary);
+  --ym-on-a: var(--md-on-primary);
+  --ym-a-container: var(--md-primary-container);
+  --ym-on-a-container: var(--md-on-primary-container);
+}
+/* 描边染上该卡的强调色 —— Material You 的「组件随内容染色」。
+   几何（圆角/底色/hover 起落/按下形变）不在这里重复，全部交给 .album-card。 */
+.ym-card:hover {
+  outline-color: color-mix(in srgb, var(--ym-a) 55%, transparent);
+}
+.ym-card:focus-visible {
+  outline: var(--m3e-focus-ring-thickness) solid var(--m3e-focus-ring-color);
+  outline-offset: var(--m3e-focus-ring-outward-offset);
+}
+/* 无头浏览器无真实指针，探针用此 class 复现 hover 态（_preview/_ym_probe.html?hover=） */
+.ym-force-hover { transform: translateY(-4px); }
+.ym-force-hover .ym-card-play { opacity: 1; transform: scale(1); }
+.ym-force-hover .ym-card-art > img { transform: scale(1.06); }
+
+/* M3 状态层：hover 时在封面上叠一层该卡强调色的状态层（替代纯缩放） */
+.ym-card-art::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: var(--ym-on-a);
+  opacity: 0;
+  transition: opacity var(--motion-effects-fast);
+}
+.ym-card:hover .ym-card-art::before {
+  opacity: var(--md-sys-state-hover-state-layer-opacity);
+}
+.ym-card:active .ym-card-art::before {
+  opacity: var(--md-sys-state-pressed-state-layer-opacity);
+}
+.ym-force-hover .ym-card-art::before {
+  opacity: var(--md-sys-state-hover-state-layer-opacity);
 }
 
-/* ── Genre Mosaic Cover (multi-album geometric layout) ─────────── */
+/* 封面：几何已由 .album-cover 提供（aspect-ratio 1 / overflow hidden /
+   surface-container-high 底），这里只补「相对定位」以便徽章/按钮定位。 */
+.ym-card-art { position: relative; }
+.ym-card-art > img,
+.ym-card-art > svg,
+.ym-card-art > .ym-mosaic-wrapper {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+/* 内部图片随 hover 轻微放大（spatial 动效：transform 走 spatial） */
+.ym-card-art > img { transition: transform var(--motion-long) var(--ease-standard); }
+.ym-card:hover .ym-card-art > img { transform: scale(1.06); }
+
+/* 类型徽章：左上角胶囊。
+   Material You：底色用**该卡的强调色**（--ym-a-container，明度恒定 30%，
+   压在任何深浅封面上白字都够对比），文字用 on-a-container。 */
+.ym-card-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--shape-full);
+  background: var(--ym-a-container);
+  color: var(--ym-on-a-container);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: background var(--motion-effects-fast);
+}
+.ym-card-badge .material-symbols-rounded { font-size: 13px; }
+
+
+/* 播放按钮：浮在封面右下（临时浮层 → elevation 是唯一允许的 shadow 例外）。
+   Material You：Filled Icon Button 用该卡的强调色，取色后每张卡按钮也不同色。 */
+.ym-card-play {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 3;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--shape-full);
+  background: var(--ym-a);
+  color: var(--ym-on-a);
+  box-shadow: var(--md-sys-elevation-level2);
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity var(--motion-effects-fast),
+              transform var(--motion-spatial-fast),
+              border-radius var(--motion-spatial-fast),
+              background var(--motion-effects-fast);
+}
+.ym-card-play .material-symbols-rounded { font-size: 22px; }
+.ym-card:hover .ym-card-play,
+.ym-card:focus-within .ym-card-play { opacity: 1; transform: scale(1); }
+.ym-card-play:hover {
+  background: var(--ym-a-container);
+  color: var(--ym-on-a-container);
+  box-shadow: var(--md-sys-elevation-level3);
+}
+.ym-card-play:active { border-radius: var(--pressed-morph-shape); transform: scale(0.9); }
+
+/* ── Hero：一张大卡 + 最多 4 张小卡 ──────────────────────────────────────
+   比例铁律：Hero 卡的宽度必须与专辑页 .album-grid 同档。
+   早期写法 `repeat(4, 1fr)` 把 4 列拉满页宽 → 1064px 下每卡 240px，
+   而专辑页同宽是 188.8px（+27%），一眼就是两套比例。
+   改为与 .album-grid **逐字同构**的表达式：
+       repeat(auto-fill, minmax(var(--ym-card-w), 1fr))
+   --ym-card-w 已经由容器查询（#page-container）解析为专辑页在**当前页宽**下
+   的列宽，故这里 auto-fill 的解析结果与专辑页**完全一致**：同为 n 轨、同为该列宽。
+   ⚠️ 不能用 `minmax(下限, 上限)` 的**固定上限** —— auto-fill 会优先取上限
+   （轨道"尽量大"），导致列数骤减、卡片变胖（实测 724px 下变成 2 轨 265px，
+   而专辑页是 3 轨 212px）。上限必须是 `1fr` 才会与 auto-fill 的 n 轨解一致。 */
+.ym-hero {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--ym-card-w), 1fr));
+  gap: var(--ym-rail-gap);
+  padding: 0 var(--ym-gutter);
+}
+/* Hero 内的卡拉伸到网格单元：封面 flex 吃掉剩余高度，.album-info 固定在底部。
+   （grid 只拉伸卡片整体，若封面仍是 aspect-ratio:1 会在底部露白） */
+.ym-hero .ym-card {
+  width: auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.ym-hero .ym-card-art { flex: 1; min-height: 0; aspect-ratio: auto; }
+.ym-hero .ym-card--lead { grid-row: span 2; grid-column: span 2; }
+/* 大卡字级只放大标题一档；meta/badge 与 rail 卡同号 ——
+   M3E 的层级靠容器尺寸与留白，不靠把每行字都撑大。 */
+.ym-hero .ym-card--lead .album-name { font-size: 17px; }
+.ym-hero .ym-card--lead .ym-card-play { width: 44px; height: 44px; }
+.ym-hero .ym-card--lead .ym-card-play .material-symbols-rounded { font-size: 26px; }
+
+/* ── Hero 的稀疏分支 ──
+   轨道数由 auto-fill 随页宽解析，小卡按 1 轨自然流动。
+   数据不足时（小卡 1~3 张）最后一行的右侧会留空轨 —— 这与 .album-grid
+   行末留空是同一现象，属正常栅格行为，不再用 :has() 强行收列
+   （收列会让卡片宽度偏离 --ym-card-w，反而破坏比例一致性）。 */
+
+/* 大卡独占整行（推荐与探索都空）：封面回到宽幅比例，占满内容宽。
+   auto-fill 轨道是 `minmax(--ym-card-w, 1.25×)`，`1 / -1` 只能跨到解析出的
+   轨道数，未必等于内容宽 → 独占时改回单列满宽。 */
+.ym-hero:has(> .ym-card:only-child) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.ym-hero > .ym-card--lead:only-child {
+  grid-row: auto;
+  grid-column: 1 / -1;
+}
+.ym-hero > .ym-card--lead:only-child .ym-card-art { aspect-ratio: 21 / 8; flex: none; }
+
+/* 通栏卡（探索降级位）：宽封面 + 下方信息块，与 .album-card 同构。
+   宽度交给栅格（跨满一行），不再硬编码 min-width。 */
+.ym-card--wide {
+  width: 100%;
+  grid-column: 1 / -1;
+}
+.ym-card--wide .ym-card-art { aspect-ratio: 21 / 8; }
+
+/* ── Genre Mosaic Cover (multi-album geometric layout) ──────────────────── */
 
 .ym-mosaic-wrapper {
   width: 100%;
@@ -6782,10 +7810,7 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   gap: 2px;
   background: var(--md-surface-container-high);
 }
-.ym-mosaic-cover .ym-mosaic-cell {
-  overflow: hidden;
-  position: relative;
-}
+.ym-mosaic-cover .ym-mosaic-cell { overflow: hidden; position: relative; }
 .ym-mosaic-cover .ym-mosaic-cell img {
   width: 100%;
   height: 100%;
@@ -6794,151 +7819,239 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
 }
 
 /* 1 image: full bleed */
-.ym-mosaic-cover:has(.m1) {
-  grid-template: 1fr / 1fr;
-}
+.ym-mosaic-cover:has(.m1) { grid-template: 1fr / 1fr; }
 /* 2 images: left/right halves */
-.ym-mosaic-cover:has(.m2-l) {
-  grid-template: 1fr / 1fr 1fr;
-}
+.ym-mosaic-cover:has(.m2-l) { grid-template: 1fr / 1fr 1fr; }
 /* 3 images: left big + right top/bottom */
-.ym-mosaic-cover:has(.m3-l) {
-  grid-template: 1fr 1fr / 1fr 1fr;
-}
-.ym-mosaic-cover .m3-l {
-  grid-row: 1 / span 2;
-}
+.ym-mosaic-cover:has(.m3-l) { grid-template: 1fr 1fr / 1fr 1fr; }
+.ym-mosaic-cover .m3-l { grid-row: 1 / span 2; }
 /* 4 images: 2×2 grid */
-.ym-mosaic-cover:has(.m4-tl) {
-  grid-template: 1fr 1fr / 1fr 1fr;
+.ym-mosaic-cover:has(.m4-tl) { grid-template: 1fr 1fr / 1fr 1fr; }
+
+/* 最近播放：直接复用全局 .track-row（由 App.utils.trackRow 生成），
+   与 history / liked 等页完全一致 —— 这里不定义任何私有样式。 */
+
+/* ── 听歌统计 ─────────────────────────────────────────────────────────── */
+
+.ym-stats-wrap { padding: 0 var(--ym-gutter); }
+
+.ym-stats-overview {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+.ym-stat-card {
+  background: var(--md-surface-container);
+  /* M3E 形状阶梯：形状随容器尺寸放大。
+     统计卡是「整块面板」量级（比卡片大得多），按阶梯取 corner-extra-large(28)，
+     与卡片 corner-large(16) 形成清晰的两级——这是 M3E 的表达力所在。 */
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ym-stat-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--md-on-surface-variant);
+}
+.ym-stat-icon {
+  font-size: 18px;
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 18;
+}
+.ym-stat-label { font-size: 12px; }
+.ym-stat-value {
+  margin-top: 4px;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.6px;
+  color: var(--md-on-surface);
+  line-height: 1.15;
+}
+.ym-stat-unit {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--md-on-surface-variant);
+  margin-left: 3px;
 }
 
-/* ── Detail page mosaic (200×200) ──────────────────────────────── */
-
-.ym-mix-detail-cover .ym-mosaic-wrapper {
-  width: 100%;
-  height: 100%;
+/* Chart card */
+.ym-stats-chart-card {
+  margin-top: 16px;
+  background: var(--md-surface-container);
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  padding: 20px 22px;
 }
-.ym-mix-cover-letter {
-  font-size: 38px;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.9);
+.ym-stats-subtitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--md-on-surface);
+  margin: 0 0 16px;
 }
-.ym-mix-overlay {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(to top, rgba(0,0,0,0.45) 0%, transparent 50%);
+.ym-chart {
   display: flex;
   align-items: flex-end;
-  justify-content: flex-end;
-  padding: 8px;
-  opacity: 0;
-  transition: opacity var(--motion-short) var(--ease-standard);
+  gap: 10px;
+  height: 132px;
 }
-.ym-mix-play-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--shape-full);
-  border: none;
-  background: var(--md-primary);
-  color: var(--md-on-primary);
-  cursor: pointer;
+.ym-chart-bar-wrap {
+  flex: 1;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+}
+.ym-chart-bar-area {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-  transition: transform var(--motion-short) var(--ease-standard);
+  min-height: 0;
+  width: 100%;
 }
-.ym-mix-play-btn:hover { transform: scale(1.1); }
-.ym-mix-play-btn:active { transform: scale(0.95); }
-.ym-mix-play-btn .material-symbols-rounded { font-size: 20px; }
-
-.ym-mix-type-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
+.ym-chart-bar {
+  width: 100%;
+  max-width: 44px;
+  border-radius: var(--shape-sm) var(--shape-sm) var(--shape-xs) var(--shape-xs);
+  background: var(--md-primary);
+  min-height: 4px;
+  position: relative;
+  transition: background var(--motion-effects-fast);
+}
+.ym-chart-bar-wrap:hover .ym-chart-bar {
+  background: var(--md-primary-container);
+}
+.ym-chart-bar-count {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
   font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
-  color: var(--md-on-surface-variant);
-  background: var(--md-surface-container-high);
-  padding: 2px 6px;
-  border-radius: 6px;
-  margin-bottom: 4px;
-}
-.ym-mix-type-icon {
-font-size: 12px !important;
-}
-.ym-mix-info {
-  padding: 8px 10px 10px;
-}
-.ym-mix-name {
-  font-size: 12px;
   font-weight: 600;
+  color: var(--md-on-surface-variant);
+  margin-bottom: 2px;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity var(--motion-effects-fast);
+  pointer-events: none;
+}
+.ym-chart-bar-wrap:hover .ym-chart-bar-count { opacity: 1; }
+.ym-chart-bar-label {
+  font-size: 10px;
+  color: var(--md-on-surface-variant);
+  white-space: nowrap;
+  text-align: center;
+  margin-top: 8px;
+}
+
+/* Top lists */
+.ym-stats-lists {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+.ym-top-list {
+  background: var(--md-surface-container);
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  padding: 20px 22px;
+}
+.ym-top-list-body { display: flex; flex-direction: column; gap: 13px; }
+.ym-top-item { display: flex; align-items: center; gap: 12px; }
+.ym-top-rank {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--md-on-surface-variant);
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.ym-top-item-body { flex: 1; min-width: 0; }
+.ym-top-item-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+.ym-top-item-name {
+  font-size: 13px;
+  font-weight: 500;
   color: var(--md-on-surface);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin: 0 0 2px;
+  flex: 1;
+  min-width: 0;
 }
-.ym-mix-meta {
+.ym-top-item-sub {
   font-size: 11px;
   color: var(--md-on-surface-variant);
-  margin: 0;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
-
-/* ── Abstract Art Cover (Apple Music style) ─────────────────── */
-
-.ym-mix-cover-art {
-  background: var(--md-surface-container-high);
-  /* SVG 内部自渐变，此背景仅用于加载前的占位 */
-}
-.ym-mix-cover-art svg {
-  display: block;
+.ym-top-item-bar-bg {
   width: 100%;
+  height: 3px;
+  border-radius: var(--shape-full);
+  background: color-mix(in srgb, var(--md-on-surface) 10%, transparent);
+  overflow: hidden;
+}
+.ym-top-item-bar {
   height: 100%;
+  border-radius: var(--shape-full);
+  background: var(--md-primary);
+  transition: width var(--motion-long) var(--ease-standard);
 }
 
-/* ── Mix Detail Page ───────────────────────────────────────── */
-
-.ym-mix-detail-page {
-  padding: 0 0 24px;
+/* ── Empty States ─────────────────────────────────────────────────────── */
+/* 空态**完全复用全站 `.empty-state`**（见上方 § 空态）——
+   DOM 固定 `.empty-icon + .empty-title + .empty-sub`，
+   与 albums / history / playlists 逐字同构，探新不另造任何私有空态类。
+   仅一条收敛：Hero 空态直接坐在卡片位上（宽 ≈ 一张卡），
+   72px 的全局图标会顶爆这个比例，故在 Hero 语境下收到 40px。 */
+.ym-hero > .empty-state {
+  grid-column: 1 / -1;
+  background: var(--md-surface-container);
+  border-radius: var(--ym-card-radius);
+  margin: 0 var(--ym-gutter);
 }
+.ym-hero > .empty-state .empty-icon { font-size: 40px; }
 
+/* ── Mix Detail Page ───────────────────────────────────────────────────── */
+
+.ym-mix-detail-page { padding: 0 0 24px; }
+/* 详情页头部与全站 `.detail-header`（歌单 / 专辑 / 艺人详情）同构：
+   同样的 28px gap、208px 封面、24px 封面圆角、底部 1px 分隔线。
+   原先探新自造了一套（200px 封面 / 24px 内缩 / 无分隔线 / 标题 700 字重），
+   比例和其余详情页对不上。 */
 .ym-mix-detail-header {
   display: flex;
   align-items: flex-end;
-  gap: 24px;
+  gap: 28px;
   padding: 24px 28px 20px;
+  margin-bottom: 4px;
 }
-
 .ym-mix-detail-cover {
-  width: 200px;
-  height: 200px;
-  border-radius: var(--shape-lg);
+  width: 208px;
+  height: 208px;
+  border-radius: var(--md-sys-shape-corner-extra-large);
   overflow: hidden;
   flex-shrink: 0;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+  outline: 1px solid color-mix(in srgb, var(--md-outline-variant) 45%, transparent);
+  outline-offset: -1px;
 }
-.ym-mix-detail-cover svg {
-display: block;
-width: 100%;
-height: 100%;
-}
+.ym-mix-detail-cover svg,
 .ym-mix-detail-cover img {
-display: block;
-width: 100%;
-height: 100%;
-object-fit: cover;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
-
-.ym-mix-detail-meta {
-  flex: 1;
-  min-width: 0;
-  padding-bottom: 8px;
-}
-
+.ym-mix-detail-cover .ym-mosaic-wrapper { height: 100%; }
+.ym-mix-detail-meta { flex: 1; min-width: 0; padding-bottom: 8px; }
 .ym-mix-detail-badge {
   display: inline-flex;
   align-items: center;
@@ -6950,33 +8063,29 @@ object-fit: cover;
   color: var(--md-on-surface-variant);
   background: var(--md-surface-container-high);
   padding: 3px 8px;
-  border-radius: 6px;
+  border-radius: var(--shape-full);
   margin-bottom: 8px;
 }
-.ym-mix-detail-badge .material-symbols-rounded {
-  font-size: 14px;
-}
-
+.ym-mix-detail-badge .material-symbols-rounded { font-size: 14px; }
+/* 标题按 M3E emphasized headline（与 .page-title 同档），不再用 700 字重。
+   M3E 的「大字轻」是 500，700 会让它比全站标题明显更重。 */
 .ym-mix-detail-title {
   font-size: 28px;
-  font-weight: 700;
+  font-weight: var(--md-sys-typescale-emphasized-headline-font-weight);
+  letter-spacing: -0.3px;
+  line-height: 1.2;
   color: var(--md-on-surface);
   margin: 0 0 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
 .ym-mix-detail-sub {
   font-size: 13px;
   color: var(--md-on-surface-variant);
   margin: 0 0 12px;
 }
-
-.ym-mix-detail-actions {
-  display: flex;
-  gap: 10px;
-}
+.ym-mix-detail-actions { display: flex; gap: 10px; }
 
 /* ── Playlists Submenu: Mix entry & section headers ────────── */
 
@@ -7010,227 +8119,6 @@ object-fit: cover;
   opacity: 0.5;
 }
 
-/* ── Recent Plays List ────────────────────────────────────── */
-
-.ym-recent-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0 16px;
-}
-
-/* ── Statistics ────────────────────────────────────────────── */
-
-.ym-stats-container {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.ym-stats-overview {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-}
-
-.ym-stat-card {
-  background: var(--md-surface-container);
-  border-radius: var(--shape-lg);
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  text-align: center;
-}
-.ym-stat-icon {
-  font-size: 28px;
-  color: var(--md-primary);
-  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 28;
-  margin-bottom: 4px;
-}
-.ym-stat-value {
-  font-size: 32px;
-  font-weight: 700;
-  color: var(--md-on-surface);
-  line-height: 1.1;
-}
-.ym-stat-unit {
-  font-size: 16px;
-  font-weight: 500;
-  color: var(--md-on-surface-variant);
-  margin-left: 2px;
-}
-.ym-stat-label {
-  font-size: 12px;
-  color: var(--md-on-surface-variant);
-}
-
-/* Chart card */
-.ym-stats-chart-card {
-  background: var(--md-surface-container);
-  border-radius: var(--shape-lg);
-  padding: 20px 24px;
-}
-.ym-stats-subtitle {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--md-on-surface);
-  margin: 0 0 16px;
-}
-.ym-chart {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  height: 140px;
-}
-.ym-chart-bar-wrap {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-width: 0;
-}
-.ym-chart-bar-area {
-  flex: 1;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  min-height: 0;
-  width: 100%;
-}
-.ym-chart-bar {
-  width: 100%;
-  max-width: 40px;
-  border-radius: var(--shape-sm) var(--shape-sm) 0 0;
-  background: var(--md-primary);
-  min-height: 4px;
-  position: relative;
-  transition: background var(--motion-short) var(--ease-standard),
-              opacity var(--motion-short) var(--ease-standard);
-  opacity: 0.85;
-}
-.ym-chart-bar-wrap:hover .ym-chart-bar {
-  opacity: 1;
-}
-.ym-chart-bar-count {
-  position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--md-on-surface-variant);
-  margin-bottom: 2px;
-  white-space: nowrap;
-  opacity: 0;
-  transition: opacity var(--motion-short) var(--ease-standard);
-  pointer-events: none;
-}
-.ym-chart-bar-wrap:hover .ym-chart-bar-count {
-  opacity: 1;
-}
-.ym-chart-bar-label {
-  font-size: 10px;
-  color: var(--md-on-surface-variant);
-  white-space: nowrap;
-  text-align: center;
-  margin-top: 6px;
-}
-
-/* Top lists */
-.ym-stats-lists {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 16px;
-}
-
-.ym-top-list {
-  background: var(--md-surface-container);
-  border-radius: var(--shape-lg);
-  padding: 20px 24px;
-}
-
-.ym-top-list-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.ym-top-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.ym-top-rank {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--md-on-surface-variant);
-  width: 20px;
-  text-align: center;
-  flex-shrink: 0;
-}
-.ym-top-item-body {
-  flex: 1;
-  min-width: 0;
-}
-.ym-top-item-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
-}
-.ym-top-item-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--md-on-surface);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-  min-width: 0;
-}
-.ym-top-item-sub {
-  font-size: 11px;
-  color: var(--md-on-surface-variant);
-  flex-shrink: 0;
-}
-.ym-top-item-bar-bg {
-  width: 100%;
-  height: 4px;
-  border-radius: var(--shape-full);
-  background: var(--md-surface-container-highest);
-  overflow: hidden;
-}
-.ym-top-item-bar {
-  height: 100%;
-  border-radius: var(--shape-full);
-  background: var(--md-primary);
-  transition: width var(--motion-medium) var(--ease-standard);
-}
-
-/* ── Empty States ──────────────────────────────────────────── */
-
-.ym-empty-section {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 40px 20px;
-  text-align: center;
-  color: var(--md-on-surface-variant);
-}
-.ym-empty-icon {
-  font-size: 48px;
-  opacity: 0.4;
-  margin-bottom: 12px;
-}
-.ym-empty-section p {
-  font-size: 14px;
-  margin: 0;
-}
 
 /* ── Remote Playlists Styles ───────────────────────────────────────────────────── */
 .page-title-with-badge {
@@ -7400,11 +8288,13 @@ body.gamepad-connected .title-bar-center {
 /* ── 手柄焦点高亮 ───────────────────────────────────────────── */
 
 .gp-focused {
-  outline: 2px solid var(--md-primary, #6750A4) !important;
-  outline-offset: -2px !important;
-  border-radius: var(--shape-small, 8px);
-  background: var(--md-state-hover, rgba(103, 80, 164, 0.08)) !important;
-  box-shadow: 0 0 0 2px var(--md-primary, #6750A4), 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+  /* 手柄焦点沿用 M3E focus ring 规格（3px / secondary / 外扩）；原实现叠加了
+     outline 与 box-shadow 两道环，视觉上重复，这里统一为单道 */
+  outline: var(--m3e-focus-ring-thickness) solid var(--m3e-focus-ring-color) !important;
+  outline-offset: calc(var(--m3e-focus-ring-outward-offset) * -1) !important;
+  border-radius: var(--shape-sm);
+  background: var(--md-state-hover) !important;
+  box-shadow: var(--md-sys-elevation-level2) !important;
   transition: outline 100ms, background 100ms, box-shadow 100ms, transform 100ms;
   z-index: 1;
 }
@@ -7415,7 +8305,7 @@ body.gamepad-connected .title-bar-center {
 .folder-item.gp-focused,
 .playlist-item.gp-focused {
   transform: translateY(-3px) scale(1.02);
-  box-shadow: 0 0 0 3px var(--md-primary, #6750A4), 0 4px 16px rgba(0, 0, 0, 0.2) !important;
+  box-shadow: var(--md-sys-elevation-level4) !important;
 }
 
 .gp-focused.gp-pressed {
@@ -7505,7 +8395,7 @@ body.onboarding-active .app-shell {
   grid-template-columns: 1fr 0;
 }
 body.onboarding-active .now-playing-pane { display: none; }
-body.onboarding-active .content-pane { padding-bottom: 0; }
+body.onboarding-active .content-pane { padding-bottom: 0; margin-left: 8px; }
 body.onboarding-active .mini-player { display: none; }
 body.onboarding-active .mini-btn-expand { display: none; }
 body.onboarding-active.np-fullscreen .title-bar { position: relative; }
@@ -7613,6 +8503,8 @@ body.onboarding-active .title-bar-settings { display: none; }
 }
 .onboarding-content {
   padding-bottom: 24px;
+  /* 与设置页同源：卡片撑到岛右缘（2026-10-04 起设置页已取消右侧 248px 对称留白，
+     引导页同步取消，两页卡片右端都落在岛右缘）。 */
 }
 .onboarding-content--enter {
   animation: onboarding-fade-in var(--motion-medium) var(--ease-decel);

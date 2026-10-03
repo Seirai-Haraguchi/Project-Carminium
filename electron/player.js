@@ -14,6 +14,20 @@ const { SHARE_SHARED, SHARE_EXCLUSIVE } = require('./wasapi');
 // WASAPI 独占モードは Windows 専用。Linux (PulseAudio/ALSA) / macOS (CoreAudio) では無効。
 const IS_WIN = process.platform === 'win32';
 
+// 队列广播用的轻量投影：省略 lyrics。
+// 队列 UI 只渲染 标题/艺术家/专辑/时长/封面，不读歌词；
+// 而 lyrics 是内嵌 LRC 文本（常 2-8KB/首），大队列下它会占队列 JSON 的 90%+ 体积。
+// 逐首浅拷贝一次即可（成本远低于少序列化几 MB），且不修改 _queue 本体，
+// 因此 track_changed 仍能拿到完整字段。
+function _stripLyricsForQueue(track) {
+  if (!track || track.lyrics === undefined) return track;
+  const out = {};
+  for (const k in track) {
+    if (k !== 'lyrics') out[k] = track[k];
+  }
+  return out;
+}
+
 class MusicPlayer extends EventEmitter {
   constructor(settings = null, library = null, renderer = null) {
     super();
@@ -481,7 +495,11 @@ class MusicPlayer extends EventEmitter {
 
   _emitQueueChanged() {
     const data = {
-      queue: this._queue,
+      // 队列 UI（now_playing / floating）只消费 id / title / artist / album /
+      // duration_ms / has_cover，不读 lyrics。剥离它可让大队列的
+      // JSON 序列化与 IPC 传输量下降一个数量级（内嵌 LRC 常 2-8KB/首）。
+      // 真正需要歌词的是 track_changed，那条路径由 bridge 按 id 回填。
+      queue: this._queue.map(_stripLyricsForQueue),
       current_index: this._current_index,
     };
     this.emit('queue_changed', JSON.stringify(data));

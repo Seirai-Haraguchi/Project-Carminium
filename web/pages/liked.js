@@ -36,10 +36,16 @@
 
     const searchInput = document.getElementById('liked-search');
     searchInput.value = searchText;
+    // 防抖：每敲一个字符都会全量过滤 + 重建列表 DOM。
+    var _searchDebounceTimer = null;
     searchInput.addEventListener('input', function (e) {
       searchText = e.target.value;
       filterStr = searchText.trim().toLowerCase();
-      _renderList();
+      if (_searchDebounceTimer) clearTimeout(_searchDebounceTimer);
+      _searchDebounceTimer = setTimeout(function () {
+        _searchDebounceTimer = null;
+        _renderList();
+      }, 180);
     });
 
     document.getElementById('btn-play-liked').addEventListener('click', function () {

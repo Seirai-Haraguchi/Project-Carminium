@@ -738,13 +738,17 @@
   }
 
   function _renderNavItems() {
-    return _buildSections().map(function (section) {
-      return '' +
-        '<button class="settings-nav-item" type="button" data-section="' + section.id + '">' +
-          '<span class="material-symbols-rounded settings-nav-icon">' + (section.icon || 'tune') + '</span>' +
-          '<span class="settings-nav-label" data-i18n="' + section.titleKey + '">' + _t(section.titleKey) + '</span>' +
-        '</button>';
-    }).join('');
+    // 左侧导航 = M3E segmented list（.md-seglist）：项间 2dp 缝，
+    // 首项顶角/末项底角放大到 large(16)，选中项四角落 large(16) 并填 secondary-container。
+    return '<div class="md-seglist settings-nav-list" role="tablist">' +
+      _buildSections().map(function (section) {
+        return '' +
+          '<button class="settings-nav-item" type="button" role="tab" data-section="' + section.id + '">' +
+            '<span class="material-symbols-rounded settings-nav-icon">' + (section.icon || 'tune') + '</span>' +
+            '<span class="settings-nav-label" data-i18n="' + section.titleKey + '">' + _t(section.titleKey) + '</span>' +
+          '</button>';
+      }).join('') +
+    '</div>';
   }
 
   function _bindNav() {
@@ -951,26 +955,142 @@
   }
 
   // ── 渲染辅助 ─────────────────────────────────────────────────────────────
+  // 右侧每个分组 = 分组标题 + 若干 .md-seglist。
+  // 「普通行」连续成段；eq / memory_info 是整宽控制块，切段另起（保持原位置）。
+  // notice 例外：它是条件性提示（默认 display:none），留在段内 ——
+  //   若把它当切段点，隐藏时会把一段撕成两个 1px 段并留下假缝。
+  //   display:none 的 flex 子项不参与 gap，隐藏时该段自然合拢。
+  var STANDALONE_ROW_TYPES = { eq: 1, memory_info: 1 };
+
   function _renderGroup(group) {
-    const rowsHtml = group.rows.map(_renderRow).join('');
-    return `
-      <div class="settings-group-header" data-i18n="${group.titleKey}">${_t(group.titleKey)}</div>
-      ${rowsHtml}
-    `;
+    var html = '<div class="settings-group-header" data-i18n="' + group.titleKey + '">' + _t(group.titleKey) + '</div>';
+
+    var run = [];
+    function flush() {
+      if (!run.length) return;
+      html += '<div class="md-seglist">' + run.join('') + '</div>';
+      run = [];
+    }
+
+    group.rows.forEach(function (row) {
+      if (STANDALONE_ROW_TYPES[row.type]) {
+        flush();
+        html += _renderRow(row);
+        return;
+      }
+      run.push(_renderRow(row));
+    });
+    flush();
+
+    return html;
   }
 
   function _renderEmptyHint() {
     return `
-      <div class="settings-row settings-row-empty">
-        <p class="settings-row-sub">` + _t('settings.about.emptyHint') + `</p>
+      <div class="md-seglist">
+        <div class="settings-row settings-row-empty">
+          <p class="settings-row-sub">` + _t('settings.about.emptyHint') + `</p>
+        </div>
       </div>
     `;
+  }
+
+  // ── M3E list item 渲染辅助 ────────────────────────────────────────────────
+  // bind（或快捷键行的 action）→ Material Symbols 图标名，作为列表项 leading icon。
+  // 未列出的项不渲染图标槽。新增图标后必须重跑 scripts/subset_fonts.py。
+  var ROW_ICONS = {
+    // 外观与视觉
+    theme: 'contrast',
+    color_scheme: 'palette',
+    monet_source: 'wallpaper',
+    language: 'language',
+    ui_font: 'text_fields',
+    circular_cover: 'album',
+    wave_progress: 'graphic_eq',
+    video_background: 'movie',
+    np_default_view: 'view_agenda',
+    lyrics_font: 'lyrics',
+    lyrics_jp_font: 'translate',
+    lyrics_jp_use_distinct: 'translate',
+    lyrics_progressive_blur: 'blur_on',
+    lyrics_center: 'format_align_center',
+    lyrics_font_size: 'format_size',
+    lyrics_credit_filters: 'filter_alt',
+    // 音频和库
+    wasapi_exclusive: 'speaker',
+    audio_output_device: 'headphones',
+    eq_enabled: 'graphic_eq',
+    eq_bands: 'equalizer',
+    dynamic_bass: 'piano',
+    compressor_enabled: 'compress',
+    hearing_protection: 'hearing',
+    vocal_enhance: 'mic',
+    guitar_friendly: 'music_note',
+    vbe_enabled: 'auto_awesome',
+    artist_separators: 'call_split',
+    tag_editor_path: 'edit_note',
+    // 自动化与控制
+    shuffle: 'shuffle',
+    resume_playback: 'play_circle',
+    automix: 'auto_awesome',
+    radical_transitions: 'bolt',
+    gapless: 'link',
+    smtc_lyrics: 'subtitles',
+    gamepad_button_layout: 'sports_esports',
+    // 快捷键行（按 action 取图标）
+    play_pause: 'play_pause',
+    next_track: 'skip_next',
+    prev_track: 'skip_previous',
+    volume_up: 'volume_up',
+    volume_down: 'volume_down',
+    toggle_like: 'favorite',
+    toggle_mute: 'volume_off',
+    // 系统与调试
+    memory_optimization: 'memory',
+    _debug_show_platform: 'memory',
+    _debug_toggle_traffic: 'api',
+    _debug_test_confirm: 'help',
+    _debug_test_toast: 'notifications',
+    _debug_test_alert: 'warning',
+    _debug_ipc_devices: 'speaker',
+    _debug_ipc_settings: 'settings',
+    _debug_reload: 'refresh',
+    _debug_lock: 'lock',
+  };
+
+  function _rowIcon(row) {
+    if (row.icon) return row.icon;
+    if (row.type === 'shortcut' && row.action) return ROW_ICONS[row.action] || '';
+    return ROW_ICONS[row.bind] || '';
+  }
+  // 右栏设置行不渲染前导图标（2026-10-03）：左端图标 + 右端控件
+  // 把一行挤成"两端顶满"，文案左侧没有留白，读起来压迫。
+  // 图标语义已由分组标题承载；需要强调的项用 label 加粗即可。
+  // 如需恢复：把下面 return '' 换成渲染 _rowIcon(row) 的 span。
+  function _rowIconHtml(row) {
+    return '';
+  }
+  // 主文案 + 支持文案；无支持文案时不渲染，以区分 one-line 56dp / two-line 72dp
+  function _rowHeadingHtml(row) {
+    return '<p class="settings-row-label">' + row.label + '</p>' +
+      (row.sub ? '<p class="settings-row-sub">' + row.sub + '</p>' : '');
+  }
+  // 主文案槽；text / file_picker 行的输入控件与文案同槽纵向排列
+  function _rowBodyHtml(row, innerHtml) {
+    var inner = innerHtml || '';
+    if (row.type === 'text' || row.type === 'file_picker') {
+      return '<div class="settings-row-body">' +
+        '<div class="settings-row-heading">' + _rowHeadingHtml(row) + '</div>' +
+        inner +
+      '</div>';
+    }
+    return '<div class="settings-row-body">' + _rowHeadingHtml(row) + inner + '</div>';
   }
 
   function _renderRow(row) {
     if (row.type === 'memory_info') {
       return '' +
-        '<div class="settings-row settings-memory-info" data-bind="' + row.bind + '">' +
+        '<div class="settings-row settings-row-full settings-memory-info" data-bind="' + row.bind + '">' +
           '<div class="settings-memory-stats" id="memory-stats-display">' +
             '<p class="settings-row-sub">加载中…</p>' +
           '</div>' +
@@ -995,22 +1115,21 @@
       `;
     }
     if (row.type === 'select') {
-      var defaultLabel = '';
       var optsHtml = row.options.map(function (o) {
         return '<div class="md-dropdown-item" data-value="' + o.value + '" role="menuitem">' + o.label + '</div>';
       }).join('');
       return `
         <div class="settings-row" data-bind="${row.bind}">
-          <div>
-            <p class="settings-row-label">${row.label}</p>
-            <p class="settings-row-sub">${row.sub || ''}</p>
-          </div>
-          <div class="md-dropdown md-select-dropdown" data-bind="${row.bind}">
-            <button class="md-dropdown-trigger" type="button" aria-haspopup="true" aria-expanded="false">
-              <span class="md-dropdown-value">—</span>
-              <span class="material-symbols-rounded md-dropdown-arrow">arrow_drop_down</span>
-            </button>
-            <div class="md-dropdown-menu" role="menu">${optsHtml}</div>
+          ${_rowIconHtml(row)}
+          ${_rowBodyHtml(row)}
+          <div class="settings-row-trailing">
+            <div class="md-dropdown md-select-dropdown" data-bind="${row.bind}">
+              <button class="md-dropdown-trigger" type="button" aria-haspopup="true" aria-expanded="false">
+                <span class="md-dropdown-value">—</span>
+                <span class="material-symbols-rounded md-dropdown-arrow">arrow_drop_down</span>
+              </button>
+              <div class="md-dropdown-menu" role="menu">${optsHtml}</div>
+            </div>
           </div>
         </div>
       `;
@@ -1019,46 +1138,41 @@
       const disabledAttr = row.disabled ? 'disabled' : '';
       return `
         <div class="settings-row" data-bind="${row.bind}">
-          <div>
-            <p class="settings-row-label">${row.label}</p>
-            <p class="settings-row-sub">${row.sub || ''}</p>
+          ${_rowIconHtml(row)}
+          ${_rowBodyHtml(row)}
+          <div class="settings-row-trailing">
+            <label class="toggle">
+              <input type="checkbox" data-bind="${row.bind}" ${disabledAttr}>
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </label>
           </div>
-          <label class="toggle">
-            <input type="checkbox" data-bind="${row.bind}" ${disabledAttr}>
-            <div class="toggle-track"></div>
-            <div class="toggle-thumb"></div>
-          </label>
         </div>
       `;
     }
     if (row.type === 'text') {
+      var textInputHtml = '<input type="text" class="settings-font-input" data-bind="' + row.bind +
+        '" placeholder="' + (row.placeholder || '') + '">';
       return `
         <div class="settings-row settings-row-text" data-bind="${row.bind}">
-          <div>
-            <p class="settings-row-label">${row.label}</p>
-            <p class="settings-row-sub">${row.sub || ''}</p>
-          </div>
-          <input type="text" class="settings-font-input" data-bind="${row.bind}"
-                 placeholder="${row.placeholder || ''}">
+          ${_rowIconHtml(row)}
+          ${_rowBodyHtml(row, textInputHtml)}
         </div>
       `;
     }
     if (row.type === 'file_picker') {
+      var pickerHtml = '<div class="settings-file-picker-control">' +
+        '<input type="text" class="settings-font-input" data-bind="' + row.bind +
+          '" placeholder="' + (row.placeholder || '') + '">' +
+        '<button class="md-text-btn settings-file-picker-btn" type="button" data-bind="' + row.bind + '">' +
+          '<span class="material-symbols-rounded">folder_open</span>' +
+          '<span>' + (row.pickLabel || '浏览') + '</span>' +
+        '</button>' +
+      '</div>';
       return `
         <div class="settings-row settings-row-text settings-row-file-picker" data-bind="${row.bind}">
-          <div>
-            <p class="settings-row-label">${row.label}</p>
-            <p class="settings-row-sub">${row.sub || ''}</p>
-          </div>
-          <div class="settings-file-picker-control">
-            <input type="text" class="settings-font-input" data-bind="${row.bind}"
-                   placeholder="${row.placeholder || ''}">
-            <button class="md-text-btn settings-file-picker-btn" type="button"
-                    data-bind="${row.bind}">
-              <span class="material-symbols-rounded">folder_open</span>
-              <span>${row.pickLabel || '浏览'}</span>
-            </button>
-          </div>
+          ${_rowIconHtml(row)}
+          ${_rowBodyHtml(row, pickerHtml)}
         </div>
       `;
     }
@@ -1066,16 +1180,16 @@
       const defaultLabel = App.utils.esc(row.placeholder || _t('settings.outputDevice.default'));
       return `
         <div class="settings-row" data-bind="${row.bind}">
-          <div>
-            <p class="settings-row-label">${row.label}</p>
-            <p class="settings-row-sub">${row.sub || ''}</p>
-          </div>
-          <div class="md-dropdown" data-bind="${row.bind}">
-            <button class="md-dropdown-trigger" type="button" aria-haspopup="true" aria-expanded="false">
-              <span class="md-dropdown-value" data-default="${defaultLabel}">${defaultLabel}</span>
-              <span class="material-symbols-rounded md-dropdown-arrow">arrow_drop_down</span>
-            </button>
-            <div class="md-dropdown-menu" role="menu"></div>
+          ${_rowIconHtml(row)}
+          ${_rowBodyHtml(row)}
+          <div class="settings-row-trailing">
+            <div class="md-dropdown" data-bind="${row.bind}">
+              <button class="md-dropdown-trigger" type="button" aria-haspopup="true" aria-expanded="false">
+                <span class="md-dropdown-value" data-default="${defaultLabel}">${defaultLabel}</span>
+                <span class="material-symbols-rounded md-dropdown-arrow">arrow_drop_down</span>
+              </button>
+              <div class="md-dropdown-menu" role="menu"></div>
+            </div>
           </div>
         </div>
       `;
@@ -1083,28 +1197,28 @@
     if (row.type === 'shortcut') {
       return `
         <div class="settings-row settings-row-shortcut" data-bind="${row.bind}" data-action="${row.action}">
-          <div>
-            <p class="settings-row-label">${row.label}</p>
-            <p class="settings-row-sub">${row.sub || ''}</p>
+          ${_rowIconHtml(row)}
+          ${_rowBodyHtml(row)}
+          <div class="settings-row-trailing">
+            <button class="settings-shortcut-value" type="button" data-action="${row.action}" data-default="${_t('shortcut.notSet')}">
+              <span class="settings-shortcut-keys">${_t('shortcut.notSet')}</span>
+              <span class="material-symbols-rounded settings-shortcut-edit">edit</span>
+            </button>
           </div>
-      <button class="settings-shortcut-value" type="button" data-action="${row.action}" data-default="${_t('shortcut.notSet')}">
-        <span class="settings-shortcut-keys">${_t('shortcut.notSet')}</span>
-            <span class="material-symbols-rounded settings-shortcut-edit">edit</span>
-          </button>
         </div>
       `;
     }
     if (row.type === 'slider') {
       return `
         <div class="settings-row settings-row-slider" data-bind="${row.bind}">
-          <div>
-            <p class="settings-row-label">${row.label}</p>
-            <p class="settings-row-sub">${row.sub || ''}</p>
-          </div>
-          <div class="settings-slider-control">
-            <input type="range" class="settings-slider" data-bind="${row.bind}"
-                   min="${row.min}" max="${row.max}" step="${row.step || 1}">
-            <span class="settings-slider-value" data-bind="${row.bind}">${row.min}</span>
+          ${_rowIconHtml(row)}
+          ${_rowBodyHtml(row)}
+          <div class="settings-row-trailing">
+            <div class="settings-slider-control">
+              <input type="range" class="settings-slider" data-bind="${row.bind}"
+                     min="${row.min}" max="${row.max}" step="${row.step || 1}">
+              <span class="settings-slider-value" data-bind="${row.bind}">${row.min}</span>
+            </div>
           </div>
         </div>
       `;
@@ -1122,7 +1236,7 @@
         `;
       }).join('');
       return `
-        <div class="settings-eq-fullwidth" data-bind="${row.bind}">
+        <div class="settings-row-full settings-eq-fullwidth" data-bind="${row.bind}">
           <div class="settings-eq-bands">
             ${slidersHtml}
           </div>
@@ -1132,14 +1246,14 @@
     if (row.type === 'action') {
       return `
         <div class="settings-row settings-row-action" data-bind="${row.bind || '_action'}">
-          <div>
-            <p class="settings-row-label">${row.label}</p>
-            <p class="settings-row-sub">${row.sub || ''}</p>
+          ${_rowIconHtml(row)}
+          ${_rowBodyHtml(row)}
+          <div class="settings-row-trailing">
+            <button class="btn-outlined settings-action-btn" type="button" data-action-key="${row.bind || '_action'}">
+              <span class="material-symbols-rounded">${row.buttonIcon || 'play_arrow'}</span>
+              <span>${row.buttonText || ''}</span>
+            </button>
           </div>
-          <button class="btn-outlined settings-action-btn" type="button" data-action-key="${row.bind || '_action'}">
-            <span class="material-symbols-rounded">${row.buttonIcon || 'play_arrow'}</span>
-            <span>${row.buttonText || ''}</span>
-          </button>
         </div>
       `;
     }
