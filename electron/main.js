@@ -483,34 +483,180 @@ if (app && process.platform === 'win32') {
     console.warn('[main] Failed to set process AUMID via koffi:', e.message);
   }
 
-  const { execFileSync } = require('child_process');
   // 探针分段日志：定位受限环境下的启动挂点（生产不设变量即静默）
   const _probeLog = process.env.CARMINIUM_MEM_PROBE
     ? (s) => console.log('[main][probe-step]', s) : () => {};
   _probeLog('after-process-aumid');
 
-  // 辅助函数：执行 reg 命令并捕获错误
-  function _reg(args) {
-    // 探针模式（CARMINIUM_MEM_PROBE 由内存测量脚本注入）：跳过全部注册表
-    // spawnSync —— 受限环境下 reg.exe 可能不是快速失败而是无限挂起，会把
-    // 启动流程卡死在 AUMID 注册阶段。生产环境不设该变量，行为不变。
-    if (process.env.CARMINIUM_MEM_PROBE) return { ok: false, output: '', error: 'probe-skip' };
+  // ── 注册表直写（koffi / advapi32，启动路径零子进程）────────────────────────
+  // 以前 _reg 通过 execFileSync('reg', ...) 实现，Start Menu 快捷方式则每次启动
+  // 都 spawn 一个 powershell.exe（-ExecutionPolicy Bypass + Add-Type C# COM）。
+  // 便携版是未签名 exe 自解压到 %TEMP% 运行，「temp 内未签名进程 + 大量子进程
+  // spawn + 注册表写入 + PowerShell Bypass」正好命中 Windows Defender 的机器
+  // 学习行为检测：v1.1.3.1 实测被误判为 Trojan:Win32/Sabsik.FL.A!ml，窗口出现
+  // 数秒后整棵进程树被强杀（用户看到的"秒闪退"），exe 本体随后被隔离。
+  // 改为 koffi 直接调用 advapi32，启动路径上不再产生任何子进程。
+  const _regApi = (() => {
     try {
-      const output = execFileSync('reg', args, {
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-      });
-      return { ok: true, output };
+      const koffi = require('koffi');
+      const adv = koffi.load('advapi32.dll');
+      const U32P = koffi.pointer('uint32');
+      const U16P = koffi.pointer('uint16');
+      const U8P = koffi.pointer('uint8');
+      const UPTRP = koffi.pointer('uintptr');
+      const api = {
+        HKCU: 0x80000001,
+        KEY_READ: 0x20019,
+        KEY_WRITE: 0x20006,
+        REG_SZ: 1,
+        ERROR_FILE_NOT_FOUND: 2,
+        createKey: adv.func('RegCreateKeyExW', 'int32',
+          ['uintptr', 'str16', 'uint32', 'uintptr', 'uint32', 'uint32', 'uintptr', UPTRP, 'uintptr']),
+        openKey: adv.func('RegOpenKeyExW', 'int32',
+          ['uintptr', 'str16', 'uint32', 'uint32', UPTRP]),
+        setValue: adv.func('RegSetValueExW', 'int32',
+          ['uintptr', 'str16', 'uint32', 'uint32', U8P, 'uint32']),
+        deleteValue: adv.func('RegDeleteValueW', 'int32', ['uintptr', 'str16']),
+        queryValue: adv.func('RegQueryValueExW', 'int32',
+          ['uintptr', 'str16', 'uintptr', U32P, U8P, U32P]),
+        queryInfo: adv.func('RegQueryInfoKeyW', 'int32',
+          ['uintptr', 'uintptr', 'uintptr', 'uintptr', U32P, 'uintptr', 'uintptr',
+           U32P, 'uintptr', 'uintptr', 'uintptr', 'uintptr']),
+        enumKey: adv.func('RegEnumKeyExW', 'int32',
+          ['uintptr', 'uint32', U16P, U32P, 'uintptr', 'uintptr', 'uintptr', 'uintptr']),
+        enumValue: adv.func('RegEnumValueW', 'int32',
+          ['uintptr', 'uint32', U16P, U32P, 'uintptr', U32P, U8P, U32P]),
+        deleteTree: adv.func('RegDeleteTreeW', 'int32', ['uintptr', 'str16']),
+        close: adv.func('RegCloseKey', 'int32', ['uintptr']),
+      };
+      // 打开（或创建）HKCU\<subPath>，成功返回句柄数字，失败返回 null。
+      api.openOrCreate = (subPath, sam) => {
+        const h = Buffer.alloc(8);
+        let hr = api.openKey(api.HKCU, subPath, 0, sam, h);
+        if (hr !== 0) hr = api.createKey(api.HKCU, subPath, 0, 0, 0, sam, 0, h, 0);
+        return hr === 0 ? Number(h.readBigUInt64LE(0)) : null;
+      };
+      api.handleOf = (buf) => Number(buf.readBigUInt64LE(0));
+      return api;
     } catch (e) {
-      const stderr = (e.stderr || '').toString().trim();
-      console.warn('[main] reg command failed:', args.join(' '), stderr || e.message);
-      return { ok: false, output: '', error: stderr || e.message };
+      console.warn('[main] koffi registry init failed:', e.message);
+      return null;
     }
+  })();
+
+  // 解析 'HKCU\Software\...' → 'Software\...'；仅支持 HKCU（本应用只写 HKCU）。
+  function _splitRegPath(fullKey) {
+    const m = /^(?:HKCU|HKEY_CURRENT_USER)\\(.+)$/i.exec(String(fullKey || ''));
+    return m ? m[1] : null;
   }
 
-  function _escapePowerShellSingleQuoted(value) {
-    return String(value || '').replace(/'/g, "''");
+  // 辅助函数：注册表读写（保持与旧 reg.exe 版本相同的调用约定与返回结构）。
+  // 支持：ADD <key> /v <name> /t REG_SZ /d <data> /f
+  //       DELETE <key> /v <name> /f
+  //       DELETE <key> /f            （删除整个键）
+  //       QUERY <key>                （枚举子键 + 值）
+  function _reg(args) {
+    // 探针模式（CARMINIUM_MEM_PROBE 由内存测量脚本注入）：跳过全部注册表
+    // 操作 —— 受限环境下写注册表可能被 broker 挂起，把启动流程卡死在
+    // AUMID 注册阶段。生产环境不设该变量，行为不变。
+    if (process.env.CARMINIUM_MEM_PROBE) return { ok: false, output: '', error: 'probe-skip' };
+    const A = _regApi;
+    if (!A) return { ok: false, output: '', error: 'registry api unavailable' };
+    const op = String(args[0] || '').toUpperCase();
+    const fullKey = String(args[1] || '');
+    try {
+      const subPath = _splitRegPath(fullKey);
+      if (!subPath) return { ok: false, output: '', error: 'unsupported root key: ' + fullKey };
+
+      if (op === 'ADD') {
+        const vi = args.indexOf('/v');
+        const di = args.indexOf('/d');
+        if (vi === -1 || di === -1 || di <= vi) {
+          return { ok: false, output: '', error: 'bad ADD args' };
+        }
+        const name = String(args[vi + 1] || '');
+        const data = String(args[di + 1] ?? '');
+        const h = A.openOrCreate(subPath, A.KEY_WRITE);
+        if (h === null) return { ok: false, output: '', error: 'open/create failed: ' + subPath };
+        try {
+          const buf = Buffer.from(data + '\0', 'utf16le');
+          const hr = A.setValue(h, name, 0, A.REG_SZ, buf, buf.length);
+          return hr === 0 ? { ok: true, output: '' }
+                          : { ok: false, output: '', error: 'RegSetValueExW hr=' + hr };
+        } finally { A.close(h); }
+      }
+
+      if (op === 'DELETE') {
+        const vi = args.indexOf('/v');
+        if (vi !== -1) {
+          // 删除指定值；值本就不存在（ERROR_FILE_NOT_FOUND）视为成功
+          const name = String(args[vi + 1] || '');
+          const h = A.openOrCreate(subPath, A.KEY_WRITE);
+          if (h === null) return { ok: true, output: '' };
+          try {
+            const hr = A.deleteValue(h, name);
+            return (hr === 0 || hr === A.ERROR_FILE_NOT_FOUND)
+              ? { ok: true, output: '' } : { ok: false, output: '', error: 'hr=' + hr };
+          } finally { A.close(h); }
+        }
+        // 无 /v：删除整个键（reg DELETE <key> /f）
+        const cut = subPath.lastIndexOf('\\');
+        if (cut <= 0) return { ok: false, output: '', error: 'cannot delete root-level key' };
+        const parent = subPath.slice(0, cut);
+        const leaf = subPath.slice(cut + 1);
+        const h = A.openOrCreate(parent, A.KEY_WRITE);
+        if (h === null) return { ok: true, output: '' };
+        try {
+          const hr = A.deleteTree(h, leaf);
+          return (hr === 0 || hr === A.ERROR_FILE_NOT_FOUND)
+            ? { ok: true, output: '' } : { ok: false, output: '', error: 'hr=' + hr };
+        } finally { A.close(h); }
+      }
+
+      if (op === 'QUERY') {
+        const h = A.openOrCreate(subPath, A.KEY_READ);
+        if (h === null) return { ok: false, output: '', error: 'open failed: ' + subPath };
+        const lines = [];
+        try {
+          const subCnt = Buffer.alloc(4);
+          const valCnt = Buffer.alloc(4);
+          if (A.queryInfo(h, 0, 0, 0, subCnt, 0, 0, valCnt, 0, 0, 0, 0) === 0) {
+            // 子键行（旧 reg.exe 输出兼容：完整路径，供调用方解析）
+            for (let i = 0; i < subCnt.readUInt32LE(0); i++) {
+              const nameBuf = Buffer.alloc(512);
+              const nameLen = Buffer.alloc(4); nameLen.writeUInt32LE(256);
+              if (A.enumKey(h, i, nameBuf, nameLen, 0, 0, 0, 0) === 0) {
+                const name = nameBuf.toString('utf16le', 0, nameLen.readUInt32LE(0) * 2);
+                lines.push(fullKey + '\\' + name);
+              }
+            }
+            // 值行："<name>    REG_SZ    <data>"
+            for (let i = 0; i < valCnt.readUInt32LE(0); i++) {
+              const nameBuf = Buffer.alloc(512);
+              const nameLen = Buffer.alloc(4); nameLen.writeUInt32LE(256);
+              const typeBuf = Buffer.alloc(4);
+              const dataBuf = Buffer.alloc(2048);
+              const dataSize = Buffer.alloc(4); dataSize.writeUInt32LE(2048);
+              if (A.enumValue(h, i, nameBuf, nameLen, 0, typeBuf, dataBuf, dataSize) === 0) {
+                const vName = nameBuf.toString('utf16le', 0, nameLen.readUInt32LE(0) * 2);
+                const vType = typeBuf.readUInt32LE(0);
+                const vLen = dataSize.readUInt32LE(0);
+                const vData = vType === A.REG_SZ
+                  ? dataBuf.toString('utf16le', 0, Math.max(0, vLen - 2))
+                  : '(binary)';
+                lines.push('    ' + vName + '    REG_SZ    ' + vData);
+              }
+            }
+          }
+        } finally { A.close(h); }
+        return { ok: true, output: lines.join('\n') };
+      }
+
+      return { ok: false, output: '', error: 'unsupported op: ' + op };
+    } catch (e) {
+      console.warn('[main] registry op failed:', args.join(' '), e.message);
+      return { ok: false, output: '', error: e.message };
+    }
   }
 
   function _sanitizeShortcutName(name) {
@@ -521,185 +667,33 @@ if (app && process.platform === 'win32') {
     return normalized || APP_DISPLAY_NAME;
   }
 
+  // ── 3.5. Start Menu 快捷方式 ──
+  // Windows Shell 对"可见应用名"的解析更依赖 Start Menu 中已注册的应用项。
+  // 对便携 / 未打包为 MSIX 的应用，仅设置 AUMID 往往仍会显示"未知应用"。
+  // 使用 Electron 自带的 shell.writeShortcutLink()（内部封装 IShellLink COM，
+  // 且支持写入 PKEY_AppUserModel_ID），取代原先每次启动 spawn 一个
+  // Windows 脚本解释器（Bypass 执行策略 + Add-Type C# COM interop）创建
+  // 快捷方式的做法 —— 该行为组合是 Defender 行为检测的强触发器。
   function _ensureStartMenuShortcut(aumid, displayName, targetPath, iconPath) {
     if (!aumid || !displayName || !targetPath) return null;
-
+    const appDataDir = process.env.APPDATA;
+    if (!appDataDir) return null;
     const shortcutName = _sanitizeShortcutName(displayName);
-    const script = `
-$ErrorActionPreference = 'Stop'
-$shortcutName = '${_escapePowerShellSingleQuoted(shortcutName)}'
-$targetPath = '${_escapePowerShellSingleQuoted(targetPath)}'
-$aumid = '${_escapePowerShellSingleQuoted(aumid)}'
-$iconPath = '${_escapePowerShellSingleQuoted(iconPath || '')}'
-$workingDir = [System.IO.Path]::GetDirectoryName($targetPath)
-$startMenuDir = [Environment]::GetFolderPath('Programs')
-$shortcutPath = Join-Path $startMenuDir ($shortcutName + '.lnk')
-
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.ComTypes;
-
-[ComImport, Guid("00021401-0000-0000-C000-000000000046")]
-internal class CShellLink {}
-
-[ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("000214F9-0000-0000-C000-000000000046")]
-internal interface IShellLinkW
-{
-    void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder pszFile, int cch, out WIN32_FIND_DATAW pfd, uint fFlags);
-    void GetIDList(out IntPtr ppidl);
-    void SetIDList(IntPtr pidl);
-    void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder pszName, int cch);
-    void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string pszName);
-    void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder pszDir, int cch);
-    void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string pszDir);
-    void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder pszArgs, int cch);
-    void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string pszArgs);
-    void GetHotkey(out short pwHotkey);
-    void SetHotkey(short wHotkey);
-    void GetShowCmd(out int piShowCmd);
-    void SetShowCmd(int iShowCmd);
-    void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder pszIconPath, int cch, out int piIcon);
-    void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string pszIconPath, int iIcon);
-    void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string pszPathRel, uint dwReserved);
-    void Resolve(IntPtr hwnd, uint fFlags);
-    void SetPath([MarshalAs(UnmanagedType.LPWStr)] string pszFile);
-}
-
-[ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("0000010b-0000-0000-C000-000000000046")]
-internal interface IPersistFile
-{
-    void GetClassID(out Guid pClassID);
-    void IsDirty();
-    void Load([MarshalAs(UnmanagedType.LPWStr)] string pszFileName, uint dwMode);
-    void Save([MarshalAs(UnmanagedType.LPWStr)] string pszFileName, bool fRemember);
-    void SaveCompleted([MarshalAs(UnmanagedType.LPWStr)] string pszFileName);
-    void GetCurFile([MarshalAs(UnmanagedType.LPWStr)] out string ppszFileName);
-}
-
-[ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")]
-internal interface IPropertyStore
-{
-    uint GetCount(out uint cProps);
-    uint GetAt(uint iProp, out PROPERTYKEY pkey);
-    uint GetValue(ref PROPERTYKEY key, out PROPVARIANT pv);
-    uint SetValue(ref PROPERTYKEY key, ref PROPVARIANT pv);
-    uint Commit();
-}
-
-[StructLayout(LayoutKind.Sequential)]
-internal struct PROPERTYKEY
-{
-    public Guid fmtid;
-    public uint pid;
-
-    public PROPERTYKEY(Guid formatId, uint propertyId)
-    {
-        fmtid = formatId;
-        pid = propertyId;
-    }
-}
-
-[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-internal struct WIN32_FIND_DATAW
-{
-    public uint dwFileAttributes;
-    public System.Runtime.InteropServices.ComTypes.FILETIME ftCreationTime;
-    public System.Runtime.InteropServices.ComTypes.FILETIME ftLastAccessTime;
-    public System.Runtime.InteropServices.ComTypes.FILETIME ftLastWriteTime;
-    public uint nFileSizeHigh;
-    public uint nFileSizeLow;
-    public uint dwReserved0;
-    public uint dwReserved1;
-    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
-    public string cFileName;
-    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 14)]
-    public string cAlternateFileName;
-}
-
-[StructLayout(LayoutKind.Explicit)]
-internal struct PROPVARIANT
-{
-    [FieldOffset(0)]
-    public ushort vt;
-    [FieldOffset(8)]
-    public IntPtr pointerValue;
-
-    public static PROPVARIANT FromString(string value)
-    {
-        var pv = new PROPVARIANT();
-        pv.vt = 31; // VT_LPWSTR
-        pv.pointerValue = Marshal.StringToCoTaskMemUni(value);
-        return pv;
-    }
-
-    public void Clear()
-    {
-        PropVariantClear(ref this);
-    }
-
-    [DllImport("ole32.dll")]
-    private static extern int PropVariantClear(ref PROPVARIANT pvar);
-}
-
-public static class ShortcutHelper
-{
-    private static readonly PROPERTYKEY PKEY_AppUserModel_ID =
-        new PROPERTYKEY(new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), 5);
-
-    public static void CreateShortcut(string shortcutPath, string targetPath, string workingDir, string displayName, string iconPath, string aumid)
-    {
-        var shellLink = (IShellLinkW)new CShellLink();
-        shellLink.SetPath(targetPath);
-        shellLink.SetWorkingDirectory(workingDir);
-        shellLink.SetDescription(displayName);
-        if (!string.IsNullOrWhiteSpace(iconPath))
-        {
-            shellLink.SetIconLocation(iconPath, 0);
-        }
-
-        var propertyStore = (IPropertyStore)shellLink;
-        var appIdVariant = PROPVARIANT.FromString(aumid);
-        try
-        {
-            var appUserModelIdKey = PKEY_AppUserModel_ID;
-            uint hr = propertyStore.SetValue(ref appUserModelIdKey, ref appIdVariant);
-            if (hr != 0) Marshal.ThrowExceptionForHR((int)hr);
-            hr = propertyStore.Commit();
-            if (hr != 0) Marshal.ThrowExceptionForHR((int)hr);
-        }
-        finally
-        {
-            appIdVariant.Clear();
-        }
-
-        ((IPersistFile)shellLink).Save(shortcutPath, true);
-    }
-}
-'@
-
-[ShortcutHelper]::CreateShortcut($shortcutPath, $targetPath, $workingDir, $shortcutName, $iconPath, $aumid)
-Write-Output $shortcutPath
-`;
-
-    // 探针模式跳过（同 _reg：受限环境下 powershell spawnSync 可能无限挂起）
-    if (process.env.CARMINIUM_MEM_PROBE) return null;
+    const programsDir = path.join(appDataDir, 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+    const shortcutPath = path.join(programsDir, shortcutName + '.lnk');
     try {
-      const output = execFileSync('powershell.exe', [
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy', 'Bypass',
-        '-STA',
-        '-Command', script,
-      ], {
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
+      const operation = fs.existsSync(shortcutPath) ? 'update' : 'create';
+      const ok = shell.writeShortcutLink(shortcutPath, operation, {
+        target: targetPath,
+        cwd: path.dirname(targetPath),
+        description: displayName,
+        icon: iconPath || targetPath,
+        iconIndex: 0,
+        appUserModelId: aumid,
       });
-      return output.trim().split(/\r?\n/).filter(Boolean).pop() || null;
+      return ok ? shortcutPath : null;
     } catch (e) {
-      const stderr = (e.stderr || '').toString().trim();
-      console.warn('[main] Failed to create Start Menu shortcut:', stderr || e.message);
+      console.warn('[main] Failed to create Start Menu shortcut:', e.message);
       return null;
     }
   }
@@ -844,9 +838,13 @@ Write-Output $shortcutPath
   //   1. 在任务管理器中显示应用图标
   //   2. 将所有具有相同 AUMID 的进程折叠到同一个条目下
   //
-  // ⚠️ 重要：Portable 模式下 exe 被解压到临时目录（如 Temp\...），每次路径不同。
-  // 如果 IconResource 指向临时路径，下次运行时路径失效，任务管理器无法分组。
-  // 解决方案：找到解压后的实际 electron.exe 并复制到稳定路径（%APPDATA%\Carminium\app.exe）。
+  // ⚠️ Portable 模式：IconResource 指向 %APPDATA%\Carminium\ 下的稳定 .ico。
+  // 🔴 不再把解压后的 electron.exe（~180MB）复制到 AppData：进程启动后
+  // 「temp 目录里的未签名 exe 把一个 PE 文件拷贝到 AppData」是杀软行为
+  // 检测最典型的 dropper 特征（Sabsik.FL.A!ml 的强触发器），这正是
+  // v1.1.3.1 起动数秒被强杀的诱因之一。.ico 同样可作为 IconResource 的
+  // 图标来源；任务管理器分组主要依赖 AUMID / TaskManagerAppId 注册表值
+  // 本身存在（同 AUMID 的进程天然折叠），与该值指向哪个文件无关。
   const iconExePath = process.execPath || '';
   let iconResourceValue = null;
   let iconResourceSource = 'direct';
@@ -856,71 +854,10 @@ Write-Output $shortcutPath
     const isPortable = iconExePath.toLowerCase().includes('\\temp\\') ||
                        iconExePath.toLowerCase().includes('\\tmp\\');
 
-    if (isPortable && appDataDir) {
-      // Portable 模式：找到解压后的实际 electron.exe
-      // electron-builder portable 会将内容解压到临时目录，结构如下：
-      //   Temp\xxx\  ← 临时目录（process.execPath 指向这里的 stub exe）
-      //   Temp\xxx\app.exe  ← 实际的 electron.exe（重命名后的）
-      // 我们需要找到这个实际的 exe，而不是自解压 stub
-      let actualExePath = iconExePath;
-      const exeDir = path.dirname(iconExePath);
-
-      // 尝试找到同目录下的实际应用 exe（非 stub）
-      // electron-builder portable 的 stub 通常很小（<1MB），而实际 exe 较大（>100MB）
-      try {
-        const stubStat = fs.statSync(iconExePath);
-        if (stubStat.size < 5 * 1024 * 1024) { // 小于 5MB 认为是 stub
-          // 查找同目录下最大的 .exe 文件（实际 electron.exe）
-          const entries = fs.readdirSync(exeDir);
-          let largestExe = null;
-          let largestSize = 0;
-          for (const entry of entries) {
-            if (entry.toLowerCase().endsWith('.exe')) {
-              const entryPath = path.join(exeDir, entry);
-              try {
-                const stat = fs.statSync(entryPath);
-                if (stat.isFile() && stat.size > largestSize) {
-                  largestSize = stat.size;
-                  largestExe = entryPath;
-                }
-              } catch { /* ignore */ }
-            }
-          }
-          if (largestExe && largestExe !== iconExePath) {
-            actualExePath = largestExe;
-            console.log('[main] Found actual exe in portable temp dir:', actualExePath, 'size:', largestSize);
-          }
-        }
-      } catch (e) {
-        console.warn('[main] Failed to find actual exe in portable dir:', e.message);
-      }
-
-      // 将实际 exe 复制到稳定路径
-      const stableExeDir = path.join(appDataDir, 'Carminium');
-      const stableExePath = path.join(stableExeDir, 'Carminium.exe');
-
-      try {
-        if (!fs.existsSync(stableExeDir)) {
-          fs.mkdirSync(stableExeDir, { recursive: true });
-        }
-        // 复制 exe（如果文件不存在或大小不同）
-        let needCopy = true;
-        if (fs.existsSync(stableExePath)) {
-          const srcStat = fs.statSync(actualExePath);
-          const dstStat = fs.statSync(stableExePath);
-          needCopy = srcStat.size !== dstStat.size || srcStat.mtime.getTime() !== dstStat.mtime.getTime();
-        }
-        if (needCopy) {
-          fs.copyFileSync(actualExePath, stableExePath);
-          console.log('[main] Copied portable exe to stable path:', stableExePath);
-        }
-        iconResourceValue = `${stableExePath},0`;
-        iconResourceSource = 'stable-copy';
-      } catch (e) {
-        console.warn('[main] Failed to copy exe to stable path:', e.message);
-        // 回退到直接使用实际 exe 路径（至少当前会话有效）
-        iconResourceValue = `${actualExePath},0`;
-      }
+    if (isPortable && iconUriValue) {
+      // Portable 模式：指向稳定 .ico（前面第 1 步已生成）
+      iconResourceValue = `${iconUriValue},0`;
+      iconResourceSource = 'stable-ico';
     } else {
       // 开发模式或已安装模式：直接使用 exe 路径
       iconResourceValue = `${iconExePath},0`;

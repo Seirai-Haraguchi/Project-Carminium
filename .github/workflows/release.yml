@@ -596,6 +596,10 @@ jobs:
           name: Carminium ${{ inputs.tag }}
           prerelease: ${{ inputs.prerelease }}
           draft: ${{ inputs.draft }}
+          # 允许对已存在的 release 重跑并替换同名资产
+          # （例如修复打包产物后原版本号重新发布）。
+          allowUpdates: true
+          replace_artifacts: true
           generate_release_notes: true
           body: |
             > ${{ steps.hitokoto.outputs.text }}
