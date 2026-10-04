@@ -56,6 +56,11 @@
 
   var _blobCache = new Map();      // key(track_id + '\0' + size) → { url, timestamp, status }
   // status: 'ready' | 'loading' | 'error' | 'no-cover'
+  // 负缓存（'no-cover'/'error'）的存续时长：超过后允许重新请求封面。
+  // 主进程端的"无封面"结论多数是确定的（0 字节磁盘标记），但 IO 类失败
+  // （文件被独占 / 网络盘断开）是临时的 —— 用 TTL 兜住后者，避免一次失败
+  // 就让封面在本次会话内永久消失。
+  var _NO_COVER_TTL_MS = 60 * 1000;
   var _colorCache = new Map();     // track_id → [[r,g,b], ...] (16 colors)
   var _loadingQueue = new Set();   // 正在加载的 key
   var _pendingCallbacks = {};     // key → [callbacks]
@@ -313,12 +318,20 @@
     // 已缓存
     var entry = _blobCache.get(key);
     if (entry) {
-      // LRU：移到末尾并刷新 timestamp（防止 cleanupStale 误删正在使用的封面）
-      entry.timestamp = _now();
-      _blobCache.delete(key);
-      _blobCache.set(key, entry);
-      callback(entry.status === 'ready' ? entry.url : null);
-      return;
+      // 负缓存（无封面 / 加载失败）带 TTL 过期：主进程端可能的临时性失败
+      // （音频文件被其它程序独占、网络盘短暂断开、提取期 IO 错误）不应
+      // 让该封面在本会话内永久消失。过期后移出缓存，走下面的重新加载。
+      if ((entry.status === 'no-cover' || entry.status === 'error') &&
+          (entry.timestamp || 0) + _NO_COVER_TTL_MS < _now()) {
+        _blobCache.delete(key);
+      } else {
+        // LRU：移到末尾并刷新 timestamp（防止 cleanupStale 误删正在使用的封面）
+        entry.timestamp = _now();
+        _blobCache.delete(key);
+        _blobCache.set(key, entry);
+        callback(entry.status === 'ready' ? entry.url : null);
+        return;
+      }
     }
 
     // 正在加载

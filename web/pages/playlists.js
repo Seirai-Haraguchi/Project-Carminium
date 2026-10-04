@@ -304,7 +304,7 @@ owner_email: params.owner_email || null,
     dlg.innerHTML = `
       <div class="cmd-dialog-title">${App.i18n.t('playlist.renameTitle')}</div>
       <div class="cmd-dialog-body" style="padding:0 24px 12px;">
-        <input type="text" id="rename-input" class="settings-font-input" style="width:100%; box-sizing:border-box; padding:10px 12px;" value="${App.utils.esc(playlist.name)}">
+        <input type="text" id="rename-input" class="settings-font-input" style="width:100%;" value="${App.utils.esc(playlist.name)}">
       </div>
       <div class="cmd-dialog-actions">
         <button class="cmd-dialog-btn cmd-dialog-btn--cancel">${App.i18n.t('common.cancel')}</button>

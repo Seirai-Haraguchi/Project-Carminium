@@ -21,8 +21,6 @@
     iconPlay: document.getElementById('play-icon'),
     btnPrev: document.getElementById('btn-prev'),
     btnNext: document.getElementById('btn-next'),
-    btnShuffle: document.getElementById('btn-shuffle'),
-    btnRepeat: document.getElementById('btn-repeat'),
     btnQueue: document.getElementById('btn-queue'),
     btnFullscreen: document.getElementById('btn-fullscreen'),
     btnMoreDropdown: document.getElementById('btn-more-dropdown'),
@@ -40,9 +38,8 @@
     transitionMarker: document.getElementById('np-transition-label'),
     timeCur: document.getElementById('np-time-cur'),
     timeDur: document.getElementById('np-time-dur'),
-    btnLike: document.getElementById('btn-like'),
-    btnAudioMode: document.getElementById('btn-audio-mode'),
-    audioModeLabel: document.getElementById('audio-mode-label'),
+    btnLike: null,  // 已迁入功能区动态渲染（保留占位以兼容外部引用）
+    btnAudioMode: null,
     queueList: document.getElementById('np-queue-list'),
     pivotTabs: document.querySelectorAll('.np-pivot-tab'),
     pivotIndicator: document.getElementById('np-pivot-indicator'),
@@ -104,6 +101,92 @@
     lyricsSourceArrow: document.getElementById('np-lyrics-source-arrow'),
     lyricsSourceDropdown: document.getElementById('np-lyrics-source-dropdown'),
     lyricsSourceOptions: document.querySelectorAll('.np-lyrics-source-option'),
+    // 播放控制 - 辅助按钮容器（内容动态渲染）
+    secondaryControls: document.getElementById('np-secondary-controls'),
+  };
+
+  // ── 正在播放下方功能区：功能注册表 ────────────────────────────────────────
+  // 每个功能 = { id, icon, titleKey, ariaKey, onClick, isActive, isLiked }
+  // 说明：
+  //   · icon        — Material Symbols 图标名（新增图标须重跑 scripts/subset_fonts.py）
+  //   · onClick     — 点击行为（无参）
+  //   · isActive()  — 返回 true 时按钮加 .active（选中态胶囊）
+  //   · isLiked()   — 返回 true 时按钮加 .liked（喜爱态红底）；与 isActive 互斥使用
+  //   · variant     — 'audio_mode' 时按文字按钮渲染（excl/shrd）
+  // 顺序即设置页候选列表的展示顺序。
+  const NP_SECONDARY_MAX = 5;
+  const NP_SECONDARY_DEFAULT = ['shuffle', 'repeat', 'like', 'audio_mode'];
+
+  const NP_SECONDARY_ACTIONS = {
+    shuffle: {
+      id: 'shuffle', icon: 'shuffle', titleKey: 'np.shuffle', ariaKey: 'np.shuffle',
+      onClick: function () { App.backend.set_shuffle(!App.state.shuffle); },
+      isActive: function () { return !!App.state.shuffle; },
+    },
+    repeat: {
+      id: 'repeat', icon: 'repeat', titleKey: 'np.repeat', ariaKey: 'np.repeat',
+      onClick: function () {
+        var mode = 'off';
+        if (App.state.repeat === 'off') mode = 'all';
+        else if (App.state.repeat === 'all') mode = 'one';
+        App.backend.set_repeat(mode);
+      },
+      isActive: function () { return App.state.repeat === 'all' || App.state.repeat === 'one'; },
+      // repeat 的图标随模式变化（repeat / repeat_one），由 _syncActionButton 处理
+    },
+    like: {
+      id: 'like', icon: 'favorite', titleKey: 'np.like', ariaKey: 'np.like',
+      onClick: function () { App.backend.toggle_liked(); },
+      isLiked: function () { return !!_isLiked; },
+    },
+    audio_mode: {
+      id: 'audio_mode', variant: 'audio_mode',
+      icon: 'speaker', titleKey: 'np.audioMode', ariaKey: 'np.audioMode',
+      onClick: function () {
+        var btn = els.secondaryControls.querySelector('[data-action="audio_mode"]');
+        var currentOn = btn ? btn.classList.contains('active') : false;
+        np.openAudioModeDialog(!currentOn);
+      },
+      isActive: function () { return !!App.state.isExclusive; },
+    },
+    seek_back_5: {
+      id: 'seek_back_5', icon: 'replay', titleKey: 'np.seekBack5', ariaKey: 'np.seekBack5',
+      onClick: function () { _seekBy(-5); },
+      rotate180: true, // 源字体无 replay_5 等，用 replay 旋转 180° 表示后退
+      labels: '5',
+    },
+    seek_fwd_5: {
+      id: 'seek_fwd_5', icon: 'forward', titleKey: 'np.seekFwd5', ariaKey: 'np.seekFwd5',
+      onClick: function () { _seekBy(5); },
+      labels: '5', // 角标文字
+    },
+    seek_back_30: {
+      id: 'seek_back_30', icon: 'replay', titleKey: 'np.seekBack30', ariaKey: 'np.seekBack30',
+      onClick: function () { _seekBy(-30); },
+      rotate180: true, labels: '30',
+    },
+    seek_fwd_30: {
+      id: 'seek_fwd_30', icon: 'forward', titleKey: 'np.seekFwd30', ariaKey: 'np.seekFwd30',
+      onClick: function () { _seekBy(30); },
+      labels: '30',
+    },
+    audio_settings: {
+      id: 'audio_settings', icon: 'graphic_eq', titleKey: 'np.audioSettings', ariaKey: 'np.audioSettings',
+      onClick: function () { _openAudioSettings(); },
+    },
+    mute: {
+      id: 'mute', icon: 'volume_up', titleKey: 'np.mute', ariaKey: 'np.mute',
+      onClick: function () { _toggleMuteFromNp(); },
+      isMuted: function () { return _isMuted; },
+    },
+    floating: {
+      id: 'floating', icon: 'picture_in_picture', titleKey: 'np.floating', ariaKey: 'np.floating',
+      onClick: function () { App.backend.toggle_floating_window(); },
+    },
+    fullscreen: {
+      id: 'fullscreen', icon: 'fullscreen', titleKey: 'np.fullView', ariaKey: 'np.fullView',
+      onClick: function () { _toggleFullscreen(); },
+    },
   };
 
 let duration = 0;
@@ -151,6 +234,16 @@ let _lastKnownPositionMs = 0;
 
   // デフォルト復元ビュー：'side' | 'fullscreen'
   let _npDefaultView = 'side';
+
+  // ── 正在播放下方功能区状态 ───────────────────────────────────────────────
+  // 当前配置的功能 id 有序数组（由 settings.np_secondary_actions 驱动）
+  let _secondaryActionIds = NP_SECONDARY_DEFAULT.slice();
+  // 收藏状态（由 np.updateLiked 维护）与静音状态（由音量同步维护），
+  // 供动态渲染的功能按钮读取 isLiked()/isMuted()
+  let _isLiked = false;
+  let _isMuted = false;
+  // 事件委托绑定标记（容器替换时复位，避免重复绑定/漏绑）
+  let _secondaryControlsBound = false;
 
   // 全窗口视图内容布局：'solo'（单正在播放）| 'duo'（正在播放+歌词/播放列表）| 'lyrics'（单歌词）
   let _npContentMode = 'duo';
@@ -667,17 +760,9 @@ let _lastKnownPositionMs = 0;
     els.btnPrev.addEventListener('click', () => App.backend.prev_track());
     els.btnNext.addEventListener('click', () => App.backend.next_track());
 
-    // 模式切换
-    els.btnShuffle.addEventListener('click', function () {
-      App.backend.set_shuffle(!App.state.shuffle);
-    });
-
-    els.btnRepeat.addEventListener('click', function () {
-      let mode = 'off';
-      if (App.state.repeat === 'off') mode = 'all';
-      else if (App.state.repeat === 'all') mode = 'one';
-      App.backend.set_repeat(mode);
-    });
+    // 功能区分段按钮：动态渲染 + 事件委托（见 _bindSecondaryControls / renderSecondaryActions）
+    _bindSecondaryControls();
+    np.renderSecondaryActions(_secondaryActionIds);
 
     // Pivot タブ切り替え
     els.pivotTabs.forEach(function (tab) {
@@ -805,22 +890,12 @@ let _lastKnownPositionMs = 0;
       e.target.style.setProperty('--volume-val', `${percentage}%`);
     });
 
-    // 收藏
-    els.btnLike.addEventListener('click', function () {
-      App.backend.toggle_liked();
-    });
+    // 收藏 / 音频模式切换 已迁入功能区注册表（NP_SECONDARY_ACTIONS），
+    // 由 _bindSecondaryControls 的事件委托统一处理。
     // 底栏歌名右侧的爱心按钮：与侧边收藏共用同一状态
     if (els.miniBtnLike) {
       els.miniBtnLike.addEventListener('click', function () {
         App.backend.toggle_liked();
-      });
-    }
-
-    // 音频模式切换（excl/shrd 文字状态）
-    if (els.btnAudioMode) {
-      els.btnAudioMode.addEventListener('click', function () {
-        var currentOn = els.btnAudioMode.classList.contains('active');
-        np.openAudioModeDialog(!currentOn);
       });
     }
 
@@ -846,6 +921,12 @@ let _lastKnownPositionMs = 0;
         els.lyricsRomajiBtn.classList.toggle('active', lyricsShowRomaji);
         els.lyricsWrap.classList.toggle('hide-romaji', !lyricsShowRomaji);
       });
+    }
+    // 点击歌词跳转播放位置（事件委托：行 → 行首时间戳，词 → 该词时间戳，间奏 → 下一句）
+    if (els.lyricsWrap) {
+      els.lyricsWrap.addEventListener('mousedown', _onLyricsPress);
+      els.lyricsWrap.addEventListener('touchstart', _onLyricsPress, { passive: true });
+      els.lyricsWrap.addEventListener('click', _onLyricsClick);
     }
     // 搜索面板关闭
     if (els.lyricsSearchClose) {
@@ -988,6 +1069,7 @@ let _lastKnownPositionMs = 0;
         var v = lyricsTimeOffset;
         els.lyricsOffsetValue.textContent = (v > 0 ? '+' : '') + v + 'ms';
       }
+      _refreshLyricTimeLabels();
     }
 
     function _openLyricsSettings() {
@@ -1220,8 +1302,9 @@ let _lastKnownPositionMs = 0;
       App.state.currentDominantRgb = null;
       _setBgCover(null, App.utils.hashColor(track.album || track.title));
     }
-    els.btnLike.classList.remove('liked');
-    els.btnLike.querySelector('.material-symbols-rounded').classList.remove('icon-filled');
+    // 切歌时重置喜爱状态（功能区 ♥ 由 _syncSecondaryActions 刷新）
+    _isLiked = false;
+    _syncSecondaryActions();
 
     // Mini player sync
     if (!track) {
@@ -1332,6 +1415,8 @@ let _lastKnownPositionMs = 0;
       dots.push(dot);
     }
     el.appendChild(dotsWrap);
+    // 点击间奏 → 跳到下一句（尾奏 nextStart 为 Infinity，不参与点击）
+    if (isFinite(nextStart)) el.dataset.nextTime = String(nextStart);
     return { start: start, end: end, nextStart: nextStart, lineIdx: lineIdx, el: el, wrap: dotsWrap, dots: dots };
   }
 
@@ -1485,6 +1570,10 @@ let _lastKnownPositionMs = 0;
         var lineHasJp = /[\u3040-\u309F\u30A0-\u30FF]/.test(line.text);
         var div = document.createElement('div');
         div.className = 'np-lyrics-line';
+        // 行级时间戳：点击整行跳转用（逐字歌词的词级时间戳见 _appendWords）
+        div.dataset.time = String(line.time);
+        // hover 提示用：显示补偿偏移后的实际跳转位置
+        div.dataset.timeLabel = _formatSeekTarget(line.time);
         _applyLineFont(div, lineHasJp && useJpDistinct, baseFont, jpFont);
         if (line.words && line.words.length) {
           _appendWords(div, line.words);
@@ -2251,9 +2340,11 @@ let _lastKnownPositionMs = 0;
       for (var j = 0; j < lines.length; j++) {
         lines[j].classList.remove('active', 'past');
         if (j < idx) lines[j].classList.add('past');
-        // will-change 收窄：仅激活行 ±2 行挂合成层提示（np-near），
-        // 其余行静态不提升，fullscreen 可见行多时显著减少合成层常驻内存
-        lines[j].classList.toggle('np-near', j >= idx - 2 && j <= idx + 2);
+        // will-change / filter 过渡收窄：仅激活行 ±4 行挂 np-near。
+        // 基类的 transition 已不含 filter（见 style.css），因此只有这 9 行会
+        // 被提升为合成层。±4 的依据：_blurForDistance 档位为 0/1.5/3/4.5/6，
+        // 距离 ≥4 即封顶 6px 不再变化，blur 过渡只可能发生在此范围内。
+        lines[j].classList.toggle('np-near', j >= idx - 4 && j <= idx + 4);
       }
       if (lines[idx]) lines[idx].classList.add('active');
 
@@ -2514,6 +2605,232 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
     }
   };
 
+  // ── 正在播放下方功能区：动态渲染 ──────────────────────────────────────────
+  // 按当前配置（_secondaryActionIds）重建容器内容。每个按钮带 data-action，
+  // 点击统一走事件委托；状态（active/liked/muted）由 _syncSecondaryActions 刷新。
+  // 语义：排序即显示顺序；仅渲染注册表内存在的 id（过滤脏数据）。
+  function _normalizeActionIds(list) {
+    var out = [];
+    var seen = {};
+    (Array.isArray(list) ? list : []).forEach(function (id) {
+      if (typeof id !== 'string') return;
+      if (!NP_SECONDARY_ACTIONS[id]) return;   // 非白名单，丢弃
+      if (seen[id]) return;                    // 去重
+      if (out.length >= NP_SECONDARY_MAX) return; // 截断到上限
+      seen[id] = 1;
+      out.push(id);
+    });
+    return out;
+  }
+
+  function _actionButtonHtml(action) {
+    var title = App.i18n.t(action.titleKey);
+    var aria = App.i18n.t(action.ariaKey || action.titleKey);
+    if (action.variant === 'audio_mode') {
+      return '<button class="np-audio-mode-btn np-secondary-btn" type="button" data-action="' + action.id +
+        '" aria-label="' + aria + '" title="' + title + '">' +
+        '<span class="np-audio-mode-label">shrd</span>' +
+      '</button>';
+    }
+    var iconStyle = action.rotate180 ? ' style="transform:rotate(180deg)"' : '';
+    var badge = action.labels
+      ? '<span class="np-secondary-badge">' + action.labels + '</span>'
+      : '';
+    return '<button class="icon-btn np-secondary-btn" type="button" data-action="' + action.id +
+      '" aria-label="' + aria + '" title="' + title + '">' +
+      '<span class="material-symbols-rounded"' + iconStyle + '>' + action.icon + '</span>' +
+      badge +
+    '</button>';
+  }
+
+  // 容器可能在页面重挂载后被替换：每次访问时校验引用是否仍在文档中，
+  // 失联则重查（并按需重新绑定事件委托），避免渲染进脱离文档的旧节点。
+  function _ensureSecondaryControls() {
+    if (els.secondaryControls && els.secondaryControls.isConnected) return els.secondaryControls;
+    els.secondaryControls = document.getElementById('np-secondary-controls');
+    _secondaryControlsBound = false;   // 新容器需重新挂委托
+    return els.secondaryControls;
+  }
+
+  np.renderSecondaryActions = function (ids) {
+    var host = _ensureSecondaryControls();
+    if (!host) return;
+    if (!_secondaryControlsBound) _bindSecondaryControls();
+    if (ids !== undefined && ids !== null) {
+      var norm = _normalizeActionIds(ids);
+      // 空配置（未自定义过）→ 使用默认四项，保证功能区内始终有内容
+      _secondaryActionIds = norm.length ? norm : NP_SECONDARY_DEFAULT.slice();
+    }
+    var html = _secondaryActionIds.map(function (id) {
+      return _actionButtonHtml(NP_SECONDARY_ACTIONS[id]);
+    }).join('');
+    host.innerHTML = html;
+    _syncSecondaryActions();
+  };
+
+  // 暴露当前生效的配置（供设置页读取展示）
+  np.getSecondaryActions = function () {
+    return _secondaryActionIds.slice();
+  };
+  np.NP_SECONDARY_ACTIONS = NP_SECONDARY_ACTIONS;
+  np.NP_SECONDARY_MAX = NP_SECONDARY_MAX;
+
+  // 刷新每个已渲染按钮的图标 / 状态类（切歌、音量、模式变化时调用）
+  function _syncSecondaryActions() {
+    var host = _ensureSecondaryControls();
+    if (!host) return;
+    host.querySelectorAll('[data-action]').forEach(function (btn) {
+      var action = NP_SECONDARY_ACTIONS[btn.dataset.action];
+      if (!action) return;
+
+      // 音频模式按钮：更新 excl/shrd 文字
+      if (action.variant === 'audio_mode') {
+        var label = btn.querySelector('.np-audio-mode-label');
+        var on = action.isActive ? action.isActive() : false;
+        if (label) label.textContent = on ? 'excl' : 'shrd';
+        btn.classList.toggle('active', on);
+        var t = App.i18n.t(on ? 'np.exclusiveMode' : 'np.sharedMode');
+        btn.setAttribute('title', t);
+        return;
+      }
+
+      // 图标随状态变化的按钮
+      var iconEl = btn.querySelector('.material-symbols-rounded');
+      if (action.id === 'repeat') {
+        var rep = App.state.repeat;
+        if (iconEl) iconEl.textContent = (rep === 'one') ? 'repeat_one' : 'repeat';
+      } else if (action.id === 'mute') {
+        var muted = action.isMuted ? action.isMuted() : false;
+        if (iconEl) iconEl.textContent = muted ? 'volume_off' : 'volume_up';
+      }
+
+      // 状态类
+      if (action.isLiked) {
+        var liked = action.isLiked();
+        btn.classList.toggle('liked', liked);
+        btn.classList.toggle('active', false);
+        if (iconEl) iconEl.classList.toggle('icon-filled', liked);
+      } else if (action.isActive) {
+        btn.classList.toggle('active', action.isActive());
+      }
+    });
+  }
+
+  // 事件委托：容器内任意 [data-action] 点击 → 分发到注册表
+  // 幂等：同一容器只挂一次（幂等标记在容器被替换后由 _ensureSecondaryControls 复位）
+  function _bindSecondaryControls() {
+    var host = _ensureSecondaryControls();
+    if (!host || _secondaryControlsBound) return;
+    _secondaryControlsBound = true;
+    host.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-action]');
+      if (!btn || !host.contains(btn)) return;
+      var action = NP_SECONDARY_ACTIONS[btn.dataset.action];
+      if (action && action.onClick) action.onClick();
+    });
+  }
+
+  // ── 功能区功能：快进/快退 ────────────────────────────────────────────────
+  // 跳过 N 秒（正数前进、负数后退），范围钳制在 [0, duration]。
+  function _seekBy(seconds) {
+    if (!duration) return;
+    var target = _lastKnownPositionMs + seconds * 1000;
+    target = Math.max(0, Math.min(duration, target));
+    App.backend.seek(Math.floor(target));
+    if (App.utils && App.utils.toast) {
+      var sign = seconds > 0 ? '+' : '−';
+      App.utils.toast(sign + Math.abs(seconds) + 's');
+    }
+  }
+
+  // ── 歌词点击跳转 ────────────────────────────────────────────────────────
+  // 优先级：逐字歌词的词（dataset.time，最精确）> 整行（行首时间戳）> 间奏（跳到下一句）。
+  // 时间偏移反解：_updateLyrics 里 adjustedPos = posMs - lyricsTimeOffset，
+  // 要让 adjustedPos 落在目标时间上，seek 位置必须加上偏移。
+  let _lyricPress = null;
+  function _onLyricsPress(e) {
+    _lyricPress = { x: e.clientX, y: e.clientY };
+  }
+  // hover 提示文本：补偿偏移 + 钳制到曲长，与 _onLyricsClick 的目标位置算法一致
+  function _formatSeekTarget(lyricMs) {
+    if (!App.utils || !App.utils.formatDuration) return '';
+    var pos = Math.max(0, Math.min(duration || Infinity, lyricMs + lyricsTimeOffset));
+    return App.utils.formatDuration(pos);
+  }
+  // 偏移被用户调整后，所有行的 hover 提示都要重算（行数可达数千，故一次性遍历）
+  function _refreshLyricTimeLabels() {
+    if (!els.lyricsWrap) return;
+    var lines = els.lyricsWrap.querySelectorAll('.np-lyrics-line[data-time]');
+    for (var i = 0; i < lines.length; i++) {
+      lines[i].dataset.timeLabel = _formatSeekTarget(parseInt(lines[i].dataset.time, 10));
+    }
+  }
+  function _onLyricsClick(e) {
+    // 拖动（滚动/触摸滑动）后的 click 不算跳转。
+    // 仅在确实收到过 press 时才比对坐标——没有 press 记录说明事件不是完整按下-抬起
+    // 序列（如 CDP 合成点击、键盘触发），此时不应误判为拖拽。
+    if (_lyricPress &&
+        (Math.abs(e.clientX - _lyricPress.x) > 6 || Math.abs(e.clientY - _lyricPress.y) > 6)) {
+      _lyricPress = null;
+      return;
+    }
+    _lyricPress = null;
+    if (!duration) return;
+
+    var target = null;
+    var word = e.target.closest ? e.target.closest('.np-lyrics-word') : null;
+    var line = e.target.closest ? e.target.closest('.np-lyrics-line') : null;
+    var interlude = e.target.closest ? e.target.closest('.np-lyrics-interlude') : null;
+    if (word) {
+      target = parseInt(word.dataset.time, 10);
+    } else if (line) {
+      target = parseInt(line.dataset.time, 10);
+    } else if (interlude) {
+      target = parseInt(interlude.dataset.nextTime, 10);
+    }
+    // 静态歌词（无时间戳）/ 制作信息 / 数值解析失败 → 不响应
+    if (target === null || isNaN(target)) return;
+
+    var pos = target + lyricsTimeOffset;
+    pos = Math.max(0, Math.min(duration, pos));
+    // 已在该位置附近时不重复 seek：避免无意义的音频重启与状态抖动。
+    // 基准只认后端上报的真实位置（_lastKnownPositionMs 由 position_changed 写入），
+    // 不能用下面的乐观值——那会让「点同一行两次」永远被误判成原地踏步。
+    if (Math.abs(pos - _lastKnownPositionMs) < 400) return;
+
+    App.backend.seek(Math.floor(pos));
+    // 乐观更新歌词高亮/滚动，避免等下一个 position tick（最多 250ms）的视觉迟滞。
+    // 只驱动歌词渲染，不写 _lastKnownPositionMs（那是后端位置的镜像）。
+    _updateLyrics(pos);
+    if (App.utils && App.utils.toast) {
+      App.utils.toast(App.utils.formatDuration(pos));
+    }
+  }
+
+  // ── 功能区功能：静音/恢复 ────────────────────────────────────────────────
+  function _toggleMuteFromNp() {
+    App.utils.call('get_player_state').then(function (res) {
+      var st = JSON.parse(res);
+      var cur = st.volume || 0;
+      if (cur > 0) {
+        _lastVolumeBeforeMute = cur;
+        App.backend.set_volume(0);
+      } else {
+        App.backend.set_volume(_lastVolumeBeforeMute || 80);
+      }
+    });
+  }
+  let _lastVolumeBeforeMute = 80;
+
+  // ── 功能区功能：打开音效设置 ─────────────────────────────────────────────
+  // 跳转设置页并切到「音频和库」分区（EQ / 动态低音 / 压缩器等均在此）。
+  function _openAudioSettings() {
+    if (App.navigate) App.navigate('settings');
+    if (App.pages && App.pages.settings && App.pages.settings.activateSection) {
+      App.pages.settings.activateSection('audio_library');
+    }
+  }
+
   np.updateVolume = function (vol) {
     els.sliderVol.value = vol;
     els.labelVol.textContent = vol;
@@ -2530,36 +2847,25 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
     } else {
       els.iconVol.textContent = 'volume_up';
     }
+
+    // 功能区静音按钮状态同步
+    _isMuted = (vol === 0);
+    _syncSecondaryActions();
   };
 
   np.updateModes = function (shuffle, repeat) {
-    if (shuffle) {
-      els.btnShuffle.classList.add('active');
-    } else {
-      els.btnShuffle.classList.remove('active');
-    }
-
-    els.btnRepeat.classList.remove('active');
-    els.btnRepeat.querySelector('.material-symbols-rounded').textContent = 'repeat';
-    if (repeat === 'all') {
-      els.btnRepeat.classList.add('active');
-    } else if (repeat === 'one') {
-      els.btnRepeat.classList.add('active');
-      els.btnRepeat.querySelector('.material-symbols-rounded').textContent = 'repeat_one';
-    }
+    _syncSecondaryActions();
   };
 
   np.updateLiked = function (liked) {
+    _isLiked = !!liked;
+    _syncSecondaryActions();
     if (liked) {
-      els.btnLike.classList.add('liked');
-      els.btnLike.querySelector('.material-symbols-rounded').classList.add('icon-filled');
       if (els.miniBtnLike) {
         els.miniBtnLike.classList.add('liked');
         els.miniBtnLike.querySelector('.material-symbols-rounded').classList.add('icon-filled');
       }
     } else {
-      els.btnLike.classList.remove('liked');
-      els.btnLike.querySelector('.material-symbols-rounded').classList.remove('icon-filled');
       if (els.miniBtnLike) {
         els.miniBtnLike.classList.remove('liked');
         els.miniBtnLike.querySelector('.material-symbols-rounded').classList.remove('icon-filled');
@@ -2594,18 +2900,10 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
   };
 
   // ── 音频模式（独占/共享）──────────────────────────────────────────────────
-  // 正在播放页右下角文字状态按钮：excl（独占）/ shrd（共享）。
+  // 正在播放页功能区文字状态按钮：excl（独占）/ shrd（共享）。
+  // 实际渲染与状态刷新由 _syncSecondaryActions 统一处理。
   np.updateAudioMode = function (exclusive) {
-    if (!els.btnAudioMode || !els.audioModeLabel) return;
-    if (exclusive) {
-      els.btnAudioMode.classList.add('active');
-      els.audioModeLabel.textContent = 'excl';
-      els.btnAudioMode.setAttribute('title', App.i18n.t('np.exclusiveMode'));
-    } else {
-      els.btnAudioMode.classList.remove('active');
-      els.audioModeLabel.textContent = 'shrd';
-      els.btnAudioMode.setAttribute('title', App.i18n.t('np.sharedMode'));
-    }
+    _syncSecondaryActions();
   };
 
   // 弹 dialog 确认后切换；供正在播放页按钮与设置页入口共用。
@@ -2631,159 +2929,183 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
     });
   };
 
+  // ── 队列渲染（窗口化）────────────────────────────────────────────────
+  // 原实现一次性创建全部 <li>：5000 首队列 = 5000×5 事件监听器 + 5000 个
+  // 封面 <img>，实测渲染进程 RSS 达 1047MB。改走 VirtualList 只渲染视口
+  // 附近的行（复用 DOM 节点与对象池），DOM/监听器/解码图数量都降到视口量级。
+  // 行的 dataset.index 保持「绝对队列索引」，拖拽/reorder 语义不变。
+
+  const QUEUE_ROW_HEIGHT = 56;   // 与 .np-queue-item 的 min-height 一致
+  let _queueVL = null;
+
+  // 构造单个队列行的内容（不含事件；事件用委托挂在滚动容器上，
+  // 避免窗口化后反复解绑/绑定的开销，也天然覆盖被复用的节点）。
+  function _renderQueueItem(el, track, index, currentIndex) {
+    el.className = 'np-queue-item' + (index === currentIndex ? ' current' : '');
+    el.dataset.index = index;
+    el.draggable = true;
+
+    let coverHtml;
+    if (track.has_cover) {
+      // loading=lazy + 占位：窗口化后同时挂载的 img 只有视口量级
+      coverHtml = `<img loading="lazy" decoding="async" src="${window.coverUrl(track.id, 128)}" alt="">`;
+    } else {
+      const bg = App.utils.hashColor(track.album || track.title);
+      coverHtml = `<div class="np-queue-cover" style="background:${bg}">${App.utils.initial(track.album || track.title)}</div>`;
+    }
+
+    el.innerHTML = `
+      <button class="np-queue-drag" aria-label="${App.i18n.t('np.dragToReorder') || ''}">
+        <span class="np-queue-drag-icon"></span>
+      </button>
+      <div class="np-queue-cover-wrap">${coverHtml}</div>
+      <div class="np-queue-info">
+        <div class="np-queue-title">${App.utils.esc(track.title || App.i18n.t('common.unknownTrack'))}</div>
+        <div class="np-queue-artist">${App.utils.esc(track.artist || App.i18n.t('common.unknownArtist'))}</div>
+      </div>
+      <div class="np-queue-duration">${App.utils.formatDuration(track.duration_ms)}</div>
+      <button class="icon-btn np-queue-remove" title="${App.i18n.t('np.removeFromQueue')}">
+        <span class="material-symbols-rounded" style="font-size:18px">close</span>
+      </button>
+    `;
+  }
+
   np.updateQueue = function (queue, currentIndex) {
+    const list = els.queueList;
+    if (!list) return;
+
     if (!queue || queue.length === 0) {
-      els.queueList.innerHTML = '';
+      if (_queueVL) { _queueVL.destroy(); _queueVL = null; }
+      list.innerHTML = '';
       return;
     }
 
-    els.queueList.innerHTML = '';
-    for (let i = 0; i < queue.length; i++) {
-      const track = queue[i];
-      const li = document.createElement('li');
-      li.className = 'np-queue-item';
-      if (i === currentIndex) {
-        li.classList.add('current');
-      }
-      li.dataset.index = i;
-      li.draggable = true;
+    // 队列数据快照：拖拽 drop 处需要用「真实长度」而非 DOM 子节点数
+    _queueData = queue;
+    _queueCurrentIndex = currentIndex;
 
-      let coverHtml = '';
-      if (track.has_cover) {
-        coverHtml = `<img src="${window.coverUrl(track.id, 128)}" alt="">`;
-      } else {
-        const bg = App.utils.hashColor(track.album || track.title);
-        coverHtml = `<div class="np-queue-cover" style="background:${bg}">${App.utils.initial(track.album || track.title)}</div>`;
-      }
-
-      li.innerHTML = `
-        <button class="np-queue-drag" aria-label="${App.i18n.t('np.dragToReorder') || ''}">
-          <span class="np-queue-drag-icon"></span>
-        </button>
-        <div class="np-queue-cover-wrap">${coverHtml}</div>
-        <div class="np-queue-info">
-          <div class="np-queue-title">${App.utils.esc(track.title || App.i18n.t('common.unknownTrack'))}</div>
-          <div class="np-queue-artist">${App.utils.esc(track.artist || App.i18n.t('common.unknownArtist'))}</div>
-        </div>
-        <div class="np-queue-duration">${App.utils.formatDuration(track.duration_ms)}</div>
-        <button class="icon-btn np-queue-remove" title="${App.i18n.t('np.removeFromQueue')}" data-index="${i}">
-          <span class="material-symbols-rounded" style="font-size:18px">close</span>
-        </button>
-      `;
-
-      li.addEventListener('click', function (e) {
-        if (e.target.closest('.np-queue-remove')) return;
-        if (e.target.closest('.np-queue-drag')) return;
-        App.backend.play_queue_at(i);
+    // 复用实例：容器是否仍是当前节点（now_playing 每次进入可能是新元素）
+    if (_queueVL && _queueVL.container === list) {
+      _queueVL.setItems(queue);
+      _queueVL.refresh();
+    } else {
+      if (_queueVL) { _queueVL.destroy(); _queueVL = null; }
+      list.innerHTML = '';
+      list.classList.add('np-queue-vl');
+      _queueVL = new window.VirtualList({
+        container: list,
+        items: queue,
+        itemHeight: QUEUE_ROW_HEIGHT,
+        estimatedItemHeight: QUEUE_ROW_HEIGHT,
+        bufferSize: 8,
+        onRangeChange: function (items, startIndex, endIndex, direction) {
+          if (window.CoverCache && window.CoverCache.updateViewport) {
+            window.CoverCache.updateViewport(
+              items.map(function (t) { return { track: t }; }),
+              startIndex, endIndex, direction, 128
+            );
+          }
+        },
+        onRecycle: function (el) {
+          if (window.CoverCache && window.CoverCache.releaseElement) {
+            window.CoverCache.releaseElement(el);
+          }
+        },
+        renderItem: function (track, index, el) {
+          el.classList.add('vl-item');
+          _renderQueueItem(el, track, index, _queueCurrentIndex);
+        },
       });
-
-      var removeBtn = li.querySelector('.np-queue-remove');
-      removeBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        App.backend.remove_from_queue(i);
-      });
-      App.utils.setupAvoidance(removeBtn);
-
-      els.queueList.appendChild(li);
     }
 
-    _setupQueueDragAndDrop();
+    _bindQueueDelegation();
   };
 
-  // ── 队列拖拽排序 ─────────────────────────────────────────────────────────
+  // 队列数据引用（窗口化后 DOM 不再持有完整列表）
+  let _queueData = [];
+  let _queueCurrentIndex = 0;
+  let _queueDelegationBound = false;
+  // 当前被拖拽的队列行（事件委托挂在容器上，需跨事件保持引用）
   var _draggedQueueItem = null;
 
-  function _setupQueueDragAndDrop() {
-    var items = els.queueList.querySelectorAll('.np-queue-item');
-    items.forEach(function (item) {
-      item.addEventListener('dragstart', function (e) {
-        _draggedQueueItem = item;
-        item.classList.add('dragging');
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', item.dataset.index);
-      });
+  // 事件委托：只挂一次，绑定在滚动容器上。窗口化下节点被复用，
+  // 委托可避免每次渲染都重新绑定（5000 项时原实现要绑 25000 个监听器）。
+  function _bindQueueDelegation() {
+    if (_queueDelegationBound) return;
+    const list = els.queueList;
+    if (!list) return;
+    _queueDelegationBound = true;
 
-      item.addEventListener('dragend', function () {
-        item.classList.remove('dragging');
-        _draggedQueueItem = null;
-        // 清理所有 drag-over 标记
-        var allItems = els.queueList.querySelectorAll('.np-queue-item');
-        allItems.forEach(function (it) {
-          it.classList.remove('drag-over-top', 'drag-over-bottom');
-        });
-      });
+    list.addEventListener('click', function (e) {
+      const item = e.target.closest('.np-queue-item');
+      if (!item) return;
+      const index = parseInt(item.dataset.index, 10);
+      if (e.target.closest('.np-queue-remove')) {
+        e.stopPropagation();
+        App.backend.remove_from_queue(index);
+        return;
+      }
+      if (e.target.closest('.np-queue-drag')) return;
+      App.backend.play_queue_at(index);
+    });
 
-      item.addEventListener('dragover', function (e) {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        if (_draggedQueueItem === item) return;
+    list.addEventListener('dragstart', function (e) {
+      const item = e.target.closest('.np-queue-item');
+      if (!item) return;
+      _draggedQueueItem = item;
+      item.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', item.dataset.index);
+    });
 
-        var rect = item.getBoundingClientRect();
-        var midpoint = rect.top + rect.height / 2;
-        var allItems = els.queueList.querySelectorAll('.np-queue-item');
-        allItems.forEach(function (it) {
-          it.classList.remove('drag-over-top', 'drag-over-bottom');
-        });
-
-        if (e.clientY < midpoint) {
-          item.classList.add('drag-over-top');
-        } else {
-          item.classList.add('drag-over-bottom');
-        }
-      });
-
-      item.addEventListener('dragleave', function () {
-        item.classList.remove('drag-over-top', 'drag-over-bottom');
-      });
-
-      item.addEventListener('drop', function (e) {
-        e.preventDefault();
-        if (!_draggedQueueItem || _draggedQueueItem === item) return;
-
-        var fromIndex = parseInt(_draggedQueueItem.dataset.index, 10);
-        var rect = item.getBoundingClientRect();
-        var midpoint = rect.top + rect.height / 2;
-        var toIndex = parseInt(item.dataset.index, 10);
-
-        // 如果拖到下半部分，插入到目标项之后
-        if (e.clientY >= midpoint) {
-          toIndex = toIndex + 1;
-          // 拖到队列末尾之外的情况，限制为最后一个索引
-          if (toIndex > els.queueList.children.length - 1) {
-            toIndex = els.queueList.children.length - 1;
-          }
-        }
-
-        // 调整 toIndex：如果从前面拖到后面，splice 后索引会偏移
-        if (fromIndex < toIndex) {
-          toIndex = toIndex - 1;
-        }
-
-        if (fromIndex !== toIndex) {
-          App.backend.reorder_queue(fromIndex, toIndex);
-        }
+    list.addEventListener('dragend', function () {
+      if (_draggedQueueItem) _draggedQueueItem.classList.remove('dragging');
+      _draggedQueueItem = null;
+      list.querySelectorAll('.np-queue-item').forEach(function (it) {
+        it.classList.remove('drag-over-top', 'drag-over-bottom');
       });
     });
 
-    // 队列容器本身也接受 drop（拖到空白区域 = 放到最后）
-    els.queueList.addEventListener('dragover', function (e) {
+    list.addEventListener('dragover', function (e) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
+      const item = e.target.closest('.np-queue-item');
+      list.querySelectorAll('.np-queue-item').forEach(function (it) {
+        if (it !== item) it.classList.remove('drag-over-top', 'drag-over-bottom');
+      });
+      if (!item || item === _draggedQueueItem) return;
+      const rect = item.getBoundingClientRect();
+      const mid = rect.top + rect.height / 2;
+      item.classList.remove('drag-over-top', 'drag-over-bottom');
+      item.classList.add(e.clientY < mid ? 'drag-over-top' : 'drag-over-bottom');
     });
-    els.queueList.addEventListener('drop', function (e) {
-      e.preventDefault();
-      // 如果 drop 在容器空白处而非某个 item 上，放到最后
-      if (_draggedQueueItem && !_draggedQueueItem.parentNode) return;
-      if (!_draggedQueueItem) return;
-      // 检查是否落在 item 上（由 item 的 drop handler 处理）
-      var targetItem = e.target.closest('.np-queue-item');
-      if (targetItem) return; // 已由 item 处理
 
-      var fromIndex = parseInt(_draggedQueueItem.dataset.index, 10);
-      var toIndex = els.queueList.children.length - 1;
-      if (fromIndex !== toIndex) {
-        App.backend.reorder_queue(fromIndex, toIndex);
+    list.addEventListener('dragleave', function (e) {
+      const item = e.target.closest('.np-queue-item');
+      if (item) item.classList.remove('drag-over-top', 'drag-over-bottom');
+    });
+
+    list.addEventListener('drop', function (e) {
+      e.preventDefault();
+      if (!_draggedQueueItem) return;
+      const fromIndex = parseInt(_draggedQueueItem.dataset.index, 10);
+      const targetItem = e.target.closest('.np-queue-item');
+
+      let toIndex;
+      if (targetItem) {
+        toIndex = parseInt(targetItem.dataset.index, 10);
+        const rect = targetItem.getBoundingClientRect();
+        const mid = rect.top + rect.height / 2;
+        if (e.clientY >= mid) toIndex += 1;
+      } else {
+        // 落在容器空白处 → 移到末尾（用真实队列长度，不用 DOM 子节点数）
+        toIndex = _queueData.length;
       }
+      // splice 语义：从前面拖到后面时索引会偏移
+      if (fromIndex < toIndex) toIndex -= 1;
+      if (fromIndex !== toIndex) App.backend.reorder_queue(fromIndex, toIndex);
+      _draggedQueueItem.classList.remove('dragging');
+      _draggedQueueItem = null;
     });
   }
 

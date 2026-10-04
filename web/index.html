@@ -403,21 +403,8 @@
         </button>
       </div>
 
-      <!-- 播放控制 - 辅助按钮 -->
-      <div class="np-secondary-controls">
-        <button class="icon-btn np-secondary-btn" id="btn-shuffle" data-i18n-aria-label="np.shuffle" data-i18n-title="np.shuffle">
-          <span class="material-symbols-rounded">shuffle</span>
-        </button>
-        <button class="icon-btn np-secondary-btn" id="btn-repeat" data-i18n-aria-label="np.repeat" data-i18n-title="np.repeat">
-          <span class="material-symbols-rounded">repeat</span>
-        </button>
-        <button class="icon-btn np-secondary-btn" id="btn-like" data-i18n-aria-label="np.like" data-i18n-title="np.like">
-          <span class="material-symbols-rounded">favorite</span>
-        </button>
-        <button class="np-audio-mode-btn" id="btn-audio-mode" data-i18n-aria-label="np.audioMode" data-i18n-title="np.audioMode">
-          <span class="np-audio-mode-label" id="audio-mode-label">shrd</span>
-        </button>
-      </div>
+      <!-- 播放控制 - 辅助按钮（内容由 JS 按用户配置动态渲染，见 now_playing.js 的 renderSecondaryActions） -->
+      <div class="np-secondary-controls" id="np-secondary-controls"></div>
 
       <!-- 音量 -->
       <div class="np-volume">

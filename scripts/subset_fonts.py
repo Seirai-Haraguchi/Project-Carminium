@@ -73,6 +73,9 @@ EXTRAS = {
     'play_pause', 'cleaning_services',
     # 关于页 leading icon
     'computer', 'new_releases', 'troubleshoot',
+    # 正在播放功能区（快进/快退/静音/音效/浮窗）+ 设置页功能选择对话框
+    'replay', 'forward', 'volume_up', 'volume_off', 'volume_down',
+    'graphic_eq', 'check_circle', 'circle', 'radio_button_unchecked',
 }
 
 # 排除误匹配（非图标的 textContent 赋值等）

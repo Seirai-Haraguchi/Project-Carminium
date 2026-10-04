@@ -155,7 +155,8 @@ class SmtcController {
     }
 
     try {
-      const data = this._library.getCoverData(trackId);
+      const r = await this._library.getCoverDataAsync(trackId);
+      const data = r ? r.data : null;
       if (data) return 'data:image/jpeg;base64,' + Buffer.from(data).toString('base64');
     } catch {
       return null;

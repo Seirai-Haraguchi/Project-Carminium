@@ -28,11 +28,15 @@
   var AUDIO_CACHE_TRIM_BYTES = 12 * 1024 * 1024;
   var RENDERER_HEAP_SOFT_MB = 160;
   var RENDERER_HEAP_HARD_MB = 220;
+  // 主动 GC 间隔。渲染进程堆约 50MB，远低于 V8 自发 GC 阈值，
+  // 惰性垃圾（实测约 40MB 量级）不会自行回收，须由我们定期触发。
+  var GC_INTERVAL_MS = 30_000;
 
   // ── 状态 ──────────────────────────────────────────────────────────────
 
   var _cleanupTimer = null;
   var _reportTimer = null;
+  var _gcTimer = null;
   var _started = false;
 
   // Blob URL 追踪：Map<url, { url, createdAt, revokeFn }>
@@ -223,6 +227,31 @@
     return results;
   }
 
+  // ── 主动 GC ──────────────────────────────────────────────────────────
+
+  /**
+   * 在浏览器空闲时请求一次 V8 全量 GC。
+   *
+   * 为什么需要它：渲染进程的 usedJSHeapSize 仅 ~50MB，远低于 V8 默认的
+   * 自增 GC 触发阈值，因此**惰性垃圾不会自行回收**（实测 CDP 强制 GC
+   * 可回收约 40MB）。gc() 由主进程下发的 --js-flags=--expose-gc 提供。
+   *
+   * 用 requestIdleCallback 执行：GC 有停顿，必须避开动画/滚动/音频回调。
+   * 低版本不支持时回退到 setTimeout。
+   */
+  function _requestGC() {
+    if (typeof window.gc !== 'function') return false;
+    var run = function () {
+      try { window.gc(); } catch (e) { /* ignore */ }
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(run, { timeout: 3000 });
+    } else {
+      setTimeout(run, 0);
+    }
+    return true;
+  }
+
   // ── 页面导航 / 切歌清理 ──────────────────────────────────────────────
 
   /**
@@ -345,6 +374,12 @@
       _reportToMain();
     }, REPORT_INTERVAL_MS);
 
+    // 定期主动 GC（仅在 window.gc 可用时生效）
+    _gcTimer = setInterval(function () {
+      _cleanupCaches();   // 先清缓存，再回收容器
+      _requestGC();
+    }, GC_INTERVAL_MS);
+
     // 页面隐藏时暂停清理，可见时恢复并立即执行一次
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) {
@@ -373,6 +408,10 @@
     if (_reportTimer) {
       clearInterval(_reportTimer);
       _reportTimer = null;
+    }
+    if (_gcTimer) {
+      clearInterval(_gcTimer);
+      _gcTimer = null;
     }
     _started = false;
   }
@@ -415,6 +454,9 @@
     // 清理已脱离 DOM 的元素监听器
     _cleanupDetachedListeners();
 
+    // 主动回收惰性垃圾（清缓存后容器最有回收价值）
+    _requestGC();
+
     // 请求主进程也执行清理
     if (window.__electronAPI && window.__electronAPI.invoke) {
       window.__electronAPI.invoke('memory:request_cleanup').catch(function () {});
@@ -431,6 +473,7 @@
     stop: stop,
     getStats: getStats,
     emergencyCleanup: emergencyCleanup,
+    requestGC: _requestGC,
     // Blob URL 管理
     createTrackedBlobUrl: createTrackedBlobUrl,
     revokeTrackedBlobUrl: revokeTrackedBlobUrl,

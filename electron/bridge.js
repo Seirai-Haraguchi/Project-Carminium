@@ -35,6 +35,27 @@ function _dump(obj) {
   return JSON.stringify(obj, null, undefined);
 }
 
+// ── 浮动窗口事件白名单 ────────────────────────────────────────────────────
+// 浮动窗口只渲染「当前曲目 / 播放状态 / 进度 / 队列 / 设置」，上面这些事件
+// 之外的负载它一律不用。但 Bridge._emit 默认把**所有**事件同时广播给主窗口和
+// 浮动窗口，于是每打开一次浮动窗，library_updated（整库曲目 JSON，大库可达
+// 数十 MB）、folders_updated、playlists_changed、bpm_analyzed 等都会被
+// structured-clone 一份塞进浮动窗渲染进程 —— 纯浪费堆内存和 IPC 带宽。
+// 这里用白名单把不需要的事件挡在浮动窗之外（主窗口不受影响）。
+const FLOATING_EVENTS = new Set([
+  'track_changed',
+  'playback_state_changed',
+  'position_changed',
+  'duration_changed',
+  'volume_changed',
+  'shuffle_changed',
+  'repeat_changed',
+  'queue_changed',
+  'liked_changed',
+  'lyrics_changed',
+  'settings_changed',
+]);
+
 class Bridge extends EventEmitter {
   constructor(library, player, settings, coverServer, bass = null) {
     super();
@@ -45,6 +66,7 @@ class Bridge extends EventEmitter {
     this._bass = bass;
     this._mainWindow = null;
     this._floatingWindow = null;
+    this._floatingOpening = false;
     this._floatingClosedCallback = null;
 
     // ── 智能过渡分析：缓存 + osu! 谱面提供器 ──
@@ -129,16 +151,32 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     }
 
     // ── AudioEngine 制御イベント: Player → Renderer ──
-    // 用 executeJavaScript 直接调用渲染进程的全局函数，最可靠
+    // 用 executeJavaScript 直接调用渲染进程的全局函数，最可靠。
+    // ⚠️ 只投递给主窗口：独占/共享模式的 AudioContext 重建只发生在主窗口的
+    //    AudioEngine 上，浮动窗没有 __handleAudioControl，投递给它纯粹是白跑一次
+    //    executeJavaScript（每次都要跨进程编译+执行一段 JS）。
     player.on('audio_control', (json) => {
       // json 已经是 JSON 字符串，直接嵌入 JS 即可
       const js = 'if (window.__handleAudioControl) { window.__handleAudioControl(' + json + '); }';
       if (this._mainWindow && !this._mainWindow.isDestroyed()) {
         this._mainWindow.webContents.executeJavaScript(js).catch(() => {});
       }
-      if (this._floatingWindow && !this._floatingWindow.isDestroyed()) {
-        this._floatingWindow.webContents.executeJavaScript(js).catch(() => {});
-      }
+    });
+
+    // 同じ audio_control だが「レンダラー側の完了を待つ」版。
+    // executeJavaScript は式が Promise を返せばその解決を待つので、
+    // レンダラーは完了を表す Promise を return すること(app.js の
+    // __handleAudioControl の release_context / init がそれに当たる)。
+    player.on('audio_control_await', (json, done) => {
+      const js = '(window.__handleAudioControl ? window.__handleAudioControl(' + json + ') : null)';
+      const win = this._mainWindow;
+      if (!win || win.isDestroyed()) { done(undefined); return; }
+      win.webContents.executeJavaScript(js, true)
+        .then((v) => done(v))
+        .catch((e) => {
+          console.warn('[bridge] audio_control_await failed:', (e && e.message) || e);
+          done(undefined);
+        });
     });
   }
 
@@ -168,6 +206,10 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
   _allTracksJsonDirty = true;
   _foldersJson = null;
   _foldersJsonDirty = true;
+  _albumsJson = null;
+  _albumsJsonDirty = true;
+  _artistsJson = null;
+  _artistsJsonDirty = true;
   _libraryUpdatedTimer = null;
   _libraryUpdatedPending = false;
 
@@ -187,6 +229,27 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     return this._foldersJson;
   }
 
+  // get_albums / get_artists 与 getAllTracks 同源（同一批曲目行的聚合视图），
+  // 因此共用同一套 dirty 标志：库一旦变更（_emitLibraryUpdated）三者一起失效。
+  // 此前这三个 IPC handler 各自直算 —— 前端切页/重进都会触发一次全库聚合
+  // （getAlbums 的 GROUP BY + 封面 JOIN、getArtists 的逐行 _splitArtists），
+  // 大库下每次数百毫秒同步阻塞主进程 → 播放卡顿。
+  _getAlbumsJsonCached() {
+    if (this._albumsJsonDirty) {
+      this._albumsJson = _dump(this._lib.getAlbums());
+      this._albumsJsonDirty = false;
+    }
+    return this._albumsJson;
+  }
+
+  _getArtistsJsonCached() {
+    if (this._artistsJsonDirty) {
+      this._artistsJson = _dump(this._lib.getArtists());
+      this._artistsJsonDirty = false;
+    }
+    return this._artistsJson;
+  }
+
   /**
    * library_updated / folders_updated を debounce 付きで送信。
    * 短時間に複数回のライブラリ変更があっても 1 回にまとめて送信する。
@@ -194,6 +257,8 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
   _emitLibraryUpdated() {
     this._allTracksJsonDirty = true;
     this._foldersJsonDirty = true;
+    this._albumsJsonDirty = true;
+    this._artistsJsonDirty = true;
     this._libraryUpdatedPending = true;
     if (this._libraryUpdatedTimer) return;
     this._libraryUpdatedTimer = setTimeout(() => {
@@ -224,11 +289,9 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
   }
 
   _sendFfmpegState(channel, finished) {
+    // 仅主窗口消费（AudioEngine 在那边）；浮动窗不参与音频链路
     if (this._mainWindow && !this._mainWindow.isDestroyed()) {
       this._mainWindow.webContents.send('audio_ffmpeg_state', channel, finished);
-    }
-    if (this._floatingWindow && !this._floatingWindow.isDestroyed()) {
-      this._floatingWindow.webContents.send('audio_ffmpeg_state', channel, finished);
     }
   }
 
@@ -237,8 +300,9 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     if (this._mainWindow && !this._mainWindow.isDestroyed()) {
       this._mainWindow.webContents.send('bridge:event', { event, payload });
     }
-    // 发送到浮动窗口（如果存在）
-    if (this._floatingWindow && !this._floatingWindow.isDestroyed()) {
+    // 发送到浮动窗口（如果存在）—— 仅限白名单事件，避免无谓的跨进程克隆
+    // （见文件顶部 FLOATING_EVENTS 说明）
+    if (this._floatingWindow && !this._floatingWindow.isDestroyed() && FLOATING_EVENTS.has(event)) {
       this._floatingWindow.webContents.send('bridge:event', { event, payload });
     }
     // 同时 emit 给内部消费者（SMTC 等）
@@ -351,11 +415,9 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
         // 查询 DLL 环形缓冲延迟，发送到渲染进程用于位置修正
         const latencyMs = renderer.getBufferLatencyMs();
         // 使用 webContents.send（可靠）代替 executeJavaScript（异步且可能丢失）
+        // 只发主窗口：延迟补偿由主窗口的 AudioEngine 使用，浮动窗不合成音频
         if (this._mainWindow && !this._mainWindow.isDestroyed()) {
           this._mainWindow.webContents.send('audio_latency', latencyMs);
-        }
-        if (this._floatingWindow && !this._floatingWindow.isDestroyed()) {
-          this._floatingWindow.webContents.send('audio_latency', latencyMs);
         }
       }
     });
@@ -436,10 +498,12 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     });
 
     // ── Library ──
-    ipcMain.handle('get_library', () => _dump(this._lib.getAllTracks()));
-    ipcMain.handle('get_albums', () => _dump(this._lib.getAlbums()));
-    ipcMain.handle('get_artists', () => _dump(this._lib.getArtists()));
-    ipcMain.handle('get_folders', () => _dump(this._lib.getFolders()));
+    // 三个只读聚合视图均走 dirty 缓存：库未变更时重复调用直接复用已序列化
+    // 的 JSON 字符串，避免每次切页都全库重算（见 _getAlbumsJsonCached 注释）。
+    ipcMain.handle('get_library', () => this._getAllTracksJsonCached());
+    ipcMain.handle('get_albums', () => this._getAlbumsJsonCached());
+    ipcMain.handle('get_artists', () => this._getArtistsJsonCached());
+    ipcMain.handle('get_folders', () => this._getFoldersJsonCached());
     ipcMain.handle('get_album_tracks', (_e, albumJson) => {
       const data = JSON.parse(albumJson);
       return _dump(this._lib.getAlbumTracks(data.album || '', data.album_artist || null));
@@ -1347,14 +1411,13 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       } catch {
         // ignore
       }
-      const os = require('os');
+      /* ⚠️ 顶层的 platform / arch / osVersion 已随「关于 → 平台信息」卡片删除（2026-10-04）；
+         平台/架构仍可从 diagnostic.* 与 get_diagnostic_info 的 SystemOsVersion/SystemOsArch 取得，
+         别在这里加回冗余副本。 */
       return _dump({
         version: versionData.version || '0.0.0',
         build: versionData.build || 0,
         codename: versionData.codename || '',
-        platform: process.platform,
-        arch: process.arch,
-        osVersion: os.release(),
         diagnostic: {
           electron_version: process.versions.electron,
           chrome_version: process.versions.chrome,
@@ -1801,28 +1864,125 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     }
   }
 
-  _createFloatingWindow() {
-    const floatingPath = path.join(__dirname, '..', 'web', 'floating.html');
-    this._floatingWindow = new BrowserWindow({
+  /**
+   * 判定一个 window.open 的 url 是不是浮动窗。
+   * 主窗的 setWindowOpenHandler 会先调它，命中就走「允许并注入窗口选项」分支，
+   * 其余一律 deny（外部链接交给 shell.openExternal）。
+   */
+  isFloatingWindowUrl(url) {
+    return /(^|[\\/])floating\.html([?#]|$)/.test(String(url || ''));
+  }
+
+  /**
+   * 浮动窗 BrowserWindow 构造项（由主窗 setWindowOpenHandler 的
+   * overrideBrowserWindowOptions 注入）。
+   *
+   * 🔴 `webPreferences.preload` 必须显式给：window.open 出来的子窗**不会**继承
+   *    opener 的 preload，缺了它渲染进程里 `window.__electronAPI` 是 undefined，
+   *    浮动窗直接失联（页面上表现为标题停在「未在播放」不变）。
+   *    其余 webPreferences 项仍继承主窗，这里不重复声明。
+   */
+  floatingWindowOptions() {
+    // 首帧底色：与页面 body 的 --md-surface-container-low 对齐，避免加载期白闪
+    let bg = '#191C20';
+    try {
+      const theme = this._settings.all().theme || 'system';
+      let dark = true;
+      if (theme === 'dark') dark = true;
+      else if (theme === 'light') dark = false;
+      else {
+        const { nativeTheme } = require('electron');
+        dark = nativeTheme.shouldUseDarkColors !== false;
+      }
+      bg = dark ? '#191C20' : '#F0F4F9';
+    } catch { /* 保守用暗色 */ }
+
+    return {
       width: 360,
-      height: 768,
-      resizable: false,
+      height: 760,
+      minWidth: 320,
+      minHeight: 420,
+      resizable: true,
       frame: false,
       alwaysOnTop: true,
+      show: false,
+      backgroundColor: bg,
+      autoHideMenuBar: true,
+      title: 'Project Carminium',
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
-        contextIsolation: true,
-        nodeIntegration: false,
       },
+    };
+  }
+
+  /**
+   * 接管 window.open 产生的浮动窗（在主窗的 did-create-window 里调用）。
+   * 只对真正的浮动窗生效，其它子窗忽略。
+   */
+  adoptFloatingWindow(child, details) {
+    if (!child || child.isDestroyed()) return;
+    if (details && details.url && !this.isFloatingWindowUrl(details.url)) return;
+
+    // 已经有浮动窗了 → 关掉这个多出来的，避免孤儿窗口占着渲染文档
+    if (this._floatingWindow && !this._floatingWindow.isDestroyed() && this._floatingWindow !== child) {
+      try { child.close(); } catch { /* ignore */ }
+      return;
+    }
+
+    this._floatingOpening = false;
+    this._floatingWindow = child;
+    child.once('ready-to-show', () => {
+      if (!child.isDestroyed()) child.show();
     });
-    this._floatingWindow.loadFile(floatingPath);
-    this._floatingWindow.on('closed', () => {
+    child.on('closed', () => {
       this._floatingWindow = null;
+      this._floatingOpening = false;
       this.emitFloatingWindowClosed();
       if (this._floatingClosedCallback) {
         try { this._floatingClosedCallback(); } catch { /* ignore */ }
       }
     });
+  }
+
+  /**
+   * 浮动窗承载页：自包含的轻量页（web/floating.html + floating.css + floating.js），
+   * 不再复用主窗口那套 style.css / i18n.js / utils.js / bridge.js。
+   * 原因见 web/floating.html 顶部注释：那 4 个文件加起来 ~600KB 源码，
+   * 对一个小窗来说 CSSOM + V8 堆的开销完全不值当。
+   *
+   * 🔴 为什么是 window.open 而不是 new BrowserWindow：
+   *    Electron 里由渲染进程 window.open 弹出的子窗会与 opener **共用同一个
+   *    Chromium 渲染进程**；new BrowserWindow 则会另起一个。实测（--disable-gpu，
+   *    400 首队列 + 一整个曲库的主窗）：
+   *      new BrowserWindow  → 多一个进程，工作集 158MB（峰值 167MB），
+   *                           而浮动窗页面自身只有 2.4MB JS 堆 / 284 个 DOM 节点，
+   *                           也就是说 98% 的内存花在「再起一个渲染进程」这件事上；
+   *      window.open        → 不新增进程，增量只剩文档本身（几 MB）。
+   *    代价：两者共用一个渲染线程。主窗被最小化/遮挡时无影响（这正是浮动窗的
+   *    典型用法）；只有当主窗也在跑重动画（全屏歌词）时才可能互相抢帧。
+   */
+  _createFloatingWindow() {
+    const win = this._mainWindow;
+    if (!win || win.isDestroyed()) return;
+    if (this._floatingWindow || this._floatingOpening) return;
+    this._floatingOpening = true;
+
+    // 用 executeJavaScript 在主窗里发起：window.open 的 opener 决定了子窗归属，
+    // 相对路径 'floating.html' 以主窗的 web/index.html 为基准解析。
+    // 窗口尺寸/置顶/无边框等由主窗的 setWindowOpenHandler → floatingWindowOptions()
+    // 注入（见 main.js），这里只负责触发。
+    // 失败时清掉 _floatingOpening，免得之后再也开不出来。
+    win.webContents
+      .executeJavaScript(
+        "(function(){try{window.open('floating.html','carminium-floating','width=360,height=760');return 'ok';}catch(e){return 'ERR:'+(e&&e.message);}})()"
+      )
+      .then((r) => {
+        if (r && r !== 'ok') { this._floatingOpening = false; console.warn('[bridge] floating open returned', r); }
+      })
+      .catch((e) => {
+        this._floatingOpening = false;
+        console.warn('[bridge] floating open failed:', (e && e.message) || e);
+      });
   }
 
   _closeFloatingWindow() {

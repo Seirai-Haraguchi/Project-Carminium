@@ -91,6 +91,7 @@ class MemoryManager {
     this._scheduleMonitor(MONITOR_NORMAL_MS);
     this._cleanupTimer = setInterval(() => this._runCleanup(), CLEANUP_INTERVAL_MS);
     this._monitor(); // 立即采基线
+    this._startMetricsProbe();
 
     if (!this._ipcRegistered) {
       this._registerIpc();
@@ -105,6 +106,34 @@ class MemoryManager {
   stop() {
     if (this._monitorTimer) { clearInterval(this._monitorTimer); this._monitorTimer = null; }
     if (this._cleanupTimer) { clearInterval(this._cleanupTimer); this._cleanupTimer = null; }
+  }
+
+  // ── 诊断采样探针（仅当 CARMINIUM_MEM_PROBE 环境变量存在时启用）──────────
+  // 用途：把 app.getAppMetrics() 得到的**每个子进程真实 RSS**（含渲染进程）
+  // 定时追加到指定文件。外部测量台架只需写入同名 marker 行即可按阶段聚合。
+  // 生产环境该变量不存在，此方法直接返回，零开销。
+  _startMetricsProbe() {
+    const probePath = process.env.CARMINIUM_MEM_PROBE;
+    if (!probePath) return;
+    const fsMod = require('fs');
+    try { fsMod.writeFileSync(probePath, 'ts_ms,type,pid,rss_mb,cpu\n'); } catch (_) { return; }
+    const timer = setInterval(() => {
+      try {
+        const { app } = require('electron');
+        const rows = [];
+        const ts = Date.now();
+        for (const m of app.getAppMetrics()) {
+          // m.type: Browser | Tab | GPU | Utility | Zygote ...
+          const rssMB = ((m.memory && m.memory.workingSetSize) || 0) / 1024;
+          const cpu = (m.cpu && m.cpu.percentCPUUsage) || 0;
+          rows.push(`${ts},${m.type},${m.pid},${rssMB.toFixed(2)},${cpu.toFixed(1)}`);
+        }
+        if (rows.length) fsMod.appendFileSync(probePath, rows.join('\n') + '\n');
+      } catch (_) { /* ignore */ }
+    }, 500);
+    if (timer.unref) timer.unref();
+    this._probeTimer = timer;
+    console.log('[MemoryManager] Metrics probe enabled ->', probePath);
   }
 
   _scheduleMonitor(intervalMs) {

@@ -119,7 +119,12 @@ const CJK_PATTERN = /[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+/g;
 // ── 缓存 ──────────────────────────────────────────────────────────────────────
 
 const _cache = new Map();
-const CACHE_MAX = 4096;           // 收紧至 4096（原 8192），降低内存
+// 每个曲目最多产生 4 个键（title / artist / album / alias_title）。
+// 6500 首 = 26000 潜在不同字符串，原 4096 上限会导致「刚算完就被淘汰」的
+// 抖动：每次 getAllTracks 都要对绝大多数曲目重跑 pinyin-pro（汉字逐字转换，
+// CPU 密集），大库下耗时可观且阻塞主进程。
+// 这里放宽到 65536 —— 每个条目只是短字符串，实际 RSS 增量在数 MB 量级。
+const CACHE_MAX = 65536;
 
 function convertKana(text) {
   const result = text.replace(KANA_PATTERN, (m) => KANA_MAP.get(m) || m);
@@ -148,8 +153,16 @@ function makeSortKey(text) {
   const s = String(text).trim();
   if (!s) return 'zzz';
 
-  // 检查缓存
-  if (_cache.has(s)) return _cache.get(s);
+  // 检查缓存（真 LRU：命中时把条目移到 Map 末尾）
+  const hit = _cache.get(s);
+  if (hit !== undefined) {
+    // 仅当不在末尾时才移动，减少无谓的 delete/set
+    if (_cache.get(_lruTail()) !== hit || _cache.size === 1) {
+      _cache.delete(s);
+      _cache.set(s, hit);
+    }
+    return hit;
+  }
 
   // 1. 假名 → 罗马音
   let result = convertKana(s);
@@ -161,7 +174,7 @@ function makeSortKey(text) {
   result = result.replace(/[^a-z0-9]/g, '');
   if (!result) result = 'zzz';
 
-  // 写入缓存（LRU）
+  // 写入缓存（LRU：超限时淘汰最久未使用的 = Map 首个）
   if (_cache.size >= CACHE_MAX) {
     const oldest = _cache.keys().next().value;
     _cache.delete(oldest);
@@ -169,6 +182,13 @@ function makeSortKey(text) {
   _cache.set(s, result);
 
   return result;
+}
+
+// 返回当前 Map 最后一个键（最新写入/最常使用）
+function _lruTail() {
+  let last;
+  for (const k of _cache.keys()) last = k;
+  return last;
 }
 
 /**

@@ -333,6 +333,10 @@
   --md-sys-shape-corner-large-start:       var(--md-sys-shape-corner-large) 0 0 var(--md-sys-shape-corner-large);
   --md-sys-shape-corner-large-end:         0 var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) 0;
   --md-sys-shape-corner-extra-large-top:   var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large) 0 0;
+  /* 字段专用圆角（行内小控件档）。⚠️ 这是**项目自定义档**，不在 MD3 标准 shape 阶梯里 ——
+     因为字段本轮已按用户要求从"MD3 原生形态"转向"M3E 圆角形态"（四角全圆）。
+     取值理由见 --md-comp-field-shape 注释。 */
+  --md-sys-shape-corner-field:                10px;
 
   /* 旧短名别名（保持兼容） */
   --shape-xs:      var(--md-sys-shape-corner-extra-small);
@@ -406,16 +410,21 @@
      描边 4px 圆头；tile 高 14px = 2*半振幅 + 描边。重复铺贴时边界圆头正好拼合，波形连续。 */
   --md-comp-progress-wave-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='14' viewBox='0 0 40 14'%3E%3Cpath d='M 0 7 Q 10 12 20 7 Q 30 2 40 7' fill='none' stroke='black' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E");
 
-  /* ── List / 设置行度量（M3E list item，实测自 m3e m3e-list-item）──
-     one-line 56dp · two-line（带支持文字）72dp；leading/trailing 留白 16dp。
-     行高保持 M3E 原型值 —— 它自带呼吸空间；「卡片显挤」要靠缩小卡内控件
-     （下拉/开关/输入框）解决，压行高只会更挤。
-     形状与状态层由下方 .md-seglist 统一接管（分段列表不画分隔线，
-     故 divider-inset / item-shape 系列已随之移除）。 */
-  --md-comp-list-min-height:           56px;
-  --md-comp-list-min-height-2line:     72px;
-  --md-comp-list-item-padding-block:   10px;
-  --md-comp-list-item-padding-inline:  16px;
+  /* ── List / 设置行度量（2026-10-04 三易其稿，最终值 — 别再盲调）──
+     沿革：① 旧版 padding-block 10 + `min-height:72` 强制撑高 → 文本上下**真实留白 18px**，用户报「不自然/松散」；
+     ② 按官方 MD3 two-line 规范的 8dp 收到底 → 实测行高 54、留白 ~11px，用户报「**上下直接没边距了**」；
+     ③ **现行：padding-block = 12px** —— 8 太紧、18 太松，12 落在两者之间，
+        且与左右 padding-inline(16) 同属一个 4 的倍数节奏（8/12/16），左右上下才「和谐」。
+     行高 = 内容 + 2×12：两行 38+24 = **62px**（20 + 2 + 16 = 38，含 .settings-row-sub 的 margin-top 2），
+     单行 20+24 = **44px**。
+     min-height 只作**点击下限兜底**，不主导高度；控件更高时行随之增高（如 38px 下拉 → 62px）。
+     ⚠️ 官方规范标的 8dp 是以更大字号（body-large 16/24）为基准的，本项目设置行已降到 14/20 + 12/16，
+        直接套 8dp 会显得贴边 —— 规范值要按实际行高折算，不能硬抄。
+     形状与状态层由下方 .md-seglist 统一接管（分段列表不画分隔线，故 divider-inset 系列已移除）。 */
+  --md-comp-list-min-height:           44px;   /* 单行内容高（12+20+12） */
+  --md-comp-list-min-height-2line:     62px;   /* 两行内容高（12+38+12，含 sub 的 margin-top 2） */
+  --md-comp-list-item-padding-block:   12px;   /* 上下各 12（8 太紧 / 18 太松的折中） */
+  --md-comp-list-item-padding-inline:  16px;   /* 左右各 16 —— 两侧必须相等，勿单侧加 margin */
   --md-comp-list-padding-block:        14px;
   --md-comp-list-padding-inline:       24px;
   --md-comp-list-icon-size:            20px;
@@ -447,14 +456,97 @@
      下拉/输入/快捷键 chip 的尺寸已直接写回各规则（旧版内联值），此处只留被复用的三项。 */
   --md-comp-settings-switch-w:         56px;   /* 旧版 .toggle = 56×34 */
   --md-comp-settings-switch-h:         34px;
-  --md-comp-settings-input-min-width:  240px;  /* 旧版 .settings-font-input min-width */
-  /* 设置行文字：**比 M3 typescale 原型小一档**（2026-10-04 用户要求「缩小字体大小」）。
-     主文案 body-large(16) → 14，支持文案 body-medium(14) → 12。
+  /* ⚠️ --md-comp-settings-input-min-width(240px) 已删：输入框 2026-10-04 改为 MD3 Filled field 后
+     由 --md-comp-field-* 统一接管宽度语义，别把它加回来。 */
+  /* 设置行文字：比 M3 typescale 原型小一档（2026-10-04 用户要求「缩小字体大小」）。
+     主文案 14px（对齐 MD3 label-large / title-small 角色）、支持文案 12px（对齐 label-medium）。
+     ⚠️ 字距必须跟着字号选角色，不能沿用旧角色的 tracking ——
+     曾直接借用 body-large 的 0.5px 给 14px 主文案、body-medium 的 0.25px 给 12px 副文案，
+     两者都是大字号角色的值，压到小字号上会显得松、字与字之间发虚（用户报「文字排版有问题」）。
+     MD3 各角色实测（字号/行高/字距）：label-large 14 20 0.1；label-medium 12 16 0.5；
+     body-large 16 24 0.5；body-medium 14 20 0.25。
      ⚠️ 只作用于设置/关于页的行文字，不改全局 typescale 令牌（其他页面仍用 16/14）。 */
   --md-comp-settings-label-size:       14px;
   --md-comp-settings-label-line:       20px;
+  --md-comp-settings-label-tracking:    0.1px;  /* label-large */
   --md-comp-settings-sub-size:         12px;
   --md-comp-settings-sub-line:         16px;
+  --md-comp-settings-sub-tracking:      0.5px;  /* label-medium */
+
+  /* ── MD3 Filled field / Select 容器（2026-10-04 用户要求按 MD3 标准重做）──
+     结构按 MD3：容器色 surface-container-highest · 底部 active indicator 静默 1dp on-surface-variant
+     / hover 1dp on-surface / 聚焦 2dp primary · 图标 18dp · hover 状态层 on-surface 8%。
+     ⚠️ 两处**有意偏离** MD3 原生形态（都是为了贴合本项目的 M3E 视觉语言，见下方两个 🔑）：
+        ① 形状：原生 corner-extra-small-top（顶 4dp + 底直角）→ 改**四角全圆 10px**；
+        ② 字号：原生 body-large(16/24) → 改 **label-large(14/20/0.1)**，与设置行主文案同档。
+     （依据：material-web tokens v0.192 的 _md-comp-filled-select/_filled-text-field.scss）
+     ⚠️ material-web 把 filled-select 的聚焦指示线临时覆写成 3px（源码标 TODO，等官方 tokens 跟进），
+        官方 spec 仍是 2dp —— 取 2dp，否则同屏输入框与下拉聚焦粗细不一致。
+
+     🔑 尺寸**不照抄 56dp**：MD3 的 56dp 是手机竖屏手指标，本项目右栏字段宽 220–320px，
+        56 高会得到 3.9–5.7 的宽高比，而同页开关是 56×34=1.65 —— 控件比例体系会崩。
+        （2026-10-04 用户：「你直接把新做的 select 和 text field 比例调小啊，你看看其他控件的比例呢？」）
+        取值以**同页既有控件为标尺**，三轮下调：56 → 44 → 40 → **38**
+        （末轮用户明确「再小一点到 38px」）。行高 80 → 68 → 64 → **62**，与开关行 62 完全齐平。
+     🔑🔑 圆角改成**四角全圆 10px**（2026-10-04 用户在看过多方案后选定）。
+        沿革：MD3 规范 4dp 顶角 → 8dp 顶角（"加一点匹配 M3E 的圆角"）→ **四角 10px**（用户终选）。
+        ⚠️ 这一步主动**偏离了 MD3 原生形态** —— 原生 filled field 是「顶圆角 + 底直角 + 满宽底线」，
+           三者是一套的：直角底边配满宽直线才自洽。既然用户要 M3E 的圆角观感，就整体转成圆角语言：
+           四角圆 + 底线改**两端圆头、左右内缩 8px**（见 .md-dropdown-trigger::after）。
+        取值 10px 的理由：项目 M3E 阶梯是 段内项 4 → **行内控件 10** → 卡片 16 → 浮岛 16；
+           10/38 = 0.26，与卡片 16/68 = 0.24 几乎同比例，视觉上同族而不圆钝
+           （若取 16，16/38 = 0.42 会像个胶囊）。
+        ⚠️ 菜单圆角必须**跟随字段**（同 10px）：两者等宽且上下紧贴，圆角不一致接缝处会错位。 */
+  --md-comp-field-height:                      38px;
+  --md-comp-field-padding-inline:              14px;
+  --md-comp-field-shape:            var(--md-sys-shape-corner-field);
+  /* 字段容器色 = surface-container-highest（本项目 light 主题实测 #D8DCE2 = 216,220,226）。
+     ⚠️ MD3 色阶方向：`highest` 是**最深/最突出**的，`lowest` 最浅 —— 别按字面理解成"最高=最亮"。
+        字段是卡片(surface-container-lowest #FFF)上最需要被发现的元素，用 highest 正确。
+     ⚠️ 菜单面板**不能**也用 highest，否则与字段同色、边界消失（见 --md-comp-menu-container）。 */
+  --md-comp-field-container-color:    var(--md-surface-container-highest);
+  --md-comp-field-indicator-height:            1px;
+  /* 指示线左右内缩：**必须 ≥ 圆角 + 1–2px**，这样短横的两端落在圆角起弧点内侧，
+     与容器底缘（含圆角）留出均匀的视觉间隙。10px 圆角 → 取 8px（曾配 8px 圆角时用 6px）。 */
+  --md-comp-field-indicator-inset:              8px;
+  --md-comp-field-indicator-color:    var(--md-on-surface-variant);
+  --md-comp-field-hover-indicator-color: var(--md-on-surface);
+  --md-comp-field-focus-indicator-height:      2px;
+  --md-comp-field-focus-indicator-color: var(--md-primary);
+  --md-comp-field-icon-size:                   18px;
+  /* 指示线**圆头内缩**（M3E 化）：MD3 原生是满宽直角线，配直角底边自洽；一旦容器改用圆角，
+     满宽线两端就会被 10px 圆角生硬切断。改成两端 round + 左右各让出 8px 后，与上方圆角呼应。
+     实现见 .md-dropdown-trigger::after（用伪元素，不用 border-bottom、也不用 inset box-shadow）。 */
+  /* 字段文字用 14/20/0.1 —— 即 label-large 角色，与设置行主文案、MD3 菜单项**同一档**。
+     ⚠️ 不用 body-large(16/24)：16px 在 38 高的容器里占比过大，且与行标签(14)不同档会显突兀。 */
+  --md-comp-field-font-size:   var(--md-sys-typescale-label-large-size);
+  --md-comp-field-font-line:   var(--md-sys-typescale-label-large-line);
+  --md-comp-field-font-tracking: var(--md-sys-typescale-label-large-tracking);
+  /* 字段宽度：下拉与输入框**共用同一条**，这样两者同宽、叠放时整齐（值来自下拉旧版 220–320）。 */
+  --md-comp-field-min-width:                   220px;
+  --md-comp-field-max-width:                   320px;
+  /* ── MD3 Menu（承载 Select 的下拉面板）──
+     elevation level2 · corner-field(10px，跟随字段) · 上下各 6dp 留白 · 最小宽 112dp
+     · 菜单项左右各 12dp · 文字 label-large(14/20/0.1/500)。
+     ⚠️ 圆角**跟随字段**（同 10px）：菜单紧贴字段下方、横向等宽，两者圆角不一致会在接缝处错位。
+     ⚠️ 容器色必须是 surface-container(#E4E8EE)，**不能**跟字段一样用 highest：
+        菜单紧贴在字段下方、横向等宽，同色时两者会连成一坨，level2 阴影也救不回来
+        （2026-10-04 实测事故：字段与菜单底都是 216,220,226，看起来像一个大方块掉下来）。
+        菜单比字段**亮一档** → 阴影一打就"浮"在字段之上，边界自然。
+     ⚠️ 选中态用 surface-container-highest：filled-select 令牌给的就是这个值
+        （通用 menu 才是 secondary-container），且此处 ≥ 菜单底、恰好比周围项"凸"一档。 */
+  --md-comp-menu-container:           var(--md-surface-container);
+  --md-comp-menu-padding-block:                6px;
+  --md-comp-menu-min-width:                    112px;
+  --md-comp-menu-item-height:                  36px;
+  --md-comp-menu-item-padding-inline:          12px;
+  --md-comp-menu-item-selected-container: var(--md-surface-container-highest);
+  /* label-large 角色此前未定义，MD3 Menu 项与紧凑标签用它：14/20/0.1/重量 500。
+     与 title-small 数值完全相同，但语义不同 —— 别图省事复用 title-small 令牌。 */
+  --md-sys-typescale-label-large-size:         14px;
+  --md-sys-typescale-label-large-line:         20px;
+  --md-sys-typescale-label-large-tracking:     0.1px;
+  --md-sys-typescale-label-large-weight:       500;
 
   /* ── Navigation rail（M3E nav-rail compact，实测自 m3e m3e-nav-rail）──
      rail 宽 96dp · 指示器 56×32 · 图标 24dp · 标签 label-medium 12/500/16/0.5 · 项间距 8dp。 */
@@ -1101,9 +1193,18 @@ body.is-resizing *::after {
   50%       { opacity: 0.6; transform: scale(0.95); }
 }
 
-/* Page transition */
+/* Page transition
+   ⚠️🔴 这里**绝对不能加 forwards**（2026-10-04 事故）：
+      app.js 只在下一次 navigate 时才 remove('page-enter')，加了 forwards 的话动画结束后终帧会被
+      **永久保留** —— 而 page-in 的终帧是 transform: translateY(0)，它 ≠ transform: none。
+      只要 transform 不等于 none，该元素就成为其所有 position:fixed 后代的**包含块**
+      （CSS Transforms §3），于是页面内所有 fixed 浮层都不再按视口定位，而是按 #page-container 的
+      内边距盒定位 → 实测下拉菜单整体下移 40px（= #page-container 距顶距离），用户反馈「为何分离了」。
+      page-in 的终帧恰好等于元素默认态（opacity:1 / transform 无），forwards 本来就是多余的；
+      去掉后动画期间照常生效，结束后 transform 回落 none，包含块自动释放。
+      同理已修 .settings-view-enter-left / -right（见 §「Settings 旧视图」）。 */
 .page-enter {
-  animation: page-in var(--motion-medium) var(--ease-decel) forwards;
+  animation: page-in var(--motion-medium) var(--ease-decel);
 }
 @keyframes page-in {
   from { opacity: 0; transform: translateY(12px); }
@@ -1445,6 +1546,11 @@ body.is-resizing *::after {
   background: var(--md-surface-container);
   /* M3E spatial 弹簧：卡片起落有轻微过冲 */
   transition: transform var(--motion-spatial-default);
+  /* 视口外的卡片跳过布局/绘制/解码：专辑数可达 1800+，
+     实测同时挂载 1823 个 <img> 是渲染进程内存的主要来源之一。
+     auto 关键字让浏览器记忆实测尺寸，避免滚动条跳动。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 236px;
 }
 .album-card:hover {
   transform: translateY(-4px);
@@ -3109,6 +3215,16 @@ padding: 0;
   overflow-x: hidden;
 }
 
+/* 窗口化队列（VirtualList）：spacer 撑滚动高度、content 用 transform 偏移、
+   行绝对定位。这里只重置 padding，布局交给 VirtualList 自管——
+   若加 contain:paint 会裁掉内容高度为 0 的绝对定位行，切勿添加。 */
+.np-queue-list.np-queue-vl {
+  padding: 0;
+}
+.np-queue-list.np-queue-vl > div {
+  padding: 8px 0;
+}
+
 /* ── 24. Lyrics ──────────────────────────────────────────── */
 .np-lyrics-wrap {
   flex: 1;
@@ -3153,14 +3269,17 @@ padding: 0;
   user-select: none;
   width: 100%;
   word-break: break-word;
-  /* line 本身从不设置 transform（逐字动画在 .np-lyrics-char 上），故不列入
-     transition，避免每行被无谓提升为合成层浪费 GPU 内存。
-     will-change 也不再常驻：仅激活行 ±2 行由 JS 挂 .np-near（见 _updateLyrics），
-     fullscreen 下可见行数多，常驻合成层从 ~15 个降到 ≤5 个。 */
+  /* line 本身从不设置 transform（逐字动画在 .np-lyrics-char 上）。
+     🔴 filter 必须**排除**在基类 transition 之外：filter 是强制提升合成层的属性，
+     只要它出现在 transition 列表中，Chromium 就会为**每一行**预建 compositing
+     layer（以便过渡时无需重排）。722 行 × 每层纹理后备实测约 109MB RSS，
+     而收益仅仅是「某行 blur 档位变化时平滑插值」——每行随激活行推进最多发生一次。
+     故 filter 过渡下沉到 .np-lyrics-line.np-near（激活行 ±4，仅 9 行），
+     这些行本就挂 will-change 已建层，零额外开销。
+     opacity / color 不强制提升合成层，可安全保留在基类。 */
   transition:
     opacity 0.42s cubic-bezier(0.2, 0, 0, 1),
-    color 0.42s cubic-bezier(0.2, 0, 0, 1),
-    filter 0.36s cubic-bezier(0.2, 0, 0, 1);
+    color 0.42s cubic-bezier(0.2, 0, 0, 1);
   /* 屏外行跳过样式/布局/绘制（DOM 保留，querySelector/offsetTop 等全部照常工作）：
      数千节点的逐字歌词 DOM 只渲染可见窗口附近的行。
      contain-intrinsic-height 的 auto 关键字记住已渲染行的真实高度，
@@ -3168,9 +3287,16 @@ padding: 0;
   content-visibility: auto;
   contain-intrinsic-height: auto 42px;
 }
-/* 仅激活行附近保留合成层提升提示（激活行高亮/逐字/渐进模糊的频繁变化需要） */
+/* 仅激活行附近保留合成层提升提示（激活行高亮/逐字/渐进模糊的频繁变化需要）。
+   范围 ±4：_blurForDistance 的档位是 0/1.5/3/4.5/6，距离 ≥4 已封顶 6px 不再变化，
+   因此 blur 过渡只可能发生在 ±4 以内 —— 覆盖它即可让全部 9 行都获得平滑 blur，
+   同时把合成层从 722 个压到 9 个（基类已不含 filter transition，见上）。 */
 .np-lyrics-line.np-near {
   will-change: opacity, filter, transform;
+  transition:
+    opacity 0.42s cubic-bezier(0.2, 0, 0, 1),
+    color 0.42s cubic-bezier(0.2, 0, 0, 1),
+    filter 0.36s cubic-bezier(0.2, 0, 0, 1);
 }
 
 /* 切行时的逐行上提：滚动速度较快时提供连续的空间层次，
@@ -3199,6 +3325,67 @@ padding: 0;
 }
 .np-lyrics-line.past {
   opacity: 0.2;
+}
+
+/* ── 点击歌词跳转播放位置 ──────────────────────────────────────────────
+   有 data-time 的行（时间轴歌词）可点击；静态歌词行无此属性，天然不可点。
+   hover 用状态层提亮 + 右侧浮出时间戳（纯 CSS，不碰逐字动画的 JS 路径）。
+   时间戳绝对定位在行右侧、行内垂直居中，不占布局宽度故不触发重排。 */
+.np-lyrics-line[data-time],
+.np-lyrics-interlude[data-next-time] {
+  cursor: pointer;
+}
+/* 可点行的 hover 高亮：歌词行是通栏（width:100%），直接在行上铺状态层会糊成
+   一条贯通全宽的直角带，与列表行的圆角语汇不一致。
+   改用伪元素画一块「内缩 4px 的圆角底板」叠在文字下层——不参与布局，
+   因此不影响文字排版、居中模式的居中点、以及逐字动画的 offsetTop 计算。 */
+.np-lyrics-line[data-time] {
+  position: relative;
+}
+.np-lyrics-line[data-time]::before {
+  content: '';
+  position: absolute;
+  inset: 0 -4px;
+  border-radius: var(--md-sys-shape-corner-extra-small);
+  background: var(--md-on-surface);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-effects-fast);
+}
+.np-lyrics-line[data-time]:hover::before {
+  opacity: var(--md-sys-state-hover-state-layer-opacity);
+}
+.np-lyrics-line[data-time]::after {
+  content: attr(data-time-label);
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  translate: 0 -50%;
+  font-size: var(--md-sys-typescale-label-large-size);
+  line-height: var(--md-sys-typescale-label-large-line);
+  font-weight: var(--md-sys-typescale-label-large-weight);
+  font-variation-settings: 'wght' 500, 'GRAD' 0, 'opsz' 14;
+  color: var(--md-on-surface-variant);
+  background: var(--md-surface-container-high);
+  border-radius: var(--md-sys-shape-corner-extra-small);
+  padding: 0 6px;
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  transition: opacity var(--motion-effects-fast);
+}
+.np-lyrics-line[data-time]:hover::after {
+  opacity: 0.75;
+}
+/* 已播放行平时压到 0.2，hover 提回可读态，否则「点过去听一遍」时看不清 */
+.np-lyrics-line.past[data-time]:hover {
+  opacity: 0.75;
+}
+/* 间奏点组的呼吸 scale 由 60fps RAF 逐帧写 transform，这里只叠加透明度反馈，
+   避免与 RAF 抢 transform 通道造成抖动。 */
+.np-lyrics-interlude[data-next-time]:hover .np-il-dots {
+  opacity: 0.75;
+  transition: opacity var(--motion-effects-fast);
 }
 .np-lyrics-line .np-lyrics-romaji {
   display: block;
@@ -4522,6 +4709,16 @@ padding: 0;
 }
 
 .np-secondary-controls {
+  /* 段高与「外侧胶囊半径」必须成对定义：外侧只能取**有限值**（= 段高的一半）。
+     ⚠️ 这里曾经写 --md-sys-shape-corner-full(9999px)，是错的：
+     CSS 规定「同一边上两角之和 > 该边长」时，会把该元素**所有**圆角按同一比例缩小
+     （f = min(1, 边长 / 两角和)）。首段是 9999px + 8px、段高 44 → f ≈ 0.0022，
+     于是外侧 9999→22（仍是胶囊，看不出问题），而**内侧 8px → 0.02px 被压成直角**；
+     末段同理。结果就是「首尾两段的外侧是圆的、内侧是方的」，与中间段的 8px 圆角对不上，
+     整组看起来不含 M3E 的连通感。用 22px（= 高度一半，真胶囊）则不触发缩放：
+     22+8 < 74、22+22 = 44（等于边长不触发），内侧 8px 得以保留。 */
+  --np-seg-height: 44px;
+  --np-seg-outer: calc(var(--np-seg-height) / 2);
   display: flex;
   align-items: stretch;
   background: transparent;
@@ -4534,10 +4731,11 @@ padding: 0;
   min-height: 0;
 }
 
-/* 分段按钮：细微间距，独立圆角，选中状态形变为完整胶囊（spatial 弹簧） */
+/* 分段按钮：细微间距，独立圆角，选中状态形变为完整胶囊（spatial 弹簧）
+   形状＝外侧 full / 内侧 small（见 .np-secondary-controls 的注释） */
 .np-secondary-controls > button {
   flex: 1;
-  height: 44px;
+  height: var(--np-seg-height);
   border: none;
   border-radius: var(--md-sys-shape-corner-small);
   background: var(--md-surface-container-high);
@@ -4549,12 +4747,14 @@ padding: 0;
               border-radius var(--motion-spatial-fast);
 }
 
-/* 首尾保持外侧完全圆角（full=9999px 会被自动夹到 22px，与高度无关地维持胶囊） */
+/* 首尾保持外侧胶囊、内侧 small。
+   ⚠️ 外侧必须写有限值 var(--np-seg-outer)，不能写 --md-sys-shape-corner-full，
+   否则 9999px 会触发 CSS 圆角等比缩放、把内侧 8px 压成直角（详见上方注释）。 */
 .np-secondary-controls > button:first-child {
-  border-radius: var(--md-sys-shape-corner-full) var(--md-sys-shape-corner-small) var(--md-sys-shape-corner-small) var(--md-sys-shape-corner-full);
+  border-radius: var(--np-seg-outer) var(--md-sys-shape-corner-small) var(--md-sys-shape-corner-small) var(--np-seg-outer);
 }
 .np-secondary-controls > button:last-child {
-  border-radius: var(--md-sys-shape-corner-small) var(--md-sys-shape-corner-full) var(--md-sys-shape-corner-full) var(--md-sys-shape-corner-small);
+  border-radius: var(--md-sys-shape-corner-small) var(--np-seg-outer) var(--np-seg-outer) var(--md-sys-shape-corner-small);
 }
 
 /* 交互状态：Hover */
@@ -4600,6 +4800,19 @@ padding: 0;
 .np-audio-mode-label {
   display: inline-block;
   text-transform: lowercase;
+}
+
+/* 快进/快退按钮的秒数角标：叠在图标右下角的小字，随按钮文字色 */
+.np-secondary-btn { position: relative; }
+.np-secondary-badge {
+  position: absolute;
+  right: 6px;
+  bottom: 5px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  pointer-events: none;
 }
 
 /* 确认对话框（Material You 标准样式，遵循 design.md dialog 规范） */
@@ -5465,14 +5678,17 @@ select.cmd-text-field__input + .cmd-text-field__label {
   to { opacity: 0; transform: translateX(40px); }
 }
 
+/* ⚠️ enter-* 同样禁止 forwards —— 理由见 §「Page transition」的 .page-enter 注释：
+   终帧 transform: translateX(0) ≠ none，会被永久保留并改写页面内 fixed 浮层的包含块。
+   exit-* 必须保留 forwards（离场后要保持不可见/移出视口），不要顺手一起删。 */
 .settings-view-landing {
-  animation: settings-view-enter-left var(--motion-medium) var(--ease-decel) forwards;
+  animation: settings-view-enter-left var(--motion-medium) var(--ease-decel);
 }
 .settings-view-exit-left {
   animation: settings-view-exit-left var(--motion-short) var(--ease-accel) forwards;
 }
 .settings-view-enter-right {
-  animation: settings-view-enter-right var(--motion-medium) var(--ease-decel) forwards;
+  animation: settings-view-enter-right var(--motion-medium) var(--ease-decel);
 }
 .settings-view-exit-right {
   animation: settings-view-exit-right var(--motion-short) var(--ease-accel) forwards;
@@ -5642,15 +5858,14 @@ select.cmd-text-field__input + .cmd-text-field__label {
   flex-direction: column;
 }
 /* 尾部控件槽（M3E list-item trailing slot）
-   2026-10-04 用户要求「往内部收一些」：尾部控件（下拉/开关/按钮）不再紧贴行内容右缘，
-   统一加 24px 右外边距，让控件与卡片右缘之间留出呼吸空间。
-   ⚠️ 这是**行内控件留白**，不是卡片外缘留白 —— 卡片仍撑到岛右缘（见 .settings-content > *）。 */
+   ⚠️ 勿再给这里加 margin —— 2026-10-04 曾加 `margin-right: 24px`，导致行**左右内缩不对称**
+   （左 16、右 16+24=40），用户报「不像左侧那样和谐」后已删。
+   行的左右留白统一由 padding-inline(16) 提供，两侧必须相等。 */
 .settings-row-trailing {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-right: 24px;
 }
 /* 分段列表用 2dp 缝隙分层，不再绘制 M3 inset divider —— 见 .md-seglist */
 
@@ -5669,18 +5884,26 @@ select.cmd-text-field__input + .cmd-text-field__label {
 }
 /* 主文案 · 支持文案：**比 M3 typescale 原型各小一档**（14 / 12）。
    2026-10-04 用户要求「缩小字体大小」——原型 16/14 在满宽卡片里偏大。
-   字号走 --md-comp-settings-label-size / -sub-size，改档位只动上面令牌组。 */
+   字号与**字距**一一对应 MD3 角色（14→label-large 0.1 / 12→label-medium 0.5），
+   ⚠️ 字距不再借用 body-large(0.5) / body-medium(0.25) —— 那是大字号的值，会让小字发虚。
+   主文案字重 = emphasized body-large（Roboto 无 500 时回退），与 supporting text 拉开层级。 */
 .settings-row-label {
   font-size: var(--md-comp-settings-label-size);
   line-height: var(--md-comp-settings-label-line);
-  letter-spacing: var(--md-sys-typescale-body-large-tracking);
-  font-weight: 400;
+  letter-spacing: var(--md-comp-settings-label-tracking);
+  font-weight: var(--md-sys-typescale-emphasized-body-font-weight);
   color: var(--md-on-surface);
 }
 .settings-row-sub {
   font-size: var(--md-comp-settings-sub-size);
   line-height: var(--md-comp-settings-sub-line);
-  letter-spacing: var(--md-sys-typescale-body-medium-tracking);
+  letter-spacing: var(--md-comp-settings-sub-tracking);
+  font-weight: 400;
+  /* margin-top 2px 是**基线原值**（重写这条规则时曾漏掉，2026-10-04 找回）——
+     14/20 与 16/16 的行盒上下各有 ~2px 内间距，两行直接贴着会粘成一坨；
+     补 2px 后视觉间隙约 4–5px，与左右 16 形成「外松内紧」的正确层级。
+     `.settings-row-empty .settings-row-sub { margin-top: 0 }` 负责在空态里还原。 */
+  margin-top: 2px;
   color: var(--md-on-surface-variant);
 }
 
@@ -5789,65 +6012,126 @@ select.cmd-text-field__input + .cmd-text-field__label {
   position: relative;
   display: inline-block;
 }
-/* Select 下拉触发器 — **M3E 化之前的原版**：宽 220–320 / padding 8×12 / 14px /
-   `corner-extra-small`(4px) 圆角 / `surface-container-highest` 底 / 文字用 on-surface。
-   （M3E 化那轮改成了 primary 描边胶囊 + 150–260 / 13px，2026-10-04 按用户要求回退。） */
+/* ── MD3 Filled field / M3E 圆角化（2026-10-04 用户要求按 MD3 标准，后按 M3E 加圆角）──
+   Select 触发器与文本输入框**共用同一条容器配方** —— 在 MD3 里 Select 就是"带菜单的 text field"，
+   两者容器几何逐值相同（见 --md-comp-field-* 令牌组，数值取自 material-web tokens v0.192）。
+   ⚠️ active indicator 用**伪元素**画，不用 border-bottom，也**不用 inset box-shadow**：
+      · border 参与布局 —— 聚焦 1dp→2dp 会让内容盒缩 1px、文字跳动。
+      · inset box-shadow 的线**满宽且直角**，在 8dp 圆角容器里两端会被生硬切断（实测 1152→1471 直切）。
+        改成伪元素后可以同时做到：**两端圆头** + **左右内缩对齐圆角** + 内容盒尺寸不变。
+   ⚠️ 本项目把标题留在行左侧（用户裁定），字段是**无浮动标签**形态，故内容在 40dp 内垂直居中。 */
+.md-dropdown-trigger,
+.settings-font-input {
+  position: relative;
+  height: var(--md-comp-field-height);
+  padding: 0 var(--md-comp-field-padding-inline);
+  background: var(--md-comp-field-container-color);
+  border: none;
+  border-radius: var(--md-comp-field-shape);
+  font-family: inherit;
+  font-size: var(--md-comp-field-font-size);
+  line-height: var(--md-comp-field-font-line);
+  letter-spacing: var(--md-comp-field-font-tracking);
+  color: var(--md-on-surface);
+  cursor: pointer;
+  outline: none;
+  text-align: left;
+  transition: background-color var(--md-sys-motion-spring-fast-effects);
+}
+/* 底部 active indicator（伪元素）：贴在容器底缘的圆角短横。
+   四角全圆形态下（--md-comp-field-shape = 10px），直线的两端会与底部圆角打架，
+   故让它**沿底缘内缩**（inset 比圆角略小，正好落在圆角起弧点内侧）并自身带圆头。
+   高度/颜色由 --md-comp-field-indicator-* 令牌驱动，聚焦时 height 变 2px 并染 primary。
+   ⚠️ 用 height 而非 border-width，改高度不影响任何布局。
+   ⚠️🔴 这段**只允许出现一份**（2026-10-04 事故）：曾因重复粘贴留下一份只写 `content:''` 的
+      残缺副本，残缺块的 `{` 没闭合 → 后面的 `.md-dropdown-menu`/`.md-dropdown-item` 被解析
+      器吞掉，菜单圆角变 0、背景透明、项高塌成 21px，且肉眼只能看到"菜单怪怪的"。 */
+.md-dropdown-trigger::after,
+.settings-font-input::after {
+  content: '';
+  position: absolute;
+  left: var(--md-comp-field-indicator-inset);
+  right: var(--md-comp-field-indicator-inset);
+  bottom: 0;
+  height: var(--md-comp-field-indicator-height);
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-comp-field-indicator-color);
+  pointer-events: none;
+  transition: height var(--md-sys-motion-spring-fast-spatial),
+              background-color var(--md-sys-motion-spring-fast-effects);
+}
+.md-dropdown-trigger:hover,
+.settings-font-input:hover {
+  background-color: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity),
+                              var(--md-comp-field-container-color));
+}
+.md-dropdown-trigger:hover::after,
+.settings-font-input:hover::after {
+  background: var(--md-comp-field-hover-indicator-color);
+}
+.md-dropdown-trigger:focus-visible::after,
+.md-dropdown-trigger[aria-expanded="true"]::after,
+.settings-font-input:focus::after {
+  height: var(--md-comp-field-focus-indicator-height);
+  background: var(--md-comp-field-focus-indicator-color);
+}
+/* Select 触发器：值与尾部图标两端顶开，图标展开时旋转成 arrow_drop_up */
 .md-dropdown-trigger {
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-width: 220px;
-  max-width: 320px;
-  padding: 8px 12px;
-  background: var(--md-surface-container-highest);
-  border: 1px solid var(--md-outline-variant);
-  border-radius: var(--md-sys-shape-corner-extra-small);
-  font-size: 14px;
-  font-family: inherit;
-  color: var(--md-on-surface);
-  cursor: pointer;
-  outline: none;
-  text-align: left;
-  transition: border-color var(--md-sys-motion-spring-fast-effects);
+  width: 100%;
 }
-.md-dropdown-trigger:hover {
-  background: var(--md-surface-container-highest);
-  border-color: var(--md-outline);
+/* 下拉与输入框共用宽度上下限 —— 两者同宽，叠放整齐。
+   ⚠️ 高度/内边距/字号也来自 --md-comp-field-* 令牌组，别在这里写死。 */
+.md-select-dropdown {
+  width: var(--md-comp-field-max-width);
+  max-width: 100%;
 }
-.md-dropdown-trigger:active {
-  background: var(--md-surface-container-high);
-}
-.md-dropdown-trigger:focus-visible {
-  outline: var(--m3e-focus-ring-thickness) solid var(--m3e-focus-ring-color);
-  outline-offset: var(--m3e-focus-ring-outward-offset);
+.settings-font-input {
+  cursor: text;
 }
 .md-dropdown-value {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 尾部图标：MD3 field 规定 24dp；聚焦/展开时染 primary（对应 focus-trailing-icon-color 令牌） */
 .md-dropdown-arrow {
   flex-shrink: 0;
-  font-size: 20px;
+  font-size: var(--md-comp-field-icon-size);
+  width: var(--md-comp-field-icon-size);
+  height: var(--md-comp-field-icon-size);
+  line-height: var(--md-comp-field-icon-size);
   color: var(--md-on-surface-variant);
-  transition: transform var(--md-sys-motion-spring-fast-spatial);
+  transition: transform var(--md-sys-motion-spring-fast-spatial),
+              color var(--md-sys-motion-spring-fast-effects);
+}
+.md-dropdown-trigger:focus-visible .md-dropdown-arrow,
+.md-dropdown-trigger[aria-expanded="true"] .md-dropdown-arrow {
+  color: var(--md-comp-field-focus-indicator-color);
 }
 .md-dropdown-trigger[aria-expanded="true"] .md-dropdown-arrow {
   transform: rotate(180deg);
 }
+/* MD3 Menu 面板（Select 的下拉层）：surface-container 容器 + elevation level2 + 10dp 圆角 +
+   上下各 6dp 留白 + 最小宽 112dp。⚠️ 不画 1px 描边 —— MD3 靠 elevation 分层，描边+投影重复。
+   ⚠️ 容器色必须比字段**亮一档**（见 --md-comp-menu-container 注释），否则与字段连成一片。
+   ⚠️ 圆角用 --md-sys-shape-corner-field 跟随字段，别退回 4dp（见 --md-comp-field-shape 注释）。 */
 .md-dropdown-menu {
   position: fixed;
   top: 0;
   right: 0;
+  min-width: var(--md-comp-menu-min-width);
   max-width: 360px;
   max-height: 320px;
   overflow-y: auto;
-  background: var(--md-surface-container-highest);
-  border: 1px solid var(--md-outline-variant);
-  border-radius: var(--md-sys-shape-corner-small);
-  padding: 8px 0;
-  box-shadow: var(--md-sys-elevation-level3);
+  background: var(--md-comp-menu-container);
+  border: none;
+  border-radius: var(--md-sys-shape-corner-field);
+  padding: var(--md-comp-menu-padding-block) 0;
+  box-shadow: var(--md-sys-elevation-level2);
   z-index: 99999;
   opacity: 0;
   visibility: hidden;
@@ -5861,9 +6145,17 @@ select.cmd-text-field__input + .cmd-text-field__label {
   visibility: visible;
   transform: translateY(0);
 }
+/* MD3 菜单项：36px 高 · 左右各 12dp · 文字 label-large(14/20/0.1/500) · hover 状态层 8%
+   · 选中态 = surface-container-highest（比菜单底凸一档，见令牌注释）。 */
 .md-dropdown-item {
-  padding: 10px 16px;
-  font-size: 14px;
+  display: flex;
+  align-items: center;
+  min-height: var(--md-comp-menu-item-height);
+  padding: 0 var(--md-comp-menu-item-padding-inline);
+  font-size: var(--md-sys-typescale-label-large-size);
+  line-height: var(--md-sys-typescale-label-large-line);
+  letter-spacing: var(--md-sys-typescale-label-large-tracking);
+  font-weight: var(--md-sys-typescale-label-large-weight);
   color: var(--md-on-surface);
   cursor: pointer;
   white-space: nowrap;
@@ -5873,32 +6165,21 @@ select.cmd-text-field__input + .cmd-text-field__label {
               color var(--md-sys-motion-spring-fast-effects);
 }
 .md-dropdown-item:hover {
-  background: var(--md-surface-container);
+  background: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity),
+                        var(--md-comp-menu-container));
 }
 .md-dropdown-item.selected {
-  color: var(--md-primary);
-  background: var(--md-primary-container);
+  color: var(--md-on-surface);
+  background: var(--md-comp-menu-item-selected-container);
 }
 
-/* Settings — text input（回到 M3E 化之前的原版 commit 2dbd256：
-   实心 surface-container-highest 底 + outline-variant 描边 + 4px 圆角，
-   padding 8×12、13px、min-width 240。聚焦只换描边色，不切描边宽度。 */
-.settings-font-input {
-  background: var(--md-surface-container-highest);
-  border: 1px solid var(--md-outline-variant);
-  border-radius: var(--md-sys-shape-corner-extra-small);
-  padding: 8px 12px;
-  font-size: 13px;
-  font-family: inherit;
-  color: var(--md-on-surface);
-  outline: none;
-  min-width: var(--md-comp-settings-input-min-width);
-  transition: border-color var(--md-sys-motion-spring-fast-effects);
+/* Settings — text input 的外观由上方「MD3 Filled field」统一配方提供，此处只留占位符样式。
+   ⚠️ 旧版这里自带背景/描边/圆角/min-width 240 —— 已随 MD3 化删除（与 .md-dropdown-trigger
+      共用配方后重复声明只会互相覆盖）。若确需给某个输入框单独宽度，在调用容器上写，不要改这里。 */
+.settings-font-input::placeholder {
+  color: var(--md-on-surface-variant);
+  opacity: 0.6;
 }
-.settings-font-input:focus {
-  border-color: var(--md-primary);
-}
-.settings-font-input::placeholder { color: var(--md-on-surface-variant); opacity: 0.6; }
 
 /* Settings — text row 布局（leading icon 与标题同排，输入框另起一行，避免长字符串挤压） */
 .settings-row-text {
@@ -5916,6 +6197,14 @@ select.cmd-text-field__input + .cmd-text-field__label {
 }
 .settings-row-text .settings-font-input {
   width: 100%;
+  max-width: var(--md-comp-field-max-width);
+}
+/* 字体名/路径这类输入框内容可能很长（如 "Google Sans Flex, Noto Sans SC, sans-serif"），
+   ≤320 会截断得厉害，故单独放宽到 480；仍保留上限，不做通栏（通栏 1188×44 会成扁带）。 */
+.settings-row-text .settings-font-input[data-bind="ui_font"],
+.settings-row-text .settings-font-input[data-bind="lyrics_font"],
+.settings-row-text .settings-font-input[data-bind="lyrics_jp_font"] {
+  max-width: 480px;
 }
 
 /* Settings — file_picker 行（输入框 + 浏览按钮） */
@@ -5928,6 +6217,7 @@ select.cmd-text-field__input + .cmd-text-field__label {
 .settings-file-picker-control .settings-font-input {
   flex: 1 1 240px;
   min-width: 0;
+  max-width: none;   /* file_picker 行是「输入框 + 浏览按钮」并排，由 flex 分配，不吃字段宽上限 */
 }
 .settings-file-picker-btn {
   flex-shrink: 0;
@@ -6175,17 +6465,8 @@ select.cmd-text-field__input + .cmd-text-field__label {
   margin-left: auto;
 }
 
-/* 平台信息行（不可交互，仅展示） */
-.about-info-row {
-  cursor: default;
-}
-.about-info-row .settings-row-sub {
-  text-align: right;
-  max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* ⚠️ .about-info-row（平台/架构/系统版本 展示行）已随该卡片删除（2026-10-04），勿复活。
+   平台信息统一走「诊断信息」对话框里的 SystemOsVersion / SystemOsArch。 */
 
 /* ── 23. Detail View (Album / Artist / Playlist) ────────── */
 /* Material You Expressive 紧凑头部：左侧封面 + 右侧信息卡片 */
@@ -6777,13 +7058,8 @@ select.cmd-text-field__input + .cmd-text-field__label {
 }
 
 /* ── Settings — Material Select Dropdown ─────────────────────── */
-.md-select-dropdown {
-  min-width: 140px;
-}
-.md-select-dropdown .md-dropdown-trigger {
-  width: 100%;
-  justify-content: space-between;
-}
+/* ⚠️ 宽度/上下限的唯一定义在 §「MD3 Filled field」附近的 .md-select-dropdown，此处只留旧注释占位。
+   曾在这里写 min-width:140px，与上方的 width 声明重复 —— 改宽度时两处会互相打架，已删。 */
 
 /* ── Settings — 普通页面左右分栏 ──────────────────────────────────── */
 /* 设置页主体：填满页面容器，左侧导航 + 右侧内容 */
@@ -8595,4 +8871,137 @@ body.onboarding-active .title-bar-settings { display: none; }
 .settings-action-btn {
   flex-shrink: 0;
   white-space: nowrap;
+}
+
+/* ── Settings: 正在播放功能区自定义卡片 ─────────────────────────
+   独立整宽卡片（.settings-row-full），内含：标题 + 已选 chip 行 + 编辑入口。 */
+.settings-np-secondary {
+  padding: 16px var(--md-comp-list-item-padding-inline);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.settings-np-secondary-head .settings-row-label {
+  font-size: 14px;
+  font-weight: var(--md-sys-typescale-emphasized-label-font-weight);
+  color: var(--md-on-surface);
+}
+.settings-np-secondary-head .settings-row-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--md-on-surface-variant);
+}
+.settings-np-secondary-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 32px;
+}
+.settings-np-secondary-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.settings-np-secondary-count {
+  font-size: 12px;
+  color: var(--md-on-surface-variant);
+}
+.settings-np-secondary .settings-action-btn { height: 36px; padding: 0 18px; }
+
+/* .md-chip：M3 chip（展示型 / 可移除） */
+.md-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--md-sys-shape-corner-small);
+  background: var(--md-surface-container-high);
+  color: var(--md-on-surface);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.settings-np-chip .material-symbols-rounded { font-size: 18px; }
+
+/* ── Settings: 功能选择对话框 ───────────────────────────────────
+   外壳复用项目标准对话框 .cmd-dialog（about.js / context_menu.js 同源），
+   候选列表复用 M3E 分段列表语义（.md-seglist > * 提供底色/圆角/状态层），
+   单格即一个 .settings-row（leading 图标 + 主文案 + trailing 勾选）。
+   此处只写"对话框内网格布局"的尺寸覆写，不重造视觉。 */
+.np-actions-editor {
+  /* 对话框内的列表用更紧的项内边距：两列网格下 16px 会挤掉文字 */
+  --md-comp-list-item-padding-inline: 12px;
+  /* 本对话框内容较宽（两列网格），比默认 .cmd-dialog 更宽一点 */
+  max-width: 420px;
+}
+.np-actions-editor-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* 列表超长时内部滚动，不撑破对话框 */
+  max-height: min(56vh, 460px);
+  overflow: hidden;
+}
+.np-actions-editor-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--md-on-surface-variant);
+}
+/* 网格形态：每格是一个 M3E list item。
+   .md-seglist 类同时挂上 —— 底色/圆角/hover/selected/disabled 状态层全部由
+   `.md-seglist > *` 统一提供（与设置页列表同源），此处只负责"两列网格"排版。 */
+.np-actions-editor-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));   /* minmax(0,1fr) 防内容撑破列宽 */
+  column-gap: 4px;
+  row-gap: 4px;
+  /* 覆盖 .md-seglist 的 flex 列布局与 12px inset（网格不再需要） */
+  flex-direction: unset;
+  margin-inline: 0;
+  /* 溢出时才显示滚动条，未溢出不留空白轨道 */
+  scrollbar-width: thin;
+}
+.np-actions-editor-grid::-webkit-scrollbar { width: 6px; }
+.np-actions-editor-grid::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--md-on-surface) 24%, transparent);
+  border-radius: var(--md-sys-shape-corner-full);
+}
+.np-actions-editor-item {
+  /* 网格里的按钮撑满列宽（.md-seglist > * 不管宽度） */
+  width: 100%;
+  min-width: 0;
+  /* 覆盖 .settings-row 的 justify-content: space-between（内容按 左-中-右 三槽排） */
+  justify-content: flex-start;
+  border: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  /* 项内边距收窄：两列网格下 16px 会挤掉文字 */
+  padding-inline: 12px;
+  gap: 8px;
+}
+.np-actions-editor-item.disabled { cursor: default; }
+.np-actions-editor-item-icon { font-size: 20px; }
+.np-actions-editor-item .settings-row-body { flex: 1; min-width: 0; }
+.np-actions-editor-item-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-actions-editor-check {
+  flex-shrink: 0;
+  color: var(--md-on-surface-variant);
+  font-size: 20px;
+  line-height: 1;
+}
+.np-actions-editor-item.selected .np-actions-editor-check { color: var(--md-on-secondary-container); }
+.np-actions-editor-actions {
+  align-items: center;
+  gap: 8px;
+}
+.np-actions-editor-count {
+  margin-right: auto;        /* 计数贴左，按钮组贴右 */
+  font-size: 13px;
+  color: var(--md-on-surface-variant);
 }

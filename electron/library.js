@@ -6,8 +6,20 @@
 
 const crypto = require('crypto');
 const fs = require('fs');
+const fsp = fs.promises;
 const path = require('path');
 const { makeSortKey, makeFirstLetter } = require('./sortkey');
+
+// ── 扫描并发与批写参数 ──────────────────────────────────────────────────────
+// 元数据解析是 IO 密集（读文件头）+ 少量 CPU（标签解析），4 路并发可让
+// libuv 线程池的磁盘读并行；写库按 SCAN_FLUSH_SIZE 条一个事务，
+// 把「每条 INSERT 一次 WAL fsync」变成「每批一次」，这是大库导入慢的
+// 主要原因（6500 首 = 6500 次 fsync，机械盘上光 fsync 就要几十秒）。
+const SCAN_PARSE_PARALLEL = 4;
+const SCAN_FLUSH_SIZE = 200;
+// 启动期元数据回填的并发度：刻意低于扫描，避免与用户正在进行的
+// 播放（audio_output IPC）抢占主进程。
+const BACKFILL_PARSE_PARALLEL = 2;
 
 // music-metadata v10+ 是纯 ESM 包。
 // 在 Electron 31 (Node.js 20) 中，require() 仅返回 { loadMusicMetadata }，
@@ -42,6 +54,10 @@ const FEAT_PATTERNS = ['feat.', 'ft.', 'vs.', 'with'];
 // 同时把单次同步读取的分配量从「整个音频文件（可达 100MB）」降到有界值。
 // 头部未命中时仍会回退整文件读取，因此不改变提取结果。
 const COVER_HEAD_READ_BYTES = 24 * 1024 * 1024;
+// 磁盘"无封面"负标记的有效期：过期后允许重新提取一次以自我修正。
+// 设得较长（24h），因为绝大多数负标记是真实的（曲目确实没有内嵌封面），
+// 重提取只是兜底，不应成为常态开销。
+const COVER_NEGATIVE_TTL_MS = 24 * 60 * 60 * 1000;
 
 // 艺术家分隔符正则缓存：_splitArtists 对全库每首曲目调用一次，
 // 原本每次都 new RegExp（1 万首 = 1 万次正则编译）。分隔符是设置项，
@@ -201,6 +217,10 @@ class MusicLibrary {
     try {
       fs.mkdirSync(this._coverCacheDir, { recursive: true });
     } catch { /* 已存在或无权限 */ }
+    // 并发去重：同一 trackId 的多个并发请求（列表渲染 + SMTC + 多尺寸）
+    // 共享同一个提取 Promise，避免重复读文件、重复解析封面。
+    // value 形如 Promise<{ data: Buffer|null, confirmed: boolean }>
+    this._coverInflight = new Map();
   }
 
   // ── Schema migration ─────────────────────────────────────────────────────
@@ -231,28 +251,12 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     // ── WebDAV / SMB 曲目支持：tracks 表添加 webdav_path 列 ──
     tryAlter('ALTER TABLE tracks ADD COLUMN webdav_path TEXT');
 
-    // 歌词回填
-    const rows = this._db.prepare(
-      "SELECT id, path FROM tracks WHERE lyrics IS NULL AND source IS NULL"
-    ).all();
-    for (const row of rows) {
-      if (!fs.existsSync(row.path)) continue;
-      const lrc = this._extractLrcSync(row.path);
-      if (lrc) {
-        this._db.prepare('UPDATE tracks SET lyrics=? WHERE id=?').run(lrc, row.id);
-      }
-    }
-
-// 封面回填
-    const coverRows = this._db.prepare(
-      "SELECT id, path FROM tracks WHERE has_cover=0 AND source IS NULL"
-    ).all();
-    for (const row of coverRows) {
-      if (!fs.existsSync(row.path)) continue;
-      if (this._hasCoverSync(row.path)) {
-        this._db.prepare('UPDATE tracks SET has_cover=1 WHERE id=?').run(row.id);
-      }
-    }
+    // ── 历史上的歌词/封面回填循环已删除 ──────────────────────────────────
+    // 原实现每次启动都对 lyrics IS NULL / has_cover=0 的曲目全量做
+    // fs.existsSync（6500+ 首 = 上万次同步系统调用，阻塞主进程事件循环
+    // 数秒），且封面回填用的 _hasCoverSync 恒返回 false —— 从未生效过。
+    // 歌词在扫描时已由 _parseMetadata 提取；封面按需由 getCoverDataAsync
+    // 提取，都不需要启动期回填。
 
     // ── 孤儿曲目清理 ──────────────────────────────────────────
     // 删除 folder_id 不在 folders 表中、且 source IS NULL 的本地曲目
@@ -351,17 +355,26 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return rows;
   }
 
+  /**
+   * 查询文件夹 id。
+   * folders.path 存的始终是 path.resolve() 后的规范形式（见 addFolder），
+   * 因此这里必须同样 resolve 再查 —— 否则传入 'C:/x' 这类使用正斜杠、
+   * 或含相对段的路径会查不到行，导致 scanFolder 静默 return undefined
+   * （调用方看起来"扫描成功"但一首都没入库）。
+   */
   _folderId(folderPath) {
-    const row = this._db.prepare('SELECT id FROM folders WHERE path=?').get(folderPath);
+    const p = path.resolve(folderPath);
+    const row = this._db.prepare('SELECT id FROM folders WHERE path=?').get(p);
     return row ? row.id : null;
   }
 
   _folderInfo(folderPath) {
+    const p = path.resolve(folderPath);
     const row = this._db.prepare(
       `SELECT f.path, f.added_at, f.last_scan,
        (SELECT COUNT(*) FROM tracks t WHERE t.folder_id=f.id) AS track_count
        FROM folders f WHERE f.path=?`
-    ).get(folderPath);
+    ).get(p);
     return row || null;
   }
 
@@ -373,113 +386,96 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     if (!fs.statSync(folderPath).isDirectory()) return;
     const now = Date.now() / 1000;
 
-    // 阶段1: 遍历目录并解析元数据
-    const filesToInsert = [];
-    function walkDir(dir) {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walkDir(fullPath);
-        } else if (entry.isFile()) {
-          const ext = path.extname(entry.name).toLowerCase();
-          if (SUPPORTED_EXT.has(ext)) {
-            filesToInsert.push(fullPath);
-          }
-        }
-      }
-    }
-    walkDir(folderPath);
+    // 阶段1: 遍历目录收集音频文件（纯 readdir，开销极小）
+    const filesToInsert = this._walkAudioPaths(folderPath);
 
-    // 阶段2: 解析元数据并写入数据库
+    // 阶段2: 并发解析元数据 + 批量事务写入
+    // 原实现：逐条 await parseFile + 每条独立 autocommit（每次 commit 触发
+    // WAL fsync）+ 每文件一条 SELECT 查重。6500 首在 HDD 上要数分钟。
+    // 现在：查重一次性载入 Set；解析 4 路并发；写入按批包进事务。
     let inserted = 0;
     let alreadyCount = 0;
-    for (const filePath of filesToInsert) {
-      const already = this._db.prepare('SELECT folder_id FROM tracks WHERE path=?').get(filePath);
-      if (already) {
-        alreadyCount++;
-        // 曲目已存在但 folder_id 可能缺失（旧后端迁移），补上关联
-        if (already.folder_id === null || already.folder_id === undefined) {
-          this._db.prepare('UPDATE tracks SET folder_id=? WHERE path=?').run(fid, filePath);
-        }
-        continue;
-      }
-      try {
-        const meta = await this._parseMetadata(filePath);
-        const stat = fs.statSync(filePath);
-        this._insertLocalTrackRow(fid, filePath, meta, stat.size, now);
-        inserted++;
-      } catch (e) {
-        console.error(`[MusicLibrary] Failed to insert track: ${filePath}`, e.message || e);
-      }
-    }
-    this._db.prepare('UPDATE folders SET last_scan=? WHERE id=?').run(now, fid);
-    this._invalidateDedupCache();
-  }
 
-  // ── 增量同步（FileWatcher 分层扫描）──────────────────────────────────────
-
-  /**
-   * 写入/覆盖一条本地曲目记录（INSERT OR REPLACE，仅用于新增场景）。
-   * 注意：REPLACE 会先删除旧行并触发外键级联（收藏/历史/歌单引用），
-   * 因此已存在曲目的内容更新必须使用 _updateLocalTrackRow。
-   */
-  _insertLocalTrackRow(fid, filePath, meta, size, addedAt) {
-    const tid = trackId(filePath);
-    // 使用 INSERT OR IGNORE 而非 INSERT OR REPLACE：
-    // INSERT OR REPLACE 在主键冲突时会先 DELETE 旧行再 INSERT 新行，
-    // 触发 ON DELETE CASCADE 级联删除 liked_tracks / play_history / playlist_tracks。
-    // INSERT OR IGNORE 在冲突时静默跳过，保留已存在曲目的关联数据。
-    this._db.prepare(
+    const insertStmt = this._db.prepare(
       `INSERT OR IGNORE INTO tracks
        (id, path, folder_id, title, artist, album, album_artist,
         track_number, disc_number, year, duration_ms, file_size,
         has_cover, lyrics, genre, alias_title, added_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).run(
-      tid, filePath, fid,
-      meta.title || path.basename(filePath, path.extname(filePath)),
-      meta.artist || null,
-      meta.album || null,
-      meta.album_artist || null,
-      meta.track_number || null,
-      meta.disc_number || null,
-      meta.year || null,
-      meta.duration_ms || null,
-      size,
-      meta.has_cover ? 1 : 0,
-      meta.lyrics || null,
-      meta.genre || null,
-      meta.alias_title || null,
-      addedAt
     );
+    const linkFidStmt = this._db.prepare('UPDATE tracks SET folder_id=? WHERE path=?');
+
+    // 已有曲目集合（含 folder_id 为 NULL 的遗留行，用于补关联）
+    const knownRows = this._db.prepare('SELECT path, folder_id FROM tracks').all();
+    const knownPaths = new Set();
+    const nullFidPaths = new Set();
+    for (const r of knownRows) {
+      knownPaths.add(r.path);
+      if (r.folder_id === null || r.folder_id === undefined) nullFidPaths.add(r.path);
+    }
+
+    const pendingRows = [];   // 已解析、待事务写入的参数数组
+    const pendingLinks = [];  // 待补 folder_id 的 [fid, path]
+    const insertTx = this._db.transaction((rows, links) => {
+      for (const p of links) linkFidStmt.run(p[0], p[1]);
+      for (const r of rows) insertStmt.run(...r);
+    });
+
+    let parseIndex = 0;
+    const worker = async () => {
+      for (;;) {
+        const i = parseIndex++;
+        if (i >= filesToInsert.length) return;
+        const filePath = filesToInsert[i];
+        if (knownPaths.has(filePath)) {
+          alreadyCount++;
+          if (nullFidPaths.has(filePath)) pendingLinks.push([fid, filePath]);
+          continue;
+        }
+        try {
+          const meta = await this._parseMetadata(filePath);
+          let size = 0;
+          try { size = (await fsp.stat(filePath)).size; } catch { /* 保留 0 */ }
+          pendingRows.push([
+            trackId(filePath), filePath, fid,
+            meta.title || path.basename(filePath, path.extname(filePath)),
+            meta.artist || null,
+            meta.album || null,
+            meta.album_artist || null,
+            meta.track_number || null,
+            meta.disc_number || null,
+            meta.year || null,
+            meta.duration_ms || null,
+            size,
+            meta.has_cover ? 1 : 0,
+            meta.lyrics || null,
+            meta.genre || null,
+            meta.alias_title || null,
+            now,
+          ]);
+          inserted++;
+          if (pendingRows.length >= SCAN_FLUSH_SIZE) {
+            insertTx(pendingRows.splice(0), pendingLinks.splice(0));
+          }
+        } catch (e) {
+          console.error(`[MusicLibrary] Failed to insert track: ${filePath}`, e.message || e);
+        }
+        // 周期性让出事件循环：扫描期间 audio_output IPC / 封面请求
+        // 仍能被及时处理，避免播放卡顿
+        if ((i & 15) === 15) await new Promise((r) => setImmediate(r));
+      }
+    };
+    await Promise.all(Array.from({ length: SCAN_PARSE_PARALLEL }, worker));
+    if (pendingRows.length > 0 || pendingLinks.length > 0) {
+      insertTx(pendingRows.splice(0), pendingLinks.splice(0));
+    }
+
+    this._db.prepare('UPDATE folders SET last_scan=? WHERE id=?').run(now, fid);
+    this._invalidateDedupCache();
+    return { inserted, already: alreadyCount, total: filesToInsert.length };
   }
 
-  /**
-   * 更新已存在曲目的元数据（保留 added_at 与收藏/历史/歌单关联）。
-   */
-  _updateLocalTrackRow(filePath, meta, size) {
-    this._db.prepare(
-      `UPDATE tracks SET title=?, artist=?, album=?, album_artist=?,
-       track_number=?, disc_number=?, year=?, duration_ms=?, file_size=?,
-       has_cover=?, lyrics=?, genre=?, alias_title=? WHERE path=?`
-    ).run(
-      meta.title || path.basename(filePath, path.extname(filePath)),
-      meta.artist || null,
-      meta.album || null,
-      meta.album_artist || null,
-      meta.track_number || null,
-      meta.disc_number || null,
-      meta.year || null,
-      meta.duration_ms || null,
-      size,
-      meta.has_cover ? 1 : 0,
-      meta.lyrics || null,
-      meta.genre || null,
-      meta.alias_title || null,
-      filePath
-    );
-  }
+  // ── 增量同步（FileWatcher 分层扫描）──────────────────────────────────────
 
   /**
    * 分层扫描 L1：仅遍历目录（readdir），收集受支持的音频文件路径。
@@ -591,27 +587,96 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       );
     }
 
-    // ── L3 新增 / 更新：解析元数据并写库 ──
+    // ── L3 新增 / 更新：并发解析元数据 + 批量事务写库 ──
     let added = 0;
-    for (const filePath of toAdd) {
-      try {
-        const meta = await this._parseMetadata(filePath);
-        const stat = fs.statSync(filePath);
-        this._insertLocalTrackRow(fid, filePath, meta, stat.size, now);
-        added++;
-      } catch (e) {
-        console.error(`[MusicLibrary] 增量同步新增失败: ${filePath}`, e.message || e);
-      }
+    {
+      const insertStmt = this._db.prepare(
+        `INSERT OR IGNORE INTO tracks
+         (id, path, folder_id, title, artist, album, album_artist,
+          track_number, disc_number, year, duration_ms, file_size,
+          has_cover, lyrics, genre, alias_title, added_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      );
+      const insertTx = this._db.transaction((rows) => {
+        for (const r of rows) insertStmt.run(...r);
+      });
+      const pendingRows = [];
+      let parseIndex = 0;
+      const worker = async () => {
+        for (;;) {
+          const i = parseIndex++;
+          if (i >= toAdd.length) return;
+          const filePath = toAdd[i];
+          try {
+            const meta = await this._parseMetadata(filePath);
+            let size = 0;
+            try { size = (await fsp.stat(filePath)).size; } catch { /* 保留 0 */ }
+            pendingRows.push([
+              trackId(filePath), filePath, fid,
+              meta.title || path.basename(filePath, path.extname(filePath)),
+              meta.artist || null,
+              meta.album || null,
+              meta.album_artist || null,
+              meta.track_number || null,
+              meta.disc_number || null,
+              meta.year || null,
+              meta.duration_ms || null,
+              size,
+              meta.has_cover ? 1 : 0,
+              meta.lyrics || null,
+              meta.genre || null,
+              meta.alias_title || null,
+              now,
+            ]);
+            added++;
+            if (pendingRows.length >= SCAN_FLUSH_SIZE) {
+              insertTx(pendingRows.splice(0));
+            }
+          } catch (e) {
+            console.error(`[MusicLibrary] 增量同步新增失败: ${filePath}`, e.message || e);
+          }
+          if ((i & 15) === 15) await new Promise((r) => setImmediate(r));
+        }
+      };
+      await Promise.all(Array.from({ length: SCAN_PARSE_PARALLEL }, worker));
+      if (pendingRows.length > 0) insertTx(pendingRows.splice(0));
     }
     let updated = 0;
-    for (const u of toUpdate) {
-      try {
-        const meta = await this._parseMetadata(u.path);
-        this._updateLocalTrackRow(u.path, meta, u.size);
-        updated++;
-      } catch (e) {
-        console.error(`[MusicLibrary] 增量同步更新失败: ${u.path}`, e.message || e);
+    {
+      const updateTx = this._db.transaction((rows) => {
+        const stmt = this._db.prepare(
+          `UPDATE tracks SET title=?, artist=?, album=?, album_artist=?,
+           track_number=?, disc_number=?, year=?, duration_ms=?, file_size=?,
+           has_cover=?, lyrics=?, genre=?, alias_title=? WHERE path=?`
+        );
+        for (const r of rows) stmt.run(...r);
+      });
+      const pendingRows = [];
+      for (const u of toUpdate) {
+        try {
+          const meta = await this._parseMetadata(u.path);
+          pendingRows.push([
+            meta.title || path.basename(u.path, path.extname(u.path)),
+            meta.artist || null,
+            meta.album || null,
+            meta.album_artist || null,
+            meta.track_number || null,
+            meta.disc_number || null,
+            meta.year || null,
+            meta.duration_ms || null,
+            u.size,
+            meta.has_cover ? 1 : 0,
+            meta.lyrics || null,
+            meta.genre || null,
+            meta.alias_title || null,
+            u.path,
+          ]);
+          updated++;
+        } catch (e) {
+          console.error(`[MusicLibrary] 增量同步更新失败: ${u.path}`, e.message || e);
+        }
       }
+      if (pendingRows.length > 0) updateTx(pendingRows);
     }
 
     this._db.prepare('UPDATE folders SET last_scan=? WHERE id=?').run(now, fid);
@@ -644,7 +709,8 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
       meta.has_cover = !!(common.picture && common.picture.length > 0);
       meta.genre = (common.genre && common.genre.length > 0) ? common.genre[0] : null;
-    meta.lyrics = this._extractLrcSync(filePath, metadata);
+      // 侧车 .lrc 探测走异步（扫描热路径，见 _findSidecarLrcAsync 注释）
+      meta.lyrics = await this._extractLrcAsync(filePath, metadata);
       meta.alias_title = this._extractAliasTitle(metadata, meta.title);
     } catch (e) {
       console.error(`[MusicLibrary] Failed to parse metadata: ${filePath}`, e.message || e);
@@ -690,35 +756,30 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return found.length > 0 ? found[0] : null;
   }
 
-  _extractLrcSync(filePath, metadata = null) {
+  /**
+   * 从 music-metadata 解析结果中提取内嵌歌词（纯内存，无 IO）。
+   * 侧车 .lrc 文件的探测见 _findSidecarLrcAsync。
+   */
+  _extractEmbeddedLyrics(metadata) {
+    if (!metadata || !metadata.native) return null;
     try {
-      // 1) 侧车 .lrc 文件
-      const lrcPath = filePath.replace(/\.[^.]+$/, '.lrc');
-      if (fs.existsSync(lrcPath)) {
-        return fs.readFileSync(lrcPath, 'utf-8');
-      }
-
-      // 2) 从 metadata.native 提取歌词
-      if (metadata && metadata.native) {
-        for (const [format, tags] of Object.entries(metadata.native)) {
-          for (const tag of tags) {
-            const id = tag.id.toLowerCase();
-            if (id === 'uslt' || id === '©lyr' || id === 'lyrics' || id === 'unsyncedlyrics') {
-              if (!tag.value) continue;
-              // music-metadata v10+ では USLT/COMM フレームの value が
-              // { language, descriptor, text } オブジェクトになるため、
-              // text プロパティを抽出する
-              if (typeof tag.value === 'object' && tag.value !== null) {
-                if (typeof tag.value.text === 'string' && tag.value.text) {
-                  return tag.value.text;
-                }
-                // 稀に descriptor 部分のみの場合
-                if (typeof tag.value.descriptor === 'string' && tag.value.descriptor) {
-                  return tag.value.descriptor;
-                }
+      for (const [format, tags] of Object.entries(metadata.native)) {
+        for (const tag of tags) {
+          const id = tag.id.toLowerCase();
+          if (id === 'uslt' || id === '©lyr' || id === 'lyrics' || id === 'unsyncedlyrics') {
+            if (!tag.value) continue;
+            // music-metadata v10+ では USLT/COMM フレームの value が
+            // { language, descriptor, text } オブジェクトになるため、
+            // text プロパティを抽出する
+            if (typeof tag.value === 'object' && tag.value !== null) {
+              if (typeof tag.value.text === 'string' && tag.value.text) {
+                return tag.value.text;
               }
-              return String(tag.value);
+              if (typeof tag.value.descriptor === 'string' && tag.value.descriptor) {
+                return tag.value.descriptor;
+              }
             }
+            return String(tag.value);
           }
         }
       }
@@ -728,64 +789,188 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return null;
   }
 
-  _hasCoverSync(filePath) {
+  /**
+   * 异步读取侧车 .lrc（同目录同名）。
+   * 原实现用 fs.existsSync + readFileSync，每个文件两次同步系统调用 ——
+   * 大库扫描（6500 首）时全部串在主线程上，是可观的开销。
+   * ENOENT 是常态（大多数曲目没有 .lrc），用异步 stat 直接吞掉。
+   */
+  async _findSidecarLrcAsync(filePath) {
+    const lrcPath = filePath.replace(/\.[^.]+$/, '.lrc');
     try {
-      // Quick check: read file header with music-metadata
-      // This is sync-safe for small reads, but music-metadata is async.
-      // We'll just return false for the sync path; the async scan handles it.
-      return false;
+      const buf = await fsp.readFile(lrcPath, 'utf-8');
+      return buf;
     } catch {
-      return false;
+      return null;
     }
+  }
+
+  /** 同步版本（保留给无法 await 的调用点）。 */
+  _extractLrcSync(filePath, metadata = null) {
+    try {
+      const lrcPath = filePath.replace(/\.[^.]+$/, '.lrc');
+      if (fs.existsSync(lrcPath)) {
+        return fs.readFileSync(lrcPath, 'utf-8');
+      }
+      return this._extractEmbeddedLyrics(metadata);
+    } catch {
+      return null;
+    }
+  }
+
+  /** 异步版本：侧车 .lrc 优先，其次内嵌歌词。 */
+  async _extractLrcAsync(filePath, metadata = null) {
+    const sidecar = await this._findSidecarLrcAsync(filePath);
+    if (sidecar !== null) return sidecar;
+    return this._extractEmbeddedLyrics(metadata);
   }
 
   // ── Cover extraction ──────────────────────────────────────────────────────
 
-  getCoverData(trackId) {
-    if (!trackId) return null;
+  /**
+   * 提取内嵌封面（异步，主入口）。
+   *
+   * 与旧的同步 getCoverData 的区别：
+   *   - 全部 IO 走 fs.promises（libuv 线程池），不阻塞主进程事件循环
+   *     —— 这是大库列表滚动时 PCM 断流 / 封面请求超时的根因。
+   *   - 返回 { data, confirmed }：
+   *       data      = Buffer | null
+   *       confirmed = true  → 解析流程完整跑完，"无封面"是确定结论，可写负缓存
+   *                   false → IO 错误（文件被锁 / 网络盘掉线 / 权限），
+   *                           不得写负缓存，下次请求应重试
+  /**
+   * 获取封面数据（入口）。返回 Promise，且**并发去重依赖返回同一个 Promise
+   * 实例**，因此本方法刻意不使用 async —— async 函数的 return 会把内部
+   * Promise 再包一层，导致 p1 !== p2，Map 里的去重条目形同虚设。
+   *
+   * @param {string} trackId
+   * @returns {Promise<{data: Buffer|null, confirmed: boolean}>}
+   */
+  getCoverDataAsync(trackId) {
+    const MISS = { data: null, confirmed: true };
+    if (!trackId) return Promise.resolve(MISS);
 
     // ── 1. 内存热缓存命中 ──
     const memCached = this._coverDataCache.get(trackId);
     if (memCached !== undefined) {
-      // LRU touch：移到末尾（Map 保持插入顺序）
+      if (memCached !== null) {
+        // LRU touch
+        this._coverDataCache.delete(trackId);
+        this._coverDataCache.set(trackId, memCached);
+      }
+      return Promise.resolve({ data: memCached, confirmed: true });
+    }
+
+    // ── 2. 并发去重：同一 trackId 共享同一 Promise ──
+    const inflight = this._coverInflight.get(trackId);
+    if (inflight) return inflight;
+
+    const p = this._loadCoverDataAsync(trackId).finally(() => {
+      this._coverInflight.delete(trackId);
+    });
+    this._coverInflight.set(trackId, p);
+    return p;
+  }
+
+  /**
+   * 封面加载的实际实现（含磁盘缓存 / 提取 / 回写）。
+   * 调用方应通过 getCoverDataAsync 进入以获得去重与内存缓存。
+   */
+  async _loadCoverDataAsync(trackId) {
+    let row;
+    try {
+      row = this._db.prepare('SELECT path, source FROM tracks WHERE id=?').get(trackId);
+    } catch {
+      return { data: null, confirmed: false };
+    }
+    if (!row || !row.path) return { data: null, confirmed: true };
+    // 远程来源由 cover-server 的专用代理负责，此处不处理
+    if (row.source === 'subsonic' || row.source === 'webdav') return { data: null, confirmed: true };
+
+    // ── 3. 磁盘缓存 ──
+    // 空文件 = 已确认无封面；非空 = 封面数据；ENOENT = 无记录。
+    // 0 字节标记带 TTL：极少数情况下负标记可能是"临时 IO 失败"被误写
+    // （或文件后来被打上了标签），过期后重新提取一次以自我修正。
+    const diskPath = this._coverCachePath(trackId);
+    let data = null;
+    try {
+      const buf = await fsp.readFile(diskPath);
+      if (buf && buf.length === 0) {
+        // 负标记：检查是否过期
+        let stale = false;
+        try {
+          const st = await fsp.stat(diskPath);
+          stale = (Date.now() - st.mtimeMs) > COVER_NEGATIVE_TTL_MS;
+        } catch { /* stat 失败 → 当作已确认 */ }
+        if (!stale) {
+          this._putCoverCache(trackId, null);
+          return { data: null, confirmed: true };
+        }
+        // 过期：无视该负标记，走下面的重新提取
+      } else {
+        this._putCoverCache(trackId, buf);
+        return { data: buf, confirmed: true };
+      }
+    } catch (e) {
+      if (e && e.code !== 'ENOENT') {
+        // 读磁盘缓存失败（少见）：不写负缓存，继续尝试从音频文件提取
+      }
+    }
+
+    // ── 4. 从音频文件提取 ──
+    let confirmed = true;
+    try {
+      data = await this._extractCoverAsync(row.path);
+    } catch {
+      // 提取过程 IO 异常（文件被独占 / 网络盘断开）→ 不可写负缓存
+      confirmed = false;
+    }
+    if (!confirmed) {
+      // 不写内存缓存，允许下次重试
+      return { data: null, confirmed: false };
+    }
+
+    // ── 5. 回写磁盘缓存（null 写 0 字节标记）──
+    try {
+      await fsp.writeFile(diskPath, data || Buffer.alloc(0));
+    } catch { /* 磁盘写入失败，仅靠内存缓存 */ }
+
+    this._putCoverCache(trackId, data);
+    return { data, confirmed: true };
+  }
+
+  /**
+   * 同步取封面数据（保留给无法 await 的遗留调用点）。
+   * 新代码应优先使用 getCoverDataAsync。
+   */
+  getCoverData(trackId) {
+    if (!trackId) return null;
+    const memCached = this._coverDataCache.get(trackId);
+    if (memCached !== undefined) {
       if (memCached !== null) {
         this._coverDataCache.delete(trackId);
         this._coverDataCache.set(trackId, memCached);
       }
       return memCached;
     }
-
     const row = this._db.prepare('SELECT path, source FROM tracks WHERE id=?').get(trackId);
-    if (!row) return null;
-    if (row.source === 'subsonic') return null;
-    if (row.source === 'webdav') return null;
-    if (!row.path) return null;
+    if (!row || !row.path) return null;
+    if (row.source === 'subsonic' || row.source === 'webdav') return null;
 
-    // ── 2. 磁盘缓存命中 ──
-    // 跨重启有效，避免每次启动都重新读音频文件提取。
-    // 直接用 readFileSync 判定：读成功 = 已有缓存记录；ENOENT = 从未缓存。
-    // 原实现是 existsSync + readFileSync 两次系统调用，且两者之间存在竞态。
     const diskPath = this._coverCachePath(trackId);
     let data = null;
     let hasDiskRecord = false;
     try {
       const buf = fs.readFileSync(diskPath);
       hasDiskRecord = true;
-      data = (buf && buf.length === 0) ? null : buf;  // 空文件 = 已确认无封面
-    } catch { /* ENOENT / IO 错误 → 视为无缓存记录，走提取 */ }
+      data = (buf && buf.length === 0) ? null : buf;
+    } catch { /* ENOENT → 走提取 */ }
 
-    // ── 3. 提取并写入磁盘缓存 ──
     if (!hasDiskRecord) {
       data = this._extractCoverSync(row.path);
-      // 写入磁盘缓存（null 写空文件作为"无封面"标记，避免反复读音频文件）
-      try {
-        fs.writeFileSync(diskPath, data || Buffer.alloc(0));
-      } catch { /* 磁盘写入失败，仅靠内存缓存 */ }
+      try { fs.writeFileSync(diskPath, data || Buffer.alloc(0)); } catch { /* ignore */ }
     }
-
-    // ── 4. 写入内存 LRU ──
     this._putCoverCache(trackId, data);
-
     return data;
   }
 
@@ -916,6 +1101,73 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       return null;
     } catch {
       // ignore
+    }
+    return null;
+  }
+
+  /**
+   * 提取内嵌封面（异步）。逻辑与 _extractCoverSync 等价，但：
+   *   - IO 全部走 fs.promises，不阻塞事件循环
+   *   - 手写解析器不支持的格式（.wma / .aiff 等）回退到 music-metadata
+   *
+   * @param {string} filePath
+   * @returns {Promise<Buffer|null>}
+   */
+  async _extractCoverAsync(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    const handWritten = (ext === '.mp3' || ext === '.flac' ||
+      ext === '.m4a' || ext === '.aac' || ext === '.mp4' ||
+      ext === '.ogg' || ext === '.opus');
+
+    if (handWritten) {
+      const extract = (buf) => {
+        if (ext === '.mp3') return _extractMp3Cover(buf);
+        if (ext === '.flac') return _extractFlacCover(buf);
+        if (ext === '.m4a' || ext === '.aac' || ext === '.mp4') return _extractMp4Cover(buf);
+        return _extractOggCover(buf);  // .ogg / .opus
+      };
+
+      let stat;
+      try {
+        stat = await fsp.stat(filePath);
+      } catch {
+        // stat 失败（文件被锁 / 网络盘断开）→ 交调用方判定为不可信结论，不写负缓存
+        throw new Error('cover:stat-failed');
+      }
+      const headSize = Math.min(stat.size, COVER_HEAD_READ_BYTES);
+      const head = Buffer.allocUnsafe(headSize);
+      const fh = await fsp.open(filePath, 'r');
+      try {
+        await fh.read(head, 0, headSize, 0);
+      } finally {
+        await fh.close();
+      }
+
+      const found = extract(head);
+      if (found) return found;
+
+      // 头部未命中（moov 在文件尾等布局）→ 整文件读取兜底
+      if (stat.size > headSize) {
+        const full = await fsp.readFile(filePath);
+        return extract(full);
+      }
+      return null;
+    }
+
+    // 手写解析器不支持的格式：用 music-metadata 兜底。
+    // 旧实现对这些格式直接返回 null，使 has_cover=1 的曲目永远 404，
+    // 前端又把 404 永久记为 no-cover —— 封面偶发不显示的成因之一。
+    return this._extractCoverViaMetadata(filePath);
+  }
+
+  async _extractCoverViaMetadata(filePath) {
+    const parseFile = await _ensureParseFile();
+    if (!parseFile) return null;
+    const metadata = await parseFile(filePath, { duration: false, skipCovers: false });
+    const pics = metadata.common.picture;
+    if (pics && pics.length > 0) {
+      const pic = pics[0];
+      return Buffer.from(pic.data);
     }
     return null;
   }
@@ -1466,60 +1718,74 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     this._db.prepare('DELETE FROM play_history').run();
   }
 
-  // ── Genre backfill (async, called after init) ────────────────────────────
-
-  async backfillGenres() {
-    const rows = this._db.prepare(
-      "SELECT id, path FROM tracks WHERE genre IS NULL AND source IS NULL"
-    ).all();
-    if (rows.length === 0) return;
-    const parseFile = await _ensureParseFile();
-    if (!parseFile) return;
-    let updated = 0;
-    for (const row of rows) {
-      if (!fs.existsSync(row.path)) continue;
-      try {
-        const metadata = await parseFile(row.path);
-        const g = metadata.common.genre;
-        if (g && g.length > 0) {
-          this._db.prepare('UPDATE tracks SET genre=? WHERE id=?').run(g[0], row.id);
-          updated++;
-        }
-      } catch { /* ignore */ }
-    }
-    if (updated > 0) {
-      console.log(`[MusicLibrary] Backfilled genre for ${updated} tracks`);
-    }
-  }
-
-  // ── Alias title backfill (async, called after init) ─────────────────────
+  // ── Metadata backfill (async, called after init) ────────────────────────
 
   /**
-   * 回填别名标题：为 alias_title IS NULL 的本地曲目解析一次文件。
-   * 与 genre 回填不同：无别名的曲目也写入 ''（而非保持 NULL），
-   * 这样 NULL 始终表示"未检查过"，避免每次启动重复解析全库。
+   * 单次遍历回填 genre 与 alias_title（合并自原 backfillGenres /
+   * backfillAliasTitles —— 两者并发跑会把同一文件解析两遍）。
+   *
+   * 约定：NULL = 尚未检查过；'' = 已解析确认无该字段（负标记）。
+   * 负标记让本方法在后续启动中退化为一次空 SELECT —— 修复旧版对
+   * 无 genre 曲目每次启动重复 parseFile 全库、长时间占用主进程
+   * 事件循环导致 audio_output IPC 延迟（播放卡顿）的问题。
+   *
+   * 后台节流执行：BACKFILL_PARSE_PARALLEL 路并发解析 + 事务批量写
+   * （SCAN_FLUSH_SIZE 条一批），每 16 首让出事件循环。
+   * @returns {Promise<number>} 实际写库的曲目数（0 = 无需回填）
    */
-  async backfillAliasTitles() {
+  async backfillMetadata() {
     const rows = this._db.prepare(
-      "SELECT id, path FROM tracks WHERE alias_title IS NULL AND source IS NULL"
+      "SELECT id, path, genre, alias_title FROM tracks WHERE (genre IS NULL OR alias_title IS NULL) AND source IS NULL"
     ).all();
-    if (rows.length === 0) return;
+    if (rows.length === 0) return 0;
     const parseFile = await _ensureParseFile();
-    if (!parseFile) return;
+    if (!parseFile) return 0;
+
+    // COALESCE(?, field)：参数传 null 表示保留原值（该字段本就不缺，不覆盖）
+    const updateTx = this._db.transaction((updates) => {
+      const stmt = this._db.prepare(
+        'UPDATE tracks SET genre=COALESCE(?, genre), alias_title=COALESCE(?, alias_title) WHERE id=?'
+      );
+      for (const u of updates) stmt.run(u.genre, u.alias, u.id);
+    });
+
+    let pending = [];
     let updated = 0;
-    for (const row of rows) {
-      if (!fs.existsSync(row.path)) continue;
-      try {
-        const metadata = await parseFile(row.path);
-        const title = metadata.common.title || null;
-        const alias = this._extractAliasTitle(metadata, title);
-        this._db.prepare('UPDATE tracks SET alias_title=? WHERE id=?').run(alias || '', row.id);
-        if (alias) updated++;
-      } catch { /* ignore */ }
-    }
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < rows.length) {
+        const i = cursor++;
+        const row = rows[i];
+        let genreVal = null;
+        let aliasVal = null;
+        try {
+          const metadata = await parseFile(row.path);
+          if (row.genre === null) {
+            const g = metadata.common.genre;
+            genreVal = (g && g.length > 0) ? g[0] : '';
+          }
+          if (row.alias_title === null) {
+            const alias = this._extractAliasTitle(metadata, metadata.common.title || null);
+            aliasVal = alias || '';
+          }
+        } catch {
+          // 文件缺失/损坏/被锁：不写负标记，保留 NULL 下次启动重试（罕见路径）
+        }
+        if (genreVal !== null || aliasVal !== null) {
+          pending.push({ id: row.id, genre: genreVal, alias: aliasVal });
+          if (pending.length >= SCAN_FLUSH_SIZE) updateTx(pending.splice(0));
+          updated++;
+        }
+        // 周期性让出事件循环：回填期间 audio_output IPC 仍能被及时处理
+        if ((i & 15) === 15) await new Promise((r) => setImmediate(r));
+      }
+    };
+    await Promise.all(Array.from({ length: BACKFILL_PARSE_PARALLEL }, worker));
+    if (pending.length > 0) updateTx(pending.splice(0));
     if (updated > 0) {
-      console.log(`[MusicLibrary] Backfilled alias title for ${updated} tracks`);
+      console.log(`[MusicLibrary] Backfilled genre/alias for ${updated} tracks`);
     }
+    return updated;
   }
 
   // ── Play statistics ──────────────────────────────────────────────────────

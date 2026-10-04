@@ -118,6 +118,11 @@ class MusicPlayer extends EventEmitter {
       this.emit('audio_control', JSON.stringify({ action: 'set_crossfade', enabled: this._automixEnabled }));
       this.emit('audio_control', JSON.stringify({ action: 'set_radical_transitions', enabled: this._radicalTransitions }));
       this.emit('audio_control', JSON.stringify({ action: 'set_crossfade_duration', ms: this._crossfadeDurationMs }));
+      // AudioEngine に出力先の種別(独占/共有)を通知。
+      // 独占時は Chromium にハードウェアデバイスを一切開かせない(null sink)。
+      // init より先に送ることで「起動時から独占」のパスも明示的に null sink になり、
+      // Chromium の暗黙フォールバックに依存しなくなる。
+      this.emit('audio_control', JSON.stringify({ action: 'set_output_sink', nullSink: this._exclusive }));
     }
   }
 
@@ -147,6 +152,31 @@ class MusicPlayer extends EventEmitter {
   }
 
   /**
+   * audio_control アクションを送信し、レンダラー側の完了を待つ。
+   *
+   * bridge が executeJavaScript の戻り値(Promise)を待って resolve するため、
+   * 「レンダラーである処理が終わってから次に進む」順序保証が必要な場面で使う
+   * (例: AudioContext を閉じてから DLL にデバイスを開かせる)。
+   * bridge が居ない / 応答が無い場合はタイムアウトで resolve して処理を止めない。
+   *
+   * @param {string} action
+   * @param {object} [params]
+   * @returns {Promise<any>}
+   */
+  _invokeAudioControl(action, params) {
+    const payload = params ? { action, ...params } : { action };
+    const json = JSON.stringify(payload);
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+      this.emit('audio_control_await', json, done);
+      // レンダラーが応答しない場合の保険(起動直後・ウィンドウ破棄など)
+      const t = setTimeout(() => done(undefined), 4000);
+      if (t.unref) t.unref();
+    });
+  }
+
+  /**
    * AudioEngine を完全に停止させる(stop + clear_next)。
    * レンダラー(WASAPI DLL)を再初期化する前に必ず呼ぶ。
    * そうしないと AudioEngine の古いソース/ストリーミングノードが
@@ -164,6 +194,14 @@ class MusicPlayer extends EventEmitter {
    */
   async _reinitRendererWithMode(exclusive) {
     if (!this._renderer) return false;
+
+    // 0. レンダラーの AudioContext を先に解放する(Chromium の共有出力ストリームを閉じる)。
+    //    共有モードの context は実際にハードウェア端点を開いているため、独占ストリームを
+    //    開く前に必ず手放させる。順序が逆だと DLL がデバイスを掴めない / 互いの Stream を
+    //    無効化し合って device error になる。
+    //    ⚠️ これだけでは不十分: 権独占後に作り直した context も device error で死ぬ。
+    //    本当の対策は step 3 の nullSink(下記)。
+    await this._releaseAudioContext();
 
     // レンダラーが初期化済みなら一旦閉じる
     if (this._renderer.isInitialized) {
@@ -183,17 +221,35 @@ class MusicPlayer extends EventEmitter {
       this._fallbackToShared();
     }
 
-    // AudioEngine に新しいサンプリングレート/チャンネル数を通知
-    // (AudioEngine の init() は最初の1回のみ AudioContext を生成するが、
-    //  この通知は設計上のプロトコル整合性を保つために必ず送信する)
+    // AudioEngine に新しいサンプリングレート/チャンネル数を通知。
+    // デバイスを開き直したあとは AudioEngine 側の AudioContext を作り直す必要がある
+    // (rebuild: true → web/audio_engine.js の recreateContext())。
+    // nullSink: 独占時は Chromium にハードウェアデバイスを一切開かせない
+    // (null sink でオーディオグラフを描画させる)。これを指定しないと、DLL が掴んで
+    // いるデバイスを Chromium が開こうとして
+    // "The AudioContext encountered an error from the audio device" → 永久 suspended
+    // → OutputCaptureWorklet が PCM を出さず「切替後そのまま無音」になる。
+    // 実際のモード判定はフォールバック後の initInfo.shareMode を使う。
+    const effectiveExclusive = exclusive && initInfo.shareMode === SHARE_EXCLUSIVE;
     this._emitAudioControl('init', {
       sampleRate: this._renderer._sampleRate,
       channels: this._renderer._channels,
+      rebuild: true,
+      nullSink: effectiveExclusive,
     });
     // 音量を AudioEngine に同期(DLL 側は常に 1.0)
     this._emitAudioControl('set_volume', { level: this._fe_volume / 100 });
 
     return true;
+  }
+
+  /**
+   * レンダラーの AudioContext を解放する(Chromium の共有出力ストリームを閉じる)。
+   * WASAPI 独占ストリームを開く / 出力デバイスを開き直す前に必ず待つこと。
+   * 理由は _reinitRendererWithMode() のコメントを参照。
+   */
+  _releaseAudioContext() {
+    return this._invokeAudioControl('release_context');
   }
 
   /** 排他モード回退時に設定を同期し、UI を更新 */
@@ -202,6 +258,8 @@ class MusicPlayer extends EventEmitter {
     if (this._settings) {
       this._settings.set('wasapi_exclusive', false);
     }
+    // 共有へ戻ったので null sink を解除(Chromium に通常の出力デバイスを使わせる)
+    this._emitAudioControl('set_output_sink', { nullSink: false });
     this.emit('settings_changed', JSON.stringify(this._settings.all()));
   }
 
@@ -681,10 +739,15 @@ class MusicPlayer extends EventEmitter {
           this._fallbackToShared();
         }
         // AudioEngine に初期化パラメータを通知
+        // nullSink: 独占時は Chromium にハードウェアデバイスを一切開かせない
+        // (詳細は _reinitRendererWithMode() のコメント参照)。
+        // ここも initInfo.shareMode を見る(独占 init が共有へフォールバックした場合に
+        // nullSink にしてしまうと、共有なのに音が出なくなる)。
         this.emit('audio_control', JSON.stringify({
           action: 'init',
           sampleRate: this._renderer._sampleRate,
           channels: this._renderer._channels,
+          nullSink: initInfo.shareMode === SHARE_EXCLUSIVE,
         }));
         // Dummy mode: native audio device unavailable. Notify the frontend
         // once so the user sees a toast. Playback continues without sound.

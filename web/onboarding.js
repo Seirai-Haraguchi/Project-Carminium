@@ -326,12 +326,11 @@
         if (t) t.setAttribute('aria-expanded', 'false');
       });
       if (isOpen) return;
-      // 定位
+      // 定位 —— 与 settings.js 的同名逻辑保持一致：MD3 要求菜单宽度 = 字段宽度、顶边紧贴字段底边
       var rect = trigger.getBoundingClientRect();
-      var menuWidth = Math.max(rect.width, 200);
-      menu.style.top = (rect.bottom + 4) + 'px';
+      menu.style.top = rect.bottom + 'px';
       menu.style.right = (window.innerWidth - rect.right) + 'px';
-      menu.style.width = menuWidth + 'px';
+      menu.style.width = rect.width + 'px';
       menu.classList.add('open');
       trigger.setAttribute('aria-expanded', 'true');
     };

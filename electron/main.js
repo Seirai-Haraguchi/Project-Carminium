@@ -406,6 +406,19 @@ if (_memOptLevel === 'aggressive') {
 }
 // off：不限制 V8 堆，使用 Chromium 默认
 
+// ── 渲染进程主动 GC（normal / aggressive）──────────────────────────────────
+// 实测：渲染进程在 boot 之类静态场景下已有 ~43MB 惰性垃圾（CDP 强制 GC 可回收），
+// 而渲染进程的 usedJSHeapSize 仅 ~54MB，远低于 V8 默认触发阈值（~2GB），
+// 因此**永远不会自发 GC**，这些垃圾会随会话持续堆积。
+// 通过 --js-flags=--expose-gc 让渲染进程获得全局 gc()（Chromium 会把该 flag
+// 下发给渲染进程，已实测 window.gc 可调用），再由 web/memory_manager.js
+// 在空闲时主动调用，回收惰性对象。
+// 注意：此处**不**给 js-flags 加 --max-old-space-size —— 渲染进程堆本身很小，
+// 限制堆只会造成频繁 GC 而收益为零（内存大头是 Blink 原生侧，非 V8 堆）。
+if (_memOptLevel === 'normal' || _memOptLevel === 'aggressive') {
+  app.commandLine.appendSwitch('js-flags', '--expose-gc');
+}
+
 // 导出等级供 memory_manager 使用
 app._memOptLevel = _memOptLevel;
 
@@ -446,6 +459,8 @@ app.commandLine.appendSwitch('app-user-model-id', AUMID);
 
 if (app && process.platform === 'win32') {
   app.setAppUserModelId(AUMID);
+  // Probe mode: skip shell-registration section (decorative; sandbox broker may hang fs ops).
+  if (!process.env.CARMINIUM_MEM_PROBE) {
 
   // ── 0. 直接调用 SetCurrentProcessExplicitAppUserModelID ──
   // app.setAppUserModelId() 设置窗口级 AUMID，但 Chromium SMTC 使用进程级 AUMID。
@@ -469,9 +484,17 @@ if (app && process.platform === 'win32') {
   }
 
   const { execFileSync } = require('child_process');
+  // 探针分段日志：定位受限环境下的启动挂点（生产不设变量即静默）
+  const _probeLog = process.env.CARMINIUM_MEM_PROBE
+    ? (s) => console.log('[main][probe-step]', s) : () => {};
+  _probeLog('after-process-aumid');
 
   // 辅助函数：执行 reg 命令并捕获错误
   function _reg(args) {
+    // 探针模式（CARMINIUM_MEM_PROBE 由内存测量脚本注入）：跳过全部注册表
+    // spawnSync —— 受限环境下 reg.exe 可能不是快速失败而是无限挂起，会把
+    // 启动流程卡死在 AUMID 注册阶段。生产环境不设该变量，行为不变。
+    if (process.env.CARMINIUM_MEM_PROBE) return { ok: false, output: '', error: 'probe-skip' };
     try {
       const output = execFileSync('reg', args, {
         encoding: 'utf8',
@@ -659,6 +682,8 @@ public static class ShortcutHelper
 Write-Output $shortcutPath
 `;
 
+    // 探针模式跳过（同 _reg：受限环境下 powershell spawnSync 可能无限挂起）
+    if (process.env.CARMINIUM_MEM_PROBE) return null;
     try {
       const output = execFileSync('powershell.exe', [
         '-NoProfile',
@@ -722,7 +747,12 @@ Write-Output $shortcutPath
     return icoPath;
   }
 
-  if (appDataDir) {
+  _probeLog('before-ico');
+  // 探针模式：跳过 ICO 生成（纯外壳装饰，与内存测量无关）。
+  // 沙箱下 Electron 主进程 writeFileSync 到 %APPDATA% 可能被 broker 无限挂起。
+  if (process.env.CARMINIUM_MEM_PROBE) {
+    _probeLog('skip-ico');
+  } else if (appDataDir) {
     const stableDir = path.join(appDataDir, 'Carminium');
     const stableIcoPath = path.join(stableDir, 'app-icon.ico');
     const sourceIconPath = path.join(__dirname, '..', 'build', 'icon.png');
@@ -970,6 +1000,7 @@ Write-Output $shortcutPath
     process.execPath,
     iconUriValue
   );
+  _probeLog('after-reg-section');
   if (startMenuShortcut) {
     console.log('[main] Start Menu shortcut ensured:', startMenuShortcut);
   }
@@ -1006,7 +1037,9 @@ Write-Output $shortcutPath
       const SHChangeNotify = _shell32.func(
         'void SHChangeNotify(int32 wEventId, int32 uFlags, void *dwItem1, void *dwItem2)'
       );
+      _probeLog('before-shchangenotify');
       SHChangeNotify(0x08000000, 0x0000, null, null);
+      _probeLog('after-shchangenotify');
       console.log('[main] SHChangeNotify(SHCNE_ASSOCCHANGED) sent — Shell cache refreshed');
     } catch (e) {
       console.warn('[main] SHChangeNotify failed:', e.message);
@@ -1026,6 +1059,8 @@ Write-Output $shortcutPath
   // .ico 并更新注册表 IconUri，否则任务栏按钮与 SMTC 媒体控件图标都不会变
   // （这两处读的是 AUMID 的 IconUri，与 win.setIcon 控制的窗口/Alt+Tab 图标无关）。
   function _updateAumidIconIco(isDark) {
+    // 探针模式：跳过（内部会写 %APPDATA% ICO，沙箱下可能无限挂起）
+    if (process.env.CARMINIUM_MEM_PROBE) return;
     const appDataDir = process.env.APPDATA;
     if (!appDataDir) return;
     const stableDir = path.join(appDataDir, 'Carminium');
@@ -1063,6 +1098,7 @@ Write-Output $shortcutPath
   nativeTheme.on('updated', () => {
     _updateAumidIconIco(nativeTheme.shouldUseDarkColors);
   });
+  } /* probe-skip close */
 }
 
 // ── 单实例锁 ───────────────────────────────────────────────────────────────
@@ -1179,10 +1215,23 @@ function createMainWindow() {
     mainWindow.webContents.send('bridge:event', 'app:visibility', 'foreground');
   });
 
-  // 在外部浏览器打开链接
+  // window.open 处理：
+  //  · 浮动窗 → 允许弹出，并注入窗口选项（frame:false / alwaysOnTop / 尺寸）。
+  //    🔴 必须走 window.open 而不是主进程 new BrowserWindow：只有前者能让子窗
+  //    与主窗**共用同一个渲染进程**，否则要多付一整个渲染进程 ~158MB 工作集。
+  //    详见 bridge.js 的 floatingWindowOptions() 注释。
+  //  · 其余 → 一律 deny，交给系统浏览器。
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (bridge && bridge.isFloatingWindowUrl(url)) {
+      return { action: 'allow', overrideBrowserWindowOptions: bridge.floatingWindowOptions() };
+    }
     shell.openExternal(url);
     return { action: 'deny' };
+  });
+
+  // 接管真正创建出来的子窗（只认 floating.html，其它忽略）
+  mainWindow.webContents.on('did-create-window', (child, details) => {
+    if (bridge) bridge.adoptFloatingWindow(child, details);
   });
 
   // F12 切换 DevTools
@@ -1282,10 +1331,11 @@ async function initializeApp() {
     settings = new AppSettings();
     library = new MusicLibrary(settings);
 
-    // 非阻塞回填 genre（异步执行，不阻止启动）
-    library.backfillGenres().catch(e => console.warn('[main] genre backfill failed:', e.message));
-    // 非阻塞回填别名标题（osu! 风格 ASCII/Unicode 双标题，用于搜索）
-    library.backfillAliasTitles().catch(e => console.warn('[main] alias title backfill failed:', e.message));
+    // 非阻塞回填 genre / 别名标题（单次遍历；负标记 '' 使后续启动为空操作）。
+    // 完成后通知渲染进程刷新，让流派/搜索立刻拿到回填结果。
+    library.backfillMetadata()
+      .then((n) => { if (n > 0 && bridge) bridge._emitLibraryUpdated(); })
+      .catch(e => console.warn('[main] metadata backfill failed:', e.message));
 
     try {
       wasapi = NativeRenderer ? new NativeRenderer() : null;
@@ -1375,6 +1425,17 @@ async function initializeApp() {
     // 恢复播放状态 — 延迟到渲染进程 AudioEngine 就绪后执行，
     // 避免 audio_control (init/play) 事件在窗口加载前丢失导致无声
     bridge.once('renderer-ready', () => {
+      // 出力先の種別(独占/共有)をレンダラーへ確実に伝える。
+      // Player コンストラクタ時の送信はレンダラーの __handleAudioControl 登録前に
+      // 実行されて落ちる可能性があるため、AudioEngine 準備完了時に再送する。
+      // 独占なら AudioContext は null sink になり、ハードウェアデバイスは
+      // WASAPI DLL に完全に譲られる(web/audio_engine.js の setNullSink 参照)。
+      try {
+        player.emit('audio_control', JSON.stringify({
+          action: 'set_output_sink',
+          nullSink: player.isExclusive,
+        }));
+      } catch { /* ignore */ }
       restorePlaybackState();
     });
   } catch (err) {

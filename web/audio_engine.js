@@ -82,6 +82,12 @@
       this._initPromise = null;
       /** @type {AudioWorkletNode} 输出捕获节点（终端） */
       this._outputNode = null;
+      /**
+       * @type {boolean} 是否让 AudioContext 使用「空输出接收器」(null sink)。
+       * WASAPI 独占模式下 DLL 独占硬件设备，Chromium 必须完全不占用设备
+       * （详见 setNullSink()）。构造后由 setNullSink() 设定，init() 时生效。
+       */
+      this._nullSink = false;
       /** @type {AnalyserNode|null} 频谱分析节点（旁路，不影响音频流） */
       this._analyser = null;
       /** @type {Uint8Array|null} 频谱数据缓冲 */
@@ -288,10 +294,15 @@
     async init() {
       if (this._ctx) return;
 
-      this._ctx = new AudioContext({
+      var ctxOpts = {
         sampleRate: 44100,
         latencyHint: 'playback',
-      });
+      };
+      // 独占模式：让 Chromium 用一个定时驱动的「空接收器」渲染音频图，
+      // 完全不打开任何硬件输出设备 —— 设备交给 WASAPI DLL 独占。
+      // 详见 setNullSink() 的说明。
+      if (this._nullSink) ctxOpts.sinkId = { type: 'none' };
+      this._ctx = new AudioContext(ctxOpts);
       this._initPromise = (async () => {
         const workletBase = 'worklets/';
         await Promise.all([
@@ -449,6 +460,99 @@
       })();
 
       return this._initPromise;
+    }
+
+    /**
+     * 指定 AudioContext 是否使用「空输出接收器」(null sink)。
+     *
+     * 为什么需要：WASAPI 独占模式会独占硬件端点，此时 Chromium **不能**再打开
+     * 同一个设备。若让 Chromium 去开，它会报
+     * "The AudioContext encountered an error from the audio device or the WebAudio
+     *  renderer."，然后永久停在 suspended，OutputCaptureWorklet 再也拿不到渲染
+     * 时钟 → PCM 断流（进度条照走，但完全没有声音）。
+     *
+     * 实测（Electron 24 / Chromium 112）：`new AudioContext({ sinkId: {type:'none'} })`
+     * 可用，context 状态为 running、currentTime 实时推进、process() 正常回调。
+     * 注意必须传对象 `{type:'none'}`；传字符串 `'none'` 会被当成「无效设备 id」并
+     * 回退到默认设备 → 触发上面那条 device error。
+     *
+     * 结论：独占模式下让 Chromium 走 null sink，音频图照常渲染（PCM 照常被捕获后
+     * 交给 DLL 播放），而设备彻底让给 DLL，切换/启动两条路径都稳定。
+     *
+     * @param {boolean} enabled
+     */
+    setNullSink(enabled) {
+      this._nullSink = !!enabled;
+    }
+
+    /**
+     * 释放 AudioContext 与整条音频图（不重建）。
+     *
+     * 用途：切换到 WASAPI 独占模式 / 切换输出设备**之前**让 Chromium 交出硬件设备。
+     * 共享模式下的 AudioContext 真的打开了硬件端点，所以切到独占前必须先关掉它，
+     * 否则 DLL 打不开独占流（或打开后与 Chromium 互相作废对方）。
+     *
+     * 注意：真正的「切到独占后没声音」问题**不是**靠这个顺序解决的，而是靠
+     * setNullSink(true) —— 让新建的 AudioContext 根本不占用设备。仅靠「先关后开」
+     * 在真实应用里仍然会失败（新建的 context 依旧报 device error）。
+     *
+     * 返回的 Promise 在旧 context 关闭后 resolve，调用方（主进程）据此保证
+     * 「Chromium 让出设备」先于「DLL 独占设备」。
+     */
+    releaseContext() {
+      const old = this._ctx;
+      const oldOutput = this._outputNode;
+
+      // 1) 同步拆掉旧图：释放源、断开旧 worklet 的回调，防止旧 context 继续回吐 PCM
+      this.stop();
+      if (oldOutput && oldOutput.port) oldOutput.port.onmessage = null;
+      this._detachGraph();
+
+      // 2) 关闭旧 context（有超时兜底：设备状态异常时 close() 可能长时间不 resolve，
+      //    不能让主进程的切换流程被它卡住）
+      if (!old) return Promise.resolve();
+      let p;
+      try { p = old.close(); } catch (e) { return Promise.resolve(); }
+      if (!p || !p.then) return Promise.resolve();
+      return Promise.race([
+        p.catch(function () { /* ignore */ }),
+        new Promise(function (r) { setTimeout(r, 2000); }),
+      ]);
+    }
+
+    /**
+     * 重建 AudioContext 与整条音频图（输出模式/设备切换后调用）。
+     *
+     * 前提：必须先由 releaseContext() 释放旧 context，且 DLL 已按新模式打开设备。
+     * 新建的 context 会按 setNullSink() 的设定决定是否走 null sink —— 独占模式下
+     * 必须走 null sink，见 setNullSink() 的说明。
+     *
+     * @returns {Promise<{sampleRate:number, channels:number}>} 同 init()
+     */
+    recreateContext() {
+      return this.releaseContext().then(() => this.init());
+    }
+
+    /**
+     * 清空所有由 init() 创建的节点引用，使其走完整建图路径。
+     * 调用前必须先 stop()。
+     */
+    _detachGraph() {
+      this._ctx = null;
+      this._initPromise = null;
+      this._outputNode = null;
+      this._analyser = null;
+      this._freqData = null;
+      this._effectsInput = null;
+      this._eqBands = null;
+      this._bassBoost = null;
+      this._vbeNode = null;
+      this._compressor = null;
+      this._vocalFilters = null;
+      this._guitarFilters = null;
+      this._hearingProtectionFilter = null;
+      this._safetyGainNode = null;
+      this._eqBandGains = new Array(16).fill(0);
     }
 
     // ── Streaming Node 管理 ──────────────────────────────────────────────────

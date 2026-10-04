@@ -348,6 +348,10 @@
             if (s.tag_editor_path !== undefined) {
               App.state.tagEditorPath = s.tag_editor_path || '';
             }
+            // 正在播放界面功能按钮配置变更：实时重渲染功能区
+            if (s.np_secondary_actions !== undefined && App.nowPlaying && App.nowPlaying.renderSecondaryActions) {
+              App.nowPlaying.renderSecondaryActions(s.np_secondary_actions);
+            }
           } catch (e) { /* ignore */ }
         });
 
@@ -529,6 +533,12 @@
       // 同步正在播放页音频模式按钮（excl/shrd）
       if (App.nowPlaying && App.nowPlaying.updateAudioMode) {
         App.nowPlaying.updateAudioMode(!!settings.wasapi_exclusive);
+      }
+
+      // 应用正在播放功能区按钮配置（启动时从 settings 还原用户自定义）
+      if (App.nowPlaying && App.nowPlaying.renderSecondaryActions &&
+          settings.np_secondary_actions !== undefined) {
+        App.nowPlaying.renderSecondaryActions(settings.np_secondary_actions);
       }
 
       // 同步外部音乐标签编辑应用路径到 App.state
@@ -1338,6 +1348,11 @@
 
     _audioEngine = new window.AudioEngine();
 
+    // 独占模式下让 AudioContext 走「空接收器」，把硬件设备完全让给 WASAPI DLL。
+    // App.state.isExclusive 已由 settings 同步（app.js 启动时读取），
+    // 之后每次模式切换由主进程推送 set_output_sink 更新。
+    _audioEngine.setNullSink(!!App.state.isExclusive);
+
     // ── AudioEngine → Main (IPC) ──
     _audioEngine.onOutput = function (arrayBuffer) {
       window.__electronAPI.sendAudioOutput(arrayBuffer);
@@ -1412,15 +1427,32 @@
       try {
         var cmd = typeof json === 'string' ? JSON.parse(json) : json;
         switch (cmd.action) {
+          case 'release_context':
+            // WASAPI 独占流建立 / 切换输出设备之前，必须先让 Chromium 关掉自己的
+            // 共享输出流，否则独占流会作废它并让 AudioContext 永久 suspended
+            // （之后新建的 context 也打不开该设备）→ PCM 断流、完全静音。
+            // 主进程通过 executeJavaScript 的返回值等待本 Promise。
+            return _audioEngine.releaseContext();
+          case 'set_output_sink':
+            // 独占模式下让 AudioContext 走「空接收器」，完全不占用硬件设备。
+            // 详见 audio_engine.js 的 setNullSink()。
+            _audioEngine.setNullSink(!!cmd.nullSink);
+            break;
           case 'init':
-            _audioEngine.init(cmd.sampleRate, cmd.channels).then(function (info) {
+            // cmd.rebuild: 设备已按新模式重新打开，旧 context 的共享输出流已失效，
+            // 必须整条重建（不能复用 _ctx）—— 详见 audio_engine.js releaseContext()。
+            // cmd.nullSink: 独占模式下必须让新 context 走 null sink（关键修复点）。
+            if (typeof cmd.nullSink === 'boolean') _audioEngine.setNullSink(cmd.nullSink);
+            return (cmd.rebuild
+              ? _audioEngine.recreateContext()
+              : _audioEngine.init(cmd.sampleRate, cmd.channels)
+            ).then(function (info) {
               console.log('[app] AudioEngine initialized:', info);
               // 同步音频效果设置到 AudioEngine
               _syncAudioEffects();
             }).catch(function (e) {
               console.error('[app] AudioEngine init failed:', e);
             });
-            break;
           case 'play':
             // Web Audio 引擎需要 filePath 来加载并解码文件
             // cmd.paused: 模式切替中の一時停止トラック(未定義 = 通常再生)

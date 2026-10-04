@@ -219,9 +219,15 @@ class CoverHTTPServer {
 
   // ── Cover ───────────────────────────────────────────────────────────────
 
-  _handleCover(req, res, trackId, method) {
+  async _handleCover(req, res, trackId, method) {
     const size = _parseSizeFromUrl(req.url);
-    const data = this._library.getCoverData(trackId);
+    let data = null;
+    try {
+      const r = await this._library.getCoverDataAsync(trackId);
+      data = r ? r.data : null;
+    } catch {
+      data = null;
+    }
     if (data) {
       // 本地封面：按请求尺寸缩放后返回（sharp 不可用时回退原图）
       this._sendResizedCover(req, res, trackId, data, size, method);
@@ -239,7 +245,7 @@ class CoverHTTPServer {
     }
     // SMB 曲目：有本地路径（挂载点），使用 library 的本地封面提取
     // SMB trackId 不以 s/w 开头，而是使用 trackId() 生成的 hash
-    // 因此 getCoverData 已经在上面处理了
+    // 因此 getCoverDataAsync 已经在上面处理了
     this._sendError(res, 404);
   }
 
@@ -368,7 +374,13 @@ class CoverHTTPServer {
    */
   async _proxyWebDAVCoverForTrack(req, res, trackId, method, size) {
     // 1) 检查本地缓存（之前提取过并写入 library 的封面数据）
-    const cached = this._library.getCoverData(trackId);
+    let cached = null;
+    try {
+      const r = await this._library.getCoverDataAsync(trackId);
+      cached = r ? r.data : null;
+    } catch {
+      cached = null;
+    }
     if (cached) {
       this._sendResizedCover(req, res, trackId, cached, size, method);
       return;

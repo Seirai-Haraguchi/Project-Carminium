@@ -94,21 +94,9 @@
             '</div>' +
           '</div>' +
         '</div>' +
-        // 段二：平台信息（不可交互，独立成段）
-        '<div class="md-seglist">' +
-          '<div class="settings-row about-info-row" id="about-platform-row">' +
-            '<div class="settings-row-body"><p class="settings-row-label" data-i18n="about.platform">平台</p></div>' +
-            '<div class="settings-row-trailing"><span class="settings-row-sub" id="about-platform-text">—</span></div>' +
-          '</div>' +
-          '<div class="settings-row about-info-row" id="about-arch-row">' +
-            '<div class="settings-row-body"><p class="settings-row-label" data-i18n="about.arch">架构</p></div>' +
-            '<div class="settings-row-trailing"><span class="settings-row-sub" id="about-arch-text">—</span></div>' +
-          '</div>' +
-          '<div class="settings-row about-info-row" id="about-os-version-row">' +
-            '<div class="settings-row-body"><p class="settings-row-label" data-i18n="about.osVersion">系统版本</p></div>' +
-            '<div class="settings-row-trailing"><span class="settings-row-sub" id="about-os-version-text">—</span></div>' +
-          '</div>' +
-        '</div>' +
+        /* ⚠️ 原「段二：平台信息」（平台 / 架构 / 系统版本 三行）已按用户要求删除（2026-10-04）。
+           它只做展示、与「诊断信息」里的 SystemOsVersion/SystemOsArch 重复，删后不要再复活。
+           （配套已删：.about-info-row 样式、_loadAppInfo 里的填充、5 语言 × 3 个 i18n 键） */
       '</div>' +
 
       // ── 操作 ──
@@ -239,17 +227,7 @@
         if (info.codename) text += ' (Codename ' + info.codename + ')';
         el.textContent = text;
       }
-      // 平台信息
-      var platformMap = { win32: 'Windows', darwin: 'macOS', linux: 'Linux' };
-      var platformText = platformMap[info.platform] || info.platform || '—';
-      var archText = info.arch || '—';
-      var osVerText = info.osVersion || '—';
-      var pEl = document.getElementById('about-platform-text');
-      var aEl = document.getElementById('about-arch-text');
-      var oEl = document.getElementById('about-os-version-text');
-      if (pEl) pEl.textContent = platformText;
-      if (aEl) aEl.textContent = archText;
-      if (oEl) oEl.textContent = osVerText;
+      // （平台/架构/系统版本的填充已随该卡片一并删除 —— 见 _renderAboutBody 的注释）
     });
   }
 

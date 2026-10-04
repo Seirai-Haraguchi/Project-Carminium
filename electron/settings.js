@@ -71,6 +71,10 @@ const DEFAULTS = {
   library_watch_debounce_ms: 3000,   // FileWatcher 事件去抖窗口
   subsonic_auto_sync: true,          // 远程库定期 re-sync（刷新本地缓存数据库）
   subsonic_sync_interval_minutes: 30, // 远程库 re-sync 间隔（0 = 禁用）
+  // 正在播放界面下方功能区（.np-secondary-controls）的按钮配置。
+  // 有序数组，元素为功能 id；顺序即显示顺序，最多 5 个。
+  // 空数组 = 使用默认（见 DEFAULT_NP_SECONDARY_ACTIONS）。
+  np_secondary_actions: [],
   shortcuts: {
     play_pause: 'Space',
     next_track: 'MediaTrackNext',
@@ -80,6 +84,18 @@ const DEFAULTS = {
     toggle_like: 'Ctrl+l',
     toggle_mute: 'Ctrl+m',
   },
+};
+
+// 正在播放功能区候选功能（id 白名单 + 上限），供持久化层做基本校验。
+// 前端 UI 注册表见 web/pages/now_playing.js 的 NP_SECONDARY_ACTIONS。
+const NP_SECONDARY_ACTIONS = {
+  ids: [
+    'shuffle', 'repeat', 'like', 'audio_mode',
+    'seek_back_5', 'seek_fwd_5', 'seek_back_30', 'seek_fwd_30',
+    'audio_settings', 'mute', 'floating', 'fullscreen',
+  ],
+  max: 5,
+  defaults: ['shuffle', 'repeat', 'like', 'audio_mode'],
 };
 
 class AppSettings {
@@ -182,4 +198,4 @@ class AppSettings {
   }
 }
 
-module.exports = { AppSettings, DEFAULTS };
+module.exports = { AppSettings, DEFAULTS, NP_SECONDARY_ACTIONS };

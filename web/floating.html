@@ -1,89 +1,34 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Carminium — 正在播放</title>
-  <!-- 字体全部自托管：与 index.html 共用 style.css 的本地 @font-face（含 Material Symbols 子集） -->
-  <link rel="stylesheet" href="style.css">
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body {
-      height: 100%;
-      overflow: hidden;
-      font-family: 'Roboto', 'Google Sans Flex', 'Google Sans', 'Segoe UI', 'Microsoft YaHei', sans-serif;
-      background: var(--md-surface-container-low);
-      color: var(--md-on-surface);
-      user-select: none;
-    }
+  <!--
+    浮动窗口 = 「正在播放」面板的独立小窗版本。
 
-    .floating-root {
-      height: 100%;
-      display: flex;
-      flex-direction: column;
-    }
+    ▸ 设计语言：结构、类名、度量与 index.html 的 .now-playing-pane 完全一致
+      （.np-pivot / .np-cover / .np-info / .np-progress-* / .np-main-controls /
+        .np-secondary-controls / .np-volume / .np-queue-* / .np-lyrics-*）。
+      样式在 floating.css 中，数值摘自 style.css，改一边记得同步另一边。
 
-    .floating-titlebar {
-      display: flex;
-      align-items: center;
-      flex-shrink: 0;
-      height: 40px;
-      padding: 0 8px 0 16px;
-      gap: 8px;
-    }
-    .floating-titlebar-label {
-      flex: 1;
-      font-size: 14px;
-      font-weight: 500;
-      font-variation-settings: 'wght' 500, 'GRAD' 0, 'opsz' 14;
-      color: var(--md-on-surface);
-      letter-spacing: 0.1px;
-    }
-    .floating-titlebar .icon-btn {
-      width: 32px;
-      height: 32px;
-      border-radius: 9999px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      background: transparent;
-      border: none;
-      color: var(--md-on-surface-variant);
-      cursor: pointer;
-      transition: background-color 0.2s cubic-bezier(0.2, 0, 0, 1);
-    }
-    .floating-titlebar .icon-btn:hover {
-      background: var(--md-surface-container-high);
-    }
-    .floating-titlebar .icon-btn:active {
-      background: var(--md-surface-container-highest);
-    }
-    .floating-titlebar .icon-btn .material-symbols-rounded {
-      font-size: 20px;
-      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
-    }
-    .floating-titlebar .close-btn:hover {
-      background: var(--md-error-container) !important;
-      color: var(--md-on-error-container) !important;
-    }
-
-    /* 浮动窗内 padding 微調整 */
-    .floating-root .np-cover-wrap {
-      padding: 12px 24px 16px;
-    }
-    .floating-root .np-main-controls {
-      padding: 12px 24px;
-    }
-    .floating-root .np-volume {
-      padding: 12px 20px;
-    }
-  </style>
+    ▸ 为什么不用 style.css + i18n.js + pages/utils.js + bridge.js：
+      那 4 个文件合计约 600KB 源码（style.css 300KB 的 CSSOM、i18n.js 209KB
+      的字典、utils.js 的全量页面工具、bridge.js 的 SMTC 心跳），对这个小窗
+      几乎全是无用开销。这里改为按需子集：
+        floating.css        自包含样式（约 30KB）
+        floating_i18n.js    35 键 × 5 语言（由 scripts/gen_floating_i18n.js 生成）
+        pages/floating.js   自包含逻辑（不依赖 App.utils，不建 SMTC 心跳）
+      事件也在主进程按白名单过滤（见 electron/bridge.js 的 FLOATING_EVENTS）。
+  -->
+  <link rel="stylesheet" href="floating.css">
 </head>
 <body>
   <div class="floating-root">
 
-    <div class="floating-titlebar" id="floating-titlebar">
-      <span class="floating-titlebar-label pywebview-drag-region" data-i18n="common.nowPlaying">正在播放</span>
+    <!-- 顶栏：左侧拖拽区 + 右侧窗口按钮（M3E 图标按钮） -->
+    <div class="floating-titlebar">
+      <span class="floating-titlebar-label" data-i18n="common.nowPlaying">正在播放</span>
       <button class="icon-btn" id="btn-dock" data-i18n-title="floating.dock" title="还原到侧边栏">
         <span class="material-symbols-rounded">dock_to_right</span>
       </button>
@@ -95,15 +40,14 @@
       </button>
     </div>
 
-    <!-- Pivot タブ -->
+    <!-- 标签页（M3 choice chips） -->
     <div class="np-pivot" role="tablist">
       <button class="np-pivot-tab active" data-tab="info" role="tab" aria-selected="true" data-i18n="np.tab.info">音乐信息</button>
       <button class="np-pivot-tab" data-tab="queue" role="tab" aria-selected="false" data-i18n="np.tab.queue">接下来播放</button>
       <button class="np-pivot-tab" data-tab="lyrics" role="tab" aria-selected="false" data-i18n="np.tab.lyrics">歌词</button>
-      <div class="np-pivot-indicator" id="np-pivot-indicator"></div>
     </div>
 
-    <!-- ミニ曲情報バー（非音楽情報タブ時に表示） -->
+    <!-- 折叠曲目条（非「音乐信息」标签页时显示） -->
     <div class="np-mini-info" id="np-mini-info" style="display:none;">
       <div class="np-mini-cover" id="np-mini-cover">
         <span class="material-symbols-rounded" id="np-mini-cover-icon">music_note</span>
@@ -115,11 +59,11 @@
       </div>
     </div>
 
-    <!-- 切り替わるパネル -->
+    <!-- 面板 -->
     <div class="np-panels">
+
       <!-- 音乐信息 -->
       <div class="np-panel np-panel--info active" data-panel="info">
-        <!-- 封面 -->
         <div class="np-cover-wrap">
           <div class="np-cover" id="np-cover">
             <span class="np-cover-placeholder material-symbols-rounded" id="np-cover-icon">music_note</span>
@@ -127,7 +71,6 @@
           </div>
         </div>
 
-        <!-- 曲目信息 -->
         <div class="np-info">
           <div class="np-text">
             <p class="np-title" id="np-title">未在播放</p>
@@ -136,10 +79,10 @@
           </div>
         </div>
 
-        <!-- 进度条 -->
         <div class="np-progress-wrap">
           <div class="np-progress-bar" id="np-progress-bar" role="slider"
-               data-i18n-aria-label="np.progress" aria-label="播放进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+               data-i18n-aria-label="np.progress" aria-label="播放进度"
+               aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
             <div class="np-progress-track">
               <div class="np-progress-fill" id="np-progress-fill"></div>
               <div class="np-progress-thumb" id="np-progress-thumb"></div>
@@ -152,14 +95,12 @@
         </div>
       </div>
 
-      <!-- 接下来播放 -->
+      <!-- 接下来播放（懒渲染，由 JS 填充） -->
       <div class="np-panel np-panel--queue" data-panel="queue">
-        <div class="np-queue-list" id="np-queue-list">
-          <!-- Filled by JS -->
-        </div>
+        <div class="np-queue-list" id="np-queue-list"></div>
       </div>
 
-      <!-- 歌词 -->
+      <!-- 歌词（懒渲染，由 JS 填充） -->
       <div class="np-panel np-panel--lyrics" data-panel="lyrics">
         <div class="np-lyrics-wrap" id="np-lyrics-wrap">
           <div class="np-lyrics" id="np-lyrics">
@@ -172,7 +113,7 @@
       </div>
     </div>
 
-    <!-- 播放控制 - 主按钮 -->
+    <!-- 主控制 -->
     <div class="np-main-controls">
       <button class="np-control-pill" id="btn-prev" data-i18n-aria-label="np.prev" data-i18n-title="np.prev" aria-label="上一首" title="上一首">
         <span class="material-symbols-rounded">skip_previous</span>
@@ -185,15 +126,15 @@
       </button>
     </div>
 
-    <!-- 播放控制 - 辅助按钮 -->
+    <!-- 辅助控制（M3E 分段组） -->
     <div class="np-secondary-controls">
-      <button class="icon-btn np-secondary-btn" id="btn-shuffle" data-i18n-aria-label="np.shuffle" data-i18n-title="np.shuffle" aria-label="随机" title="随机播放">
+      <button class="np-secondary-btn" id="btn-shuffle" data-i18n-aria-label="np.shuffle" data-i18n-title="np.shuffle" aria-label="随机" title="随机播放">
         <span class="material-symbols-rounded">shuffle</span>
       </button>
-      <button class="icon-btn np-secondary-btn" id="btn-repeat" data-i18n-aria-label="np.repeat" data-i18n-title="np.repeat" aria-label="循环" title="循环播放">
+      <button class="np-secondary-btn" id="btn-repeat" data-i18n-aria-label="np.repeat" data-i18n-title="np.repeat" aria-label="循环" title="循环播放">
         <span class="material-symbols-rounded">repeat</span>
       </button>
-      <button class="icon-btn np-secondary-btn" id="btn-like" data-i18n-aria-label="np.like" data-i18n-title="np.like" aria-label="收藏" title="收藏">
+      <button class="np-secondary-btn" id="btn-like" data-i18n-aria-label="np.like" data-i18n-title="np.like" aria-label="收藏" title="收藏">
         <span class="material-symbols-rounded">favorite</span>
       </button>
       <button class="np-audio-mode-btn" id="btn-audio-mode" data-i18n-aria-label="np.audioMode" data-i18n-title="np.audioMode" aria-label="切换音频模式" title="音频模式">
@@ -213,9 +154,7 @@
 
   </div>
 
-  <script src="i18n.js"></script>
-  <script src="bridge.js"></script>
-  <script src="pages/utils.js"></script>
+  <script src="floating_i18n.js"></script>
   <script src="pages/floating.js"></script>
 </body>
 </html>

@@ -137,6 +137,13 @@
                 { value: 'fullscreen', label: _t('settings.npDefaultView.fullscreen') },
               ],
             },
+            {
+              // 正在播放界面下方功能区：自定义按钮组合（最多 5 个）
+              type: 'np_secondary',
+              bind: 'np_secondary_actions',
+              label: _t('settings.npSecondary.label'),
+              sub: _t('settings.npSecondary.sub'),
+            },
           ],
         },
         {
@@ -960,7 +967,7 @@
   // notice 例外：它是条件性提示（默认 display:none），留在段内 ——
   //   若把它当切段点，隐藏时会把一段撕成两个 1px 段并留下假缝。
   //   display:none 的 flex 子项不参与 gap，隐藏时该段自然合拢。
-  var STANDALONE_ROW_TYPES = { eq: 1, memory_info: 1 };
+  var STANDALONE_ROW_TYPES = { eq: 1, memory_info: 1, np_secondary: 1 };
 
   function _renderGroup(group) {
     var html = '<div class="settings-group-header" data-i18n="' + group.titleKey + '">' + _t(group.titleKey) + '</div>';
@@ -1257,6 +1264,25 @@
         </div>
       `;
     }
+    if (row.type === 'np_secondary') {
+      // 独立整宽卡片：展示当前已选功能 + 编辑入口
+      return `
+        <div class="settings-row-full settings-np-secondary" data-bind="${row.bind}">
+          <div class="settings-np-secondary-head">
+            <p class="settings-row-label">${row.label}</p>
+            <p class="settings-row-sub">${row.sub}</p>
+          </div>
+          <div class="settings-np-secondary-chips" id="np-secondary-chips"></div>
+          <div class="settings-np-secondary-foot">
+            <span class="settings-np-secondary-count" id="np-secondary-count"></span>
+            <button class="btn-outlined settings-action-btn" type="button" id="np-secondary-edit-btn">
+              <span class="material-symbols-rounded">edit</span>
+              <span>${_t('settings.npSecondary.edit')}</span>
+            </button>
+          </div>
+        </div>
+      `;
+    }
     return '';
   }
 
@@ -1328,6 +1354,8 @@
         _bindSliderRow(row, settings[row.bind]);
       } else if (row.type === 'eq') {
         _bindEqRow(row, settings[row.bind] || []);
+      } else if (row.type === 'np_secondary') {
+        _bindNpSecondaryRow(row, settings[row.bind]);
       } else if (row.type === 'action') {
         const btn = document.querySelector(`.settings-action-btn[data-action-key="${row.bind || '_action'}"]`);
         if (btn && row.onAction) {
@@ -1342,6 +1370,195 @@
     if (typeof settings.wasapi_exclusive !== 'undefined') {
       _applyWasapiExclusive(!!settings.wasapi_exclusive);
     }
+  }
+
+  // ── 正在播放功能区（.np-secondary-controls）自定义 ──────────────────────
+  // 候选功能注册表镜像（与 web/pages/now_playing.js 的 NP_SECONDARY_ACTIONS 保持一致）。
+  // 仅暴露展示所需字段：id / icon / 标题键。执行逻辑留在 now_playing.js。
+  var NP_SECONDARY_MAX = 5;
+  var NP_SECONDARY_DEFAULT = ['shuffle', 'repeat', 'like', 'audio_mode'];
+  var NP_SECONDARY_CANDIDATES = [
+    { id: 'shuffle', icon: 'shuffle', labelKey: 'settings.npSecondary.shuffle' },
+    { id: 'repeat', icon: 'repeat', labelKey: 'settings.npSecondary.repeat' },
+    { id: 'like', icon: 'favorite', labelKey: 'settings.npSecondary.like' },
+    { id: 'audio_mode', icon: 'speaker', labelKey: 'settings.npSecondary.audioMode' },
+    { id: 'seek_back_5', icon: 'replay', labelKey: 'settings.npSecondary.seekBack5', rotate: true },
+    { id: 'seek_fwd_5', icon: 'forward', labelKey: 'settings.npSecondary.seekFwd5' },
+    { id: 'seek_back_30', icon: 'replay', labelKey: 'settings.npSecondary.seekBack30', rotate: true },
+    { id: 'seek_fwd_30', icon: 'forward', labelKey: 'settings.npSecondary.seekFwd30' },
+    { id: 'audio_settings', icon: 'graphic_eq', labelKey: 'settings.npSecondary.audioSettings' },
+    { id: 'mute', icon: 'volume_up', labelKey: 'settings.npSecondary.mute' },
+    { id: 'floating', icon: 'picture_in_picture', labelKey: 'settings.npSecondary.floating' },
+    { id: 'fullscreen', icon: 'fullscreen', labelKey: 'settings.npSecondary.fullscreen' },
+  ];
+  function _npCandidate(id) {
+    for (var i = 0; i < NP_SECONDARY_CANDIDATES.length; i++) {
+      if (NP_SECONDARY_CANDIDATES[i].id === id) return NP_SECONDARY_CANDIDATES[i];
+    }
+    return null;
+  }
+  function _npNormalize(list) {
+    var out = [], seen = {};
+    (Array.isArray(list) ? list : []).forEach(function (id) {
+      if (!_npCandidate(id) || seen[id]) return;
+      if (out.length >= NP_SECONDARY_MAX) return;
+      seen[id] = 1; out.push(id);
+    });
+    return out;
+  }
+  // 当前生效配置（空 → 默认）
+  function _npCurrentList() {
+    var raw = (_lastSettings && _lastSettings.np_secondary_actions) || [];
+    var norm = _npNormalize(raw);
+    return norm.length ? norm : NP_SECONDARY_DEFAULT.slice();
+  }
+
+  function _npChipHtml(id) {
+    var c = _npCandidate(id);
+    var label = _t(c.labelKey);
+    var iconStyle = c.rotate ? ' style="transform:rotate(180deg)"' : '';
+    return '<span class="md-chip settings-np-chip" data-id="' + id + '">' +
+      '<span class="material-symbols-rounded"' + iconStyle + '>' + c.icon + '</span>' +
+      '<span class="settings-np-chip-label">' + label + '</span>' +
+    '</span>';
+  }
+
+  // 刷新当前卡片内的 chip 展示与计数
+  function _npRefreshCard() {
+    var chipsEl = page.container && page.container.querySelector('#np-secondary-chips');
+    var countEl = page.container && page.container.querySelector('#np-secondary-count');
+    if (!chipsEl) return;
+    var list = _npCurrentList();
+    chipsEl.innerHTML = list.map(function (id) { return _npChipHtml(id); }).join('');
+    if (countEl) {
+      countEl.textContent = _t('settings.npSecondary.count')
+        .replace('{n}', String(list.length)).replace('{max}', String(NP_SECONDARY_MAX));
+    }
+  }
+
+  function _bindNpSecondaryRow(row, value) {
+    _npRefreshCard();
+    var editBtn = page.container && page.container.querySelector('#np-secondary-edit-btn');
+    if (editBtn) {
+      editBtn.removeEventListener('click', editBtn._npHandler);
+      editBtn._npHandler = function () { _openNpSecondaryEditor(); };
+      editBtn.addEventListener('click', editBtn._npHandler);
+    }
+  }
+
+  // ── 功能选择面板（对话框式）────────────────────────────────────────────
+  // 12 项候选勾选，最多 5 项；超出上限时其余项禁用并提示。
+  var _npEditorEl = null;
+  function _closeNpEditor() {
+    if (!_npEditorEl) return;
+    var el = _npEditorEl;
+    _npEditorEl = null;
+    el.classList.remove('open');
+    el.classList.add('closing');       // 供选择器区分"正在淡出的旧实例"
+    // 立即从命中测试中移除（避免淡出期间被 querySelector 命中），
+    // DOM 真正移除延后到过渡结束，保留视觉淡出。
+    el.style.pointerEvents = 'none';
+    document.removeEventListener('keydown', el._keyHandler);
+    setTimeout(function () {
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }, 200);
+  }
+
+  function _openNpSecondaryEditor() {
+    if (_npEditorEl) return;
+    var selected = _npCurrentList().slice();
+
+    var overlay = document.createElement('div');
+    overlay.className = 'cmd-dialog-overlay';
+    overlay.innerHTML =
+      '<div class="cmd-dialog np-actions-editor">' +
+        '<div class="cmd-dialog-title">' + _t('settings.npSecondary.title') + '</div>' +
+        '<div class="cmd-dialog-body np-actions-editor-body">' +
+          '<p class="np-actions-editor-hint">' + _t('settings.npSecondary.hint')
+            .replace('{max}', String(NP_SECONDARY_MAX)) + '</p>' +
+          '<div class="np-actions-editor-grid md-seglist" id="np-actions-editor-grid"></div>' +
+        '</div>' +
+        '<div class="cmd-dialog-actions np-actions-editor-actions">' +
+          '<span class="np-actions-editor-count" id="np-actions-editor-count"></span>' +
+          '<button class="cmd-dialog-btn np-actions-editor-reset" type="button" id="np-actions-editor-reset">' +
+            _t('settings.npSecondary.reset') + '</button>' +
+          '<button class="cmd-dialog-btn np-actions-editor-cancel" type="button" id="np-actions-editor-cancel">' +
+            _t('common.cancel') + '</button>' +
+          '<button class="cmd-dialog-btn cmd-dialog-btn--confirm" type="button" id="np-actions-editor-save">' +
+            _t('common.save') + '</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    _npEditorEl = overlay;
+    requestAnimationFrame(function () { overlay.classList.add('open'); });
+
+    var gridEl = overlay.querySelector('#np-actions-editor-grid');
+    var countEl = overlay.querySelector('#np-actions-editor-count');
+
+    // 每个候选 = M3E list item：leading 图标槽 + 主文案槽 + trailing 勾选槽。
+    // 两列网格布局（每格即一个 list item），底色/圆角/状态层由 .md-seglist > * 接管。
+    function renderGrid() {
+      gridEl.innerHTML = NP_SECONDARY_CANDIDATES.map(function (c) {
+        var on = selected.indexOf(c.id) !== -1;
+        var atMax = selected.length >= NP_SECONDARY_MAX;
+        var disabled = !on && atMax;
+        var iconStyle = c.rotate ? ' style="transform:rotate(180deg)"' : '';
+        return '<button class="settings-row np-actions-editor-item' + (on ? ' selected' : '') +
+          (disabled ? ' disabled' : '') + '" type="button" data-id="' + c.id +
+          '" role="option" aria-selected="' + (on ? 'true' : 'false') + '"' +
+          (disabled ? ' aria-disabled="true"' : '') + '>' +
+          '<span class="material-symbols-rounded settings-row-icon np-actions-editor-item-icon"' + iconStyle + '>' + c.icon + '</span>' +
+          '<span class="settings-row-body"><span class="settings-row-label np-actions-editor-item-label">' + _t(c.labelKey) + '</span></span>' +
+          '<span class="settings-row-trailing np-actions-editor-check">' +
+            '<span class="material-symbols-rounded">' + (on ? 'check_circle' : 'circle') + '</span>' +
+          '</span>' +
+        '</button>';
+      }).join('');
+      countEl.textContent = selected.length + ' / ' + NP_SECONDARY_MAX;
+    }
+
+    gridEl.addEventListener('click', function (e) {
+      var item = e.target.closest('.np-actions-editor-item');
+      if (!item) return;
+      var id = item.dataset.id;
+      var idx = selected.indexOf(id);
+      if (idx !== -1) {
+        selected.splice(idx, 1);
+      } else {
+        // 达上限：提示且不改动选择（禁用项 pointer-events:none 挡真实点击，
+        // 这里的判断覆盖键盘/程序化触发）
+        if (selected.length >= NP_SECONDARY_MAX) {
+          App.utils.toast(_t('settings.npSecondary.limit'));
+          return;
+        }
+        selected.push(id);
+      }
+      renderGrid();
+    });
+
+    // 恢复默认：仅改草稿，仍需点「保存」才落盘（与取消语义一致）
+    overlay.querySelector('#np-actions-editor-reset').addEventListener('click', function () {
+      selected = NP_SECONDARY_DEFAULT.slice();
+      renderGrid();
+    });
+
+    overlay.querySelector('#np-actions-editor-save').addEventListener('click', function () {
+      App.utils.call('save_settings', JSON.stringify({ np_secondary_actions: selected }));
+      // 同步本地缓存并刷新卡片（settings_changed 也会再刷一次，做双保险）
+      if (_lastSettings) _lastSettings.np_secondary_actions = selected.slice();
+      _npRefreshCard();
+      if (App.nowPlaying && App.nowPlaying.renderSecondaryActions) {
+        App.nowPlaying.renderSecondaryActions(selected);
+      }
+      _closeNpEditor();
+    });
+
+    overlay.querySelector('#np-actions-editor-cancel').addEventListener('click', _closeNpEditor);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) _closeNpEditor(); });
+    overlay._keyHandler = function (e) { if (e.key === 'Escape') _closeNpEditor(); };
+    document.addEventListener('keydown', overlay._keyHandler);
+
+    renderGrid();
   }
 
   // ── WASAPI 独占模式：切换依赖项状态 ────────────────────────────────────
@@ -1539,13 +1756,15 @@
       dropdown.dataset.value = value;
     }
 
+    // MD3 Exposed dropdown menu（Select）：菜单宽度**等于**字段宽度、顶边紧贴字段底边。
+    // ⚠️ 旧版用 Math.max(rect.width, 260) 强行加宽 —— MD3 要求两者等宽（见 m3.material.io Menus），
+    //    且字段已按 MD3 放大到 56dp/min-width 220，不再需要那条下限兜底。
     function positionMenu() {
-      const rect = trigger.getBoundingClientRect();
-      const menuWidth = Math.max(rect.width, 260);
-      const rightOffset = window.innerWidth - rect.right;
-      menu.style.top = (rect.bottom + 4) + 'px';
+      var rect = trigger.getBoundingClientRect();
+      var rightOffset = window.innerWidth - rect.right;
+      menu.style.top = rect.bottom + 'px';
       menu.style.right = rightOffset + 'px';
-      menu.style.width = menuWidth + 'px';
+      menu.style.width = rect.width + 'px';
     }
 
     function closeMenu() {
@@ -1651,13 +1870,15 @@
   });
 
   // ── 窗口大小或布局变化时重新定位或关闭下拉菜单 ───────────────────────────
+  // 定位口径与 _bindSelectRow / _bindDeviceSelectRow 的 positionMenu() 一致：
+  // MD3 要求菜单宽度 = 字段宽度、顶边紧贴字段底边（改一处必须三处同改，否则 resize 后
+  // 菜单会跳回旧几何 —— 曾漏掉这里，导致「为何分离了」）。
   window.addEventListener('resize', function () {
     document.querySelectorAll('.md-dropdown-menu.open').forEach(function (menu) {
       const dropdown = menu.parentElement;
       const trigger = dropdown.querySelector('.md-dropdown-trigger');
       if (!trigger) return;
       const rect = trigger.getBoundingClientRect();
-      const menuWidth = Math.max(rect.width, 260);
       const rightOffset = window.innerWidth - rect.right;
       // 触发器已不可见或移出视口则关闭
       if (rect.top < 0 || rect.bottom > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth) {
@@ -1665,9 +1886,9 @@
         trigger.setAttribute('aria-expanded', 'false');
         return;
       }
-      menu.style.top = (rect.bottom + 4) + 'px';
+      menu.style.top = rect.bottom + 'px';
       menu.style.right = rightOffset + 'px';
-      menu.style.width = menuWidth + 'px';
+      menu.style.width = rect.width + 'px';
     });
   });
 
@@ -1939,13 +2160,13 @@
     valueEl.textContent = findLabel(currentVal);
     _refreshSelectedItem(menu, currentVal);
 
+    // 见 _bindDeviceSelectRow 里的同名注释：MD3 要求菜单宽度 = 字段宽度、顶边紧贴字段底边。
     function positionMenu() {
       var rect = trigger.getBoundingClientRect();
-      var menuWidth = Math.max(rect.width, 200);
       var rightOffset = window.innerWidth - rect.right;
-      menu.style.top = (rect.bottom + 4) + 'px';
+      menu.style.top = rect.bottom + 'px';
       menu.style.right = rightOffset + 'px';
-      menu.style.width = menuWidth + 'px';
+      menu.style.width = rect.width + 'px';
     }
     function closeMenu() {
       menu.classList.remove('open');
