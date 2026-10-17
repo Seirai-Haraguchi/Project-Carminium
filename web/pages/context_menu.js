@@ -466,15 +466,21 @@
     }
     var hasMultipleArtists = trackArtists && trackArtists.length > 1;
 
+    // 拖入窗口播放的库外文件（track.external）：没有 tracks 行，
+    // 加歌单会撞外键约束，打开专辑/歌手也查不到 → 只保留播放类操作。
+    var hasExternal = selectedTracks.some(function (t) { return !!(t && t.external); });
+
     const items = [
       { id: 'play', icon: 'play_arrow', text: isMulti ? App.i18n.t('cm.playSelected') : App.i18n.t('cm.play'), color: 'var(--md-primary)' },
       { id: 'play_next', icon: 'queue_play_next', text: isMulti ? App.i18n.t('cm.playNextSelected') : App.i18n.t('cm.playNext') },
       { id: 'add_queue', icon: 'playlist_play', text: isMulti ? App.i18n.t('cm.addToQueueSelected') : App.i18n.t('cm.addToQueue') },
-      { id: 'add_to_playlist', icon: 'playlist_add', text: App.i18n.t('cm.addToPlaylist'), hasSubmenu: true },
     ];
+    if (!hasExternal) {
+      items.push({ id: 'add_to_playlist', icon: 'playlist_add', text: App.i18n.t('cm.addToPlaylist'), hasSubmenu: true });
+    }
 
     // 单曲时显示「打开专辑」和「打开歌手」
-    if (!isMulti) {
+    if (!isMulti && !hasExternal) {
       if (track.album) {
         items.push({ id: 'open_album', icon: 'album', text: App.i18n.t('cm.openAlbum', { name: track.album }) });
       }

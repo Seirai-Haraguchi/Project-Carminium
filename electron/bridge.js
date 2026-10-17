@@ -359,7 +359,12 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     try {
       const track = JSON.parse(trackJson);
       const tid = track && track.id ? track.id : null;
-      if (tid) {
+      if (track && track.external) {
+        // 拖入窗口播放的「库外文件」：只进播放历史，不进任何统计
+        // （play_history / getPlayStats 只认 tracks 内的曲目）
+        this._lib.addExternalPlayHistory(track);
+        this._emitHistoryChanged();
+      } else if (tid) {
         this._lib.addPlayHistory(tid);
         this._emitHistoryChanged();
       }
@@ -571,6 +576,33 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       // 列表负载已剔除 lyrics，播放前按 id 批量回填（见 _hydrateTrackLyrics）
       this._hydrateTrackLyrics(tracks);
       this._player.playTracks(tracks, index);
+    });
+
+    /**
+     * 拖入窗口播放（Explorer → 窗口）。
+     * 库内文件与「在播放器里点歌」完全同待遇；库外文件仅进播放历史，
+     * 不计入统计（解析与分流见 library.resolveDroppedFiles）。
+     * @param {string[]} paths - 绝对路径数组
+     */
+    ipcMain.handle('play_dropped_files', async (_e, paths) => {
+      let list = paths;
+      if (typeof list === 'string') {
+        try { list = JSON.parse(list); } catch { list = []; }
+      }
+      if (!Array.isArray(list) || list.length === 0) return _dump({ count: 0, external: 0 });
+      let tracks = [];
+      try {
+        tracks = await this._lib.resolveDroppedFiles(list);
+      } catch (e) {
+        console.warn('[bridge] play_dropped_files resolve failed:', (e && e.message) || e);
+        return _dump({ count: 0, external: 0, error: 'resolve_failed' });
+      }
+      if (tracks.length === 0) return _dump({ count: 0, external: 0 });
+      this._player.playTracks(tracks, 0);
+      return _dump({
+        count: tracks.length,
+        external: tracks.filter((t) => t.external).length,
+      });
     });
 
     ipcMain.handle('play', () => this._player.play());
@@ -1304,6 +1336,19 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     // ── App ──
     ipcMain.handle('toggle_floating_window', () => this._toggleFloatingWindow());
     ipcMain.handle('close_floating_window', () => this._closeFloatingWindow());
+    // 打开外部链接（系统浏览器）。仅允许 http/https，供设置页跳转
+    // Discord 开发者门户等说明页面使用。
+    ipcMain.handle('open_external', (_e, url) => {
+      let parsed;
+      try {
+        parsed = new URL(url);
+      } catch {
+        return false;
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+      shell.openExternal(url);
+      return true;
+    });
     ipcMain.handle('minimize_window', (e) => {
       const win = BrowserWindow.fromWebContents(e.sender);
       if (win && !win.isDestroyed()) win.minimize();

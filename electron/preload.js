@@ -5,11 +5,25 @@
  */
 'use strict';
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 // ── 暴露 Electron API 到渲染进程 ──────────────────────────────────────────
 
 contextBridge.exposeInMainWorld('__electronAPI', {
+  /**
+   * 取拖入窗口的文件在本机的绝对路径。
+   * Electron 32+ 已移除 File.path，必须走 webUtils.getPathForFile。
+   * @param {File} file - DataTransfer 里的 File 对象
+   * @returns {string} 绝对路径（失败时返回空串）
+   */
+  getPathForFile: (file) => {
+    try {
+      return webUtils.getPathForFile(file) || '';
+    } catch {
+      return '';
+    }
+  },
+
   /**
    * 调用主进程的 IPC handler（invoke/handle 模式）。
    * @param {string} method - 方法名

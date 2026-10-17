@@ -129,6 +129,13 @@
 
   var currentTab = 'info';
 
+  // 过长歌名跑马灯：标题文本统一走这里（Marquee 负责包裹与滚动，见 marquee.js）
+  function _setTitle(el, text) {
+    if (!el) return;
+    if (window.Marquee) window.Marquee.setText(el, text == null ? '' : text);
+    else el.textContent = text == null ? '' : text;
+  }
+
   // ==========================================================================
   // 基础工具
   // ==========================================================================
@@ -896,7 +903,7 @@
     lyricsRendered = false;
 
     if (!track) {
-      els.title.textContent = App.i18n.t('common.notPlaying');
+      _setTitle(els.title, App.i18n.t('common.notPlaying'));
       els.artist.textContent = '—';
       els.album.textContent = '';
       els.coverImg.removeAttribute('src');
@@ -910,7 +917,7 @@
       _lastCurSec = 0; _lastDurSec = 0;
       applyDynamicTheme(null);
       currentDominantRgb = null;
-      els.miniTitle.textContent = App.i18n.t('common.notPlaying');
+      _setTitle(els.miniTitle, App.i18n.t('common.notPlaying'));
       els.miniArtist.textContent = '—';
       els.miniCoverImg.removeAttribute('src');
       els.miniCoverImg.style.display = 'none';
@@ -919,10 +926,10 @@
       return;
     }
 
-    els.title.textContent = track.title || App.i18n.t('common.unknownTrack');
+    _setTitle(els.title, track.title || App.i18n.t('common.unknownTrack'));
     els.artist.textContent = track.artist || App.i18n.t('common.unknownArtist');
     els.album.textContent = track.album || '';
-    els.miniTitle.textContent = els.title.textContent;
+    _setTitle(els.miniTitle, els.title.textContent);
     els.miniArtist.textContent = els.artist.textContent;
 
     if (track.has_cover) {
@@ -1113,12 +1120,12 @@
 
   function onLanguageChanged() {
     if (!currentTrack) {
-      els.title.textContent = App.i18n.t('common.notPlaying');
-      els.miniTitle.textContent = App.i18n.t('common.notPlaying');
+      _setTitle(els.title, App.i18n.t('common.notPlaying'));
+      _setTitle(els.miniTitle, App.i18n.t('common.notPlaying'));
     } else {
-      els.title.textContent = currentTrack.title || App.i18n.t('common.unknownTrack');
+      _setTitle(els.title, currentTrack.title || App.i18n.t('common.unknownTrack'));
       els.artist.textContent = currentTrack.artist || App.i18n.t('common.unknownArtist');
-      els.miniTitle.textContent = els.title.textContent;
+      _setTitle(els.miniTitle, els.title.textContent);
       els.miniArtist.textContent = els.artist.textContent;
     }
     _updateAudioMode(els.btnAudioMode.classList.contains('active'));
@@ -1325,6 +1332,12 @@
     api.onBridgeEvent(dispatch);
     wireEvents();
     bindUI();
+
+    // 过长歌名跑马灯：绑定标题（文本统一由 _setTitle 写入）
+    if (window.Marquee) {
+      window.Marquee.bind(els.title);
+      window.Marquee.bind(els.miniTitle);
+    }
 
     invoke('get_cover_base_url').then(function (url) {
       _coverBase = url || '';

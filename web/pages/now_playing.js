@@ -54,11 +54,16 @@
     miniCover: document.querySelector('#mini-player .mini-player-cover'),
     miniBtnLike: document.getElementById('mini-btn-like'),
     miniProgressInline: document.getElementById('mini-player-progress-inline'),
+    miniProgressSlot: document.getElementById('mini-progress-slot'),
+    miniLrc: document.getElementById('mini-lrc'),
     miniProgressBar: document.getElementById('mini-progress-bar'),
     miniProgressTrackFill: document.getElementById('mini-progress-track-fill'),
     miniProgressThumb: document.getElementById('mini-progress-thumb'),
     miniTimeCur: document.getElementById('mini-time-cur'),
     miniTimeDur: document.getElementById('mini-time-dur'),
+    miniTimeRem: document.getElementById('mini-time-rem'),
+    miniTimeJoinedCur: document.getElementById('mini-time-joined-cur'),
+    miniTimeJoinedRem: document.getElementById('mini-time-joined-rem'),
     miniCoverImg: document.getElementById('mini-cover-img'),
     miniCoverIcon: document.getElementById('mini-cover-icon'),
     miniTitle: document.getElementById('mini-title'),
@@ -104,6 +109,15 @@
     // 播放控制 - 辅助按钮容器（内容动态渲染）
     secondaryControls: document.getElementById('np-secondary-controls'),
   };
+
+  // ── 过长歌名跑马灯 ──────────────────────────────────────────────────────
+  // 所有标题写入都必须走这里：Marquee 会把文本包进 .mq-inner 并由它驱动滚动。
+  // 直接写 textContent 会摧毁包裹结构（marquee.js 有自愈兜底，但仍以走这里为准）。
+  function _setTitle(el, text) {
+    if (!el) return;
+    if (window.Marquee) window.Marquee.setText(el, text == null ? '' : text);
+    else el.textContent = text == null ? '' : text;
+  }
 
   // ── 正在播放下方功能区：功能注册表 ────────────────────────────────────────
   // 每个功能 = { id, icon, titleKey, ariaKey, onClick, isActive, isLiked }
@@ -740,6 +754,13 @@ let _lastKnownPositionMs = 0;
   np.init = function () {
     _loadLyricFontSettings();
 
+    // 过长歌名跑马灯：绑定标题（文本统一由 _setTitle 写入）
+    if (window.Marquee) {
+      window.Marquee.bind(els.title);
+      window.Marquee.bind(els.miniTitle);
+      if (els.miniInfoTitle) window.Marquee.bind(els.miniInfoTitle);
+    }
+
     // 视频背景初始化
     var bgEl = document.querySelector('.np-bg');
     if (bgEl && window.VideoBackground) {
@@ -854,6 +875,13 @@ let _lastKnownPositionMs = 0;
       els.miniBtnExpand.addEventListener('click', function () {
         _toggleCollapse();
       });
+    }
+
+    // 底栏歌词跟随收折状态：转成收折态时立即补画当前行（暂停时没有 position tick）
+    if (typeof MutationObserver !== 'undefined' && document.body) {
+      new MutationObserver(function () {
+        _miniLrcResync();
+      }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
     }
 
     // Mini Player 顶部进度条：点击跳转
@@ -1199,7 +1227,7 @@ let _lastKnownPositionMs = 0;
       _trackInfoHidden = false;
     }
     if (!track) {
-      els.title.textContent = App.i18n.t('common.notPlaying');
+      _setTitle(els.title, App.i18n.t('common.notPlaying'));
       els.artist.textContent = '—';
       els.album.textContent = '';
       els.coverImg.style.display = 'none';
@@ -1209,8 +1237,7 @@ let _lastKnownPositionMs = 0;
       if (els.miniProgressTrackFill) els.miniProgressTrackFill.style.width = '0%';
       if (els.miniProgressThumb) els.miniProgressThumb.style.left = '0%';
       if (els.miniProgressBar) els.miniProgressBar.style.setProperty('--progress-val', '0%');
-      if (els.miniTimeCur) els.miniTimeCur.textContent = '0:00';
-      if (els.miniTimeDur) els.miniTimeDur.textContent = '0:00';
+      _setMiniTime('0:00', '0:00');
       _setBgCover(null, null);
       if (_videoBg) _videoBg.clear();
       // 取消 pin 上一曲的封面
@@ -1255,7 +1282,7 @@ let _lastKnownPositionMs = 0;
     if (!isSameTrack && els.miniProgressThumb) els.miniProgressThumb.style.left = '0%';
     if (!isSameTrack && els.miniProgressBar) els.miniProgressBar.style.setProperty('--progress-val', '0%');
 
-    els.title.textContent = track.title || App.i18n.t('common.unknownTrack');
+    _setTitle(els.title, track.title || App.i18n.t('common.unknownTrack'));
     els.artist.textContent = track.artist || App.i18n.t('common.unknownArtist');
     els.album.textContent = track.album || '';
     
@@ -1308,12 +1335,12 @@ let _lastKnownPositionMs = 0;
 
     // Mini player sync
     if (!track) {
-      els.miniTitle.textContent = App.i18n.t('common.notPlaying');
+      _setTitle(els.miniTitle, App.i18n.t('common.notPlaying'));
       els.miniArtist.textContent = '—';
       els.miniCoverImg.style.display = 'none';
       els.miniCoverIcon.style.display = '';
     } else {
-      els.miniTitle.textContent = track.title || App.i18n.t('common.unknownTrack');
+      _setTitle(els.miniTitle, track.title || App.i18n.t('common.unknownTrack'));
       els.miniArtist.textContent = track.artist || App.i18n.t('common.unknownArtist');
       if (track.has_cover) {
         if (!isSameTrack || els.miniCoverImg.style.display === 'none') {
@@ -1334,14 +1361,14 @@ let _lastKnownPositionMs = 0;
     // Mini info bar sync (Pivot 非 info タブ時)
     if (!track) {
       if (els.miniInfo) {
-        els.miniInfoTitle.textContent = App.i18n.t('common.notPlaying');
+        _setTitle(els.miniInfoTitle, App.i18n.t('common.notPlaying'));
         els.miniInfoArtist.textContent = '—';
         els.miniInfoCoverImg.style.display = 'none';
         els.miniInfoCoverIcon.style.display = '';
       }
     } else {
       if (els.miniInfo) {
-        els.miniInfoTitle.textContent = track.title || App.i18n.t('common.unknownTrack');
+        _setTitle(els.miniInfoTitle, track.title || App.i18n.t('common.unknownTrack'));
         els.miniInfoArtist.textContent = track.artist || App.i18n.t('common.unknownArtist');
         if (track.has_cover) {
           if (!isSameTrack || els.miniInfoCoverImg.style.display === 'none') {
@@ -1423,6 +1450,7 @@ let _lastKnownPositionMs = 0;
   function _renderLyrics(track) {
     lyricsData = [];
     lastLyricsIdx = -1;
+    _miniLrcClear();  // 底栏小歌词随旧曲一起清空，重建后由 position tick 重新挂载
     lyricsTimeOffset = 0;  // 切歌时重置偏移
     _lyricsTrackId = track ? track.id : null;  // 记录歌词所属曲目
     interludes = [];
@@ -1945,7 +1973,11 @@ let _lastKnownPositionMs = 0;
       // 应用冻结（窗口后台）时跳过渲染，省电
       if (window.__appFrozen) { _wordRafId = requestAnimationFrame(tick); return; }
       if (App.state.playbackState === 'playing' && lineEl._wl) {
-        _renderWordLine(lineEl, _beatGetPrecisePosition() - lyricsTimeOffset);
+        var pos = _beatGetPrecisePosition() - lyricsTimeOffset;
+        _renderWordLine(lineEl, pos);
+        // 底栏小歌词与主界面同一行、同一位置：搭这趟车一起渲染，
+        // 不另起 RAF（两处逐字若各跑一路会各自读一次精确位置而轻微错相）
+        if (_miniLrcWordLine && _miniLrcWordLine._wl) _renderWordLine(_miniLrcWordLine, pos);
       }
       _wordRafId = requestAnimationFrame(tick);
     };
@@ -1954,6 +1986,253 @@ let _lastKnownPositionMs = 0;
 
   function _stopWordRaf() {
     if (_wordRafId) { cancelAnimationFrame(_wordRafId); _wordRafId = 0; }
+  }
+
+  // ── 底栏（mini player）小歌词 ─────────────────────────────────────────
+  // 底栏中间那块默认显示当前歌词（有翻译则原文 + 翻译双行），指针悬停时让回
+  // 进度条。逐字填充直接复用主界面的 _prepareWordLine / _renderWordLine，
+  // 因此填充羽化、上浮、长词强调波浪与正在播放界面逐帧一致；差异只有字号配色。
+  // 行切换用两层叠放做水平渐变交接（新行右侧渐显、旧行左侧渐隐）。
+  var MINI_LRC_OUT_MS = 200;
+  var _miniLrcIdx = -2;         // 已渲染的行索引（-2 = 尚未同步）
+  var _miniLrcSwap = null;      // 当前显示层
+  var _miniLrcWordLine = null;  // 层中的逐字行（逐字驱动目标）
+  var _miniLrcOutTimer = 0;
+
+  // 底栏时间：常规「左侧当前 / 右侧剩余」；歌词态把两者合并成「当前 / 剩余」
+  // 统一放右侧（靠 CSS 的 .lrc-mode:not(:hover) 切显示，这里只管把三处文本写全）
+  function _setMiniTime(curLabel, remLabel) {
+    if (els.miniTimeCur) els.miniTimeCur.textContent = curLabel;
+    if (els.miniTimeRem) els.miniTimeRem.textContent = remLabel;
+    if (els.miniTimeJoinedCur) els.miniTimeJoinedCur.textContent = curLabel;
+    if (els.miniTimeJoinedRem) els.miniTimeJoinedRem.textContent = remLabel;
+  }
+
+  // 只有真溢出才挂两端渐隐：短句保持干净边缘（不是恒定的装饰性渐变）
+  function _markMiniOverflow(el) {
+    if (!el) return;
+    el.classList.toggle('is-overflow', el.scrollWidth > el.clientWidth + 1);
+  }
+
+  // 宽度是 300ms 补间的：新行刚插进来时槽位还停在上一句的宽度上，
+  // 于是「短句 → 长句」会被按旧窄宽误判成溢出（反之漏判）。构建时先按当前
+  // 布局判一次（保住即时反馈），等宽度落定后再复核一次纠正。token 保证
+  // 只有最新一行的复核能落地。
+  var _miniLrcOverflowTimer = 0;
+  var _miniLrcOverflowToken = 0;
+  function _scheduleMiniOverflowCheck(lineEl, transEl) {
+    var token = ++_miniLrcOverflowToken;
+    if (_miniLrcOverflowTimer) clearTimeout(_miniLrcOverflowTimer);
+    _miniLrcOverflowTimer = setTimeout(function () {
+      _miniLrcOverflowTimer = 0;
+      if (token !== _miniLrcOverflowToken) return;
+      if (!lineEl || !lineEl.isConnected) return;
+      _markMiniOverflow(lineEl);
+      _markMiniOverflow(transEl);
+    }, 330);
+  }
+
+  // 普通模式（不隐藏歌名）下歌词最多能占多宽：底栏内容宽 × 54%
+  // 再减掉右侧时间块、容器 gap(10)、槽位左右 margin(8×2)。
+  // 这三个数值与 style.css 里 .mini-player / .mini-player-progress-inline /
+  // .mini-progress-slot 的写法一一对应，改那边记得同步这里。
+  var MINI_LRC_CAP = 0.54;
+  function _miniLrcAvailWidth() {
+    if (!els.miniPlayer) return 0;
+    var baseW = els.miniPlayer.clientWidth - 32;   // .mini-player padding: 0 16px
+    if (baseW <= 0) return 0;
+    var timeW = els.miniTimeDur ? els.miniTimeDur.offsetWidth : 0;
+    return baseW * MINI_LRC_CAP - timeW - 10 - 16;
+  }
+
+  // 一行太长（超过普通模式能给的最大宽度）→ 临时让出左侧歌名 / 艺术家，
+  // 把中间上限从 54% 放到 62%。判定只看内容宽与固定阈值，不依赖当前布局，
+  // 所以进入/退出都不会因为「让宽之后又不溢出了」来回抖。
+  function _applyMiniLrcWide(contentW) {
+    if (!els.miniPlayer) return;
+    var avail = _miniLrcAvailWidth();
+    var wide = avail > 0 && contentW > avail + 2;
+    els.miniPlayer.classList.toggle('mini-lrc-wide', wide);
+  }
+
+  // 宽度跟随：量本句内容的 scrollWidth（与槽位当前宽度无关，溢出时仍是完整内容宽），
+  // 写进 --mini-lrc-w。槽位 width 带 300ms 过渡，所以两侧的喜爱按钮 / 时间标签
+  // 是平滑跟着歌词走的，而不是整块跳一下。
+  // 不用「先清变量再量 .mini-lrc 宽度」那套：max-content 与 max-width:100% 相互
+  // 引用会形成循环百分比，量到的是上一句的宽度。
+  function _fitMiniLrcWidth(swap) {
+    if (!els.miniProgressSlot || !swap) return false;
+    var w = 0;
+    for (var i = 0; i < swap.children.length; i++) {
+      w = Math.max(w, swap.children[i].scrollWidth);
+    }
+    if (w <= 0) return false;
+    _applyMiniLrcWide(w + 4);
+    var slot = els.miniProgressSlot;
+    var prev = parseFloat(slot.style.getPropertyValue('--mini-lrc-w')) || 0;
+    var instant = !prev;   // 没有旧宽度（切歌 / 首次挂载）：直接到位，别补间
+    if (instant) slot.style.transition = 'none';
+    slot.style.setProperty('--mini-lrc-w', (w + 4) + 'px');  // +4 = swap 两侧 padding
+    if (instant) {
+      slot.offsetWidth;          // 让布局吃到目标宽度，再恢复过渡
+      slot.style.transition = '';
+      return false;              // 布局已是目标态，调用方可以即时判定
+    }
+    return (w + 4) > prev + 0.5; // true = 这句比上一句宽（当前布局还是旧窄宽）
+  }
+
+  function _miniLrcClear() {
+    if (_miniLrcSwap || _miniLrcWordLine || _miniLrcIdx !== -2) {
+      if (_miniLrcWordLine) _teardownWordLine(_miniLrcWordLine);
+      _miniLrcSwap = null;
+      _miniLrcWordLine = null;
+      _miniLrcIdx = -2;
+      // 挂起的溢出复核作废（元素马上要被移除）
+      _miniLrcOverflowToken++;
+      if (_miniLrcOverflowTimer) { clearTimeout(_miniLrcOverflowTimer); _miniLrcOverflowTimer = 0; }
+      if (els.miniLrc) els.miniLrc.innerHTML = '';
+      if (els.miniProgressSlot) {
+        els.miniProgressSlot.classList.remove('has-lyric');
+        els.miniProgressSlot.style.removeProperty('--mini-lrc-w');
+      }
+      if (els.miniProgressInline) els.miniProgressInline.classList.remove('lrc-mode');
+      if (els.miniPlayer) els.miniPlayer.classList.remove('mini-lrc-wide');
+    }
+  }
+
+  // 底栏只在播放器收折态可见；展开态构建会量到 0 宽（字宽缓存全错），
+  // 故在此期间不渲染，等收折后由 position tick 自然重建。
+  function _miniLrcVisible() {
+    return !!(document.body && document.body.classList.contains('player-collapsed'));
+  }
+
+  // 窗口尺寸变化会改掉 54% 上限（行的可用宽度随之变），溢出判定与宽度都要重算
+  var _miniLrcResizeTimer = 0;
+  window.addEventListener('resize', function () {
+    if (!_miniLrcSwap) return;
+    if (_miniLrcResizeTimer) clearTimeout(_miniLrcResizeTimer);
+    _miniLrcResizeTimer = setTimeout(function () {
+      _miniLrcResizeTimer = 0;
+      if (!_miniLrcSwap) return;
+      _fitMiniLrcWidth(_miniLrcSwap);
+      _markMiniOverflow(_miniLrcSwap.querySelector('.mini-lrc-line'));
+      _markMiniOverflow(_miniLrcSwap.querySelector('.mini-lrc-trans'));
+    }, 180);
+  });
+
+  // 收折/展开的边沿处理：转成收折态时立即用最后已知位置重建（暂停时后端
+  // 可能不再上报 position，不能等下一个 tick，否则底栏滑出来了却空着）；
+  // 转成展开态时清空，避免残留过期的一句留在隐藏的底栏里。
+  var _miniLrcWasVisible = false;
+  function _miniLrcResync() {
+    var vis = _miniLrcVisible();
+    if (!vis) {
+      _miniLrcWasVisible = false;
+      if (_miniLrcIdx !== -2) _miniLrcClear();
+      return;
+    }
+    if (_miniLrcWasVisible && _miniLrcIdx !== -2) return;  // 已可见且已就位
+    _miniLrcWasVisible = true;
+    if (lyricsData.length === 0) return;
+    var pos = _lastKnownPositionMs - lyricsTimeOffset;
+    var idx = -1;
+    for (var i = 0; i < lyricsData.length; i++) {
+      if (pos >= lyricsData[i].time) idx = i; else break;
+    }
+    if (idx < 0) idx = 0;
+    _updateMiniLyric(pos, idx);
+  }
+
+  function _updateMiniLyric(pos, idx) {
+    if (!els.miniLrc) return;
+    if (!_miniLrcVisible()) { _miniLrcClear(); return; }
+
+    var line = lyricsData[idx];
+    if (!line) { _miniLrcClear(); return; }
+
+    if (idx === _miniLrcIdx && _miniLrcSwap) {
+      // 同一行：播放中由主界面 RAF 独家驱动，暂停/seek 时由这里补画一帧
+      if (App.state.playbackState !== 'playing' && _miniLrcWordLine) {
+        _renderWordLine(_miniLrcWordLine, pos);
+      }
+      return;
+    }
+    _miniLrcIdx = idx;
+
+    // 先切到歌词态再量宽度：右侧时间要已是「当前 / 剩余」合并串，
+    // 否则 _miniLrcAvailWidth 会按较窄的单一剩余时长算，长句判定偏松。
+    if (els.miniProgressInline) els.miniProgressInline.classList.add('lrc-mode');
+
+    var swap = document.createElement('div');
+    swap.className = 'mini-lrc-swap';
+    // 字号随行数自适应（CSS 变量）：有翻译时两行一起收紧，单行给足体量
+    if (line.translation) swap.classList.add('has-trans');
+
+    var lineEl = document.createElement('div');
+    lineEl.className = 'mini-lrc-line';
+    var jp = /[\u3040-\u309F\u30A0-\u30FF]/.test(line.text);
+    var baseFont = lyricFontSettings.lyrics_font || '';
+    var jpFont = lyricFontSettings.lyrics_jp_use_distinct !== false
+      ? (lyricFontSettings.lyrics_jp_font || '') : '';
+    if (jp && jpFont) lineEl.style.fontFamily = jpFont;
+    else if (baseFont) lineEl.style.fontFamily = baseFont;
+
+    if (line.words && line.words.length) {
+      _appendWords(lineEl, line.words);
+    } else {
+      // 逐行歌词（无词级时间戳）：整句直接点亮，不做逐字
+      lineEl.textContent = line.text;
+      lineEl.style.color = 'transparent';
+      lineEl.style.backgroundImage =
+        'linear-gradient(to right, var(--wc) 0%, var(--wc) 100%)';
+      lineEl.style.webkitBackgroundClip = 'text';
+      lineEl.style.backgroundClip = 'text';
+    }
+    swap.appendChild(lineEl);
+
+    var transEl = null;
+    if (line.translation) {
+      transEl = document.createElement('div');
+      transEl.className = 'mini-lrc-trans';
+      transEl.textContent = line.translation;
+      if (baseFont) transEl.style.fontFamily = baseFont;
+      swap.appendChild(transEl);
+    }
+
+    var old = _miniLrcSwap;
+    els.miniLrc.appendChild(swap);
+    swap.classList.add('is-in');
+
+    var wordLine = lineEl.querySelector('.np-lyrics-word') ? lineEl : null;
+    if (wordLine) {
+      _prepareWordLine(wordLine);
+      _renderWordLine(wordLine, pos);
+    }
+    var grew = _fitMiniLrcWidth(swap);
+    // 变宽时布局还停在上一句的窄宽度上，此刻测溢出必然误判（短→中会被判成溢出）；
+    // 这种情况跳过即时判定，直接等宽度落定后的复核。不变宽 / 变窄时即时判定是可信的。
+    if (!grew) {
+      _markMiniOverflow(lineEl);
+      _markMiniOverflow(transEl);
+    }
+    _scheduleMiniOverflowCheck(lineEl, transEl);
+
+    _miniLrcSwap = swap;
+    _miniLrcWordLine = wordLine;
+
+    if (old) {
+      old.classList.remove('is-in');
+      old.classList.add('is-out');
+      if (_miniLrcOutTimer) clearTimeout(_miniLrcOutTimer);
+      _miniLrcOutTimer = setTimeout(function () {
+        _miniLrcOutTimer = 0;
+        if (old.parentNode) old.parentNode.removeChild(old);
+      }, MINI_LRC_OUT_MS + 40);
+    }
+
+    if (els.miniProgressSlot) els.miniProgressSlot.classList.add('has-lyric');
+    // 歌词态：左侧当前时间收掉，右侧换成「当前 / 剩余」合并串
+    if (els.miniProgressInline) els.miniProgressInline.classList.add('lrc-mode');
   }
 
   // 歌词渐进模糊：根据距离当前行的距离计算模糊量
@@ -2300,6 +2579,9 @@ let _lastKnownPositionMs = 0;
     }
     if (idx < 0) idx = 0;
 
+    // 底栏小歌词：与主界面同源（同一 idx / 同一位置），间奏期间保持上一句
+    _updateMiniLyric(adjustedPos, idx);
+
     var lines = els.lyricsWrap.querySelectorAll('.np-lyrics-line');
 
     // 间奏指示器优先于行高亮：处于时间间隙时接管歌词区
@@ -2472,8 +2754,9 @@ els.timeDur.textContent = '-' + App.utils.formatDuration(remaining);
 if (els.miniProgressTrackFill) els.miniProgressTrackFill.style.width = (pct * 100) + '%';
 if (els.miniProgressThumb) els.miniProgressThumb.style.left = (pct * 100) + '%';
 if (els.miniProgressBar) els.miniProgressBar.style.setProperty('--progress-val', (pct * 100) + '%');
-if (els.miniTimeCur) els.miniTimeCur.textContent = App.utils.formatDuration(clampedMs);
-if (els.miniTimeDur && duration) els.miniTimeDur.textContent = '-' + App.utils.formatDuration(remaining);
+if (els.miniTimeCur || els.miniTimeJoinedCur) {
+  _setMiniTime(App.utils.formatDuration(clampedMs), '-' + App.utils.formatDuration(remaining));
+}
 // 过渡标记固定在过渡点位置，不跟随进度
 // 歌词守卫：过渡期间 position_changed 可能在新曲的 updateTrack（含 _renderLyrics）之前到达，
 // 此时歌词仍属于旧曲。用旧曲歌词 + 新曲位置更新高亮会导致 lastLyricsIdx 错乱。
@@ -2553,6 +2836,7 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
       // 清空歌词数据，防止过渡期间滚动
       lyricsData = [];
       lastLyricsIdx = -1;
+      _miniLrcClear();
     } else {
       // 恢复：移除 blur/opacity（CSS transition 淡入）
       els.coverImg.style.transition = 'opacity ' + dur + ', filter ' + dur;
@@ -2679,6 +2963,10 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
   function _syncSecondaryActions() {
     var host = _ensureSecondaryControls();
     if (!host) return;
+    // 拖入窗口播放的库外文件（track.external）不在 tracks 表内，无法收藏
+    // （liked_tracks.track_id 有外键）→ 爱心按钮置灰，避免点了没反应。
+    var externalTrack = !!(App.state.currentTrack && App.state.currentTrack.external);
+    if (els.miniBtnLike) els.miniBtnLike.disabled = externalTrack;
     host.querySelectorAll('[data-action]').forEach(function (btn) {
       var action = NP_SECONDARY_ACTIONS[btn.dataset.action];
       if (!action) return;
@@ -2710,6 +2998,7 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
         btn.classList.toggle('liked', liked);
         btn.classList.toggle('active', false);
         if (iconEl) iconEl.classList.toggle('icon-filled', liked);
+        if (action.id === 'like') btn.disabled = externalTrack;
       } else if (action.isActive) {
         btn.classList.toggle('active', action.isActive());
       }
@@ -2823,11 +3112,11 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
   let _lastVolumeBeforeMute = 80;
 
   // ── 功能区功能：打开音效设置 ─────────────────────────────────────────────
-  // 跳转设置页并切到「音频和库」分区（EQ / 动态低音 / 压缩器等均在此）。
+  // 跳转设置页并切到「播放设置」分区（EQ / 动态低音 / 压缩器等均在此）。
   function _openAudioSettings() {
     if (App.navigate) App.navigate('settings');
     if (App.pages && App.pages.settings && App.pages.settings.activateSection) {
-      App.pages.settings.activateSection('audio_library');
+      App.pages.settings.activateSection('playback');
     }
   }
 
@@ -4152,16 +4441,16 @@ function _updateLyricsSourceBadge() {
   np.onLanguageChanged = function () {
     var track = App.state.currentTrack;
     if (!track) {
-      els.title.textContent = App.i18n.t('common.notPlaying');
-      els.miniTitle.textContent = App.i18n.t('common.notPlaying');
-      if (els.miniInfo) els.miniInfoTitle.textContent = App.i18n.t('common.notPlaying');
+      _setTitle(els.title, App.i18n.t('common.notPlaying'));
+      _setTitle(els.miniTitle, App.i18n.t('common.notPlaying'));
+      if (els.miniInfo) _setTitle(els.miniInfoTitle, App.i18n.t('common.notPlaying'));
     } else {
-      els.title.textContent = track.title || App.i18n.t('common.unknownTrack');
+      _setTitle(els.title, track.title || App.i18n.t('common.unknownTrack'));
       els.artist.textContent = track.artist || App.i18n.t('common.unknownArtist');
-      els.miniTitle.textContent = track.title || App.i18n.t('common.unknownTrack');
+      _setTitle(els.miniTitle, track.title || App.i18n.t('common.unknownTrack'));
       els.miniArtist.textContent = track.artist || App.i18n.t('common.unknownArtist');
       if (els.miniInfo) {
-        els.miniInfoTitle.textContent = track.title || App.i18n.t('common.unknownTrack');
+        _setTitle(els.miniInfoTitle, track.title || App.i18n.t('common.unknownTrack'));
         els.miniInfoArtist.textContent = track.artist || App.i18n.t('common.unknownArtist');
       }
     }

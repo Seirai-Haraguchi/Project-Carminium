@@ -1060,6 +1060,8 @@ let player = null;
 let coverServer = null;
 let bridge = null;
 let smtc = null;
+let discordRpc = null;
+let thumbar = null;
 let wasapi = null;
 
 // ── 获取主窗口 ─────────────────────────────────────────────────────────────
@@ -1256,6 +1258,8 @@ async function initializeApp() {
     const { CoverHTTPServer } = require('./cover-server');
     const { Bridge } = require('./bridge');
     const { SmtcController } = require('./smtc');
+    const { DiscordRpcController } = require('./discord_rpc');
+    const { ThumbarController } = require('./thumbar');
 
     // ネイティブオーディオレンダラーを初期化（DLL が利用できない場合はスキップ）
     let NativeRenderer = null;
@@ -1300,10 +1304,23 @@ async function initializeApp() {
     smtc = new SmtcController(player, library, settings);
     smtc.setBridge(bridge);
 
+    // ── 创建任务栏缩略图工具栏控制器 ─────────────────────────────────────────
+    // 窗口预览下方那排按钮：上一首 / 播放·暂停 / 下一首 / 喜欢。非 Windows 内部直接跳过。
+    thumbar = new ThumbarController(player, settings);
+    thumbar.setBridge(bridge);
+
+    // ── 创建 Discord Rich Presence 控制器 ────────────────────────────────────
+    // 通过本地 IPC 通道向 Discord 客户端推送播放状态；
+    // Discord 未启动时按间隔重试，设置变更经 bridge settings_changed 驱动。
+    discordRpc = new DiscordRpcController(player, settings);
+    discordRpc.setBridge(bridge);
+    discordRpc.start();
+
     // ── 创建主窗口 ──────────────────────────────────────────────────────────
     createMainWindow();
     bridge.setMainWindow(mainWindow);
     smtc.setMainWindow(mainWindow);
+    if (thumbar) thumbar.setWindow(mainWindow);
 
     // ── 动态窗口标题：进度 歌曲名 - 歌手 | Project Carminium ──────────────────
     // 自定义标题栏 (frame:false) 不显示原生标题，但 Windows 任务栏缩略提示、
@@ -1395,6 +1412,12 @@ function shutdown() {
   } catch { /* ignore */ }
   savePlaybackState();
   try {
+    if (discordRpc) discordRpc.stop();
+  } catch { /* ignore */ }
+  try {
+    if (thumbar) thumbar.dispose();
+  } catch { /* ignore */ }
+  try {
     if (bridge) bridge.close();
   } catch { /* ignore */ }
   try {
@@ -1441,6 +1464,7 @@ app.on('activate', () => {
     createMainWindow();
     if (bridge) bridge.setMainWindow(mainWindow);
     if (smtc) smtc.setMainWindow(mainWindow);
+    if (thumbar) thumbar.setWindow(mainWindow);
   }
 });
 

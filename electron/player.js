@@ -1536,6 +1536,8 @@ class MusicPlayer extends EventEmitter {
 
   toggleLiked() {
     if (!this.currentTrack) return;
+    // 库外文件（拖入窗口播放）没有 tracks 行，无法收藏
+    if (this.currentTrack.external) return;
     const trackId = this.currentTrack.id || '';
     if (!trackId) return;
     const newState = !this._liked_tracks.has(trackId);

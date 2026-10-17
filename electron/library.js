@@ -168,6 +168,32 @@ CREATE TABLE IF NOT EXISTS cover_colors (
     track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
     colors   TEXT NOT NULL
 );
+
+-- 拖入窗口播放的外部文件（不在 media library 内）。
+-- 与 tracks 完全隔离：tracks 是「库」，这两张表只服务「播放历史」，
+-- 因此不会出现在音乐页，也不会被 play_history 的统计查询（JOIN tracks）计入。
+CREATE TABLE IF NOT EXISTS external_tracks (
+    id           TEXT PRIMARY KEY,
+    path         TEXT NOT NULL,
+    title        TEXT,
+    artist       TEXT,
+    album        TEXT,
+    album_artist TEXT,
+    duration_ms  INTEGER,
+    file_size    INTEGER,
+    has_cover    INTEGER DEFAULT 0,
+    lyrics       TEXT,
+    added_at     REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS external_plays (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id  TEXT NOT NULL,
+    played_at REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_external_plays_time ON external_plays(played_at DESC);
+CREATE INDEX IF NOT EXISTS idx_external_plays_track ON external_plays(track_id);
 `;
 
 function trackId(filePath) {
@@ -883,6 +909,14 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     } catch {
       return { data: null, confirmed: false };
     }
+    if (!row || !row.path) {
+      // 外部拖入播放的文件（不在 tracks 内）：它只在 external_tracks 里，
+      // 但仍需要封面 → 反查路径后照常走「磁盘缓存 → 从文件提取」链路。
+      try {
+        const ext = this._db.prepare('SELECT path FROM external_tracks WHERE id=?').get(trackId);
+        if (ext && ext.path) row = { path: ext.path, source: 'external' };
+      } catch { /* ignore */ }
+    }
     if (!row || !row.path) return { data: null, confirmed: true };
     // 远程来源由 cover-server 的专用代理负责，此处不处理
     if (row.source === 'subsonic' || row.source === 'webdav') return { data: null, confirmed: true };
@@ -953,7 +987,14 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
       return memCached;
     }
-    const row = this._db.prepare('SELECT path, source FROM tracks WHERE id=?').get(trackId);
+    let row = this._db.prepare('SELECT path, source FROM tracks WHERE id=?').get(trackId);
+    if (!row || !row.path) {
+      // 外部拖入播放的文件：反查路径（同 _loadCoverDataAsync）
+      try {
+        const ext = this._db.prepare('SELECT path FROM external_tracks WHERE id=?').get(trackId);
+        if (ext && ext.path) row = { path: ext.path, source: 'external' };
+      } catch { /* ignore */ }
+    }
     if (!row || !row.path) return null;
     if (row.source === 'subsonic' || row.source === 'webdav') return null;
 
@@ -1618,6 +1659,82 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return this._db.prepare('SELECT * FROM tracks WHERE id=?').get(trackId) || null;
   }
 
+  /**
+   * 解析「拖入窗口」的一组文件路径 → 可播放的曲目对象数组。
+   *
+   * 两种待遇（用户明确要求）：
+   *   1. 文件在媒体库内 → 返回库内 track（与在播放器里点歌完全一致，
+   *      播放历史/统计/封面/歌词都走正常链路）；
+   *   2. 文件不在库内 → 返回带 `external: true` 的临时曲目：只解析标签供显示，
+   *      播放时仅进播放历史（见 bridge 的 _onTrackChanged），不进任何统计。
+   *
+   * @param {string[]} paths
+   * @returns {Promise<object[]>}
+   */
+  async resolveDroppedFiles(paths) {
+    const out = [];
+    const seen = new Set();
+    for (const raw of Array.isArray(paths) ? paths : []) {
+      if (typeof raw !== 'string' || !raw) continue;
+      let abs;
+      try { abs = path.resolve(raw); } catch { continue; }
+      if (seen.has(abs)) continue;
+      seen.add(abs);
+      let st;
+      try { st = fs.statSync(abs); } catch { continue; }
+      if (!st.isFile()) continue;
+      if (!SUPPORTED_EXT.has(path.extname(abs).toLowerCase())) continue;
+      try {
+        const track = await this.resolveDroppedFile(abs, st);
+        if (track) out.push(track);
+      } catch (e) {
+        console.warn('[MusicLibrary] resolveDroppedFile failed:', abs, e.message || e);
+      }
+    }
+    return out;
+  }
+
+  /** @private 单个文件：先查库，再退化为外部曲目 */
+  async resolveDroppedFile(abs, stat) {
+    // ── 1. 库内文件：按路径查（id 也是路径的哈希，双保险）──
+    let row = null;
+    try {
+      row = this._db.prepare('SELECT * FROM tracks WHERE path=?').get(abs)
+        || this._db.prepare('SELECT * FROM tracks WHERE id=?').get(trackId(abs))
+        || this._db.prepare('SELECT * FROM tracks WHERE path=? COLLATE NOCASE').get(abs)
+        || null;
+    } catch { row = null; }
+    if (row) {
+      // 已是库内曲目：与 play_from_list 拿到的负载保持一致（补齐排序键/歌手数组）
+      this._decorateTrack(row);
+      row.external = false;
+      return row;
+    }
+
+    // ── 2. 库外文件：解析标签，构造临时曲目 ──
+    const meta = await this._parseMetadata(abs);
+    const ext = path.extname(abs);
+    return this._decorateTrack({
+      id: trackId(abs),
+      path: abs,
+      title: meta.title || path.basename(abs, ext),
+      artist: meta.artist || null,
+      album: meta.album || null,
+      album_artist: meta.album_artist || null,
+      track_number: meta.track_number || null,
+      disc_number: meta.disc_number || null,
+      year: meta.year || null,
+      duration_ms: meta.duration_ms || 0,
+      file_size: (stat && stat.size) || 0,
+      has_cover: meta.has_cover ? 1 : 0,
+      lyrics: meta.lyrics || null,
+      genre: meta.genre || null,
+      alias_title: meta.alias_title || null,
+      added_at: Date.now() / 1000,
+      external: true,
+    });
+  }
+
   updateLyrics(trackId, lyrics) {
     this._db.prepare('UPDATE tracks SET lyrics=? WHERE id=?').run(lyrics, trackId);
   }
@@ -1649,6 +1766,9 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
   }
 
   setLiked(trackId, liked) {
+    // 外部拖入文件（不在 tracks 内）无法收藏：liked_tracks.track_id 有外键
+    // 指向 tracks(id)，强行写入会触发 FK 约束错误。
+    if (liked && !this.getTrack(trackId)) return;
     if (liked) {
       this._db.prepare(
         'INSERT OR IGNORE INTO liked_tracks (track_id, liked_at) VALUES (?,?)'
@@ -1694,7 +1814,56 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     ).run();
   }
 
+  /**
+   * 记录一条「外部文件」（不在媒体库内，拖入窗口播放）的播放历史。
+   *
+   * 与 addPlayHistory 的核心区别：
+   *   - 写入 external_plays / external_tracks，**不写** play_history；
+   *   - tracks 表没有对应行 → getPlayStats() 等 JOIN tracks 的统计查询
+   *     天然不会统计到它（这就是「只出现在历史、不计入任何统计」的落点）。
+   * @param {object} track - 播放中的外部曲目对象（需含 path）
+   */
+  addExternalPlayHistory(track) {
+    if (!track || !track.path) return;
+    const now = Date.now() / 1000;
+    const id = track.id || trackId(track.path);
+    try {
+      this._db.prepare(
+        `INSERT INTO external_tracks
+           (id, path, title, artist, album, album_artist, duration_ms, file_size, has_cover, lyrics, added_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET
+           path=excluded.path, title=excluded.title, artist=excluded.artist,
+           album=excluded.album, album_artist=excluded.album_artist,
+           duration_ms=excluded.duration_ms, file_size=excluded.file_size,
+           has_cover=excluded.has_cover,
+           lyrics=COALESCE(excluded.lyrics, external_tracks.lyrics)`
+      ).run(
+        id, track.path, track.title || null, track.artist || null,
+        track.album || null, track.album_artist || null,
+        track.duration_ms || 0, track.file_size || 0,
+        track.has_cover ? 1 : 0, track.lyrics || null, now
+      );
+      this._db.prepare(
+        'INSERT INTO external_plays (track_id, played_at) VALUES (?,?)'
+      ).run(id, now);
+      // 修剪：与 play_history 一致，保留最新 500 条
+      this._db.prepare(
+        `DELETE FROM external_plays WHERE id NOT IN (
+          SELECT id FROM external_plays ORDER BY played_at DESC LIMIT 500
+        )`
+      ).run();
+      // 顺带清理不再被任何历史引用的外部曲目元数据（例如已被移出历史窗口）
+      this._db.prepare(
+        'DELETE FROM external_tracks WHERE id NOT IN (SELECT track_id FROM external_plays)'
+      ).run();
+    } catch (e) {
+      console.warn('[MusicLibrary] addExternalPlayHistory failed:', e.message || e);
+    }
+  }
+
   getPlayHistory(limit = 200) {
+    const lim = parseInt(limit, 10) || 200;
     const rows = this._db.prepare(
       `SELECT t.*, h.played_at FROM tracks t
        INNER JOIN (
@@ -1702,20 +1871,61 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
          FROM play_history GROUP BY track_id
        ) h ON t.id = h.track_id
        ORDER BY h.played_at DESC LIMIT ?`
-    ).all(parseInt(limit, 10));
+    ).all(lim);
     const deduped = this._dedupeTracks(rows);
     for (const t of deduped) {
-      t.sort_key = makeSortKey(t.title);
-      t.artist_sort_key = makeSortKey(t.artist);
-      t.album_sort_key = makeSortKey(t.album);
-      t.alias_sort_key = makeSortKey(t.alias_title);
-      t.artists = this._splitArtists(t.artist);
+      this._decorateTrack(t);
     }
-    return deduped;
+
+    // ── 合并外部文件（拖入播放、非库内）的历史 ──
+    // 它们只存在于 external_* 两张表里，因此不会污染 tracks / play_history，
+    // 也就不会进入 getPlayStats()、每日精选、Discover 等任何统计/推荐口径。
+    let extRows = [];
+    try {
+      extRows = this._db.prepare(
+        `SELECT e.*, h.played_at FROM external_tracks e
+         INNER JOIN (
+           SELECT track_id, MAX(played_at) AS played_at
+           FROM external_plays GROUP BY track_id
+         ) h ON e.id = h.track_id
+         ORDER BY h.played_at DESC LIMIT ?`
+      ).all(lim);
+    } catch {
+      extRows = [];
+    }
+    if (extRows.length > 0) {
+      // 文件后来被纳入媒体库时，同一文件会同时命中两条链路 → 以库内记录为准，
+      // 避免历史里出现重复行。
+      const libPaths = new Set(deduped.map((t) => t.path).filter(Boolean));
+      for (const e of extRows) {
+        if (libPaths.has(e.path)) continue;
+        this._decorateTrack(e);
+        e.external = true;
+        e.source = e.source || 'external';
+        deduped.push(e);
+      }
+      deduped.sort((a, b) => (b.played_at || 0) - (a.played_at || 0));
+    }
+    return deduped.slice(0, lim);
+  }
+
+  /** 为曲目补齐前端列表所需的排序键 / 歌手拆分（库内外共用） */
+  _decorateTrack(t) {
+    t.sort_key = makeSortKey(t.title);
+    t.artist_sort_key = makeSortKey(t.artist);
+    t.album_sort_key = makeSortKey(t.album);
+    t.alias_sort_key = makeSortKey(t.alias_title);
+    t.artists = this._splitArtists(t.artist);
+    return t;
   }
 
   clearPlayHistory() {
     this._db.prepare('DELETE FROM play_history').run();
+    // 外部文件的历史一并清空（它们本来就只被历史引用）
+    try {
+      this._db.prepare('DELETE FROM external_plays').run();
+      this._db.prepare('DELETE FROM external_tracks').run();
+    } catch { /* 旧库升级前的容错 */ }
   }
 
   // ── Metadata backfill (async, called after init) ────────────────────────
@@ -2144,6 +2354,13 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
   addTracksToPlaylist(playlistId, trackIds) {
     if (!trackIds || trackIds.length === 0) return 0;
+    // 过滤掉不在库内的 id（如拖入播放的外部文件）：playlist_tracks.track_id
+    // 外键指向 tracks(id)，写进去会直接抛约束错误。
+    const ownStmt = this._db.prepare('SELECT 1 FROM tracks WHERE id=?');
+    trackIds = trackIds.filter((tid) => {
+      try { return !!ownStmt.get(tid); } catch { return false; }
+    });
+    if (trackIds.length === 0) return 0;
     const row = this._db.prepare(
       'SELECT MAX(position) AS m FROM playlist_tracks WHERE playlist_id=?'
     ).get(playlistId);

@@ -39,8 +39,19 @@ const DEFAULTS = {
   monet_source: 'album_cover',  // "album_cover" | "system_wallpaper"
   language: 'zh-CN',  // "zh-CN" | "zh-TW" | "ja" | "en" | "ru"
   smtc_lyrics: false,
+  // Windows 任务栏缩略图预览下方的媒体控制按钮（上一首/播放·暂停/下一首）。
+  // 关闭后不再调用 setThumbarButtons，任务栏预览恢复系统默认外观。
+  taskbar_thumb_controls: true,
   artist_separators: ';',
   tag_editor_path: '',          // 外部音乐标签编辑应用路径（如 Mp3tag）
+  // Discord Rich Presence
+  discord_rpc: false,           // 总开关
+  discord_rpc_show_paused: true, // 暂停时仍在 Discord 显示当前曲目（无进度）
+  // 简略状态（Discord 第二行）模板，占位符：{title} {artist} {album} {album_artist}
+  discord_rpc_brief_format: '{artist}',
+  // Discord 开发者门户的应用 ID（discord.com/developers/applications）。
+  // RPC 握手必须携带有效的 application ID；留空 = 不连接。
+  discord_rpc_client_id: '',
   eq_enabled: false,
   eq_bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   dynamic_bass: false,

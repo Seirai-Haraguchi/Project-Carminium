@@ -1056,3 +1056,28 @@ button { font-family: inherit; }
   background: color-mix(in srgb, var(--md-on-primary) var(--md-sys-state-hover-state-layer-opacity), var(--md-primary));
 }
 .np-dialog-btn--cancel:hover { background: var(--md-state-hover); }
+
+/* ── 过长标题跑马灯（marquee.js）────────────────────────────────────────
+   与 style.css 中同名段落保持一致。 */
+.mq {
+  overflow: hidden;
+  text-overflow: clip;
+}
+.mq > .mq-inner {
+  display: block;
+  width: max-content;
+  white-space: inherit;
+  will-change: transform;
+}
+.mq-rolling {
+  --mq-fade-l: 14px;
+  --mq-fade-r: 26px;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--mq-fade-l),
+    #000 calc(100% - var(--mq-fade-r)), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 var(--mq-fade-l),
+    #000 calc(100% - var(--mq-fade-r)), transparent 100%);
+}
+.np-mini-title.mq-rolling {
+  --mq-fade-l: 12px;
+  --mq-fade-r: 20px;
+}

@@ -1966,8 +1966,125 @@
     serverSelect.dispatchEvent(new Event('change'));
   }
 
+  // ── 拖入窗口播放（Explorer → 窗口）────────────────────────────────────────
+  // 待遇分流在后端 library.resolveDroppedFiles：
+  //   · 文件在媒体库内 → 与「在播放器里点歌」完全一致（历史 + 统计 + 封面 + 歌词）；
+  //   · 不在库内 → 只进播放历史，不计入任何统计。
+  // 这里只负责拦截系统拖放（否则 Chromium 会直接导航到 file://）、
+  // 给出提示态、并把绝对路径交给主进程。
+  var DROP_AUDIO_EXT = ['.mp3', '.flac', '.ogg', '.wav', '.m4a', '.aac', '.opus', '.wma'];
+  var _dropHintEl = null;
+  var _dropEnterCount = 0;
+
+  function _isFileDrag(e) {
+    var dt = e.dataTransfer;
+    // 内部拖拽（列表重排 / 拖进歌单）带 text/plain，不带 Files
+    if (!dt || !dt.types) return false;
+    for (var i = 0; i < dt.types.length; i++) {
+      if (dt.types[i] === 'Files') return true;
+    }
+    return false;
+  }
+
+  function _isAudioPath(p) {
+    if (!p) return false;
+    var dot = p.lastIndexOf('.');
+    if (dot < 0) return false;
+    return DROP_AUDIO_EXT.indexOf(p.slice(dot).toLowerCase()) >= 0;
+  }
+
+  function _ensureDropHint() {
+    if (_dropHintEl && _dropHintEl.isConnected) return _dropHintEl;
+    var el = document.createElement('div');
+    el.className = 'drop-hint';
+    el.id = 'drop-hint';
+    el.setAttribute('aria-hidden', 'true');
+    el.innerHTML =
+      '<div class="drop-hint-card">' +
+        '<span class="material-symbols-rounded drop-hint-icon">music_note</span>' +
+        '<span class="drop-hint-text"></span>' +
+      '</div>';
+    document.body.appendChild(el);
+    _dropHintEl = el;
+    return el;
+  }
+
+  function _showDropHint(on) {
+    var el = _ensureDropHint();
+    if (on) {
+      var txt = el.querySelector('.drop-hint-text');
+      if (txt) txt.textContent = App.i18n ? App.i18n.t('drop.hint') : '松开以播放';
+    }
+    el.classList.toggle('visible', !!on);
+  }
+
+  function _initFileDrop() {
+    if (!window.__electronAPI || !window.__electronAPI.getPathForFile) return;
+
+    window.addEventListener('dragenter', function (e) {
+      if (!_isFileDrag(e)) return;
+      e.preventDefault();
+      _dropEnterCount++;
+      _showDropHint(true);
+    }, true);
+
+    window.addEventListener('dragover', function (e) {
+      if (!_isFileDrag(e)) return;
+      // 必须拦下来：否则 will-navigate 允许 file:// → 整个界面被替换成该文件
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = 'copy'; } catch (err) { /* ignore */ }
+    });
+
+    window.addEventListener('dragleave', function (e) {
+      if (!_isFileDrag(e)) return;
+      _dropEnterCount = Math.max(0, _dropEnterCount - 1);
+      // relatedTarget 为空 = 真的离开了窗口
+      if (_dropEnterCount === 0 || !e.relatedTarget) {
+        _dropEnterCount = 0;
+        _showDropHint(false);
+      }
+    }, true);
+
+    window.addEventListener('drop', function (e) {
+      if (!_isFileDrag(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      _dropEnterCount = 0;
+      _showDropHint(false);
+
+      var files = e.dataTransfer.files;
+      if (!files || files.length === 0) return;
+      var paths = [];
+      var hasAudio = false;
+      for (var i = 0; i < files.length; i++) {
+        var f = files[i];
+        var p = '';
+        try { p = window.__electronAPI.getPathForFile(f) || ''; } catch (err) { p = ''; }
+        if (!p && f.path) p = f.path;   // 旧版 Electron 兜底
+        if (!p) continue;
+        if (_isAudioPath(p) || _isAudioPath(f.name || '')) hasAudio = true;
+        paths.push(p);
+      }
+      // 拖进来的不是音频（图片/压缩包/文件夹…）：静默忽略，只拦截导航
+      if (!hasAudio || paths.length === 0) return;
+
+      App.backend.play_dropped_files(paths).then(function (res) {
+        var data = null;
+        try { data = JSON.parse(res); } catch (err) { data = null; }
+        if (!data || !data.count) {
+          if (App.utils && App.utils.toast) {
+            App.utils.toast(App.i18n ? App.i18n.t('drop.unsupported') : '无法播放该文件');
+          }
+        }
+      }).catch(function (err) {
+        console.error('[app] play_dropped_files failed:', err);
+      });
+    });
+  }
+
   // 启动
   document.addEventListener('DOMContentLoaded', function () {
+    _initFileDrop();
     _initAudioEngine();
     _initAutoMixAnalysis();
     // ── 启动渲染进程内存管理器 ──

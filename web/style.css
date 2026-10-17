@@ -2539,10 +2539,26 @@ z-index: 1;
   gap: 12px;
   flex: 1 1 0; /* 与右侧控件区对称，使中间进度条真正横向居中 */
   min-width: 0;
+  max-width: 100%;
+  /* 长词模式下要收缩让宽，收放都得有过渡（max-width 用 100% 而不是 none，才可插值） */
+  transition: max-width 320ms var(--ease-standard);
+}
+/* 长词模式：极长的一句放不下时，暂时隐去歌名 / 艺术家，把左区收成封面 + 爱心。
+   只降不消——封面上还在，用户不会失去"这是哪首"的全部线索。 */
+.mini-player.mini-lrc-wide .mini-player-left {
+  max-width: 124px;
+}
+.mini-player.mini-lrc-wide .mini-player-info {
+  opacity: 0;
+}
+.mini-player.mini-lrc-wide .mini-player-progress-inline.lrc-mode:not(:hover) {
+  max-width: 62%;
 }
 .mini-player-info {
   flex: 1 1 0;
   min-width: 0;
+  overflow: hidden;
+  transition: opacity 220ms var(--ease-standard);
 }
 .mini-player-title {
   font-size: 14px;
@@ -2586,12 +2602,261 @@ z-index: 1;
   text-align: center;
   letter-spacing: 0.2px;
 }
+/* 左侧当前时间：歌词态收成 0 宽让位（负 margin 抵消容器 gap），
+   宽度可过渡，所以歌词区是从左边"长出来"而不是整块跳位 */
+.mini-time-cur {
+  width: 36px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: width 260ms var(--ease-standard),
+              margin-right 260ms var(--ease-standard),
+              opacity 200ms var(--ease-standard);
+}
+/* 右侧时间：常规只留剩余时长；歌词态换成「当前 / 剩余」合并串 */
+.mini-time-dur .mini-time-joined { display: none; }
+.mini-time-joined {
+  gap: 3px;
+  white-space: nowrap;
+}
+.mini-time-sep { opacity: 0.45; }
+.mini-player-progress-inline.lrc-mode:not(:hover) .mini-time-cur {
+  width: 0;
+  min-width: 0;      /* .mini-time 的 min-width 34 会挡住收窄，必须一并放开 */
+  opacity: 0;
+  margin-right: -10px;
+}
+.mini-player-progress-inline.lrc-mode:not(:hover) .mini-time-dur .mini-time-rem { display: none; }
+.mini-player-progress-inline.lrc-mode:not(:hover) .mini-time-dur .mini-time-joined {
+  display: inline-flex;
+  align-items: baseline;
+}
 /* 复用正在播放页进度条：让 .np-progress-bar 在底栏中生长并居中
    （handle 高度走基准档 16px，调档表见 .np-progress-bar 的场景调档） */
 .mini-progress-bar {
   margin-bottom: 0;
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/* ── 进度条 / 底栏歌词共用槽位 ─────────────────────────────────────────
+   底栏中间那块默认显示当前歌词（有翻译则双行），指针进入槽位时让回
+   进度条——两者几何完全重合，只能用同一个槽位交叉淡入，不能各占一份
+   宽度（宽窄来回跳会带动左右时间标签位移）。 */
+.mini-progress-slot {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 42px;      /* 底栏 64，上下各留 11：够放原文 + 翻译两行 */
+  display: flex;
+  align-items: center;
+  /* 放在基类：歌词态 ↔ 进度条态来回切时 width / margin 都有补间 */
+  transition: width 300ms var(--ease-standard),
+              margin 300ms var(--ease-standard);
+}
+
+/* 歌词态：中间块不再固定占 44%，改由歌词自身宽度决定 ——
+   左右两侧的喜爱按钮与时间会跟着歌词一起收放，短句不再甩出大片空白。
+   整条链路（容器 → 槽位 → 歌词层 → 当前层）都用 max-content + max-width:100%，
+   上下文宽度由容器的 max-width 兜底，所以长句会被 54% 截住并走两端渐隐。 */
+.mini-player-progress-inline.lrc-mode:not(:hover) {
+  flex: 0 1 auto;
+  width: max-content;
+  min-width: 0;
+  max-width: 54%;
+}
+.mini-player-progress-inline.lrc-mode:not(:hover) .mini-progress-slot {
+  flex: 0 1 auto;
+  /* --mini-lrc-w 由 JS 写入本句的自然宽度，宽度可过渡 → 两侧组件平滑跟随 */
+  width: var(--mini-lrc-w, max-content);
+  max-width: 100%;
+  min-width: 0;
+  /* 与左右两侧（喜爱 / 时间）留一点呼吸，不贴着 */
+  margin: 0 14px;
+}
+/* 歌词态里进度条退成绝对定位铺满同块，不再参与撑宽（hover 时再回到流内） */
+.mini-player-progress-inline.lrc-mode:not(:hover) .mini-progress-slot .mini-progress-bar {
+  position: absolute;
+  inset: 0;
+  width: auto;
+}
+.mini-player-progress-inline.lrc-mode:not(:hover) .mini-lrc {
+  position: relative;
+  /* 进流后必须自己撑满 42px 并居中：否则作为块级元素会从顶部排版，整句看着偏上 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: max-content;
+  max-width: 100%;
+  height: 42px;
+}
+/* 当前层参与流，宽度即歌词宽度；旧层仍是绝对定位，只为退场动画存在 */
+.mini-player-progress-inline.lrc-mode:not(:hover) .mini-lrc .mini-lrc-swap.is-in {
+  position: relative;
+  inset: auto;
+  width: max-content;
+  max-width: 100%;
+  padding: 0 2px;
+}
+.mini-progress-slot .mini-progress-bar {
+  flex: none;
+  width: 100%;
+  margin-bottom: 0;
+  transform-origin: 50% 50%;
+  /* 让位时横向收一档再淡出，回来时反之：比单纯 opacity 更有"交接"感 */
+  transition: opacity var(--motion-effects-fast),
+              transform var(--motion-spatial-fast);
+}
+/* 有歌词：默认只露歌词；hover 槽位即恢复进度条（底栏想拖进度就把指针移上来） */
+.mini-progress-slot.has-lyric .mini-lrc {
+  opacity: 1;
+  transform: none;
+}
+.mini-progress-slot.has-lyric .mini-progress-bar {
+  opacity: 0;
+  transform: scaleX(0.9);
+  pointer-events: none;
+}
+.mini-progress-slot.has-lyric:hover .mini-lrc {
+  opacity: 0;
+  transform: translateX(8px);
+}
+.mini-progress-slot.has-lyric:hover .mini-progress-bar {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+/* 底栏歌词层（绝对定位盖在进度条之上，不吃指针事件） */
+.mini-lrc {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(8px);
+  transition: opacity var(--motion-effects-fast),
+              transform var(--motion-spatial-fast);
+  contain: layout paint;
+}
+/* 一次换行 = 一层；换行时新旧两层叠放做水平渐变交接，动画结束移除旧层 */
+.mini-lrc-swap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 10px;
+  /* 字号随行数自适应：单行给足体量；有翻译时两行一起收紧，保证 42px 槽内不挤 */
+  --mini-lrc-size: 16px;
+  --mini-lrc-trans-size: 12.5px;
+}
+.mini-lrc-swap.has-trans {
+  --mini-lrc-size: 14.5px;
+  --mini-lrc-trans-size: 12.5px;
+  gap: 1px;
+}
+.mini-lrc-swap.is-in {
+  animation: mini-lrc-in 280ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+.mini-lrc-swap.is-out {
+  animation: mini-lrc-out 200ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+/* 行：默认不做两端渐隐——短句被虚化边缘只是脏，不是风格。
+   只有真的溢出（JS 测 scrollWidth）才挂 .is-overflow 的 10px 渐隐，
+   用来提示"这句还没完"。mask 与交接动画分别挂在行 / swap 上，互不抢属性。 */
+.mini-lrc-line,
+.mini-lrc-trans {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.mini-lrc-line.is-overflow,
+.mini-lrc-trans.is-overflow {
+  -webkit-mask-image: linear-gradient(to right,
+    transparent 0, #000 10px, #000 calc(100% - 10px), transparent 100%);
+  mask-image: linear-gradient(to right,
+    transparent 0, #000 10px, #000 calc(100% - 10px), transparent 100%);
+}
+.mini-lrc-line {
+  font-size: var(--mini-lrc-size, 14.5px);
+  line-height: 1.25;
+  font-weight: 700;
+  font-variation-settings: 'wght' 700, 'GRAD' 40, 'opsz' 18;
+  letter-spacing: 0.2px;
+  color: var(--md-primary);
+  /* 逐字填充的两端色：已唱 = primary，未唱 = 45% primary（同主界面比例） */
+  --wc: var(--md-primary);
+  --wc-muted: color-mix(in srgb, var(--md-primary) 42%, transparent);
+}
+/* 底栏字号小，词/字容器的几何必须与主界面一致才能共用逐字渲染 */
+.mini-lrc .np-lyrics-word {
+  display: inline-block;
+  white-space: pre;
+  opacity: 1;
+  top: 0;
+  font-weight: inherit;
+  font-variation-settings: inherit;
+  letter-spacing: inherit;
+}
+.mini-lrc .np-lyrics-char {
+  display: inline-block;
+  white-space: pre;
+  transform-origin: 50% 50%;
+  color: transparent;
+  background-image: linear-gradient(
+    to right,
+    var(--wc) 0%,
+    var(--wc) var(--fo, 0%),
+    var(--wc-muted) var(--fe, 0%),
+    var(--wc-muted) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+.mini-lrc-trans {
+  font-size: var(--mini-lrc-trans-size, 11.5px);
+  line-height: 1.3;
+  font-weight: 500;
+  font-variation-settings: 'wght' 500, 'GRAD' 0, 'opsz' 14;
+  letter-spacing: 0.1px;
+  color: var(--md-on-surface-variant);
+  opacity: 0.8;
+}
+
+/* 行切换：新行自右侧水平渐显（遮罩从左往右展开），旧行向左渐隐 */
+@keyframes mini-lrc-in {
+  from {
+    opacity: 0;
+    transform: translateX(7px);
+    -webkit-mask-image: linear-gradient(to right, transparent 0, transparent 42%, #000 88%, #000 100%);
+    mask-image: linear-gradient(to right, transparent 0, transparent 42%, #000 88%, #000 100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 0%, #000 100%, #000 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 0%, #000 100%, #000 100%);
+  }
+}
+@keyframes mini-lrc-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 0%, #000 100%, #000 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 0%, #000 100%, #000 100%);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-7px);
+    -webkit-mask-image: linear-gradient(to right, transparent 0, transparent 58%, #000 100%, #000 100%);
+    mask-image: linear-gradient(to right, transparent 0, transparent 58%, #000 100%, #000 100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mini-lrc-swap.is-in,
+  .mini-lrc-swap.is-out { animation-duration: 1ms; }
 }
 
 .mini-player-controls {
@@ -5907,6 +6172,29 @@ select.cmd-text-field__input + .cmd-text-field__label {
   color: var(--md-on-surface-variant);
 }
 
+/* Discord RPC 连接状态点（settings-row-trailing 槽内）。
+   四态由 JS 写 data-state：disabled=灰 / disconnected=error / connecting=
+   tertiary 呼吸 / connected=primary。纯色阶 + 形状区分，不用 box-shadow；
+   呼吸动画复用全局 pulse（颜色类过渡用 effects 曲线，不掺 spatial）。 */
+.settings-discord-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--md-outline);
+  transition: background var(--motion-effects-fast);
+}
+.settings-discord-dot[data-state='disconnected'] {
+  background: var(--md-error);
+}
+.settings-discord-dot[data-state='connecting'] {
+  background: var(--md-tertiary);
+  animation: pulse 2s ease-in-out infinite;
+}
+.settings-discord-dot[data-state='connected'] {
+  background: var(--md-primary);
+}
+
 /* Toggle switch — **M3E 化之前的原版几何**：56×34、轨道描边 2.5px、thumb 23px。
    2026-10-03 曾按 52×32 等比缩到 44×26，2026-10-04 用户要求还原旧版比例，故回退。
    几何链：thumb 23 → 26（按下）；开启时靠 right 定位（`calc(100% - 28px)`）。 */
@@ -7390,6 +7678,21 @@ body.settings-active.np-fullscreen .title-bar-center {
   flex-direction: column;
   align-items: center;
   gap: 8px;
+}
+.settings-eq-band-value {
+  font-size: 10px;
+  line-height: 1;
+  min-width: 26px;
+  text-align: center;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--md-primary);
+  /* 0 dB 降权显示，让真正被调过的频段更醒目 */
+  opacity: 1;
+}
+.settings-eq-band-value[data-zero="true"] {
+  color: var(--md-on-surface-variant);
+  opacity: 0.65;
 }
 .settings-eq-slider-wrap {
   width: 8px;
@@ -9004,4 +9307,81 @@ body.onboarding-active .title-bar-settings { display: none; }
   margin-right: auto;        /* 计数贴左，按钮组贴右 */
   font-size: 13px;
   color: var(--md-on-surface-variant);
+}
+
+/* ── 拖入窗口播放提示 ───────────────────────────────────────────────
+   Explorer 拖入音频文件时显示；drop / 拖出后由 JS 去掉 .visible。
+   纯 M3E：surface-container-high + outline-variant，不用阴影做层次。 */
+.drop-hint {
+  position: fixed;
+  inset: 0;
+  z-index: 100003;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--motion-effects-fast);
+}
+.drop-hint.visible { opacity: 1; }
+.drop-hint::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--md-surface);
+  opacity: 0.66;
+}
+.drop-hint-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 26px;
+  border-radius: var(--md-sys-shape-corner-large-increased);
+  background: var(--md-surface-container-high);
+  color: var(--md-on-surface);
+  outline: 1px solid color-mix(in srgb, var(--md-outline-variant) 55%, transparent);
+  font-size: 15px;
+  font-weight: 500;
+  transform: scale(0.96);
+  transition: transform var(--motion-spatial-fast);
+}
+.drop-hint.visible .drop-hint-card { transform: scale(1); }
+.drop-hint-icon { font-size: 28px; color: var(--md-primary); }
+
+/* 库外文件（拖入播放）不可收藏：功能区爱心置灰 */
+.np-secondary-btn:disabled { opacity: 0.38; cursor: default; }
+.np-secondary-btn:disabled:hover { background: transparent; }
+.mini-btn-like:disabled { opacity: 0.38; pointer-events: none; }
+
+/* ── 过长标题跑马灯（marquee.js）────────────────────────────────────────
+   结构：容器 .mq > 内层 span.mq-inner，滚动只动内层 transform。
+   溢出时加 .mq-rolling：两侧 mask 渐变透明，文字进出不硬切。
+   数值须与 floating.css 的同一段保持同步。 */
+.mq {
+  overflow: hidden;
+  text-overflow: clip;
+}
+.mq > .mq-inner {
+  display: block;
+  width: max-content;
+  white-space: inherit;
+  will-change: transform;
+}
+.mq-rolling {
+  --mq-fade-l: 14px;
+  --mq-fade-r: 26px;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--mq-fade-l),
+    #000 calc(100% - var(--mq-fade-r)), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 var(--mq-fade-l),
+    #000 calc(100% - var(--mq-fade-r)), transparent 100%);
+}
+/* 小字号（底栏 / 面板折叠条）渐隐带更窄，避免吃掉首尾字 */
+.mini-player-title.mq-rolling {
+  --mq-fade-l: 10px;
+  --mq-fade-r: 18px;
+}
+.np-mini-title.mq-rolling {
+  --mq-fade-l: 12px;
+  --mq-fade-r: 20px;
 }

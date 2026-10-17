@@ -4,13 +4,16 @@
  * 设置以普通页面形式呈现，填满页面容器：
  * 左侧导航列出所有分类，右侧内容区显示当前分类的设置项。
  * 由 App.navigate('settings') 触发，与其他页面一致。
- * 分类：
- *   1. 外观与视觉    — 主题、配色、歌词与文字
- *   2. 音频和库      — 输出设备、歌手分隔等
- *   3. 自动化与控制  — 启动行为、快捷键
- *   4. 实验性        — 实验性功能
- *   5. 系统与内存    — 内存信息面板
- *   6. 关于          — 在右栏内嵌渲染关于页内容
+ * 分类（顺序即导航顺序；每类下的 groups 即右栏的小标题，缺的请补上）：
+ *   1. 常规设置     — 语言 / 音乐库
+ *   2. 外观设置     — 主题与配色 / 正在播放界面 / 字体
+ *   3. 播放设置     — 播放行为 / 音频输出 / 音效
+ *   4. 歌词设置     — 字体 / 排版与显示 / 制作信息
+ *   5. 快捷键配置   — 快捷键 / 手柄
+ *   6. 服务和自动化 — 系统集成 / 外部应用
+ *   7. 内存和存储   — 内存优化 / 内存信息
+ *   8. 其他设置     — 初始设置（新手引导）
+ *   9. 关于和更新   — 在右栏内嵌渲染关于页内容（isPage，无分组）
  */
 (function () {
   'use strict';
@@ -31,12 +34,53 @@
   function _buildSections() {
     var sections = [
     {
+      // 1. 常规设置 — 语言、歌手分隔符
+      id: 'general',
+      titleKey: 'settings.section.general',
+      icon: 'settings',
+      groups: [
+        {
+          titleKey: 'settings.group.language',
+          rows: [
+            {
+              type: 'select',
+              bind: 'language',
+              label: _t('settings.language.label'),
+              sub: _t('settings.language.sub'),
+              options: [
+                { value: 'zh-CN', label: '简体中文(Simplified Chinese)' },
+                { value: 'zh-TW', label: '繁體中文(Traditional Chinese,Taiwan)' },
+                { value: 'ja', label: '日本語(Japanese)' },
+                { value: 'en', label: 'English(English)' },
+                { value: 'ru', label: 'Русский(Russian)' },
+              ],
+              onApply: function (val) { _applyLanguage(val); },
+            },
+          ],
+        },
+        {
+          titleKey: 'settings.group.library',
+          rows: [
+            {
+              type: 'text',
+              bind: 'artist_separators',
+              label: _t('settings.artistSeparators.label'),
+              sub: _t('settings.artistSeparators.sub'),
+              placeholder: ';',
+              onApply: function () { App.refreshLibraryCache(); },
+            },
+          ],
+        },
+      ],
+    },
+    {
+      // 2. 外观设置 — 深色模式、莫奈取色、正在播放界面视觉、界面字体
       id: 'appearance',
       titleKey: 'settings.section.appearance',
       icon: 'palette',
       groups: [
         {
-          titleKey: 'settings.group.global',
+          titleKey: 'settings.group.theme',
           rows: [
             {
               type: 'select',
@@ -79,32 +123,10 @@
               ],
               onApply: function (val) { _applyMonetSource(val); },
             },
-            {
-              type: 'select',
-              bind: 'language',
-              label: _t('settings.language.label'),
-              sub: _t('settings.language.sub'),
-              options: [
-                { value: 'zh-CN', label: '简体中文(Simplified Chinese)' },
-                { value: 'zh-TW', label: '繁體中文(Traditional Chinese,Taiwan)' },
-                { value: 'ja', label: '日本語(Japanese)' },
-                { value: 'en', label: 'English(English)' },
-                { value: 'ru', label: 'Русский(Russian)' },
-              ],
-              onApply: function (val) { _applyLanguage(val); },
-            },
-            {
-              type: 'text',
-              bind: 'ui_font',
-              label: _t('settings.uiFont.label'),
-              sub: _t('settings.uiFont.sub'),
-              placeholder: 'Google Sans Flex, Noto Sans SC, sans-serif',
-              onApply: function (val) { _applyUiFont(val); },
-            },
           ],
         },
         {
-          titleKey: 'settings.group.playback',
+          titleKey: 'settings.group.nowPlaying',
           rows: [
             {
               type: 'toggle',
@@ -147,75 +169,90 @@
           ],
         },
         {
-          titleKey: 'settings.group.lyrics',
+          titleKey: 'settings.group.font',
           rows: [
             {
               type: 'text',
-              bind: 'lyrics_font',
-              label: _t('settings.lyricsFont.label'),
-              sub: _t('settings.lyricsFont.sub'),
+              bind: 'ui_font',
+              label: _t('settings.uiFont.label'),
+              sub: _t('settings.uiFont.sub'),
               placeholder: 'Google Sans Flex, Noto Sans SC, sans-serif',
-              onApply: function (val) { _applyLyricsFont(val); },
-            },
-            {
-              type: 'text',
-              bind: 'lyrics_jp_font',
-              label: _t('settings.lyricsJpFont.label'),
-              sub: _t('settings.lyricsJpFont.sub'),
-              placeholder: 'Yu Gothic UI, Hiragino Kaku Gothic ProN, Meiryo, sans-serif',
-              onApply: function (val) { _applyLyricsJpFont(val); },
-            },
-            {
-              type: 'toggle',
-              bind: 'lyrics_jp_use_distinct',
-              label: _t('settings.lyricsJpDistinct.label'),
-              sub: _t('settings.lyricsJpDistinct.sub'),
-              onChange: function (checked) { _applyLyricsJpDistinct(checked); },
-            },
-            {
-              type: 'toggle',
-              bind: 'lyrics_progressive_blur',
-              label: _t('settings.lyricsBlur.label'),
-              sub: _t('settings.lyricsBlur.sub'),
-              onChange: function (checked) { _applyProgressiveBlur(checked); },
-            },
-            {
-              type: 'toggle',
-              bind: 'lyrics_center',
-              label: _t('settings.lyricsCenter.label'),
-              sub: _t('settings.lyricsCenter.sub'),
-              onChange: function (checked) { _applyLyricsCenter(checked); },
-            },
-            {
-              type: 'slider',
-              bind: 'lyrics_font_size',
-              label: _t('settings.lyricsFontSize.label'),
-              sub: _t('settings.lyricsFontSize.sub'),
-              min: 12,
-              max: 28,
-              step: 1,
-              unit: 'px',
-              onChange: function (val) { _applyLyricsFontSize(val); },
-            },
-            {
-              type: 'text',
-              bind: 'lyrics_credit_filters',
-              label: _t('settings.lyricsCreditFilters.label'),
-              sub: _t('settings.lyricsCreditFilters.sub'),
-              placeholder: '作词,作曲,编曲,制作人,混音,母带,录音',
-              onApply: function (val) { _applyLyricsCreditFilters(val); },
+              onApply: function (val) { _applyUiFont(val); },
             },
           ],
         },
       ],
     },
     {
-      id: 'audio_library',
-      titleKey: 'settings.section.audio',
+      // 3. 播放设置 — 播放行为 + 全部音效
+      id: 'playback',
+      titleKey: 'settings.section.playback',
       icon: 'headphones',
       groups: [
         {
-          titleKey: 'settings.group.audio',
+          titleKey: 'settings.group.playbackBehavior',
+          rows: [
+            {
+              type: 'toggle',
+              bind: 'shuffle',
+              label: _t('settings.shuffle.label'),
+              sub: _t('settings.shuffle.sub'),
+              onChange: function (checked) { App.backend.set_shuffle(checked); },
+            },
+            {
+              type: 'toggle',
+              bind: 'resume_playback',
+              label: _t('settings.resumePlayback.label'),
+              sub: _t('settings.resumePlayback.sub'),
+              disabled: true,
+            },
+            {
+              type: 'toggle',
+              bind: 'automix',
+              label: _t('settings.automix.label'),
+              sub: _t('settings.automix.sub'),
+              onChange: function (checked) {
+                App.utils.call('set_automix', checked);
+                if (checked) {
+                  App.utils.call('set_gapless', false);
+                  var gaplessEl = document.querySelector('input[type="checkbox"][data-bind="gapless"]');
+                  if (gaplessEl) gaplessEl.checked = false;
+                }
+              },
+            },
+            {
+              type: 'toggle',
+              bind: 'radical_transitions',
+              label: _t('settings.radicalTransitions.label'),
+              sub: _t('settings.radicalTransitions.sub'),
+              onChange: function (checked) {
+                App.utils.call('set_radical_transitions', checked);
+                if (checked) {
+                  App.utils.call('set_automix', true);
+                  var automixEl = document.querySelector('input[type="checkbox"][data-bind="automix"]');
+                  if (automixEl) automixEl.checked = true;
+                }
+              },
+            },
+            {
+              type: 'toggle',
+              bind: 'gapless',
+              label: _t('settings.gapless.label'),
+              sub: _t('settings.gapless.sub'),
+              onChange: function (checked) {
+                App.utils.call('set_gapless', checked);
+                if (checked) {
+                  App.utils.call('set_automix', false);
+                  var automixEl = document.querySelector('input[type="checkbox"][data-bind="automix"]');
+                  if (automixEl) automixEl.checked = false;
+                }
+              },
+            },
+          ],
+        },
+        {
+          // 独占模式 / 输出设备
+          titleKey: 'settings.group.audioOutput',
           rows: [
             {
               type: 'toggle',
@@ -245,6 +282,11 @@
               sub: _t('settings.outputDevice.sub'),
               placeholder: _t('settings.outputDevice.default'),
             },
+          ],
+        },
+        {
+          titleKey: 'settings.group.soundEffects',
+          rows: [
             {
               type: 'toggle',
               bind: 'eq_enabled',
@@ -323,106 +365,93 @@
             },
           ],
         },
+      ],
+    },
+    {
+      // 4. 歌词设置 — 字体、排版与制作信息筛选
+      id: 'lyrics',
+      titleKey: 'settings.section.lyrics',
+      icon: 'lyrics',
+      groups: [
         {
-          titleKey: 'settings.group.library',
+          titleKey: 'settings.group.font',
           rows: [
             {
               type: 'text',
-              bind: 'artist_separators',
-              label: _t('settings.artistSeparators.label'),
-              sub: _t('settings.artistSeparators.sub'),
-              placeholder: ';',
-              onApply: function () { App.refreshLibraryCache(); },
+              bind: 'lyrics_font',
+              label: _t('settings.lyricsFont.label'),
+              sub: _t('settings.lyricsFont.sub'),
+              placeholder: 'Google Sans Flex, Noto Sans SC, sans-serif',
+              onApply: function (val) { _applyLyricsFont(val); },
             },
             {
-              type: 'file_picker',
-              bind: 'tag_editor_path',
-              label: _t('settings.tagEditorPath.label'),
-              sub: _t('settings.tagEditorPath.sub'),
-              placeholder: _t('settings.tagEditorPath.placeholder'),
-              pickLabel: _t('settings.tagEditorPath.pick'),
+              type: 'text',
+              bind: 'lyrics_jp_font',
+              label: _t('settings.lyricsJpFont.label'),
+              sub: _t('settings.lyricsJpFont.sub'),
+              placeholder: 'Yu Gothic UI, Hiragino Kaku Gothic ProN, Meiryo, sans-serif',
+              onApply: function (val) { _applyLyricsJpFont(val); },
+            },
+            {
+              type: 'toggle',
+              bind: 'lyrics_jp_use_distinct',
+              label: _t('settings.lyricsJpDistinct.label'),
+              sub: _t('settings.lyricsJpDistinct.sub'),
+              onChange: function (checked) { _applyLyricsJpDistinct(checked); },
+            },
+          ],
+        },
+        {
+          titleKey: 'settings.group.lyricsLayout',
+          rows: [
+            {
+              type: 'toggle',
+              bind: 'lyrics_progressive_blur',
+              label: _t('settings.lyricsBlur.label'),
+              sub: _t('settings.lyricsBlur.sub'),
+              onChange: function (checked) { _applyProgressiveBlur(checked); },
+            },
+            {
+              type: 'toggle',
+              bind: 'lyrics_center',
+              label: _t('settings.lyricsCenter.label'),
+              sub: _t('settings.lyricsCenter.sub'),
+              onChange: function (checked) { _applyLyricsCenter(checked); },
+            },
+            {
+              type: 'slider',
+              bind: 'lyrics_font_size',
+              label: _t('settings.lyricsFontSize.label'),
+              sub: _t('settings.lyricsFontSize.sub'),
+              min: 12,
+              max: 28,
+              step: 1,
+              unit: 'px',
+              onChange: function (val) { _applyLyricsFontSize(val); },
+            },
+          ],
+        },
+        {
+          titleKey: 'settings.group.lyricsCredit',
+          rows: [
+            {
+              type: 'text',
+              bind: 'lyrics_credit_filters',
+              label: _t('settings.lyricsCreditFilters.label'),
+              sub: _t('settings.lyricsCreditFilters.sub'),
+              placeholder: '作词,作曲,编曲,制作人,混音,母带,录音',
+              onApply: function (val) { _applyLyricsCreditFilters(val); },
             },
           ],
         },
       ],
     },
     {
-      id: 'automation_controls',
-      titleKey: 'settings.section.automation',
-      icon: 'tune',
+      // 5. 快捷键配置 — 全局快捷键、手柄
+      id: 'shortcuts',
+      titleKey: 'settings.section.shortcuts',
+      icon: 'sports_esports',
       groups: [
-        {
-          titleKey: 'settings.group.automation',
-          rows: [
-            {
-              type: 'toggle',
-              bind: 'shuffle',
-              label: _t('settings.shuffle.label'),
-              sub: _t('settings.shuffle.sub'),
-              onChange: function (checked) { App.backend.set_shuffle(checked); },
-            },
-            {
-              type: 'toggle',
-              bind: 'resume_playback',
-              label: _t('settings.resumePlayback.label'),
-              sub: _t('settings.resumePlayback.sub'),
-              disabled: true,
-            },
-            {
-              type: 'toggle',
-              bind: 'automix',
-              label: _t('settings.automix.label'),
-              sub: _t('settings.automix.sub'),
-              onChange: function (checked) {
-                App.utils.call('set_automix', checked);
-                if (checked) {
-                  App.utils.call('set_gapless', false);
-                  var gaplessEl = document.querySelector('input[type="checkbox"][data-bind="gapless"]');
-                  if (gaplessEl) gaplessEl.checked = false;
-                }
-              },
-            },
-            {
-              type: 'toggle',
-              bind: 'radical_transitions',
-              label: _t('settings.radicalTransitions.label'),
-              sub: _t('settings.radicalTransitions.sub'),
-              onChange: function (checked) {
-                App.utils.call('set_radical_transitions', checked);
-                if (checked) {
-                  App.utils.call('set_automix', true);
-                  var automixEl = document.querySelector('input[type="checkbox"][data-bind="automix"]');
-                  if (automixEl) automixEl.checked = true;
-                }
-              },
-            },
-            {
-              type: 'toggle',
-              bind: 'gapless',
-              label: _t('settings.gapless.label'),
-              sub: _t('settings.gapless.sub'),
-              onChange: function (checked) {
-                App.utils.call('set_gapless', checked);
-                if (checked) {
-                  App.utils.call('set_automix', false);
-                  var automixEl = document.querySelector('input[type="checkbox"][data-bind="automix"]');
-                  if (automixEl) automixEl.checked = false;
-                }
-              },
-            },
-          ],
-        },
-        {
-          titleKey: 'settings.group.controlCenter',
-          rows: [
-            {
-              type: 'toggle',
-              bind: 'smtc_lyrics',
-              label: _t('settings.smtcLyrics.label'),
-              sub: _t('settings.smtcLyrics.sub'),
-            },
-          ],
-        },
         {
           titleKey: 'settings.group.shortcuts',
           rows: [
@@ -455,32 +484,97 @@
             },
           ],
         },
+      ],
+    },
+    {
+      // 6. 服务和自动化 — 系统媒体集成、Discord Rich Presence、外部标签编辑应用
+      id: 'services',
+      titleKey: 'settings.section.services',
+      icon: 'cloud',
+      groups: [
         {
-          titleKey: 'settings.group.setup',
+          titleKey: 'settings.group.systemIntegration',
           rows: [
             {
+              type: 'toggle',
+              bind: 'smtc_lyrics',
+              label: _t('settings.smtcLyrics.label'),
+              sub: _t('settings.smtcLyrics.sub'),
+            },
+            {
+              type: 'toggle',
+              bind: 'taskbar_thumb_controls',
+              label: _t('settings.thumbar.label'),
+              sub: _t('settings.thumbar.sub'),
+            },
+          ],
+        },
+        {
+          titleKey: 'settings.group.discordRpc',
+          rows: [
+            {
+              type: 'toggle',
+              bind: 'discord_rpc',
+              label: _t('settings.discordRpc.label'),
+              sub: _t('settings.discordRpc.sub'),
+              onChange: function (checked) { _onDiscordRpcToggle(checked); },
+            },
+            {
               type: 'action',
-              label: _t('settings.onboarding.label'),
-              sub: _t('settings.onboarding.sub'),
-              buttonText: _t('settings.onboarding.action'),
-              buttonIcon: 'rocket_launch',
+              bind: 'discord_rpc_get_id',
+              label: _t('settings.discordRpc.getId.label'),
+              sub: _t('settings.discordRpc.getId.sub'),
+              buttonText: _t('settings.discordRpc.getId.action'),
+              buttonIcon: 'open_in_new',
               onAction: function () {
-                if (App.onboarding && App.onboarding.restart) {
-                  App.onboarding.restart();
-                }
+                App.utils.call('open_external', 'https://discord.com/developers/applications');
               },
+            },
+            {
+              type: 'text',
+              bind: 'discord_rpc_client_id',
+              label: _t('settings.discordRpc.clientId.label'),
+              sub: _t('settings.discordRpc.clientId.sub'),
+              placeholder: _t('settings.discordRpc.clientId.placeholder'),
+            },
+            {
+              // 连接状态行：主进程经 bridge 'discord_status' 事件实时推送
+              type: 'discord_status',
+              bind: 'discord_rpc_status',
+              label: _t('settings.discordRpc.status.label'),
+            },
+            {
+              type: 'toggle',
+              bind: 'discord_rpc_show_paused',
+              label: _t('settings.discordRpc.showPaused.label'),
+              sub: _t('settings.discordRpc.showPaused.sub'),
+            },
+            {
+              type: 'text',
+              bind: 'discord_rpc_brief_format',
+              label: _t('settings.discordRpc.briefFormat.label'),
+              sub: _t('settings.discordRpc.briefFormat.sub'),
+              placeholder: _t('settings.discordRpc.briefFormat.placeholder'),
+            },
+          ],
+        },
+        {
+          titleKey: 'settings.group.externalApps',
+          rows: [
+            {
+              type: 'file_picker',
+              bind: 'tag_editor_path',
+              label: _t('settings.tagEditorPath.label'),
+              sub: _t('settings.tagEditorPath.sub'),
+              placeholder: _t('settings.tagEditorPath.placeholder'),
+              pickLabel: _t('settings.tagEditorPath.pick'),
             },
           ],
         },
       ],
     },
     {
-      id: 'experimental',
-      titleKey: 'settings.section.experimental',
-      icon: 'science',
-      rows: [],
-    },
-    {
+      // 7. 内存和存储 — 内存优化等级、内存信息面板
       id: 'system',
       titleKey: 'settings.section.system',
       icon: 'memory',
@@ -519,6 +613,32 @@
       ],
     },
     {
+      // 8. 其他设置 — 重新运行新手引导
+      id: 'other',
+      titleKey: 'settings.section.other',
+      icon: 'tune',
+      groups: [
+        {
+          titleKey: 'settings.group.setup',
+          rows: [
+            {
+              type: 'action',
+              label: _t('settings.onboarding.label'),
+              sub: _t('settings.onboarding.sub'),
+              buttonText: _t('settings.onboarding.action'),
+              buttonIcon: 'rocket_launch',
+              onAction: function () {
+                if (App.onboarding && App.onboarding.restart) {
+                  App.onboarding.restart();
+                }
+              },
+            },
+          ],
+        },
+      ],
+    },
+    {
+      // 9. 关于和更新 — 在右栏内嵌渲染关于页内容
       id: 'about',
       titleKey: 'settings.section.about',
       icon: 'info',
@@ -526,7 +646,7 @@
     },
   ];
 
-    // 调试选项卡（仅当 localStorage 中有标记时显示）
+    // 调试选项卡（仅当 sessionStorage 中有标记时显示）
     if (_isDebugMode()) {
       sections.push(_buildDebugSection());
     }
@@ -813,9 +933,7 @@
   function _renderSectionBody(section) {
     return section.groups
       ? section.groups.map(_renderGroup).join('')
-      : (section.rows && section.rows.length
-          ? section.rows.map(_renderRow).join('')
-          : _renderEmptyHint());
+      : _renderRows(section.rows || []);
   }
 
   // 绑定当前分类的所有行（设置未加载时仅渲染占位，加载后由 get_settings 回调再次调用）
@@ -962,16 +1080,17 @@
   }
 
   // ── 渲染辅助 ─────────────────────────────────────────────────────────────
-  // 右侧每个分组 = 分组标题 + 若干 .md-seglist。
-  // 「普通行」连续成段；eq / memory_info 是整宽控制块，切段另起（保持原位置）。
+  // 右侧每一段 = 分组标题（可选）+ 若干 .md-seglist。
+  // 「普通行」连续成段；eq / memory_info / np_secondary 是整宽控制块，切段另起（保持原位置）。
   // notice 例外：它是条件性提示（默认 display:none），留在段内 ——
   //   若把它当切段点，隐藏时会把一段撕成两个 1px 段并留下假缝。
   //   display:none 的 flex 子项不参与 gap，隐藏时该段自然合拢。
+  // 无 groups 的分类（单组分类）直接铺行，复用同一套切段逻辑。
   var STANDALONE_ROW_TYPES = { eq: 1, memory_info: 1, np_secondary: 1 };
 
-  function _renderGroup(group) {
-    var html = '<div class="settings-group-header" data-i18n="' + group.titleKey + '">' + _t(group.titleKey) + '</div>';
-
+  // 把一组行渲染成若干 .md-seglist 段（整宽控制块各自独立成段）。
+  function _renderRows(rows) {
+    var html = '';
     var run = [];
     function flush() {
       if (!run.length) return;
@@ -979,7 +1098,7 @@
       run = [];
     }
 
-    group.rows.forEach(function (row) {
+    rows.forEach(function (row) {
       if (STANDALONE_ROW_TYPES[row.type]) {
         flush();
         html += _renderRow(row);
@@ -992,38 +1111,27 @@
     return html;
   }
 
-  function _renderEmptyHint() {
-    return `
-      <div class="md-seglist">
-        <div class="settings-row settings-row-empty">
-          <p class="settings-row-sub">` + _t('settings.about.emptyHint') + `</p>
-        </div>
-      </div>
-    `;
+  function _renderGroup(group) {
+    return '<div class="settings-group-header" data-i18n="' + group.titleKey + '">' + _t(group.titleKey) + '</div>' +
+      _renderRows(group.rows);
   }
 
   // ── M3E list item 渲染辅助 ────────────────────────────────────────────────
   // bind（或快捷键行的 action）→ Material Symbols 图标名，作为列表项 leading icon。
   // 未列出的项不渲染图标槽。新增图标后必须重跑 scripts/subset_fonts.py。
   var ROW_ICONS = {
-    // 外观与视觉
+    // 常规 / 外观
+    language: 'language',
+    artist_separators: 'call_split',
     theme: 'contrast',
     color_scheme: 'palette',
     monet_source: 'wallpaper',
-    language: 'language',
     ui_font: 'text_fields',
     circular_cover: 'album',
     wave_progress: 'graphic_eq',
     video_background: 'movie',
     np_default_view: 'view_agenda',
-    lyrics_font: 'lyrics',
-    lyrics_jp_font: 'translate',
-    lyrics_jp_use_distinct: 'translate',
-    lyrics_progressive_blur: 'blur_on',
-    lyrics_center: 'format_align_center',
-    lyrics_font_size: 'format_size',
-    lyrics_credit_filters: 'filter_alt',
-    // 音频和库
+    // 播放（音效）
     wasapi_exclusive: 'speaker',
     audio_output_device: 'headphones',
     eq_enabled: 'graphic_eq',
@@ -1034,16 +1142,23 @@
     vocal_enhance: 'mic',
     guitar_friendly: 'music_note',
     vbe_enabled: 'auto_awesome',
-    artist_separators: 'call_split',
-    tag_editor_path: 'edit_note',
-    // 自动化与控制
     shuffle: 'shuffle',
     resume_playback: 'play_circle',
     automix: 'auto_awesome',
     radical_transitions: 'bolt',
     gapless: 'link',
+    // 歌词
+    lyrics_font: 'lyrics',
+    lyrics_jp_font: 'translate',
+    lyrics_jp_use_distinct: 'translate',
+    lyrics_progressive_blur: 'blur_on',
+    lyrics_center: 'format_align_center',
+    lyrics_font_size: 'format_size',
+    lyrics_credit_filters: 'filter_alt',
+    // 快捷键 / 服务
     smtc_lyrics: 'subtitles',
     gamepad_button_layout: 'sports_esports',
+    tag_editor_path: 'edit_note',
     // 快捷键行（按 action 取图标）
     play_pause: 'play_pause',
     next_track: 'skip_next',
@@ -1052,7 +1167,7 @@
     volume_down: 'volume_down',
     toggle_like: 'favorite',
     toggle_mute: 'volume_off',
-    // 系统与调试
+    // 内存与调试
     memory_optimization: 'memory',
     _debug_show_platform: 'memory',
     _debug_toggle_traffic: 'api',
@@ -1235,6 +1350,7 @@
       var slidersHtml = eqFreqLabels.map(function (label, i) {
         return `
           <div class="settings-eq-band">
+            <span class="settings-eq-band-value" data-band="${i}">0</span>
             <div class="settings-eq-slider-wrap">
               <input type="range" class="settings-eq-slider" data-band="${i}" min="-12" max="12" step="1">
             </div>
@@ -1246,6 +1362,22 @@
         <div class="settings-row-full settings-eq-fullwidth" data-bind="${row.bind}">
           <div class="settings-eq-bands">
             ${slidersHtml}
+          </div>
+        </div>
+      `;
+    }
+    if (row.type === 'discord_status') {
+      // Discord RPC 连接状态：文案（.settings-row-sub 槽）与状态点由
+      // _renderDiscordStatus 依据主进程推送的 discord_status 事件实时刷新。
+      return `
+        <div class="settings-row" data-bind="${row.bind}">
+          ${_rowIconHtml(row)}
+          <div class="settings-row-body">
+            <p class="settings-row-label">${row.label}</p>
+            <p class="settings-row-sub" id="discord-rpc-status-text">${_t('common.loading')}</p>
+          </div>
+          <div class="settings-row-trailing">
+            <span class="settings-discord-dot" id="discord-rpc-status-dot" data-state="disabled"></span>
           </div>
         </div>
       `;
@@ -1356,6 +1488,8 @@
         _bindEqRow(row, settings[row.bind] || []);
       } else if (row.type === 'np_secondary') {
         _bindNpSecondaryRow(row, settings[row.bind]);
+      } else if (row.type === 'discord_status') {
+        _bindDiscordStatusRow();
       } else if (row.type === 'action') {
         const btn = document.querySelector(`.settings-action-btn[data-action-key="${row.bind || '_action'}"]`);
         if (btn && row.onAction) {
@@ -1370,6 +1504,58 @@
     if (typeof settings.wasapi_exclusive !== 'undefined') {
       _applyWasapiExclusive(!!settings.wasapi_exclusive);
     }
+  }
+
+  // ── Discord Rich Presence ────────────────────────────────────────────────
+  // 连接状态由主进程 DiscordRpcController 维护，两条通路到 UI：
+  //   1. push：bridge 'discord_status' 事件（连接/断开/握手结果时）
+  //   2. pull：进入设置页时 ipc 'discord_rpc_status' 查一次当前状态
+  // 订阅在本 IIFE 加载时注册一次（settings.js 只被 index.html 引入一次），
+  // DOM 不在场时静默跳过，避免每次进设置页重复订阅。
+
+  function _renderDiscordStatus(status) {
+    if (!page.container) return;
+    var textEl = page.container.querySelector('#discord-rpc-status-text');
+    var dotEl = page.container.querySelector('#discord-rpc-status-dot');
+    if (!textEl || !dotEl) return;
+    var state = (status && status.state) || 'disabled';
+    var text;
+    if (state === 'connected') {
+      var name = (status && status.username) || '';
+      text = _t('settings.discordRpc.status.connected').replace('{name}', name);
+      // 用户名缺失（畸形 READY）时去掉尾部冒号，避免「已连接：」光秃结尾
+      if (!name) text = text.replace(/[：:]\s*$/, '');
+    } else if (state === 'connecting') {
+      text = _t('settings.discordRpc.status.connecting');
+    } else if (state === 'disabled') {
+      text = _t('settings.discordRpc.status.disabled');
+    } else {
+      text = _t('settings.discordRpc.status.disconnected');
+    }
+    textEl.textContent = text;
+    dotEl.setAttribute('data-state', state);
+  }
+
+  function _bindDiscordStatusRow() {
+    App.utils.call('discord_rpc_status').then(function (res) {
+      _renderDiscordStatus(res);
+    }).catch(function () { /* ignore */ });
+  }
+
+  // 开启 RPC 但未填写 Application ID 时给出即时反馈
+  // （主进程在同样条件下不会连接，状态行会显示「未连接」）。
+  function _onDiscordRpcToggle(checked) {
+    if (!checked) return;
+    var clientId = (_lastSettings && _lastSettings.discord_rpc_client_id) || '';
+    if (!String(clientId).trim()) {
+      App.utils.toast(_t('settings.discordRpc.needClientId'));
+    }
+  }
+
+  if (window.__bridge && window.__bridge.on) {
+    window.__bridge.on('discord_status', function (payload) {
+      _renderDiscordStatus(payload);
+    });
   }
 
   // ── 正在播放功能区（.np-secondary-controls）自定义 ──────────────────────
@@ -1991,6 +2177,13 @@
     var max = parseFloat(slider.max) || 12;
     var pct = ((val - min) / (max - min)) * 100;
     slider.style.setProperty('--slider-val', pct + '%');
+    // 数值回显：拖动时实时显示当前 dB，避免只能靠手感盲调
+    var band = slider.closest ? slider.closest('.settings-eq-band') : null;
+    var valueEl = band ? band.querySelector('.settings-eq-band-value') : null;
+    if (valueEl) {
+      valueEl.textContent = (val > 0 ? '+' : '') + val;
+      valueEl.dataset.zero = val === 0 ? 'true' : 'false';
+    }
   }
 
   function _updateSliderUI(slider, valueLabel, val, row) {

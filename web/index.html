@@ -434,15 +434,24 @@
         </button>
       </div>
       <div class="mini-player-progress-inline" id="mini-player-progress-inline">
-        <span class="mini-time" id="mini-time-cur">0:00</span>
-        <div class="np-progress-bar mini-progress-bar" id="mini-progress-bar" role="slider"
-             data-i18n-aria-label="np.progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-          <div class="np-progress-track">
-            <div class="np-progress-fill" id="mini-progress-track-fill"></div>
-            <div class="np-progress-thumb" id="mini-progress-thumb"></div>
+        <span class="mini-time mini-time-cur" id="mini-time-cur">0:00</span>
+        <!-- 进度条与底栏歌词共用同一槽位：几何完全重合，互为交叉淡入 -->
+        <div class="mini-progress-slot" id="mini-progress-slot">
+          <div class="np-progress-bar mini-progress-bar" id="mini-progress-bar" role="slider"
+               data-i18n-aria-label="np.progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="np-progress-track">
+              <div class="np-progress-fill" id="mini-progress-track-fill"></div>
+              <div class="np-progress-thumb" id="mini-progress-thumb"></div>
+            </div>
           </div>
+          <!-- 底栏歌词（内容由 now_playing.js 按当前行重建） -->
+          <div class="mini-lrc" id="mini-lrc" aria-hidden="true"></div>
         </div>
-        <span class="mini-time" id="mini-time-dur">-0:00</span>
+        <span class="mini-time mini-time-dur" id="mini-time-dur">
+          <!-- 常规：仅剩余时间；歌词态：合并为「当前 / 剩余」并统一靠右 -->
+          <span class="mini-time-rem" id="mini-time-rem">-0:00</span>
+          <span class="mini-time-joined"><span id="mini-time-joined-cur">0:00</span><span class="mini-time-sep">/</span><span id="mini-time-joined-rem">-0:00</span></span>
+        </span>
       </div>
       <div class="mini-player-controls">
         <button class="mini-btn" id="mini-btn-prev" data-i18n-title="np.prev">
@@ -485,6 +494,9 @@
 
   <!-- i18n internationalization -->
   <script src="i18n.js"></script>
+
+  <!-- 过长标题跑马灯（自包含，浮动窗同用） -->
+  <script src="marquee.js"></script>
 
   <!-- Page modules (loaded before app.js) -->
   <script src="pages/utils.js"></script>
