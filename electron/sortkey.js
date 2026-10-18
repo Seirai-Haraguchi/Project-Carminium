@@ -1,20 +1,9 @@
-/**
- * Carminium — 排序键生成器
- * 将包含中文、日文假名的字符串转换为可用于 A-Z 排序的拉丁字母键。
- *
- * - 汉字 → 拼音（通过 pinyin-pro）
- * - 平假名 / 片假名 → 罗马音（Hepburn 式，内置表）
- * - 拉丁字母 / 数字 → 保持原样
- */
 'use strict';
 
 const { pinyin } = require('pinyin-pro');
 
-// ── 平假名 → 罗马音（Hepburn）────────────────────────────────────────────────
 
-// 按「长键优先」排列，保证 きゃ 先于 き 被匹配
 const HIRAGANA_TABLE = [
-  // yōon
   ['きゃ', 'kya'], ['きゅ', 'kyu'], ['きょ', 'kyo'],
   ['しゃ', 'sha'], ['しゅ', 'shu'], ['しょ', 'sho'],
   ['ちゃ', 'cha'], ['ちゅ', 'chu'], ['ちょ', 'cho'],
@@ -26,9 +15,7 @@ const HIRAGANA_TABLE = [
   ['じゃ', 'ja'],  ['じゅ', 'ju'],  ['じょ', 'jo'],
   ['びゃ', 'bya'], ['びゅ', 'byu'], ['びょ', 'byo'],
   ['ぴゃ', 'pya'], ['ぴゅ', 'pyu'], ['ぴょ', 'pyo'],
-  // 拗音的小 ゃゅょ 单独出现
   ['ゃ', 'ya'], ['ゅ', 'yu'], ['ょ', 'yo'],
-  // 基本音
   ['あ', 'a'], ['い', 'i'], ['う', 'u'], ['え', 'e'], ['お', 'o'],
   ['か', 'ka'], ['き', 'ki'], ['く', 'ku'], ['け', 'ke'], ['こ', 'ko'],
   ['さ', 'sa'], ['し', 'shi'], ['す', 'su'], ['せ', 'se'], ['そ', 'so'],
@@ -39,26 +26,19 @@ const HIRAGANA_TABLE = [
   ['や', 'ya'], ['ゆ', 'yu'], ['よ', 'yo'],
   ['ら', 'ra'], ['り', 'ri'], ['る', 'ru'], ['れ', 're'], ['ろ', 'ro'],
   ['わ', 'wa'], ['を', 'wo'], ['ん', 'n'],
-  // 濁音
   ['が', 'ga'], ['ぎ', 'gi'], ['ぐ', 'gu'], ['げ', 'ge'], ['ご', 'go'],
   ['ざ', 'za'], ['じ', 'ji'], ['ず', 'zu'], ['ぜ', 'ze'], ['ぞ', 'zo'],
   ['だ', 'da'], ['ぢ', 'ji'], ['づ', 'zu'], ['で', 'de'], ['ど', 'do'],
   ['ば', 'ba'], ['び', 'bi'], ['ぶ', 'bu'], ['べ', 'be'], ['ぼ', 'bo'],
-  // 半濁音
   ['ぱ', 'pa'], ['ぴ', 'pi'], ['ぷ', 'pu'], ['ぺ', 'pe'], ['ぽ', 'po'],
-  // 小文字
   ['ぁ', 'a'], ['ぃ', 'i'], ['ぅ', 'u'], ['ぇ', 'e'], ['ぉ', 'o'],
   ['ゎ', 'wa'],
-  // 促音（映射为标记符，后续处理双写）
   ['っ', '\x01'],
-  // ー（长音符号）
   ['ー', '-'],
 ];
 
-// ── 片假名 → 罗马音 ─────────────────────────────────────────────────────────
 
 const KATAKANA_TABLE = [
-  // yōon
   ['キャ', 'kya'], ['キュ', 'kyu'], ['キョ', 'kyo'],
   ['シャ', 'sha'], ['シュ', 'shu'], ['ショ', 'sho'],
   ['チャ', 'cha'], ['チュ', 'chu'], ['チョ', 'cho'],
@@ -70,13 +50,11 @@ const KATAKANA_TABLE = [
   ['ジャ', 'ja'],  ['ジュ', 'ju'],  ['ジョ', 'jo'],
   ['ビャ', 'bya'], ['ビュ', 'byu'], ['ビョ', 'byo'],
   ['ピャ', 'pya'], ['ピュ', 'pyu'], ['ピョ', 'pyo'],
-  // 外来语拗音
   ['ファ', 'fa'],  ['フィ', 'fi'],  ['フェ', 'fe'],  ['フォ', 'fo'],
   ['ティ', 'ti'],  ['ディ', 'di'],  ['トゥ', 'tu'],  ['ドゥ', 'du'],
   ['ウィ', 'wi'],  ['ウェ', 'we'],  ['ウォ', 'wo'],
   ['ツァ', 'tsa'], ['ツィ', 'tsi'], ['ツェ', 'tse'], ['ツォ', 'tso'],
   ['ジェ', 'je'],  ['チェ', 'che'],
-  // 基本音
   ['ア', 'a'], ['イ', 'i'], ['ウ', 'u'], ['エ', 'e'], ['オ', 'o'],
   ['カ', 'ka'], ['キ', 'ki'], ['ク', 'ku'], ['ケ', 'ke'], ['コ', 'ko'],
   ['サ', 'sa'], ['シ', 'shi'], ['ス', 'su'], ['セ', 'se'], ['ソ', 'so'],
@@ -87,24 +65,19 @@ const KATAKANA_TABLE = [
   ['ヤ', 'ya'], ['ユ', 'yu'], ['ヨ', 'yo'],
   ['ラ', 'ra'], ['リ', 'ri'], ['ル', 'ru'], ['レ', 're'], ['ロ', 'ro'],
   ['ワ', 'wa'], ['ヲ', 'wo'], ['ン', 'n'],
-  // 濁音
   ['ガ', 'ga'], ['ギ', 'gi'], ['グ', 'gu'], ['ゲ', 'ge'], ['ゴ', 'go'],
   ['ザ', 'za'], ['ジ', 'ji'], ['ズ', 'zu'], ['ゼ', 'ze'], ['ゾ', 'zo'],
   ['ダ', 'da'], ['ヂ', 'ji'], ['ヅ', 'zu'], ['デ', 'de'], ['ド', 'do'],
   ['バ', 'ba'], ['ビ', 'bi'], ['ブ', 'bu'], ['ベ', 'be'], ['ボ', 'bo'],
-  // 半濁音
   ['パ', 'pa'], ['ピ', 'pi'], ['プ', 'pu'], ['ペ', 'pe'], ['ポ', 'po'],
-  // 小文字
   ['ァ', 'a'], ['ィ', 'i'], ['ゥ', 'u'], ['ェ', 'e'], ['ォ', 'o'],
   ['ャ', 'ya'], ['ュ', 'yu'], ['ョ', 'yo'],
   ['ッ', '\x01'],
   ['ヴ', 'vu'],
   ['ヶ', 'ga'], ['ヵ', 'ka'],
-  // ー
   ['ー', '-'],
 ];
 
-// 编译正则：一次性匹配所有假名
 const ALL_KANA = [...HIRAGANA_TABLE, ...KATAKANA_TABLE];
 const KANA_MAP = new Map(ALL_KANA);
 const KANA_PATTERN = new RegExp(
@@ -112,23 +85,15 @@ const KANA_PATTERN = new RegExp(
   'g'
 );
 
-// ── CJK 汉字 Unicode 范围检测 ──────────────────────────────────────────────────
 
 const CJK_PATTERN = /[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+/g;
 
-// ── 缓存 ──────────────────────────────────────────────────────────────────────
 
 const _cache = new Map();
-// 每个曲目最多产生 4 个键（title / artist / album / alias_title）。
-// 6500 首 = 26000 潜在不同字符串，原 4096 上限会导致「刚算完就被淘汰」的
-// 抖动：每次 getAllTracks 都要对绝大多数曲目重跑 pinyin-pro（汉字逐字转换，
-// CPU 密集），大库下耗时可观且阻塞主进程。
-// 这里放宽到 65536 —— 每个条目只是短字符串，实际 RSS 增量在数 MB 量级。
 const CACHE_MAX = 65536;
 
 function convertKana(text) {
   const result = text.replace(KANA_PATTERN, (m) => KANA_MAP.get(m) || m);
-  // 处理促音双写：っ/ッ 被标记为 \x01
   return result.replace(/\x01([kgsztcpbhjmrwdn])/g, '$1$1').replace(/\x01/g, '');
 }
 
@@ -142,21 +107,14 @@ function convertCJK(text) {
   });
 }
 
-/**
- * 生成排序键：将中文→拼音、假名→罗马音，全部转小写。
- * @param {string|null} text
- * @returns {string}
- */
 function makeSortKey(text) {
   if (!text) return 'zzz';
 
   const s = String(text).trim();
   if (!s) return 'zzz';
 
-  // 检查缓存（真 LRU：命中时把条目移到 Map 末尾）
   const hit = _cache.get(s);
   if (hit !== undefined) {
-    // 仅当不在末尾时才移动，减少无谓的 delete/set
     if (_cache.get(_lruTail()) !== hit || _cache.size === 1) {
       _cache.delete(s);
       _cache.set(s, hit);
@@ -164,17 +122,12 @@ function makeSortKey(text) {
     return hit;
   }
 
-  // 1. 假名 → 罗马音
   let result = convertKana(s);
-  // 2. 汉字 → 拼音
   result = convertCJK(result);
-  // 3. 转小写
   result = result.toLowerCase();
-  // 4. 去除非字母数字字符
   result = result.replace(/[^a-z0-9]/g, '');
   if (!result) result = 'zzz';
 
-  // 写入缓存（LRU：超限时淘汰最久未使用的 = Map 首个）
   if (_cache.size >= CACHE_MAX) {
     const oldest = _cache.keys().next().value;
     _cache.delete(oldest);
@@ -184,19 +137,12 @@ function makeSortKey(text) {
   return result;
 }
 
-// 返回当前 Map 最后一个键（最新写入/最常使用）
 function _lruTail() {
   let last;
   for (const k of _cache.keys()) last = k;
   return last;
 }
 
-/**
- * 获取排序首字母（用于 A-Z 分组）。
- * 返回大写字母 A-Z，或 '#' 表示数字/符号开头。
- * @param {string|null} text
- * @returns {string}
- */
 function makeFirstLetter(text) {
   const key = makeSortKey(text);
   if (!key || key === 'zzz') return '#';

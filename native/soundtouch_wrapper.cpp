@@ -1,8 +1,3 @@
-/**
- * Carminium — SoundTouch C wrapper implementation
- *
- * 许可证: LGPL v2.1 (与 SoundTouch 一致)
- */
 #include "soundtouch_wrapper.h"
 
 #include "SoundTouch.h"
@@ -21,7 +16,6 @@ void* st_create(uint32_t sampleRate, uint32_t channels) {
     if (!w) return nullptr;
     w->st.setSampleRate(sampleRate);
     w->st.setChannels(channels);
-    // 默认 sequence/pitch 窗口参数（适合音乐）
     w->st.setSetting(SETTING_SEQUENCE_MS, 82);
     w->st.setSetting(SETTING_SEEKWINDOW_MS, 28);
     w->st.setSetting(SETTING_OVERLAP_MS, 12);
@@ -79,4 +73,4 @@ int st_is_empty(void* handle) {
     return static_cast<StWrapper*>(handle)->st.isEmpty() ? 1 : 0;
 }
 
-}  // extern "C"
+}

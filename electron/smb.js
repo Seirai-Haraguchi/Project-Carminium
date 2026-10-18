@@ -1,21 +1,3 @@
-/**
- * Carminium — SMB / NAS 客户端
- *
- * 通过 Windows WNetAddConnection2 API 或 Linux mount.cifs 挂载 SMB 共享，
- * 然后将其作为本地文件系统路径访问。
- *
- * Windows: 使用 koffi FFI 调用 mpr.dll 的 WNetAddConnection2W
- * Linux:   使用 child_process 调用 mount -t cifs
- *
- * 挂载后，SMB 共享的行为与本地文件夹完全一致：
- *   - 扫描：复用 library.scanFolder
- *   - 流式播放：复用 cover-server 的 /media/ 端点
- *   - 封面提取：复用 library 的本地封面提取逻辑
- *
- * 这意味着 SMB 曲目在数据库中存储为 source='smb'，
- * path 为挂载点下的本地路径（如 Z:\Music\song.flac），
- * 但 folder_id 指向一个虚拟的 SMB 文件夹条目。
- */
 'use strict';
 
 const fs = require('fs');
@@ -35,7 +17,6 @@ class SMBError extends Error {
   }
 }
 
-// ── Windows FFI (koffi) ─────────────────────────────────────────────────────
 
 let _koffi = null;
 let _mprLib = null;
@@ -46,27 +27,19 @@ function _initFFI() {
   if (_koffi !== null) return;
   try {
     _koffi = require('koffi');
-    // mpr.dll 包含 WNet* 函数
     _mprLib = _koffi.load('mpr.dll');
 
-    // NETRESOURCEW 结构体
     const NETRESOURCEW = _koffi.struct('NETRESOURCEW', {
       dwScope: 'uint32',
       dwType: 'uint32',
       dwDisplayType: 'uint32',
       dwUsage: 'uint32',
-      lpLocalName: 'uint16 *',  // wchar_t*
-      lpRemoteName: 'uint16 *', // wchar_t*
-      lpComment: 'uint16 *',    // wchar_t*
-      lpProvider: 'uint16 *',   // wchar_t*
+      lpLocalName: 'uint16 *',
+      lpRemoteName: 'uint16 *',
+      lpComment: 'uint16 *',
+      lpProvider: 'uint16 *',
     });
 
-    // DWORD WNetAddConnection2W(
-    //   NETRESOURCEW *lpNetResource,
-    //   LPCWSTR      lpPassword,
-    //   LPCWSTR      lpUserName,
-    //   DWORD        dwFlags
-    // );
     _WNetAddConnection2 = _mprLib.func('WNetAddConnection2W', 'uint32', [
       _koffi.pointer(NETRESOURCEW),
       'uint16 *',
@@ -74,11 +47,6 @@ function _initFFI() {
       'uint32',
     ]);
 
-    // DWORD WNetCancelConnection2W(
-    //   LPCWSTR lpName,
-    //   DWORD   dwFlags,
-    //   BOOL    fForce
-    // );
     _WNetCancelConnection2 = _mprLib.func('WNetCancelConnection2W', 'uint32', [
       'uint16 *',
       'uint32',
@@ -90,9 +58,6 @@ function _initFFI() {
   }
 }
 
-/**
- * Windows 错误码 → 可读消息
- */
 const WN_ERRORS = {
   67: '网络名不存在',
   53: '网络路径未找到',
@@ -111,17 +76,8 @@ function _wnError(code) {
   return WN_ERRORS[code] || `Windows 网络错误 ${code}`;
 }
 
-// ── SMB 客户端 ──────────────────────────────────────────────────────────────
 
 class SMBClient {
-  /**
-   * @param {string} host - SMB 服务器地址（如 192.168.1.100 或 nas.local）
-   * @param {string} shareName - 共享名（如 Music）
-   * @param {string} username
-   * @param {string} password
-   * @param {string} domain - 域名/工作组（可选）
-   * @param {number} timeout - seconds
-   */
   constructor(host, shareName, username, password, domain = '', timeout = 30.0) {
     this._host = host;
     this._shareName = shareName;
@@ -134,23 +90,15 @@ class SMBClient {
     this._connected = false;
   }
 
-  /**
-   * 远程路径 \\host\share
-   */
   get remotePath() {
     const host = this._host.replace(/^\\\\/, '');
     const share = this._shareName.replace(/^[\\/]+/, '').replace(/[\\/]+$/, '');
     return `\\\\${host}\\${share}`;
   }
 
-  /**
-   * 测试连接：尝试临时挂载并立即断开。
-   * @returns {Promise<{ok: boolean, version?: string, error?: string}>}
-   */
   async ping() {
     try {
       if (process.platform === 'win32') {
-        // Windows: 使用临时驱动器盘符测试
         const drive = _findFreeDriveLetter();
         if (!drive) {
           return { ok: false, error: '没有可用的驱动器盘符' };
@@ -162,7 +110,6 @@ class SMBClient {
         }
         return { ok: false, error: _wnError(result) };
       } else if (process.platform === 'linux') {
-        // Linux: 尝试临时挂载
         const tmpMount = path.join(os.tmpdir(), `carminium_smb_test_${Date.now()}`);
         try { fs.mkdirSync(tmpMount, { recursive: true }); } catch {}
         const result = await _linuxMount(this.remotePath, tmpMount, this._username, this._password, this._domain);
@@ -179,12 +126,6 @@ class SMBClient {
     }
   }
 
-  /**
-   * 挂载 SMB 共享到本地路径/驱动器。
-   * Windows: 挂载到临时驱动器盘符
-   * Linux: 挂载到临时目录
-   * @returns {Promise<{ok: boolean, mountPoint: string, error?: string}>}
-   */
   async connect() {
     if (this._connected) return { ok: true, mountPoint: this._mountPoint };
 
@@ -217,9 +158,6 @@ class SMBClient {
     }
   }
 
-  /**
-   * 断开 SMB 共享。
-   */
   async disconnect() {
     if (!this._connected) return;
 
@@ -235,9 +173,6 @@ class SMBClient {
     this._connected = false;
   }
 
-  /**
-   * 获取挂载点路径（连接后可用）。
-   */
   get mountPoint() {
     return this._mountPoint;
   }
@@ -247,10 +182,8 @@ class SMBClient {
   }
 }
 
-// ── Windows 辅助函数 ────────────────────────────────────────────────────────
 
 function _findFreeDriveLetter() {
-  // 从 Z: 往前找，跳过已用的
   const used = new Set();
   try {
     const drives = execSync('wmic logicaldisk get name', { encoding: 'utf-8' });
@@ -258,7 +191,6 @@ function _findFreeDriveLetter() {
       used.add(m[0]);
     }
   } catch {
-    // 回退：检查 A-Z
     for (let c = 65; c <= 90; c++) {
       const letter = String.fromCharCode(c);
       const drive = letter + ':';
@@ -266,7 +198,6 @@ function _findFreeDriveLetter() {
     }
   }
 
-  // 优先从 Z: 往前找（避开 A: B: C: D:）
   for (let c = 90; c >= 69; c--) {
     const letter = String.fromCharCode(c);
     if (!used.has(letter)) {
@@ -279,15 +210,14 @@ function _findFreeDriveLetter() {
 function _windowsConnect(remotePath, username, password, domain, localDrive) {
   _initFFI();
   if (!_koffi || _koffi === false || !_WNetAddConnection2) {
-    // FFI 不可用时回退到 net use 命令
     return _windowsConnectCmd(remotePath, username, password, domain, localDrive);
   }
 
   try {
     const NETRESOURCEW = _koffi.get('NETRESOURCEW');
     const nr = {
-      dwScope: 0,          // RESOURCE_GLOBALNET
-      dwType: 1,           // RESOURCETYPE_DISK
+      dwScope: 0,
+      dwType: 1,
       dwDisplayType: 0,
       dwUsage: 0,
       lpLocalName: _koffi.encode(localDrive, 'uint16'),
@@ -301,10 +231,9 @@ function _windowsConnect(remotePath, username, password, domain, localDrive) {
       nr,
       _koffi.encode(password, 'uint16'),
       _koffi.encode(user, 'uint16'),
-      0  // no flags
+      0
     );
 
-    // 释放编码的字符串
     _koffi.free(nr.lpLocalName);
     _koffi.free(nr.lpRemoteName);
 
@@ -318,16 +247,14 @@ function _windowsConnect(remotePath, username, password, domain, localDrive) {
 function _windowsConnectCmd(remotePath, username, password, domain, localDrive) {
   try {
     const user = domain ? `${domain}\\${username}` : username;
-    // 使用 /persistent:no 避免重启后自动重连
     const cmd = `net use ${localDrive} "${remotePath}" "${password}" /user:"${user}" /persistent:no`;
     execSync(cmd, { stdio: 'pipe', timeout: 15000 });
     return 0;
   } catch (e) {
-    // 解析 net use 错误
     const stderr = e.stderr ? e.stderr.toString() : '';
     const m = stderr.match(/error (\d+)/i);
     if (m) return parseInt(m[1], 10);
-    return 1208; // generic extended error
+    return 1208;
   }
 }
 
@@ -335,24 +262,20 @@ function _windowsDisconnect(localDrive) {
   try {
     execSync(`net use ${localDrive} /delete /yes`, { stdio: 'pipe', timeout: 10000 });
   } catch {
-    // 尝试 FFI
     _initFFI();
     if (_koffi && _koffi !== false && _WNetCancelConnection2) {
       try {
         _WNetCancelConnection2(_koffi.encode(localDrive, 'uint16'), 0, 1);
-      } catch { /* ignore */ }
+      } catch {  }
     }
   }
 }
 
-// ── Linux 辅助函数 ──────────────────────────────────────────────────────────
 
 function _linuxMount(remotePath, mountPoint, username, password, domain) {
   return new Promise((resolve) => {
-    // Linux SMB 路径需要从 \\host\share 转换为 //host/share
     const linuxPath = remotePath.replace(/\\\\/g, '/').replace(/\\/g, '/');
 
-    // 创建凭据文件
     const credFile = path.join(os.tmpdir(), `carminium_smb_cred_${Date.now()}`);
     const credContent = `username=${username}\npassword=${password}\n${domain ? `domain=${domain}\n` : ''}`;
     try {
@@ -364,7 +287,6 @@ function _linuxMount(remotePath, mountPoint, username, password, domain) {
 
     const cmd = `mount -t cifs "${linuxPath}" "${mountPoint}" -o credentials="${credFile}",uid=${process.getuid()},gid=${process.getgid()},iocharset=utf8`;
     exec(cmd, { timeout: 15000 }, (err, stdout, stderr) => {
-      // 清理凭据文件
       try { fs.unlinkSync(credFile); } catch {}
 
       if (err) {
@@ -379,21 +301,10 @@ function _linuxMount(remotePath, mountPoint, username, password, domain) {
 function _linuxUnmount(mountPoint) {
   try {
     execSync(`umount "${mountPoint}"`, { stdio: 'pipe', timeout: 10000 });
-  } catch { /* ignore */ }
+  } catch {  }
 }
 
-// ── 同步到本地库 ────────────────────────────────────────────────────────────
 
-/**
- * 挂载 SMB 共享后，使用 MusicLibrary 的本地扫描功能扫描挂载点。
- * SMB 曲目在数据库中存储为 source='smb'，path 为挂载点下的本地路径。
- *
- * @param {SMBClient} client
-   * @param {MusicLibrary} library
-   * @param {number} serverId
-   * @param {object} options - { progressCb, libraryChangedCb }
-   * @returns {Promise<object>} 统计信息
-   */
 async function syncServerToLibrary(client, library, serverId, options = {}) {
   const {
     progressCb = null,
@@ -406,7 +317,6 @@ async function syncServerToLibrary(client, library, serverId, options = {}) {
     warnings: [],
   };
 
-  // 1) 确保已连接
   if (!client.connected) {
     const connResult = await client.connect();
     if (!connResult.ok) {
@@ -421,12 +331,9 @@ async function syncServerToLibrary(client, library, serverId, options = {}) {
     return stats;
   }
 
-  // 2) 在 library 中注册 SMB 文件夹
   const folderPath = mountPoint;
   library.addFolder(folderPath);
 
-  // 3) 标记该文件夹下的曲目为 SMB 来源
-  // 使用 library 的扫描功能，然后更新来源标记
   if (progressCb) {
     try { progressCb({ phase: 'scanning', current_path: folderPath }); } catch {}
   }
@@ -437,13 +344,11 @@ async function syncServerToLibrary(client, library, serverId, options = {}) {
     stats.warnings.push(`扫描失败: ${e}`);
   }
 
-  // 4) 将扫描到的曲目标记为 SMB 来源
   const fid = library._folderId(folderPath);
   if (fid !== null) {
     library.markTracksAsSmb(fid, serverId);
   }
 
-  // 5) 统计曲目数
   const tracks = library.getTracksByFolder(fid);
   stats.tracks = tracks.length;
 

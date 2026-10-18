@@ -1,9 +1,3 @@
-/**
- * Carminium — Bridge (Electron 架构)
- * IPC Bridge：Main↔Renderer 通信中枢。
- * 接收 Player 信号并通过 IPC 转发到渲染进程（Main→Renderer），
- * 暴露 IPC handler 供渲染进程调用（Renderer→Main）。
- */
 'use strict';
 
 const { EventEmitter } = require('events');
@@ -12,7 +6,6 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-// ── 智能过渡分析模块 ──────────────────────────────────────────────────────────
 let AnalysisCache = null;
 let OsuBeatmapProvider = null;
 try {
@@ -26,7 +19,28 @@ try {
   console.warn('[bridge] OsuBeatmapProvider module not available:', e.message);
 }
 
-// 后台同步状态：记录正在同步的 server_id，防止重复触发
+let LoudnessAnalyzer = null;
+try {
+  ({ LoudnessAnalyzer } = require('./loudness'));
+} catch (e) {
+  console.warn('[bridge] LoudnessAnalyzer module not available:', e.message);
+}
+
+let AudioQualityProbe = null;
+let _qualityClassifyFromSuffix = null;
+let _qualityClassifyFromPath = null;
+try {
+  ({
+    AudioQualityProbe,
+    classifyFromSuffix: _qualityClassifyFromSuffix,
+    classifyFromPath: _qualityClassifyFromPath,
+  } = require('./audio_quality'));
+} catch (e) {
+  console.warn('[bridge] AudioQualityProbe module not available:', e.message);
+}
+
+const { LibraryWorkerHost } = require('./library_worker_host');
+
 const _syncingServers = new Set();
 const _syncingWebDAVServers = new Set();
 const _syncingSMBServers = new Set();
@@ -35,13 +49,6 @@ function _dump(obj) {
   return JSON.stringify(obj, null, undefined);
 }
 
-// ── 浮动窗口事件白名单 ────────────────────────────────────────────────────
-// 浮动窗口只渲染「当前曲目 / 播放状态 / 进度 / 队列 / 设置」，上面这些事件
-// 之外的负载它一律不用。但 Bridge._emit 默认把**所有**事件同时广播给主窗口和
-// 浮动窗口，于是每打开一次浮动窗，library_updated（整库曲目 JSON，大库可达
-// 数十 MB）、folders_updated、playlists_changed、bpm_analyzed 等都会被
-// structured-clone 一份塞进浮动窗渲染进程 —— 纯浪费堆内存和 IPC 带宽。
-// 这里用白名单把不需要的事件挡在浮动窗之外（主窗口不受影响）。
 const FLOATING_EVENTS = new Set([
   'track_changed',
   'playback_state_changed',
@@ -69,7 +76,11 @@ class Bridge extends EventEmitter {
     this._floatingOpening = false;
     this._floatingClosedCallback = null;
 
-    // ── 智能过渡分析：缓存 + osu! 谱面提供器 ──
+    // 库工作线程：扫描 + 长列表计算都在这里跑，主进程只中转状态
+    this._scanWorker = new LibraryWorkerHost(settings, (status) => {
+      try { this._emit('library_scan_status', _dump(status)); } catch {  }
+    });
+
     this._analysisCache = AnalysisCache ? new AnalysisCache() : null;
     this._osuProvider = OsuBeatmapProvider ? new OsuBeatmapProvider() : null;
     this._currentTransitionPlan = null;
@@ -80,34 +91,62 @@ class Bridge extends EventEmitter {
       console.log('[bridge] OsuBeatmapProvider initialized');
     }
 
-    // ── 接入主进程内存管理器 ──
-    // 注册定时清理回高与紧急清理回调
+    this._loudness = LoudnessAnalyzer ? new LoudnessAnalyzer() : null;
+    if (this._loudness) {
+      this._loudness.setResultHandler((key, entry, filePath) => {
+
+        this._emit('loudness_ready', {
+          key: key,
+          filePath: filePath || '',
+          integratedLufs: entry.i,
+          peakDb: entry.peak,
+        });
+      });
+      console.log('[bridge] LoudnessAnalyzer initialized');
+    }
+
+    this._quality = AudioQualityProbe ? new AudioQualityProbe() : null;
+    if (this._quality) {
+      this._quality.setResultHandler((key, entry, ctx) => {
+        this._emit('quality_ready', {
+          key: key,
+          trackId: (ctx && ctx.trackId) || '',
+          filePath: (ctx && ctx.filePath) || '',
+          quality: entry.q,
+          codec: entry.codec || '',
+          sampleRate: entry.sr || 0,
+          bitsPerSample: entry.bits || 0,
+          bitrate: entry.br || 0,
+        });
+      });
+      console.log('[bridge] AudioQualityProbe initialized');
+    }
+
     try {
       const { getInstance: getMemoryManager } = require('./memory_manager');
       const memMgr = getMemoryManager();
       memMgr.onCleanup(() => {
-        // AnalysisCache 内部有 debounce 保存，这里只检查是否需要 flush
+
         if (this._analysisCache && this._analysisCache._dirty) {
           try { this._analysisCache.flush(); } catch (e) {
             console.warn('[bridge] AnalysisCache flush during cleanup failed:', e.message);
           }
         }
       });
-      // 紧急清理：清空封面缩放缓存 + 封面原始数据缓存 + 轨道 JSON 缓存
-      // 这些缓存均有磁盘后备，清空后仅性能略降（重新读磁盘/重新序列化），不影响功能
+
       memMgr.onEmergencyCleanup(() => {
-        // cover-server 的缩放结果缓存
+
         if (this._coverServer && typeof this._coverServer.clearResizeCache === 'function') {
-          try { this._coverServer.clearResizeCache(); } catch (e) { /* ignore */ }
+          try { this._coverServer.clearResizeCache(); } catch (e) {  }
         }
-        // library 的封面原始数据缓存
+
         if (this._lib && this._lib._coverDataCache) {
           try {
             this._lib._coverDataCache.clear();
             this._lib._coverDataCacheBytes = 0;
-          } catch (e) { /* ignore */ }
+          } catch (e) {  }
         }
-        // 轨道 JSON 缓存（大库下可达 5-20MB）
+
         this._allTracksJson = null;
         this._allTracksJsonDirty = true;
         this._foldersJson = null;
@@ -117,7 +156,6 @@ class Bridge extends EventEmitter {
       console.warn('[bridge] Memory manager integration failed:', e.message);
     }
 
-    // ── 转发 player 信号 → Renderer 事件 ──
     player.on('track_changed', (trackJson) => {
       this._onTrackChanged(trackJson);
     });
@@ -131,15 +169,13 @@ class Bridge extends EventEmitter {
     player.on('liked_changed', (liked) => this._emit('liked_changed', liked));
     player.on('lyrics_changed', (trackId) => this._emit('lyrics_changed', trackId));
     player.on('automix_takeover', () => this._emit('automix_takeover'));
-// Native audio device unavailable (dummy mode) — notify renderer to show toast
 player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
-    // 独占モード回退時に player から settings_changed が発行される → 転送
+
     player.on('settings_changed', (settingsJson) => {
       this.emit('settings_changed', settingsJson);
       this._emit('settings_changed', settingsJson);
     });
 
-    // ── Audio PCM 中継: wasapi → Renderer ──
     const renderer = player._renderer;
     if (renderer) {
       renderer.sendPcmToRenderer = (channel, float32Array) => {
@@ -150,23 +186,14 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       };
     }
 
-    // ── AudioEngine 制御イベント: Player → Renderer ──
-    // 用 executeJavaScript 直接调用渲染进程的全局函数，最可靠。
-    // ⚠️ 只投递给主窗口：独占/共享模式的 AudioContext 重建只发生在主窗口的
-    //    AudioEngine 上，浮动窗没有 __handleAudioControl，投递给它纯粹是白跑一次
-    //    executeJavaScript（每次都要跨进程编译+执行一段 JS）。
     player.on('audio_control', (json) => {
-      // json 已经是 JSON 字符串，直接嵌入 JS 即可
+
       const js = 'if (window.__handleAudioControl) { window.__handleAudioControl(' + json + '); }';
       if (this._mainWindow && !this._mainWindow.isDestroyed()) {
         this._mainWindow.webContents.executeJavaScript(js).catch(() => {});
       }
     });
 
-    // 同じ audio_control だが「レンダラー側の完了を待つ」版。
-    // executeJavaScript は式が Promise を返せばその解決を待つので、
-    // レンダラーは完了を表す Promise を return すること(app.js の
-    // __handleAudioControl の release_context / init がそれに当たる)。
     player.on('audio_control_await', (json, done) => {
       const js = '(window.__handleAudioControl ? window.__handleAudioControl(' + json + ') : null)';
       const win = this._mainWindow;
@@ -184,23 +211,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     this._mainWindow = win;
   }
 
-  // ── library_updated / folders_updated の debounce + キャッシュ ──
-  //
-  // 問題：FileWatcher 発火 / Subsonic 同期進行中 / フォルダ追加削除などで
-  // library_updated が短時間に連続発火すると、そのたびに getAllTracks() を
-  // 同期実行して JSON.stringify するため、メインプロセスが長時間ブロックされる。
-  // その間 audio_output IPC も処理できず WASAPI バッファアンダーラン →
-  // 音切れ + UI フリーズ（いわゆる「なんだか分からないけど止まる」）。
-  //
-  // 対策：
-  //   1. 複数回の変更要求を 500ms の debounce で 1 回にまとめる
-  //   2. getAllTracks() の結果 JSON をキャッシュし、dirty フラグで再計算を管理
-  //   3. これにより Subsonic 同期中の 20 曲ごとの libraryChangedCb が
-  //      何十回も重い計算を走らせるのを防ぐ
-  //
-  // 注意：1 回の計算自体は依然として同期ブロックするが、頻度が劇的に下がるため
-  // 再生中の音切れリスクは実用上ほぼ解消する。
-
   _LIBRARY_UPDATED_DEBOUNCE_MS = 500;
   _allTracksJson = null;
   _allTracksJsonDirty = true;
@@ -212,13 +222,54 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
   _artistsJsonDirty = true;
   _libraryUpdatedTimer = null;
   _libraryUpdatedPending = false;
+  _tracksDumpInflight = null;
+  _albumsDumpInflight = null;
+  _artistsDumpInflight = null;
 
-  _getAllTracksJsonCached() {
-    if (this._allTracksJsonDirty) {
-      this._allTracksJson = _dump(this._lib.getAllTracks());
-      this._allTracksJsonDirty = false;
+  // 库导出（tracks/albums/artists）在工作线程里计算，避免长列表排序/装饰阻塞主进程。
+  // 工作线程失败时回退到主线程同步计算，保证功能可用。
+  async _dumpWithFallback(dumpFn, fallbackFn, onSuccess) {
+    try {
+      const json = await dumpFn();
+      onSuccess(json);
+      return json;
+    } catch (e) {
+      console.warn('[bridge] 工作线程导出失败，回退主线程计算:', (e && e.message) || e);
+      return _dump(fallbackFn());
     }
-    return this._allTracksJson;
+  }
+
+  async _getTracksJsonAsync() {
+    if (!this._allTracksJsonDirty && this._allTracksJson) return this._allTracksJson;
+    if (this._tracksDumpInflight) return this._tracksDumpInflight;
+    this._tracksDumpInflight = this._dumpWithFallback(
+      () => this._scanWorker.dumpTracks(),
+      () => this._lib.getAllTracks(),
+      (json) => { this._allTracksJson = json; this._allTracksJsonDirty = false; }
+    ).finally(() => { this._tracksDumpInflight = null; });
+    return this._tracksDumpInflight;
+  }
+
+  async _getAlbumsJsonAsync() {
+    if (!this._albumsJsonDirty && this._albumsJson) return this._albumsJson;
+    if (this._albumsDumpInflight) return this._albumsDumpInflight;
+    this._albumsDumpInflight = this._dumpWithFallback(
+      () => this._scanWorker.dumpAlbums(),
+      () => this._lib.getAlbums(),
+      (json) => { this._albumsJson = json; this._albumsJsonDirty = false; }
+    ).finally(() => { this._albumsDumpInflight = null; });
+    return this._albumsDumpInflight;
+  }
+
+  async _getArtistsJsonAsync() {
+    if (!this._artistsJsonDirty && this._artistsJson) return this._artistsJson;
+    if (this._artistsDumpInflight) return this._artistsDumpInflight;
+    this._artistsDumpInflight = this._dumpWithFallback(
+      () => this._scanWorker.dumpArtists(),
+      () => this._lib.getArtists(),
+      (json) => { this._artistsJson = json; this._artistsJsonDirty = false; }
+    ).finally(() => { this._artistsDumpInflight = null; });
+    return this._artistsDumpInflight;
   }
 
   _getFoldersJsonCached() {
@@ -229,31 +280,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     return this._foldersJson;
   }
 
-  // get_albums / get_artists 与 getAllTracks 同源（同一批曲目行的聚合视图），
-  // 因此共用同一套 dirty 标志：库一旦变更（_emitLibraryUpdated）三者一起失效。
-  // 此前这三个 IPC handler 各自直算 —— 前端切页/重进都会触发一次全库聚合
-  // （getAlbums 的 GROUP BY + 封面 JOIN、getArtists 的逐行 _splitArtists），
-  // 大库下每次数百毫秒同步阻塞主进程 → 播放卡顿。
-  _getAlbumsJsonCached() {
-    if (this._albumsJsonDirty) {
-      this._albumsJson = _dump(this._lib.getAlbums());
-      this._albumsJsonDirty = false;
-    }
-    return this._albumsJson;
-  }
-
-  _getArtistsJsonCached() {
-    if (this._artistsJsonDirty) {
-      this._artistsJson = _dump(this._lib.getArtists());
-      this._artistsJsonDirty = false;
-    }
-    return this._artistsJson;
-  }
-
-  /**
-   * library_updated / folders_updated を debounce 付きで送信。
-   * 短時間に複数回のライブラリ変更があっても 1 回にまとめて送信する。
-   */
   _emitLibraryUpdated() {
     this._allTracksJsonDirty = true;
     this._foldersJsonDirty = true;
@@ -265,47 +291,42 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       this._libraryUpdatedTimer = null;
       if (!this._libraryUpdatedPending) return;
       this._libraryUpdatedPending = false;
-      // debounce 収束後に 1 回だけ重い計算を実行
-      const tracksJson = this._getAllTracksJsonCached();
+
+      // 只发轻量状态通知，不再在主线程上现算整库 JSON；
+      // 前端收到后按需调用 get_library / get_albums / get_artists 拉取
+      this._emit('library_updated', _dump({ changed: true }));
       const foldersJson = this._getFoldersJsonCached();
-      this._emit('library_updated', tracksJson);
       this._emit('folders_updated', foldersJson);
     }, this._LIBRARY_UPDATED_DEBOUNCE_MS);
     if (this._libraryUpdatedTimer.unref) this._libraryUpdatedTimer.unref();
   }
 
-  // ── Audio PCM 中継メソッド ────────────────────────────────────────────
-
   _sendAudioPcm(channel, float32Array) {
-    // Float32Array 视图直接发送：structured clone 只序列化视图的字节范围，
-    // 无需 buffer.slice 再做一次全量拷贝（44.1kHz 立体声 f32 ≈ 352KB/s 的持续流量，
-    // 每次省一次拷贝可显著降低主进程 external/arrayBuffers 的分配churn）。
+
     const ipcChannel = channel === 'main' ? 'audio_pcm_main' : 'audio_pcm_next';
-    // PCM データは主窗口にのみ送信（浮動窗口は音声データを使用せず、
-    // 不要な IPC 転送と structured clone によるメモリ無駄遣いを避ける）
+
     if (this._mainWindow && !this._mainWindow.isDestroyed()) {
       this._mainWindow.webContents.send(ipcChannel, float32Array);
     }
   }
 
   _sendFfmpegState(channel, finished) {
-    // 仅主窗口消费（AudioEngine 在那边）；浮动窗不参与音频链路
+
     if (this._mainWindow && !this._mainWindow.isDestroyed()) {
       this._mainWindow.webContents.send('audio_ffmpeg_state', channel, finished);
     }
   }
 
   _emit(event, payload) {
-    // 发送到主窗口
+
     if (this._mainWindow && !this._mainWindow.isDestroyed()) {
       this._mainWindow.webContents.send('bridge:event', { event, payload });
     }
-    // 发送到浮动窗口（如果存在）—— 仅限白名单事件，避免无谓的跨进程克隆
-    // （见文件顶部 FLOATING_EVENTS 说明）
+
     if (this._floatingWindow && !this._floatingWindow.isDestroyed() && FLOATING_EVENTS.has(event)) {
       this._floatingWindow.webContents.send('bridge:event', { event, payload });
     }
-    // 同时 emit 给内部消费者（SMTC 等）
+
     this.emit(event, payload);
   }
 
@@ -317,19 +338,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     this._floatingClosedCallback = cb;
   }
 
-  // ── Player signal handlers ───────────────────────────────────────────────
-
-  /**
-   * 为播放入口（play_from_list / play_track）补回列表负载中被剔除的 lyrics。
-   *
-   * 背景：getAllTracks() 为控制负载体积不再 SELECT lyrics（全表唯一大文本列），
-   * 而播放队列的 track 对象直接来自前端传来的列表 JSON。若不回填，
-   * now_playing 判断 track.lyrics 就会误判为「无内嵌歌词」而触发自动搜索，
-   * 造成歌词显示回归。
-   *
-   * 只补 lyrics 这一个字段（单次批量 IN 查询），其余字段原样透传，
-   * 因此播放链路拿到的 track 与优化前完全一致。
-   */
   _hydrateTrackLyrics(tracks) {
     if (!Array.isArray(tracks)) return;
     let need = null;
@@ -348,8 +356,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     for (const t of tracks) {
       if (t && t.id && t.lyrics === undefined) {
         const v = map.get(t.id);
-        // 显式写 undefined 会被 JSON.stringify 丢弃，等价于「该曲无内嵌歌词」，
-        // 与优化前 lyrics 列为 NULL 的情况一致。
+
         t.lyrics = v;
       }
     }
@@ -360,8 +367,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       const track = JSON.parse(trackJson);
       const tid = track && track.id ? track.id : null;
       if (track && track.external) {
-        // 拖入窗口播放的「库外文件」：只进播放历史，不进任何统计
-        // （play_history / getPlayStats 只认 tracks 内的曲目）
+
         this._lib.addExternalPlayHistory(track);
         this._emitHistoryChanged();
       } else if (tid) {
@@ -369,7 +375,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
         this._emitHistoryChanged();
       }
     } catch {
-      // ignore
+
     }
     this._emit('track_changed', trackJson);
   }
@@ -402,14 +408,12 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     const payload = _dump(this._lib.getAllRemoteServers());
     this.emit('remote_servers_changed', payload);
     this._emit('remote_servers_changed', payload);
-    // 同时发 subsonic_servers_changed 以兼容旧前端
+
     this._emitSubsonicServersChanged();
   }
 
-  // ── 注册 IPC handlers ────────────────────────────────────────────────────
-
   registerIpcHandlers() {
-    // ── Audio Output: Renderer (AudioEngine) → Main (miniaudio) ──
+
     ipcMain.on('audio_output', (_e, arrayBuffer) => {
       const renderer = this._player._renderer;
       if (renderer && renderer.isInitialized) {
@@ -417,17 +421,15 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
         if (result !== 0 && result !== -2) {
           console.error('[bridge] audio_output push failed:', result);
         }
-        // 查询 DLL 环形缓冲延迟，发送到渲染进程用于位置修正
+
         const latencyMs = renderer.getBufferLatencyMs();
-        // 使用 webContents.send（可靠）代替 executeJavaScript（异步且可能丢失）
-        // 只发主窗口：延迟补偿由主窗口的 AudioEngine 使用，浮动窗不合成音频
+
         if (this._mainWindow && !this._mainWindow.isDestroyed()) {
           this._mainWindow.webContents.send('audio_latency', latencyMs);
         }
       }
     });
 
-    // ── AudioEngine events (Renderer → Main) ──
     ipcMain.on('audio_ended', () => {
       this._player._handleAudioEnded();
     });
@@ -444,9 +446,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       this._player._handleGaplessSwitch();
     });
 
-    // ── FFmpeg 背压控制 (Renderer → Main) ──
-    // 渲染进程 StreamingPCMProcessor 的 ring buffer 水位过高/过低时，
-    // 暂停/恢复 FFmpeg stdout，防止 buffer 无限扩容又不丢数据
     ipcMain.handle('ffmpeg_flow_control', (_e, opts) => {
       const renderer = this._player._renderer;
       if (!renderer || !opts) return false;
@@ -458,9 +457,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       return true;
     });
 
-    // ── Web Audio API: 文件解码 IPC ──
-    // 渲染进程请求读取音频文件，主进程读取后以 ArrayBuffer 形式返回
-    // 支持本地文件路径和 HTTP URL（Subsonic 流媒体）
     ipcMain.on('decode_audio_file', async (_e, filePath) => {
       if (!filePath) return;
 
@@ -478,7 +474,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
 
       try {
         if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
-          // Subsonic 等流媒体：通过 HTTP 获取
+
           const resp = await net.fetch(filePath);
           if (!resp.ok) {
             sendErr(`HTTP ${resp.status}: ${resp.statusText}`);
@@ -487,7 +483,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
           const buf = await resp.arrayBuffer();
           sendOk(buf);
         } else {
-          // 本地文件
+
           fs.readFile(filePath, (err, data) => {
             if (err) {
               sendErr(err.message);
@@ -502,12 +498,9 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       }
     });
 
-    // ── Library ──
-    // 三个只读聚合视图均走 dirty 缓存：库未变更时重复调用直接复用已序列化
-    // 的 JSON 字符串，避免每次切页都全库重算（见 _getAlbumsJsonCached 注释）。
-    ipcMain.handle('get_library', () => this._getAllTracksJsonCached());
-    ipcMain.handle('get_albums', () => this._getAlbumsJsonCached());
-    ipcMain.handle('get_artists', () => this._getArtistsJsonCached());
+    ipcMain.handle('get_library', () => this._getTracksJsonAsync());
+    ipcMain.handle('get_albums', () => this._getAlbumsJsonAsync());
+    ipcMain.handle('get_artists', () => this._getArtistsJsonAsync());
     ipcMain.handle('get_folders', () => this._getFoldersJsonCached());
     ipcMain.handle('get_album_tracks', (_e, albumJson) => {
       const data = JSON.parse(albumJson);
@@ -516,7 +509,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     ipcMain.handle('get_artist_tracks', (_e, artist) => _dump(this._lib.getArtistTracks(artist)));
     ipcMain.handle('search_tracks', (_e, query) => _dump(this._lib.searchTracks(query)));
 
-    // ── Folder management ──
     ipcMain.handle('open_folder_dialog', () => {
       const result = dialog.showOpenDialogSync(this._mainWindow, {
         title: '选择音乐文件夹',
@@ -535,7 +527,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
         this._settings.set('music_folders', folders);
       }
       this._scanFolderAsync(resolvedPath);
-      // 新文件夹纳入 FileWatcher 监控
+
       if (this._libraryWatcher) this._libraryWatcher.syncFolders();
       return _dump(folder);
     });
@@ -548,7 +540,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
         folders.splice(idx, 1);
         this._settings.set('music_folders', folders);
       }
-      // 停止监控已移除的文件夹
+
       if (this._libraryWatcher) this._libraryWatcher.syncFolders();
       this._player.reloadLikedTracks();
       this._emitLibraryUpdated();
@@ -558,14 +550,11 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     ipcMain.handle('rescan_folder', (_e, folderPath) => {
       const folderInfo = this._lib.rescanFolder(folderPath);
       const resolvedPath = folderInfo.path || folderPath;
-      // 使用增量同步（syncFolderIncremental）而非全量扫描（scanFolder），
-      // 仅对真正新增/消失的曲目做写库，保留仍存在曲目的
-      // liked_tracks / play_history / playlist_tracks 关联数据。
+
       this._scanFolderAsync(resolvedPath, true);
       return _dump(folderInfo);
     });
 
-    // ── Playback ──
     ipcMain.handle('play_track', (_e, trackId) => {
       const track = this._lib.getTrack(trackId);
       if (track) this._player.playTracks([track]);
@@ -573,17 +562,11 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
 
     ipcMain.handle('play_from_list', (_e, tracksJson, index) => {
       const tracks = JSON.parse(tracksJson);
-      // 列表负载已剔除 lyrics，播放前按 id 批量回填（见 _hydrateTrackLyrics）
+
       this._hydrateTrackLyrics(tracks);
       this._player.playTracks(tracks, index);
     });
 
-    /**
-     * 拖入窗口播放（Explorer → 窗口）。
-     * 库内文件与「在播放器里点歌」完全同待遇；库外文件仅进播放历史，
-     * 不计入统计（解析与分流见 library.resolveDroppedFiles）。
-     * @param {string[]} paths - 绝对路径数组
-     */
     ipcMain.handle('play_dropped_files', async (_e, paths) => {
       let list = paths;
       if (typeof list === 'string') {
@@ -626,14 +609,12 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       this._settings.set('repeat', mode);
     });
 
-    // ── 音频设备 ──
     ipcMain.handle('get_audio_devices', () => this._player.getAudioDevices());
     ipcMain.handle('set_output_device', (_e, deviceId) => {
       this._player.setOutputDevice(deviceId);
       this._settings.set('audio_output_device', deviceId);
     });
 
-    // ── SoundTouch: tempo / pitch / rate ──
     ipcMain.handle('set_tempo', (_e, tempo) => {
       this._player.setTempo(parseFloat(tempo));
     });
@@ -647,7 +628,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     ipcMain.handle('get_pitch', () => this._player.pitch);
     ipcMain.handle('get_rate', () => this._player.rate);
 
-    // ── AutoMix / クロスフェード ──
     ipcMain.handle('set_automix', (_e, enabled) => {
       this._player.setAutomixEnabled(!!enabled);
     });
@@ -661,23 +641,13 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     });
     ipcMain.handle('get_crossfade_duration', () => this._player.crossfadeDurationMs);
 
-    // ── 莫奈取色：系统强调色 ──
-    // 注意：非同期で実行し、メインプロセスのイベントループをブロックしない
     ipcMain.handle('get_system_accent_color', async () => _getSystemAccentColor());
 
-    // ── Gapless ──
     ipcMain.handle('set_gapless', (_e, enabled) => {
       this._player.setGaplessEnabled(!!enabled);
     });
     ipcMain.handle('get_gapless', () => this._player.gaplessEnabled);
 
-    // ── 智能过渡：分析缓存 + osu! 谱面 ──
-
-    /**
-     * 获取缓存的音轨分析结果。
-     * @param {string} trackId - 音轨 ID
-     * @returns {object|null} 分析结果，或 null（未缓存）
-     */
     ipcMain.handle('get_track_analysis', (_e, trackId) => {
       if (!this._analysisCache || !trackId) return null;
       try {
@@ -688,11 +658,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       }
     });
 
-    /**
-     * 保存音轨分析结果到磁盘缓存。
-     * @param {string} trackId - 音轨 ID
-     * @param {object} analysis - 分析结果
-     */
     ipcMain.handle('save_track_analysis', (_e, trackId, analysis) => {
       if (!this._analysisCache || !trackId || !analysis) return;
       try {
@@ -702,13 +667,89 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       }
     });
 
-    /**
-     * 搜索 osu! 谱面数据（通过 sayobot API）。
-     * @param {string} title - 歌曲标题
-     * @param {string} artist - 艺术家
-     * @param {number} durationMs - 音频时长（ms），用于匹配
-     * @returns {object|null} { bpm, beatLengthMs, kiaiSections, source, beatmapId, beatmapSetId }
-     */
+    ipcMain.handle('get_track_loudness', async (_e, trackId, filePath) => {
+      if (!this._loudness) return null;
+      try {
+        const key = LoudnessAnalyzer.keyFor(trackId, filePath);
+        const cached = this._loudness.get(key);
+        if (cached) {
+
+          return cached.unsupported
+            ? { key: key, unsupported: true }
+            : { key: key, integratedLufs: cached.i, peakDb: cached.peak };
+        }
+
+        this._loudness.request(key, filePath).catch(() => {});
+        const settled = this._loudness.get(key);
+        if (settled) {
+          return settled.unsupported
+            ? { key: key, unsupported: true }
+            : { key: key, integratedLufs: settled.i, peakDb: settled.peak };
+        }
+        return { key: key, pending: true };
+      } catch (e) {
+        console.warn('[bridge] get_track_loudness error:', e.message);
+        return null;
+      }
+    });
+
+    ipcMain.handle('analyze_track_loudness', async (_e, trackId, filePath) => {
+      if (!this._loudness) return null;
+      try {
+        const key = LoudnessAnalyzer.keyFor(trackId, filePath);
+        const entry = await this._loudness.request(key, filePath);
+        if (!entry || entry.unsupported) return null;
+        return { integratedLufs: entry.i, peakDb: entry.peak, key: key };
+      } catch (e) {
+        console.warn('[bridge] analyze_track_loudness error:', e.message);
+        return null;
+      }
+    });
+
+    ipcMain.handle('get_track_quality', async (_e, trackId, filePath, suffix) => {
+      try {
+        const id = trackId || '';
+        const p = filePath || '';
+
+        // 流媒体（Subsonic / WebDAV / HTTP）不探测，用服务器给的 suffix 兜底
+        const isStream = !p
+          || /^(subsonic|webdav|smb):\/\//i.test(p)
+          || /^https?:\/\//i.test(p);
+        if (isStream) {
+          const q = _qualityClassifyFromSuffix ? _qualityClassifyFromSuffix(suffix) : null;
+          return q ? { key: '', quality: q, stream: true } : { key: '', unsupported: true };
+        }
+
+        const key = AudioQualityProbe
+          ? AudioQualityProbe.keyFor(id, p)
+          : (id || p);
+        if (!this._quality) {
+          const q = _qualityClassifyFromPath ? _qualityClassifyFromPath(p) : null;
+          return q ? { key: key, quality: q } : { key: key, unsupported: true };
+        }
+
+        const cached = this._quality.get(key);
+        if (cached) {
+          return cached.unsupported
+            ? { key: key, unsupported: true }
+            : {
+              key: key,
+              quality: cached.q,
+              codec: cached.codec || '',
+              sampleRate: cached.sr || 0,
+              bitsPerSample: cached.bits || 0,
+              bitrate: cached.br || 0,
+            };
+        }
+
+        this._quality.request(key, p, { trackId: id, filePath: p }).catch(() => {});
+        return { key: key, pending: true };
+      } catch (e) {
+        console.warn('[bridge] get_track_quality error:', e.message);
+        return null;
+      }
+    });
+
     ipcMain.handle('search_osu_beatmap', async (_e, title, artist, durationMs) => {
       if (!this._osuProvider || !title) return null;
       try {
@@ -719,11 +760,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       }
     });
 
-    /**
-     * 接收渲染进程计算的过渡方案。
-     * 主进程存储方案用于可能的 FFmpeg seek 调整和日志记录。
-     * @param {object} plan - TransitionPlanner 生成的过渡方案
-     */
     ipcMain.handle('set_transition_plan', (_e, plan) => {
       this._currentTransitionPlan = plan || null;
       if (plan) {
@@ -733,13 +769,9 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       return true;
     });
 
-    // ── Cover/Media URL ──
     ipcMain.handle('get_cover_base_url', () => this._coverServer.baseUrl);
     ipcMain.handle('get_media_base_url', () => this._coverServer.mediaBaseUrl);
 
-    // ── 艺人头像后台预热（本地库慢慢缓存）──
-    // 渲染进程传入全部艺人名（JSON 数组），主进程以节流队列逐个抓取并落盘。
-    // 立即返回（不等待整条队列），抓取在后台异步进行。
     ipcMain.handle('prefetch_artist_images', (_e, namesJson) => {
       try {
         const names = JSON.parse(namesJson || '[]');
@@ -752,8 +784,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       }
     });
 
-    // ── 艺人别名后台预热（供"用别名搜到这个人"）──
-    // 与头像预热同构：渲染进程传全部艺人名，后台节流队列逐个抓取落盘。
     ipcMain.handle('prefetch_artist_aliases', (_e, namesJson) => {
       try {
         const names = JSON.parse(namesJson || '[]');
@@ -766,13 +796,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       }
     });
 
-    // ── Video Background: 查找同名视频文件 ──
-    /**
-     * 查找与指定音轨同名的视频文件（MV / 短视频背景）。
-     * 在音轨所在目录下搜索同名但不同扩展名的视频文件。
-     * @param {string} trackId - 音轨 ID
-     * @returns {{path: string, url: string}|null} 视频文件路径和可访问的 HTTP URL，未找到返回 null
-     */
     ipcMain.handle('find_video_for_track', (_e, trackId) => {
       const track = this._lib.getTrack(trackId);
       if (!track || track.source === 'subsonic') return null;
@@ -787,7 +810,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       for (const vext of VIDEO_EXTS) {
         const videoPath = path.join(dir, baseName + vext);
         if (fs.existsSync(videoPath)) {
-          // base64url 编码路径，用于 /video/ 端点
+
           const b64 = Buffer.from(videoPath, 'utf-8').toString('base64')
             .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
           const url = this._coverServer.baseUrl + '/video/' + b64;
@@ -797,7 +820,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       return null;
     });
 
-    // ── 歌词搜索 ──
     ipcMain.handle('search_netease_lyrics', async (_e, query) => {
       const { search } = require('./lyrics');
       return search(query);
@@ -806,7 +828,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       const { fetchLyrics } = require('./lyrics');
       return fetchLyrics(songId);
     });
-    // 多平台统一歌词搜索
+
     ipcMain.handle('search_lyrics', async (_e, query, source) => {
       const { searchLyrics } = require('./lyrics');
       return searchLyrics(query, source);
@@ -816,7 +838,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       return fetchLyricsById(songId, source);
     });
 
-    // ── Queue ──
     ipcMain.handle('add_next', (_e, trackJson) => {
       const track = JSON.parse(trackJson);
       this._player.addNext(track);
@@ -834,14 +855,12 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       }
     });
 
-    // ── AutoMix ──
     ipcMain.handle('peek_next_track', () => {
       const nxt = this._player.peekNextTrack();
       return nxt ? _dump(nxt) : '{}';
     });
     ipcMain.handle('advance_to_next', () => this._player.advanceToNext());
 
-    // ── Liked ──
     ipcMain.handle('toggle_liked', () => {
       this._player.toggleLiked();
       this._emitLikedTracksChanged();
@@ -855,7 +874,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     ipcMain.handle('is_track_liked', (_e, trackId) => this._player.isTrackLiked(trackId));
     ipcMain.handle('get_liked_tracks', () => _dump(this._lib.getLikedTracks()));
 
-    // ── Play history ──
     ipcMain.handle('get_play_history', (_e, limit) => {
       return _dump(this._lib.getPlayHistory(parseInt(limit, 10) || 200));
     });
@@ -876,7 +894,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       return _dump(this._lib.getSimilarRecommendations());
     });
 
-    // ── Playlists ──
     ipcMain.handle('get_playlists', () => _dump(this._lib.getPlaylists()));
     ipcMain.handle('create_playlist', (_e, name) => {
       const playlist = this._lib.createPlaylist(name);
@@ -912,7 +929,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       return _dump(this._lib.getAllPlaylistTrackIds());
     });
 
-    // ── 添加曲目到远程歌单（同步到 Subsonic 服务器）──
     ipcMain.handle('add_tracks_to_remote_playlist', async (_e, playlistId, trackIdsJson) => {
       const trackIds = JSON.parse(trackIdsJson || '[]');
       if (trackIds.length === 0) return _dump({ error: '没有曲目' });
@@ -925,7 +941,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       const cfg = this._lib.getSubsonicServer(info.server_id);
       if (!cfg) return _dump({ error: '服务器不存在' });
 
-      // 将本地 track ID 映射为 Subsonic 服务器端 ID
       const { subsonicIds, skipped } = this._lib.getSubsonicTrackIds(trackIds, info.server_id);
       if (subsonicIds.length === 0) {
         return _dump({ error: '所选曲目均不属于该 Subsonic 服务器，无法添加到远程歌单', skipped: trackIds.length });
@@ -935,9 +950,9 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       const client = new SubsonicClient(cfg.server_url, cfg.username, cfg.password, cfg.protocol_mode || 'subsonic', 30.0);
 
       try {
-        // 推送到远程服务器
+
         await client.updatePlaylist(info.remote_id, { songIdsToAdd: subsonicIds });
-        // 同时更新本地数据库
+
         const added = this._lib.addTracksToPlaylist(parseInt(playlistId, 10), trackIds);
         this._emitPlaylistsChanged();
         return _dump({ added, skipped: skipped.length, total: trackIds.length });
@@ -946,7 +961,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       }
     });
 
-    // ── Subsonic ──
     ipcMain.handle('get_subsonic_servers', () => _dump(this._lib.getSubsonicServers()));
 
     ipcMain.handle('add_subsonic_server', (_e, name, serverUrl, username, password, protocolMode) => {
@@ -998,10 +1012,8 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       return this._syncSubsonicServer(parseInt(serverId, 10));
     });
 
-    // ── 统一远程服务器查询 ──
     ipcMain.handle('get_remote_servers', () => _dump(this._lib.getAllRemoteServers()));
 
-    // ── WebDAV ──
     ipcMain.handle('get_webdav_servers', () => _dump(this._lib.getWebDAVServers()));
 
     ipcMain.handle('add_webdav_server', (_e, name, serverUrl, username, password) => {
@@ -1043,7 +1055,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       return this._syncWebDAVServer(parseInt(serverId, 10));
     });
 
-    // ── SMB / NAS ──
     ipcMain.handle('get_smb_servers', () => _dump(this._lib.getSMBServers()));
 
     ipcMain.handle('add_smb_server', (_e, name, host, shareName, username, password, domain) => {
@@ -1085,7 +1096,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       return this._syncSMBServer(parseInt(serverId, 10));
     });
 
-    // ── Cover colors ──
     ipcMain.handle('store_cover_colors', (_e, trackId, colorsJson) => {
       try {
         this._lib.storeCoverColors(trackId, colorsJson);
@@ -1160,7 +1170,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       return _dump({ lyrics: null, error: '服务器未返回歌词' });
     });
 
-    // ── Remote Playlists (Subsonic) ───────────────────────────────
     ipcMain.handle('fetch_subsonic_playlists', async (_e, serverId) => {
       const { SubsonicClient } = require('./subsonic');
       const cfg = this._lib.getSubsonicServer(parseInt(serverId, 10));
@@ -1194,11 +1203,11 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
           }
           const remotePlaylist = await client.getPlaylist(remoteId);
           const playlist = this._lib.importRemotePlaylist(serverId, remoteId, remotePlaylist.name, remotePlaylist.changed, remotePlaylist.cover_art_id, remotePlaylist.owner);
-          // 先将远程曲目写入本地数据库，否则 playlist_tracks 的 INSERT OR IGNORE 会静默跳过
+
           this._lib.upsertSubsonicTracksBatch(serverId, remotePlaylist.tracks);
           const trackIds = remotePlaylist.tracks.map((track) => subsonicTrackId(serverId, track.id));
           this._lib.replacePlaylistTracks(playlist.id, trackIds);
-          // 异步获取 owner 的 email（用于 Gravatar 头像），失败不阻塞导入
+
           if (remotePlaylist.owner) {
             client.getUser(remotePlaylist.owner).then((user) => {
               if (user.email) {
@@ -1233,18 +1242,18 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       try {
         const remotePlaylist = await client.getPlaylist(info.remote_id);
         this._lib.updateRemotePlaylist(playlistId, remotePlaylist.name, remotePlaylist.changed, remotePlaylist.cover_art_id, remotePlaylist.owner);
-        // 先将远程曲目写入本地数据库
+
         this._lib.upsertSubsonicTracksBatch(info.server_id, remotePlaylist.tracks);
         const trackIds = remotePlaylist.tracks.map((track) => subsonicTrackId(info.server_id, track.id));
         const added = this._lib.replacePlaylistTracks(playlistId, trackIds);
-        // 同步时也刷新 owner email
+
         if (remotePlaylist.owner) {
           client.getUser(remotePlaylist.owner).then((user) => {
             if (user.email) {
               this._lib.updatePlaylistOwnerEmail(playlistId, user.email);
               this._emitPlaylistsChanged();
             }
-          }).catch(() => { /* 非关键，静默忽略 */ });
+          }).catch(() => {  });
         }
         this._emitPlaylistsChanged();
         return _dump({ ok: true, trackCount: added, name: remotePlaylist.name });
@@ -1253,12 +1262,10 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       }
     });
 
-    // ── Lyrics ──
     ipcMain.handle('apply_lyrics', (_e, trackId, lyrics) => {
       this._lib.updateLyrics(trackId, lyrics);
       this._player.updateTrackLyrics(trackId, lyrics);
-      // lyrics_changed event is emitted by updateTrackLyrics — no need to
-      // emit track_changed here (would trigger glitch animation + play history)
+
       return _dump({ success: true });
     });
 
@@ -1267,13 +1274,11 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       return _dump({ success: true });
     });
 
-    // 从音频文件中提取内嵌歌词
     ipcMain.handle('get_embedded_lyrics', async (_e, trackId) => {
       const lyrics = await this._lib.getEmbeddedLyrics(trackId);
       return lyrics || '';
     });
 
-    // ── Player state ──
     ipcMain.handle('get_player_state', () => {
       return _dump({
         current_track: this._player.currentTrack,
@@ -1289,9 +1294,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       });
     });
 
-    // ── Renderer 就绪信号 ──
-    // AudioEngine 初始化完成后渲染进程调用此 handler，
-    // 主进程据此延迟恢复播放状态，避免 audio_control 事件在窗口就绪前丢失。
     ipcMain.handle('renderer_ready', (_e, webAudioEnabled) => {
       if (webAudioEnabled) {
         this._player.setWebAudioEnabled(true);
@@ -1307,7 +1309,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       });
     });
 
-    // ── Settings ──
     ipcMain.handle('get_settings', () => _dump(this._settings.all()));
 
     ipcMain.handle('save_settings', (_e, dataJson) => {
@@ -1316,7 +1317,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       const settingsJson = _dump(this._settings.all());
       this.emit('settings_changed', settingsJson);
       this._emit('settings_changed', settingsJson);
-      // 自动刷新相关设置变更时，重启 FileWatcher / 远程定期同步
+
       const AUTO_REFRESH_KEYS = [
         'library_auto_watch', 'library_watch_poll_minutes', 'library_watch_debounce_ms',
         'subsonic_auto_sync', 'subsonic_sync_interval_minutes',
@@ -1329,15 +1330,13 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       const settingsJson = _dump(this._settings.all());
       this.emit('settings_changed', settingsJson);
       this._emit('settings_changed', settingsJson);
-      // 前端期望 'wasapi_exclusive' 表示独占模式已激活
+
       return (success && this._player.isExclusive) ? 'wasapi_exclusive' : 'shared';
     });
 
-    // ── App ──
     ipcMain.handle('toggle_floating_window', () => this._toggleFloatingWindow());
     ipcMain.handle('close_floating_window', () => this._closeFloatingWindow());
-    // 打开外部链接（系统浏览器）。仅允许 http/https，供设置页跳转
-    // Discord 开发者门户等说明页面使用。
+
     ipcMain.handle('open_external', (_e, url) => {
       let parsed;
       try {
@@ -1367,7 +1366,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       const win = BrowserWindow.fromWebContents(e.sender);
       if (win && !win.isDestroyed()) win.close();
     });
-    // 根据当前主题（亮/暗）同步窗口图标，使任务栏/Alt-Tab 图标随系统暗色模式变化
+
     ipcMain.handle('set_window_icon_theme', (_e, theme) => {
       const win = this._mainWindow;
       if (!win || win.isDestroyed()) return;
@@ -1378,12 +1377,11 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
         const iconPath = path.join(__dirname, '..', 'build', name);
         try {
           if (fs.existsSync(iconPath)) { img = nativeImage.createFromPath(iconPath); break; }
-        } catch { /* 尝试下一套 */ }
+        } catch {  }
       }
       if (img) win.setIcon(img);
     });
 
-    // ── 窗口控制 ──
     ipcMain.handle('toggle_fullscreen', () => {
       if (this._mainWindow && !this._mainWindow.isDestroyed()) {
         this._mainWindow.setFullScreen(!this._mainWindow.isFullScreen());
@@ -1398,8 +1396,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       shell.showItemInFolder(filePath);
     });
 
-    // ── 外部音乐标签编辑应用 ──
-    // 弹出文件选择对话框，让用户挑选外部标签编辑器可执行文件
     ipcMain.handle('pick_tag_editor_path', () => {
       const filters = process.platform === 'win32'
         ? [{ name: '可执行文件', extensions: ['exe', 'bat', 'cmd'] }, { name: '所有文件', extensions: ['*'] }]
@@ -1412,8 +1408,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       return (result && result.length > 0) ? result[0] : '';
     });
 
-    // 使用外部标签编辑器打开指定音频文件（支持单个或多个文件）
-    // 参数：filePath 或 filePaths 数组
     ipcMain.handle('open_in_tag_editor', (_e, filePathOrPaths) => {
       const exePath = this._settings.get('tag_editor_path', '');
       if (!exePath) {
@@ -1445,7 +1439,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       }
     });
 
-    // ── App Info ──
     ipcMain.handle('get_app_info', () => {
       let versionData = {};
       try {
@@ -1454,11 +1447,9 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
           versionData = JSON.parse(fs.readFileSync(versionPath, 'utf-8'));
         }
       } catch {
-        // ignore
+
       }
-      /* ⚠️ 顶层的 platform / arch / osVersion 已随「关于 → 平台信息」卡片删除（2026-10-04）；
-         平台/架构仍可从 diagnostic.* 与 get_diagnostic_info 的 SystemOsVersion/SystemOsArch 取得，
-         别在这里加回冗余副本。 */
+
       return _dump({
         version: versionData.version || '0.0.0',
         build: versionData.build || 0,
@@ -1473,7 +1464,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       });
     });
 
-    // ── 诊断信息 ──
     ipcMain.handle('get_diagnostic_info', () => {
       const os = require('os');
       const mem = process.memoryUsage();
@@ -1481,9 +1471,8 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       try {
         const { getInstance } = require('./memory_manager');
         killCount = getInstance().killCount;
-      } catch { /* ignore */ }
+      } catch {  }
 
-      // 设备厂商（仅 Windows 尝试读取，其余平台留空）
       let deviceVendor = '';
       try {
         if (process.platform === 'win32') {
@@ -1495,7 +1484,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
           const m = out.match(/Manufacturer=(.+)/);
           if (m) deviceVendor = m[1].trim();
         }
-      } catch { /* ignore */ }
+      } catch {  }
 
       const fmtMB = (bytes) => (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 
@@ -1512,39 +1501,36 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     });
   }
 
-  // ── 文件夹扫描（后台异步）──
-
   _scanFolderAsync(folderPath, useIncremental = false) {
-    setImmediate(async () => {
-      try {
-        if (useIncremental) {
-          await this._lib.syncFolderIncremental(folderPath);
-        } else {
-          await this._lib.scanFolder(folderPath);
-        }
-      } catch (e) {
-        console.error('[scan] 后台扫描失败:', e);
-      }
-      try {
-        this._emitLibraryUpdated();
-      } catch (e) {
-        console.error('[scan] 推送更新失败:', e);
-      }
+    setImmediate(() => {
+      const run = useIncremental
+        ? this._scanWorker.syncIncremental(folderPath)
+        : this._scanWorker.scanFolder(folderPath);
+      run
+        .then((res) => {
+          if (res) console.log('[scan] 扫描完成:', folderPath, JSON.stringify(res));
+        })
+        .catch((e) => {
+          console.error('[scan] 后台扫描失败:', (e && e.message) || e);
+        })
+        .finally(() => {
+          try {
+            this._emitLibraryUpdated();
+          } catch (e) {
+            console.error('[scan] 推送更新失败:', e);
+          }
+        });
     });
   }
 
-  // ── 库自动刷新：本地 FileWatcher + 远程定期 re-sync ──
-
-  /**
-   * 启动库自动刷新。可重复调用（先停后启，用于设置变更后重启）。
-   * 本地：FileWatcher 监控各库文件夹，分层增量扫描后经 onChanged 推送更新。
-   * 远程：定期调用 _syncSubsonicServer（自带防重入）刷新本地缓存数据库。
-   */
   startAutoRefresh() {
     this.stopAutoRefresh();
     try {
       const { LibraryWatcher, RemoteSyncScheduler } = require('./auto_refresh');
       this._libraryWatcher = new LibraryWatcher(this._lib, this._settings, {
+        scan: (folderPath, opts) => this._scanWorker.syncIncremental(
+          folderPath, (opts && opts.sizeCheckPaths) || null
+        ),
         onChanged: (folderPath, stats) => this._onAutoRefreshChanged(folderPath, stats),
       });
       this._remoteSyncScheduler = new RemoteSyncScheduler(
@@ -1559,23 +1545,19 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
 
   stopAutoRefresh() {
     if (this._libraryWatcher) {
-      try { this._libraryWatcher.stop(); } catch { /* ignore */ }
+      try { this._libraryWatcher.stop(); } catch {  }
       this._libraryWatcher = null;
     }
     if (this._remoteSyncScheduler) {
-      try { this._remoteSyncScheduler.stop(); } catch { /* ignore */ }
+      try { this._remoteSyncScheduler.stop(); } catch {  }
       this._remoteSyncScheduler = null;
     }
   }
 
-  /**
-   * FileWatcher 分层扫描检测到库内容变动后的推送。
-   * 复用前端已监听的 library_updated / folders_updated 事件，无需前端改动。
-   */
   _onAutoRefreshChanged(folderPath, stats) {
     try {
       if (stats.removed > 0) {
-        // 有曲目被移除：同步清理播放器内存中的收藏状态
+
         this._player.reloadLikedTracks();
         this._emitLikedTracksChanged();
         this._emitPlaylistsChanged();
@@ -1585,8 +1567,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       console.error('[auto-refresh] 推送库更新失败:', e.message || e);
     }
   }
-
-  // ── Subsonic 同步（后台异步）──
 
   _syncSubsonicServer(serverId) {
     if (_syncingServers.has(serverId)) {
@@ -1674,15 +1654,12 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
         }
 
         const pendingCovers = stats.pending_covers || [];
-        try { this._lib.updateSubsonicServerLastSync(serverId); } catch { /* ignore */ }
+        try { this._lib.updateSubsonicServerLastSync(serverId); } catch {  }
 
         this._emitSubsonicServersChanged();
         this._emitLibraryUpdated();
         this._emit('subsonic_sync_result', _dump({ ok: true, server_id: serverId, stats }));
 
-        // ── 同步远程歌单 ──────────────────────────────────────────────
-        // 常规同步只处理 artist/album/track，歌单需额外拉取并持久化。
-        // 作为后台任务运行，不阻塞 cover prefetch / finally 清理。
         setImmediate(async () => {
           try {
             const { subsonicTrackId } = require('./library');
@@ -1711,7 +1688,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
                   if (remotePL.owner) {
                     client.getUser(remotePL.owner).then((user) => {
                       if (user && user.email) {
-                        try { this._lib.updatePlaylistOwnerEmail(playlist.id, user.email); } catch { /* ignore */ }
+                        try { this._lib.updatePlaylistOwnerEmail(playlist.id, user.email); } catch {  }
                       }
                     }).catch(() => {});
                   }
@@ -1721,27 +1698,25 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
               }
             }
 
-            // 清理服务器上已不存在的远程歌单
             const localPLs = this._lib.listRemotePlaylists(serverId);
             for (const lp of localPLs) {
               if (!serverPLIds.has(String(lp.remote_id))) {
-                try { this._lib.deletePlaylist(lp.id); } catch { /* ignore */ }
+                try { this._lib.deletePlaylist(lp.id); } catch {  }
               }
             }
 
             this._emitPlaylistsChanged();
           } catch (e) {
-            // playlist sync failure is non-fatal — server and track data are already updated
+
             console.warn('[subsonic] 远程歌单同步失败:', e);
           }
         });
 
-        // 后台预缓存封面
         if (pendingCovers.length > 0) {
           setImmediate(async () => {
             try {
               await prefetchCovers(client, this._lib, serverId, pendingCovers);
-            } catch { /* ignore */ }
+            } catch {  }
           });
         }
       } finally {
@@ -1751,8 +1726,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
 
     return _dump({ ok: true, started: true, message: '同步已开始' });
   }
-
-  // ── WebDAV 同步（后台异步）──
 
   _syncWebDAVServer(serverId) {
     if (_syncingWebDAVServers.has(serverId)) {
@@ -1812,7 +1785,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
           return;
         }
 
-        try { this._lib.updateWebDAVServerLastSync(serverId); } catch { /* ignore */ }
+        try { this._lib.updateWebDAVServerLastSync(serverId); } catch {  }
 
         this._emitRemoteServersChanged();
         this._emitLibraryUpdated();
@@ -1824,8 +1797,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
 
     return _dump({ ok: true, started: true, message: '同步已开始' });
   }
-
-  // ── SMB 同步（后台异步）──
 
   _syncSMBServer(serverId) {
     if (_syncingSMBServers.has(serverId)) {
@@ -1879,20 +1850,19 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
           return;
         }
 
-        try { this._lib.updateSMBServerLastSync(serverId); } catch { /* ignore */ }
+        try { this._lib.updateSMBServerLastSync(serverId); } catch {  }
 
-        // SMB 扫描完成后断开挂载（释放驱动器盘符/挂载点）
         if (client && client.connected) {
-          try { await client.disconnect(); } catch { /* ignore */ }
+          try { await client.disconnect(); } catch {  }
         }
 
         this._emitRemoteServersChanged();
         this._emitLibraryUpdated();
         this._emit('subsonic_sync_result', _dump({ ok: true, server_id: serverId, stats }));
       } finally {
-        // 确保断开 SMB 连接
+
         if (client && client.connected) {
-          try { await client.disconnect(); } catch { /* ignore */ }
+          try { await client.disconnect(); } catch {  }
         }
         _syncingSMBServers.delete(serverId);
       }
@@ -1909,26 +1879,12 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     }
   }
 
-  /**
-   * 判定一个 window.open 的 url 是不是浮动窗。
-   * 主窗的 setWindowOpenHandler 会先调它，命中就走「允许并注入窗口选项」分支，
-   * 其余一律 deny（外部链接交给 shell.openExternal）。
-   */
   isFloatingWindowUrl(url) {
     return /(^|[\\/])floating\.html([?#]|$)/.test(String(url || ''));
   }
 
-  /**
-   * 浮动窗 BrowserWindow 构造项（由主窗 setWindowOpenHandler 的
-   * overrideBrowserWindowOptions 注入）。
-   *
-   * 🔴 `webPreferences.preload` 必须显式给：window.open 出来的子窗**不会**继承
-   *    opener 的 preload，缺了它渲染进程里 `window.__electronAPI` 是 undefined，
-   *    浮动窗直接失联（页面上表现为标题停在「未在播放」不变）。
-   *    其余 webPreferences 项仍继承主窗，这里不重复声明。
-   */
   floatingWindowOptions() {
-    // 首帧底色：与页面 body 的 --md-surface-container-low 对齐，避免加载期白闪
+
     let bg = '#191C20';
     try {
       const theme = this._settings.all().theme || 'system';
@@ -1940,7 +1896,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
         dark = nativeTheme.shouldUseDarkColors !== false;
       }
       bg = dark ? '#191C20' : '#F0F4F9';
-    } catch { /* 保守用暗色 */ }
+    } catch {  }
 
     return {
       width: 360,
@@ -1960,17 +1916,12 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     };
   }
 
-  /**
-   * 接管 window.open 产生的浮动窗（在主窗的 did-create-window 里调用）。
-   * 只对真正的浮动窗生效，其它子窗忽略。
-   */
   adoptFloatingWindow(child, details) {
     if (!child || child.isDestroyed()) return;
     if (details && details.url && !this.isFloatingWindowUrl(details.url)) return;
 
-    // 已经有浮动窗了 → 关掉这个多出来的，避免孤儿窗口占着渲染文档
     if (this._floatingWindow && !this._floatingWindow.isDestroyed() && this._floatingWindow !== child) {
-      try { child.close(); } catch { /* ignore */ }
+      try { child.close(); } catch {  }
       return;
     }
 
@@ -1984,39 +1935,17 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       this._floatingOpening = false;
       this.emitFloatingWindowClosed();
       if (this._floatingClosedCallback) {
-        try { this._floatingClosedCallback(); } catch { /* ignore */ }
+        try { this._floatingClosedCallback(); } catch {  }
       }
     });
   }
 
-  /**
-   * 浮动窗承载页：自包含的轻量页（web/floating.html + floating.css + floating.js），
-   * 不再复用主窗口那套 style.css / i18n.js / utils.js / bridge.js。
-   * 原因见 web/floating.html 顶部注释：那 4 个文件加起来 ~600KB 源码，
-   * 对一个小窗来说 CSSOM + V8 堆的开销完全不值当。
-   *
-   * 🔴 为什么是 window.open 而不是 new BrowserWindow：
-   *    Electron 里由渲染进程 window.open 弹出的子窗会与 opener **共用同一个
-   *    Chromium 渲染进程**；new BrowserWindow 则会另起一个。实测（--disable-gpu，
-   *    400 首队列 + 一整个曲库的主窗）：
-   *      new BrowserWindow  → 多一个进程，工作集 158MB（峰值 167MB），
-   *                           而浮动窗页面自身只有 2.4MB JS 堆 / 284 个 DOM 节点，
-   *                           也就是说 98% 的内存花在「再起一个渲染进程」这件事上；
-   *      window.open        → 不新增进程，增量只剩文档本身（几 MB）。
-   *    代价：两者共用一个渲染线程。主窗被最小化/遮挡时无影响（这正是浮动窗的
-   *    典型用法）；只有当主窗也在跑重动画（全屏歌词）时才可能互相抢帧。
-   */
   _createFloatingWindow() {
     const win = this._mainWindow;
     if (!win || win.isDestroyed()) return;
     if (this._floatingWindow || this._floatingOpening) return;
     this._floatingOpening = true;
 
-    // 用 executeJavaScript 在主窗里发起：window.open 的 opener 决定了子窗归属，
-    // 相对路径 'floating.html' 以主窗的 web/index.html 为基准解析。
-    // 窗口尺寸/置顶/无边框等由主窗的 setWindowOpenHandler → floatingWindowOptions()
-    // 注入（见 main.js），这里只负责触发。
-    // 失败时清掉 _floatingOpening，免得之后再也开不出来。
     win.webContents
       .executeJavaScript(
         "(function(){try{window.open('floating.html','carminium-floating','width=360,height=760');return 'ok';}catch(e){return 'ERR:'+(e&&e.message);}})()"
@@ -2036,42 +1965,45 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     }
   }
 
-  // ── 电台 ICY 元数据管理 ──────────────────────────────────────────────────
-
   close() {
     this._closeFloatingWindow();
-    // 停止库自动刷新（FileWatcher / 远程定期同步）
+
     this.stopAutoRefresh();
-    // 保留中の library_updated debounce タイマーを破棄
+
+    if (this._scanWorker) {
+      try { this._scanWorker.stop(); } catch {  }
+      this._scanWorker = null;
+    }
+
     if (this._libraryUpdatedTimer) {
       clearTimeout(this._libraryUpdatedTimer);
       this._libraryUpdatedTimer = null;
     }
     this._libraryUpdatedPending = false;
-    // 刷新分析缓存到磁盘（确保退出时不丢失）
+
     if (this._analysisCache) {
       try { this._analysisCache.flush(); } catch (e) {
         console.warn('[bridge] AnalysisCache flush failed:', e.message);
       }
     }
+
+    if (this._loudness) {
+      try { this._loudness.flush(); } catch (e) {
+        console.warn('[bridge] Loudness flush failed:', e.message);
+      }
+    }
+
+    if (this._quality) {
+      try { this._quality.flush(); } catch (e) {
+        console.warn('[bridge] Quality flush failed:', e.message);
+      }
+    }
   }
 }
 
-// ── 系统强调色读取 ──
-// 从 Windows 注册表读取 DWM 个性色，用于莫奈取色「系统壁纸」来源。
-// 非同期 execFile で実行し、メインプロセスのイベントループをブロックしない。
-// （以前は execSync で reg query を同期実行していたため、起動直後や
-//   設定画面の更新時にメインスレッドが最大 3 秒ブロックされ、
-//   その間 audio_output IPC も処理できず WASAPI バッファアンダーラン →
-//   「なんだか分からないけど止まる」原因の一つだった）
 async function _getSystemAccentColor() {
   const { execFile } = require('child_process');
 
-  /**
-   * @param {string} cmd
-   * @param {string[]} args
-   * @returns {Promise<string>} stdout
-   */
   const run = (cmd, args) => new Promise((resolve, reject) => {
     execFile(cmd, args, {
       encoding: 'utf8',
@@ -2084,8 +2016,7 @@ async function _getSystemAccentColor() {
   });
 
   try {
-    // Windows DWM accent color: HKCU\SOFTWARE\Microsoft\Windows\DWM
-    // AccentColor 为 ARGB DWORD，格式: 0xAARRGGBB
+
     const output = await run('reg', [
       'query', 'HKCU\\SOFTWARE\\Microsoft\\Windows\\DWM', '/v', 'AccentColor',
     ]);
@@ -2095,13 +2026,13 @@ async function _getSystemAccentColor() {
       const r = (argb >> 16) & 0xff;
       const g = (argb >> 8) & 0xff;
       const b = argb & 0xff;
-      // 忽略透明度过低的颜色（未设置个性色时 A=0）
+
       const a = (argb >> 24) & 0xff;
       if (a > 0 && (r > 0 || g > 0 || b > 0)) {
         return [r, g, b];
       }
     }
-    // 回退：ColorPrevalence 关闭时，读取 Start/Taskbar accent
+
     const output2 = await run('reg', [
       'query',
       'HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent',

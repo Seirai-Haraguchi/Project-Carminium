@@ -1,6 +1,3 @@
-/**
- * Carminium — 文件夹页（媒体库管理）
- */
 (function () {
   'use strict';
 
@@ -39,7 +36,6 @@ container.innerHTML = `
 
     const searchInput = document.getElementById('folder-search');
     searchInput.value = searchText;
-    // 防抖：每敲一个字符都会全量过滤 + 重建列表 DOM。
     var _searchDebounceTimer = null;
     searchInput.addEventListener('input', function (e) {
       searchText = e.target.value;
@@ -54,7 +50,6 @@ container.innerHTML = `
     document.getElementById('btn-add-folder').addEventListener('click', function () {
       App.utils.call('open_folder_dialog').then(function (path) {
         if (path) {
-          // 显示扫描中状态，直到收到 folders_updated 事件（后台扫描完成）
           document.getElementById('folder-list').innerHTML = `
             <div class="empty-state">
               <span class="material-symbols-rounded empty-icon" style="animation: pulse 2s infinite;">sync</span>
@@ -62,10 +57,8 @@ container.innerHTML = `
               <p class="empty-sub">${App.i18n.t('folders.scanningPath')} ${App.utils.esc(path)}</p>
             </div>
           `;
-          // add_folder 立即返回（扫描在后台线程执行），
-          // folders_updated 事件会在扫描完成后触发 onFoldersUpdated 刷新列表
           App.utils.call('add_folder', path).catch(function (err) {
-            _loadFolders();  // 出错时恢复列表
+            _loadFolders();
           });
         }
       });
@@ -79,13 +72,11 @@ container.innerHTML = `
     _renderList();
   };
 
-  // 暴露添加流媒体库对话框，供新手引导等外部入口复用
   page.promptAddSubsonic = function () {
     _promptAddStreaming();
   };
 
   function _loadFolders() {
-    // 从前端缓存读取（启动时已拉取，folders_updated 时刷新）
     allFolders = (App.state && App.state.allFolders) ? App.state.allFolders : [];
     _renderList();
   }
@@ -94,12 +85,10 @@ container.innerHTML = `
     const listEl = document.getElementById('folder-list');
     if (!listEl) return;
 
-    // 使用统一远程服务器列表（如果可用），否则回退到 Subsonic 列表
     const servers = (App.state && App.state.allRemoteServers && App.state.allRemoteServers.length > 0)
       ? App.state.allRemoteServers
       : ((App.state && App.state.allSubsonicServers) ? App.state.allSubsonicServers : []);
 
-    // 本地文件夹 + 流媒体库混排（图标已区分类型），本地在前
     let entries = [];
     allFolders.forEach(f => entries.push({ kind: 'folder', data: f }));
     servers.forEach(s => entries.push({ kind: 'server', data: s }));
@@ -115,7 +104,6 @@ container.innerHTML = `
       });
     }
 
-    // 页副标题：合并计数（过滤时显示 命中/总数）
     const countEl = document.getElementById('library-count');
     const total = allFolders.length + servers.length;
     if (countEl) {
@@ -141,11 +129,9 @@ container.innerHTML = `
       if (row) frag.appendChild(row);
     });
     listEl.appendChild(frag);
-    // 对动态插入的 DOM 应用 i18n 翻译
     if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(listEl);
   }
 
-  // 构建单个本地文件夹行（DOM 元素）
   function _buildFolderRow(folder) {
     const row = document.createElement('div');
     row.className = 'folder-row';
@@ -188,7 +174,6 @@ container.innerHTML = `
     return row;
   }
 
-  // 构建单个流媒体库服务器行（支持 Subsonic / WebDAV / SMB）
   function _buildServerRow(srv) {
     const row = document.createElement('div');
     const serverType = srv.type || 'subsonic';
@@ -198,7 +183,6 @@ container.innerHTML = `
 
     const lastSync = srv.last_sync ? App.utils.formatDate(srv.last_sync) : App.i18n.t('folders.notSynced');
 
-    // 根据服务器类型选择图标和标签
     let iconSymbol = 'cloud';
     let typeLabel = 'Subsonic';
     let typeIcon = 'api';
@@ -243,13 +227,11 @@ container.innerHTML = `
       </div>
     `;
 
-    // 同步中：更新 _pendingSync 引用到新 DOM，后续 progress 事件能继续更新
     if (isSyncing) {
       pending.icon = row.querySelector('.btn-subsonic-sync .material-symbols-rounded');
       pending.metaEl = row.querySelector('.folder-meta');
     }
 
-    // 绑定事件
     row.querySelector('.btn-subsonic-sync').addEventListener('click', function () {
       if (this.disabled) return;
       _startSyncWithOverlay(srv.id, srv.name, serverType);
@@ -285,32 +267,25 @@ container.innerHTML = `
     return row;
   }
 
-  // Handle signal push
-  page.onFoldersUpdated = function (jsonStr) {
-    // app.js 已在 folders_updated 时刷新 App.state.allFolders 缓存
+  page.onFoldersUpdated = function (_jsonStr) {
     if (document.getElementById('folder-list')) {
-      allFolders = (App.state && App.state.allFolders) ? App.state.allFolders : (jsonStr ? JSON.parse(jsonStr) : []);
-      _renderList();  // _renderList 会重建 DOM，rescan 按钮的 loading 状态自然清除
+      allFolders = (App.state && App.state.allFolders) ? App.state.allFolders : [];
+      _renderList();
     }
   };
 
-  // ── 远程服务器列表渲染（统一处理 Subsonic / WebDAV / SMB）──
-  page.onRemoteServersUpdated = function (/* jsonStr */) {
-    // 本地文件夹与流媒体库混排，服务器变化直接重渲染整张列表
+  page.onRemoteServersUpdated = function () {
     if (document.getElementById('folder-list')) {
       _renderList();
     }
   };
 
-  // ── Subsonic 服务器列表渲染（兼容旧版）──
-  page.onSubsonicServersUpdated = function (/* jsonStr */) {
-    // 本地文件夹与流媒体库混排，服务器变化直接重渲染整张列表
+  page.onSubsonicServersUpdated = function () {
     if (document.getElementById('folder-list')) {
       _renderList();
     }
   };
 
-  // 构造同步中状态的 meta 行 HTML
   function _formatSyncingMeta(lastStats) {
     if (!lastStats) {
       return '<span style="color:var(--md-primary)">' + App.i18n.t('folders.syncingBg') + '</span>';
@@ -318,19 +293,15 @@ container.innerHTML = `
     return '<span style="color:var(--md-primary)">' + App.i18n.t('folders.syncingProgress', { tracks: lastStats.tracks || 0, albums: lastStats.albums || 0 }) + '</span>';
   }
 
-  // 当前正在等待同步结果的 server_id → {lastStats: {tracks, albums, artists} | null}
   var _pendingSync = {};
 
-  // 由 app.js 的 subsonic_sync_result 信号订阅调用
   page.onSubsonicSyncResult = function (data) {
-    // 全屏同步遮罩优先接管（添加服务器后的同步流程）
     if (_syncOverlay && data && _syncOverlay.serverId === data.server_id) {
       _syncOverlay.onResult(data);
       return;
     }
     if (!_pendingSync[data.server_id]) return;
     delete _pendingSync[data.server_id];
-    // 重新渲染恢复正常显示（last_sync、track_count 由 subsonic_servers_changed 更新）
     _renderList();
 
     if (data.ok) {
@@ -341,7 +312,6 @@ container.innerHTML = `
         var warns = (stats.warnings || []).slice(0, 3).join('\n');
         alert(App.i18n.t('folders.syncNoTracks') + '\n' + msg + (warns ? '\n\n' + App.i18n.t('folders.diagnostics') + ':\n' + warns : ''));
       } else {
-        // 建议用户重启程序以避免潜在的缓存/状态不一致问题
         App.utils.confirmDialog({
           title: App.i18n.t('folders.syncCompleteTitle'),
           body: msg + '\n\n' + App.i18n.t('folders.restartHint'),
@@ -358,10 +328,8 @@ container.innerHTML = `
     }
   };
 
-  // 由 app.js 的 subsonic_sync_progress 信号订阅调用（实时进度）
   page.onSubsonicSyncProgress = function (data) {
     if (!data || data.server_id == null) return;
-    // 全屏同步遮罩优先处理
     if (_syncOverlay && _syncOverlay.serverId === data.server_id) {
       _syncOverlay.onProgress(data);
     }
@@ -373,7 +341,6 @@ container.innerHTML = `
         albums: data.albums || 0,
         artists: data.artists || 0,
       };
-      // 更新当前 DOM（如果 folders 页可见）
       var row = document.querySelector(
         '.subsonic-server-row[data-server-id="' + data.server_id + '"]'
       );
@@ -384,11 +351,8 @@ container.innerHTML = `
     }
   };
 
-  // ── 添加服务器后的全屏同步遮罩 ────────────────────────────────────────────
-  // 当前全屏同步遮罩实例：{ serverId, onProgress, onResult, close } 或 null
   var _syncOverlay = null;
 
-  // 阶段文案映射
   var _PHASE_LABELS = {
     'artists': App.i18n.t('folders.phaseArtists'),
     'albums': App.i18n.t('folders.phaseAlbums'),
@@ -396,7 +360,6 @@ container.innerHTML = `
   };
 
   function _showSyncOverlay(serverId, serverName) {
-    // 若已存在遮罩则先移除
     if (_syncOverlay) { _syncOverlay.close(); }
 
     var overlay = document.createElement('div');
@@ -498,7 +461,6 @@ container.innerHTML = `
           barFill.style.width = '100%';
           barWrap.style.setProperty('--progress-val', '100%');
           currentEl.style.display = 'none';
-          // 建议用户重启程序以避免潜在的缓存/状态不一致问题
           var restartHint = document.createElement('p');
           restartHint.className = 'sync-restart-hint';
           restartHint.textContent = App.i18n.t('folders.restartHintShort');
@@ -532,10 +494,8 @@ container.innerHTML = `
     return api;
   }
 
-  // 启动后台同步并显示全屏遮罩
   function _startSyncWithOverlay(serverId, serverName, serverType) {
     _showSyncOverlay(serverId, serverName);
-    // 根据服务器类型选择同步 IPC
     var syncCall = 'sync_subsonic_server';
     if (serverType === 'webdav') syncCall = 'sync_webdav_server';
     else if (serverType === 'smb') syncCall = 'sync_smb_server';
@@ -544,15 +504,13 @@ container.innerHTML = `
       try {
         var data = JSON.parse(syncRes);
         if (!data.ok && _syncOverlay && _syncOverlay.serverId === serverId) {
-          // 立即失败（如重复同步、服务器不存在）
           _syncOverlay.onResult({
             ok: false,
             server_id: serverId,
             error: data.error || App.i18n.t('folders.syncStartFailed'),
           });
         }
-        // data.ok=true：后台同步已启动，等待 progress/result 事件
-      } catch (e) { /* ignore */ }
+      } catch (e) {  }
     }).catch(function (err) {
       if (_syncOverlay && _syncOverlay.serverId === serverId) {
         _syncOverlay.onResult({
@@ -564,7 +522,6 @@ container.innerHTML = `
     });
   }
 
-  // ── 统一添加流媒体库对话框（Subsonic / WebDAV / NAS-SMB Pivot 切换）──────
   function _promptAddStreaming() {
     const overlay = document.createElement('div');
     overlay.className = 'cmd-dialog-overlay';
@@ -665,7 +622,6 @@ container.innerHTML = `
     document.body.appendChild(overlay);
     requestAnimationFrame(() => overlay.classList.add('open'));
 
-    // ── Pivot Tab 切换逻辑 ──
     let currentTab = 'subsonic';
     const tabs = dlg.querySelectorAll('.np-pivot-tab');
     const panels = dlg.querySelectorAll('.streaming-panel');
@@ -678,7 +634,6 @@ container.innerHTML = `
         p.style.display = match ? '' : 'none';
         p.classList.toggle('active', match);
       });
-      // 焦点切换到当前面板的第一个输入框
       const firstInput = panels.namedItem ? null : null;
       const activePanel = dlg.querySelector('.streaming-panel.active');
       if (activePanel) {
@@ -690,7 +645,6 @@ container.innerHTML = `
       t.addEventListener('click', function () { switchTab(this.dataset.tab); });
     });
 
-    // 默认焦点
     const ssName = dlg.querySelector('#ss-name');
     setTimeout(() => ssName.focus(), 50);
 
@@ -703,7 +657,6 @@ container.innerHTML = `
       setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 180);
     }
 
-    // ── 各 Tab 的 collect / validate / add / test 逻辑 ──
     function collectSubsonic() {
       return {
         name: (dlg.querySelector('#ss-name').value || '').trim(),
@@ -752,7 +705,6 @@ container.innerHTML = `
       return null;
     }
 
-    // 根据当前 Tab 返回 { collect, validate, addCall, testCall, syncCall, serverType }
     function getConfig() {
       if (currentTab === 'webdav') {
         return {
@@ -772,13 +724,12 @@ container.innerHTML = `
           serverType: 'smb', versionLabel: 'SMB/CIFS',
         };
       }
-      // 默认 subsonic
       return {
         collect: collectSubsonic, validate: validateSubsonic,
         addCall: function (d) { return App.utils.call('add_subsonic_server', d.name, d.url, d.user, d.pass, d.protocol); },
         testCall: function (id) { return App.utils.call('test_subsonic_server', id); },
         syncCall: function (id) { return App.utils.call('sync_subsonic_server', id); },
-        serverType: 'subsonic', versionLabel: null, // subsonic 有特殊版本显示
+        serverType: 'subsonic', versionLabel: null,
       };
     }
 
@@ -793,7 +744,7 @@ container.innerHTML = `
       confirmBtn.disabled = true;
       cfg.addCall(d).then(function (res) {
         var srvId = null;
-        try { srvId = JSON.parse(res).id; } catch (e) { /* ignore */ }
+        try { srvId = JSON.parse(res).id; } catch (e) {  }
         close();
         if (srvId) {
           _startSyncWithOverlay(srvId, d.name, cfg.serverType);
@@ -818,10 +769,9 @@ container.innerHTML = `
       const origText = testBtn.textContent;
       testBtn.textContent = App.i18n.t('folders.testing');
       testBtn.disabled = true;
-      // 先添加，再测试
       cfg.addCall(d).then(function (res) {
         let srvId = null;
-        try { srvId = JSON.parse(res).id; } catch (e) { /* ignore */ }
+        try { srvId = JSON.parse(res).id; } catch (e) {  }
         if (!srvId) {
           testBtn.textContent = origText;
           testBtn.disabled = false;
@@ -855,12 +805,10 @@ container.innerHTML = `
       });
     }
 
-    // 绑定按钮
     dlg.querySelector('.cmd-dialog-btn--cancel').addEventListener('click', close);
     dlg.querySelector('.cmd-dialog-btn--confirm').addEventListener('click', add);
     dlg.querySelector('#stream-btn-test').addEventListener('click', test);
 
-    // 所有面板的输入框 Enter→add, Escape→close
     dlg.querySelectorAll('.streaming-panel input, .streaming-panel select').forEach(function (inp) {
       inp.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') add();
@@ -873,7 +821,6 @@ container.innerHTML = `
     });
   }
 
-  // ── 编辑 Subsonic 服务器对话框 ────────────────────────────────────────────
   function _promptEditSubsonic(srv) {
     const overlay = document.createElement('div');
     overlay.className = 'cmd-dialog-overlay';
@@ -954,14 +901,11 @@ container.innerHTML = `
       saving = true;
       const confirmBtn = dlg.querySelector('.cmd-dialog-btn--confirm');
       confirmBtn.disabled = true;
-      // 密码留空时不更新密码字段
       App.utils.call('update_subsonic_server', srv.id, d.name, d.url, d.user, d.pass, d.protocol).then(function (res) {
-        // 保存成功提示，短暂反馈后关闭
         confirmBtn.textContent = App.i18n.t('folders.saved');
         confirmBtn.classList.add('cmd-dialog-btn--confirm');
         setTimeout(function () {
           close();
-          // subsonic_servers_changed 事件会自动刷新列表
         }, 600);
       }).catch(function (err) {
         console.error('[subsonic] 更新服务器失败:', err);
@@ -980,7 +924,6 @@ container.innerHTML = `
       const origText = testBtn.textContent;
       testBtn.textContent = App.i18n.t('folders.testing');
       testBtn.disabled = true;
-      // 先保存配置（含可能的密码修改），再测试连接
       App.utils.call('update_subsonic_server', srv.id, d.name, d.url, d.user, d.pass, d.protocol).then(function () {
         return App.utils.call('test_subsonic_server', srv.id);
       }).then(function (testRes) {
@@ -1020,7 +963,6 @@ container.innerHTML = `
     });
   }
 
-  // ── 编辑 WebDAV 服务器对话框 ──────────────────────────────────────────────
   function _promptEditWebDAV(srv) {
     const overlay = document.createElement('div');
     overlay.className = 'cmd-dialog-overlay';
@@ -1146,7 +1088,6 @@ container.innerHTML = `
     overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
   }
 
-  // ── 编辑 SMB / NAS 服务器对话框 ───────────────────────────────────────────
   function _promptEditSMB(srv) {
     const overlay = document.createElement('div');
     overlay.className = 'cmd-dialog-overlay';

@@ -1,7 +1,3 @@
-/**
- * 启动脚本：清除 ELECTRON_RUN_AS_NODE 环境变量后启动 Electron。
- * 某些 IDE 环境会设置此变量，导致 Electron 以纯 Node.js 模式运行。
- */
 'use strict';
 
 delete process.env.ELECTRON_RUN_AS_NODE;

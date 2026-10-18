@@ -25,6 +25,9 @@ Thumbs.db
 .vscode/
 .idea/
 .workbuddy/
+
+# 代码注释存档（源码已剥离注释，原文归档于此，不入库）
+代码注释.md
 .revert-backup/
 # Zig build outputs and cache
 native/.zig-cache/

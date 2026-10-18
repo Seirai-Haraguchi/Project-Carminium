@@ -1,24 +1,6 @@
-/**
- * Carminium — 浮动窗口（正在播放小窗）
- *
- * 设计目标
- *  1) 设计语言与主窗口「正在播放」面板一致：同一套 .np-* 结构 + M3 令牌，
- *     样式在 web/floating.css，与 index.html 的 .now-playing-pane 同源。
- *  2) 内存占用压到极低。三条主线：
- *     · 不加载 style.css / i18n.js / pages/utils.js / bridge.js（≈600KB 源码），
- *       改为 floating.css + floating_i18n.js + 本文件。
- *     · 不建 SMTC 静音心跳、不接音频链路（浮动窗不合成音频，不参与 AudioContext 重建）。
- *     · 懒渲染 + 限量：队列与歌词只在对应标签页激活后才建 DOM；队列超过
- *       300 条只渲染当前曲目附近的窗口，避免几千条 DOM 节点常驻。
- *
- * 本文件不依赖 window.App.utils（那会牵进整份页面工具集），所需能力就地实现。
- */
 (function () {
   'use strict';
 
-  // ==========================================================================
-  // 内联后端桥（替代 web/bridge.js 的浮动窗所需子集）
-  // ==========================================================================
   var api = window.__electronAPI;
 
   var _handlers = {};
@@ -44,9 +26,6 @@
     return url;
   }
 
-  // ==========================================================================
-  // 状态
-  // ==========================================================================
   var currentTrack = null;
   var currentState = 'stopped';
   var currentVolume = 80;
@@ -58,8 +37,8 @@
   var currentDominantRgb = null;
 
   var lyricsData = [];
-  var lyricLines = null;      // 复用：避免每帧 querySelectorAll
-  var activeWords = null;     // 当前行的逐字节点（复用）
+  var lyricLines = null;
+  var activeWords = null;
   var lastLyricsIdx = -1;
 
   var lyricFontSettings = { lyrics_font: '', lyrics_jp_font: '', lyrics_jp_use_distinct: false };
@@ -71,20 +50,14 @@
   var lyricsCreditFilters = '';
   var colorScheme = 'tonal_spot';
 
-  // 懒渲染标记
   var lyricsRendered = false;
   var queueRendered = false;
   var queueData = null;
   var queueIndex = 0;
 
-  /** 队列最多渲染的条目数（长队列下避免几万 DOM 节点） */
   var QUEUE_RENDER_LIMIT = 300;
-  /** 渲染窗口从当前曲目前多少条开始 */
   var QUEUE_LEAD = 20;
 
-  // ==========================================================================
-  // DOM
-  // ==========================================================================
   var $ = function (id) { return document.getElementById(id); };
   var els = {
     titlebar: document.querySelector('.floating-titlebar'),
@@ -129,16 +102,12 @@
 
   var currentTab = 'info';
 
-  // 过长歌名跑马灯：标题文本统一走这里（Marquee 负责包裹与滚动，见 marquee.js）
   function _setTitle(el, text) {
     if (!el) return;
     if (window.Marquee) window.Marquee.setText(el, text == null ? '' : text);
     else el.textContent = text == null ? '' : text;
   }
 
-  // ==========================================================================
-  // 基础工具
-  // ==========================================================================
   function fmtTime(ms) {
     if (!ms || ms <= 0) return '0:00';
     var totalSec = Math.floor(ms / 1000);
@@ -175,11 +144,6 @@
     return [h * 360, s * 100, l * 100];
   }
 
-  // ==========================================================================
-  // Material You 取色（applyDynamicTheme 的精简版）
-  //   与 pages/utils.js 保持一致，但去掉视频背景用的 -vd 变体（浮动窗没有视频背景），
-  //   并在取色时复用同一张 canvas（原来每首歌都新建一张 64×64 canvas）。
-  // ==========================================================================
   var COLOR_SCHEMES = {
     tonal_spot: { h1: 0,   h2: 25,  h3: -30, chroma: 'moderate', sScale: 0.65, tScale: 0.72, sMin: 22, tMin: 25, bgSat: { d: 12, l: 14 } },
     fidelity:   { h1: 0,   h2: 20,  h3: -25, chroma: 'faithful', sScale: 0.80, tScale: 0.88, sMin: 25, tMin: 28, bgSat: { d: 14, l: 16 } },
@@ -274,7 +238,7 @@
       }
       return best;
     } catch (e) {
-      return null;   // CORS 污染等
+      return null;
     }
   }
 
@@ -285,9 +249,6 @@
     applyDynamicTheme(rgb);
   }
 
-  // ==========================================================================
-  // 歌词解析（与 pages/utils.js 同算法，去掉页面无关部分）
-  // ==========================================================================
   function isLRC(text) {
     return /\[\d{2}:\d{2}(?:[\.:]\d{2,3})?\]/.test(text);
   }
@@ -384,7 +345,6 @@
     return grouped;
   }
 
-  /** 抽取「作词/作曲/制作人」等制作信息，返回 { lyrics, credits } */
   function processLyricsCredits(text, filterStr) {
     var empty = { lyrics: text || '', credits: '' };
     if (!text) return empty;
@@ -449,9 +409,6 @@
     return { lyrics: normal.join('\n'), credits: 'Written By：' + uniq.join('、') };
   }
 
-  // ==========================================================================
-  // 微交互（与 App.utils 版本同参数）
-  // ==========================================================================
   function squeezeIcon(iconEl, newText) {
     if (!iconEl) return;
     if (!iconEl.animate) { iconEl.textContent = newText; return; }
@@ -475,9 +432,6 @@
     btnEl._bloomAnim = btnEl.animate([k0, k1, k2], { duration: 320, easing: 'cubic-bezier(0.2, 0, 0, 1)' });
   }
 
-  // ==========================================================================
-  // 歌词滚动（弹性滚动 + 行级联，同 pages/utils.js 的参数）
-  // ==========================================================================
   var _scrollRaf = 0;
 
   function cancelLyricsScroll() {
@@ -516,7 +470,7 @@
       line.style.setProperty('--lyrics-lift-delay', delay + 'ms');
       line.classList.remove('np-lyrics-lift');
       if (d <= 3) {
-        void line.offsetWidth;   // 强制一次布局读取，保证动画能重播
+        void line.offsetWidth;
         line.classList.add('np-lyrics-lift');
       }
     }
@@ -535,9 +489,6 @@
     }
   }
 
-  // ==========================================================================
-  // Pivot
-  // ==========================================================================
   function switchTab(name) {
     currentTab = name;
     for (var i = 0; i < els.pivotTabs.length; i++) {
@@ -551,14 +502,10 @@
     }
     els.miniInfo.style.display = (name === 'info') ? 'none' : 'flex';
 
-    // 懒渲染：只有真正切到该标签页时才建 DOM
     if (name === 'queue' && !queueRendered) renderQueue();
     if (name === 'lyrics' && !lyricsRendered && currentTrack) renderLyrics(currentTrack);
   }
 
-  // ==========================================================================
-  // 队列
-  // ==========================================================================
   var _draggedItem = null;
 
   function renderQueue() {
@@ -570,7 +517,6 @@
 
     if (queue.length === 0) return;
 
-    // 渲染窗口：以当前曲目为锚点，最多 QUEUE_RENDER_LIMIT 条
     var total = queue.length;
     var start = 0;
     if (total > QUEUE_RENDER_LIMIT) {
@@ -706,11 +652,6 @@
     });
   }
 
-  /**
-   * 把「拖到某一条的上/下半区」翻译成绝对索引的 reorder：
-   * 渲染窗口可能只是队列的一段，所以索引要用 dataset.index（绝对值），
-   * 不能用 DOM 位置。语义与主窗口 now_playing.js 一致。
-   */
   function _dropOn(targetItem, clientY) {
     var items = _itemEls();
     var rect = targetItem.getBoundingClientRect();
@@ -725,9 +666,6 @@
     if (fromAbs !== toAbs) invoke('reorder_queue', fromAbs, toAbs);
   }
 
-  // ==========================================================================
-  // 歌词渲染
-  // ==========================================================================
   function renderLyrics(track) {
     lyricsData = [];
     lyricLines = null;
@@ -809,7 +747,6 @@
 
     els.lyrics.appendChild(frag);
     lyricLines = els.lyrics.querySelectorAll('.np-lyrics-line');
-    // 立即对齐当前进度，避免切歌后要等下一个 position tick 才高亮
     updateLyrics(_lastPos);
   }
 
@@ -870,7 +807,6 @@
       }
     }
 
-    // 逐字高亮：只在状态真的变化时写 DOM
     if (activeWords) {
       for (var w = 0; w < activeWords.length; w++) {
         var word = activeWords[w];
@@ -885,9 +821,6 @@
     }
   }
 
-  // ==========================================================================
-  // 曲目 / 状态
-  // ==========================================================================
   var _lastCurSec = -1;
   var _lastDurSec = -1;
 
@@ -895,7 +828,6 @@
     currentTrack = track;
     duration = track ? (track.duration_ms || 0) : 0;
 
-    // 换歌 → 歌词与主题重建
     lyricsData = [];
     lyricLines = null;
     activeWords = null;
@@ -958,10 +890,8 @@
       els.miniCoverIcon.style.display = '';
     }
 
-    // 歌词标签页当前可见时同步重建（否则等切过去再建，省掉整份歌词 DOM）
     if (currentTab === 'lyrics') renderLyrics(track);
 
-    // 队列：当前曲目高亮位置变了，重开时重建
     queueRendered = false;
     if (currentTab === 'queue') renderQueue();
   }
@@ -974,7 +904,6 @@
     els.barWrap.setAttribute('aria-valuenow', String(Math.round(pct)));
   }
 
-  // position 事件可能高于帧率，用 rAF 合并到每帧一次写入，避免样式抖动
   var _pendingPos = -1;
   var _posRaf = 0;
 
@@ -1063,9 +992,6 @@
       App.i18n.t(exclusive ? 'np.exclusiveMode' : 'np.sharedMode'));
   }
 
-  // ==========================================================================
-  // 主题 / 字体
-  // ==========================================================================
   var _mqDark = null;
 
   function applyTheme(val) {
@@ -1114,7 +1040,6 @@
 
     if (currentDominantRgb) applyDynamicTheme(currentDominantRgb);
 
-    // 字体/排版变化 → 重建当前可见的歌词
     if (currentTrack && lyricsRendered) renderLyrics(currentTrack);
   }
 
@@ -1133,9 +1058,6 @@
     if (queueRendered) renderQueue();
   }
 
-  // ==========================================================================
-  // 确认对话框（M3）
-  // ==========================================================================
   function confirmDialog(o) {
     return new Promise(function (resolve) {
       var overlay = document.createElement('div');
@@ -1196,9 +1118,6 @@
     });
   }
 
-  // ==========================================================================
-  // 进度条拖动
-  // ==========================================================================
   function _seekPct(clientX) {
     var rect = els.barWrap.getBoundingClientRect();
     return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
@@ -1222,9 +1141,6 @@
     invoke('seek', ms);
   }
 
-  // ==========================================================================
-  // 事件绑定
-  // ==========================================================================
   function bindUI() {
     els.btnPlay.addEventListener('click', function () {
       invoke(currentState === 'playing' ? 'pause' : 'play');
@@ -1277,14 +1193,10 @@
     }
   }
 
-  // ==========================================================================
-  // 后端事件
-  // ==========================================================================
   function wireEvents() {
     on('track_changed', function (json) {
       var t;
       try { t = JSON.parse(json); } catch (e) { return; }
-      // 队列索引会随换歌变化，队列可见时重建
       updateTrack(t);
     });
     on('playback_state_changed', updateState);
@@ -1321,9 +1233,6 @@
     });
   }
 
-  // ==========================================================================
-  // 启动
-  // ==========================================================================
   function boot() {
     if (!api) {
       console.error('[floating] __electronAPI 不可用，浮动窗无法工作');
@@ -1333,7 +1242,6 @@
     wireEvents();
     bindUI();
 
-    // 过长歌名跑马灯：绑定标题（文本统一由 _setTitle 写入）
     if (window.Marquee) {
       window.Marquee.bind(els.title);
       window.Marquee.bind(els.miniTitle);
@@ -1344,16 +1252,15 @@
       return invoke('get_settings');
     }).then(function (json) {
       var settings = {};
-      try { settings = JSON.parse(json) || {}; } catch (e) { /* ignore */ }
+      try { settings = JSON.parse(json) || {}; } catch (e) {  }
       App.i18n.init(settings.language || 'zh-CN');
       App.i18n.applyToDOM();
       applySettings(settings);
-      // 语言变更后补齐动态文本
       onLanguageChanged();
       return invoke('get_player_state');
     }).then(function (json) {
       var state = {};
-      try { state = JSON.parse(json) || {}; } catch (e) { /* ignore */ }
+      try { state = JSON.parse(json) || {}; } catch (e) {  }
       if (state.current_track) {
         updateTrack(state.current_track);
         if (state.duration) updateDuration(state.duration);
@@ -1369,7 +1276,7 @@
       return invoke('get_queue');
     }).then(function (qjson) {
       var q = {};
-      try { q = JSON.parse(qjson) || {}; } catch (e) { /* ignore */ }
+      try { q = JSON.parse(qjson) || {}; } catch (e) {  }
       queueData = q.queue || [];
       queueIndex = q.current_index || 0;
     }).catch(function (e) {
@@ -1377,7 +1284,6 @@
     });
   }
 
-  // 跟随系统主题变化（仅在 theme=system 时生效）
   _mqDark = window.matchMedia('(prefers-color-scheme: dark)');
   _mqDark.addEventListener('change', function () {
     invoke('get_settings').then(function (json) {

@@ -1,6 +1,3 @@
-/**
- * Carminium — 艺术家页
- */
 (function () {
   'use strict';
 
@@ -11,30 +8,18 @@
   let allArtists = [];
   let filterStr = '';
   let searchText = '';
-  let sortMode = 'az'; // 'az', 'za', 'albums', 'tracks'
+  let sortMode = 'az';
 
-  // ── 别名搜索（"用别名搜到这个人"）──
-  // 本名匹配在前端同步完成；别名命中由 cover-server 的别名索引异步返回，
-  // 防抖 250ms + 序号防陈旧，命中后并入结果列表重渲染。
-  let _aliasMatchNames = null;  // Set<艺人名小写>：别名命中的艺人
-  let _aliasMatchQuery = '';    // _aliasMatchNames 对应的 filterStr
+  let _aliasMatchNames = null;
+  let _aliasMatchQuery = '';
   let _aliasFetchTimer = null;
   let _aliasFetchSeq = 0;
 
-  // ── 虚拟滚动实例 ──
   let _vl = null;
-  // _flatList: [{ type:'header', letter } | { type:'row', artist }]
-  let _flatList = [];
-  const ROW_HEIGHT = 64; // 艺术家行比曲目行稍高（头像 + padding）
 
-  // ── 艺人头像探测结果缓存 ──
-  // 原实现每次行被渲染都 new Image() 探测一次。长列表来回滚动时，
-  // 同一艺人被反复探测 → 每次都产生一次图片请求/解码与 promise 回调。
-  // 服务端对 /artist-image/ 返回 max-age=86400，Chromium HTTP 缓存本身能挡住
-  // 网络往返，但解码与 JS 回调仍重复发生。这里按艺人名缓存结论：
-  //   'ok'   → 已确认在线有图，直接贴图
-  //   'miss' → 已确认无图，永久保持纯色 + 首字母（不再发探测）
-  // 键为艺人名；艺人名即缓存键，与服务端 md5(lower(name)) 一致。
+  let _flatList = [];
+  const ROW_HEIGHT = 64;
+
   const _avatarProbeCache = new Map();
 
   function _avatarProbeState(name, url) {
@@ -54,7 +39,6 @@
   }
   const HEADER_HEIGHT = 32;
 
-  // 排序选项配置
   const SORT_OPTIONS = [
     { key: 'az', label: 'A-Z', icon: 'sort_by_alpha' },
     { key: 'za', label: 'Z-A', icon: 'sort_by_alpha' },
@@ -97,8 +81,7 @@
 
     const searchInput = document.getElementById('artist-search');
     searchInput.value = searchText;
-    // 防抖：每敲一个字符都会触发「过滤全量艺人 + 排序 + 重建扁平列表」，
-    // 与music 页同理。180ms 静默后才渲染，交互体感与原生搜索框一致。
+
     var _searchDebounceTimer = null;
     searchInput.addEventListener('input', function (e) {
       searchText = e.target.value;
@@ -110,10 +93,8 @@
       }, 180);
     });
 
-    // 排序下拉菜单事件
     _setupSortDropdown(container);
 
-    // 从前端缓存读取（启动时已拉取，library_updated 时刷新）
     allArtists = (App.state && App.state.allArtists) ? App.state.allArtists : [];
     if (params && params.artist) {
       const target = allArtists.find(function (a) { return a.name === params.artist; });
@@ -156,13 +137,13 @@
         const newSort = this.dataset.value;
         if (newSort && newSort !== sortMode) {
           sortMode = newSort;
-          // 更新触发器显示
+
           const opt = SORT_OPTIONS.find(o => o.key === sortMode);
           if (opt) {
             select.querySelector('.md-select-icon').textContent = opt.icon;
             select.querySelector('.md-select-label').textContent = opt.labelKey ? App.i18n.t(opt.labelKey) : opt.label;
           }
-          // 更新选项选中状态
+
           menu.querySelectorAll('.md-select-option').forEach(o => {
             o.classList.remove('selected');
             o.setAttribute('aria-selected', 'false');
@@ -175,7 +156,7 @@
           checkSpan.className = 'material-symbols-rounded md-select-check';
           checkSpan.textContent = 'check';
           this.appendChild(checkSpan);
-          // 重新渲染
+
           _renderList(container);
         }
         closeMenu();
@@ -210,8 +191,8 @@
         sorted.sort((a, b) => {
           const ca = b.album_count || 0;
           const cb = a.album_count || 0;
-          if (ca !== cb) return ca - cb; // 专辑数降序
-          // 同数量按名字排序
+          if (ca !== cb) return ca - cb;
+
           const ka = App.utils.itemSortKey(a, 'sort_key', 'name');
           const kb = App.utils.itemSortKey(b, 'sort_key', 'name');
           return ka.localeCompare(kb);
@@ -221,8 +202,8 @@
         sorted.sort((a, b) => {
           const ca = b.track_count || 0;
           const cb = a.track_count || 0;
-          if (ca !== cb) return ca - cb; // 曲目数降序
-          // 同数量按名字排序
+          if (ca !== cb) return ca - cb;
+
           const ka = App.utils.itemSortKey(a, 'sort_key', 'name');
           const kb = App.utils.itemSortKey(b, 'sort_key', 'name');
           return ka.localeCompare(kb);
@@ -259,11 +240,11 @@
   }
 
   function _groupArtists(list) {
-    // A-Z 和 Z-A 使用原有的 groupByLetter
+
     if (sortMode === 'az' || sortMode === 'za') {
       return App.utils.groupByLetter(list, a => a.name || '');
     }
-    // 其他排序模式按对应字段分组
+
     const groups = [];
     let current = null;
     for (let i = 0; i < list.length; i++) {
@@ -278,18 +259,52 @@
     return groups;
   }
 
+  var _azCache = { src: null, list: [] };
+  function _azLetters() {
+    if (_azCache.src === _flatList) return _azCache.list;
+    var out = [];
+    for (var i = 0; i < _flatList.length; i++) {
+      if (_flatList[i].type === 'header') out.push(_flatList[i].letter);
+    }
+    _azCache = { src: _flatList, list: out };
+    return out;
+  }
+
+  function _openLetterIndex() {
+    var listEl = document.getElementById('artist-list');
+    var az = window.App && App.azIndex;
+    if (!listEl || !az) return;
+    var letters = _azLetters();
+    if (!az.isAlphabetical(letters)) return;
+    az.open({
+      host: listEl,
+      letters: letters,
+      onPick: function (letter) {
+        for (var i = 0; i < _flatList.length; i++) {
+          var item = _flatList[i];
+          if (item.type === 'header' && item.letter === letter) {
+
+            az.scrollTo(az.offsetOf(listEl) + i * ROW_HEIGHT);
+            return;
+          }
+        }
+      },
+    });
+  }
+
   function _renderList(container) {
     const listEl = document.getElementById('artist-list');
     if (!listEl) return;
+
+    if (window.App.azIndex) App.azIndex.reset();
 
     let list = filterStr ? allArtists.filter(a => App.utils.matchItem(filterStr, a, [
       { text: 'name', key: 'sort_key' },
     ])) : allArtists;
 
-    // ── 别名命中合并 ──
     if (filterStr) {
       if (_aliasMatchQuery !== filterStr) {
-        // 新查询：重置别名命中并发起防抖检索
+
         _aliasMatchNames = null;
         _aliasMatchQuery = filterStr;
         const seq = ++_aliasFetchSeq;
@@ -300,11 +315,11 @@
           fetch(window.__coverBase + '/artist-alias-search/' + encodeURIComponent(q))
             .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
             .then(function (names) {
-              if (seq !== _aliasFetchSeq) return;  // 输入已变化，丢弃陈旧结果
+              if (seq !== _aliasFetchSeq) return;
               _aliasMatchNames = new Set((names || []).map(function (n) { return String(n).toLowerCase(); }));
-              if (filterStr === q) _renderList(container);  // 仍在同一查询：并入重渲染
+              if (filterStr === q) _renderList(container);
             })
-            .catch(function () { /* 别名服务不可用：仅本名搜索 */ });
+            .catch(function () {  });
         }, 250);
       }
       if (_aliasMatchNames && _aliasMatchNames.size) {
@@ -316,14 +331,13 @@
         });
       }
     } else {
-      // 清空搜索：复位别名状态
+
       _aliasMatchNames = null;
       _aliasMatchQuery = '';
       _aliasFetchSeq++;
       if (_aliasFetchTimer) { clearTimeout(_aliasFetchTimer); _aliasFetchTimer = null; }
     }
 
-    // 应用排序
     list = _sortArtists(list);
 
     const countEl = document.getElementById('artist-count');
@@ -343,10 +357,8 @@
       return;
     }
 
-    // 根据排序模式生成分组
     const groups = filterStr ? [{ letter: '', items: list }] : _groupArtists(list);
 
-    // ── 扁平化为虚拟列表的渲染数据 ──
     _flatList = [];
     groups.forEach(group => {
       if (!filterStr) {
@@ -357,17 +369,10 @@
       });
     });
 
-    // ── 销毁旧实例，清空容器 ──
-    // 复用策略与 music 页一致：优先 setItems 复用节点池，避免搜索/排序时
-    // 反复重建 spacer/content 并丢弃约 60 个已建节点。
-    // ⚠️ 必须校验 container 身份：离开页面再回来时列表元素是新的，
-    // 旧实例挂在已脱离文档的节点上，直接 setItems 会让列表渲染到旧容器里
-    // （表现为新列表空白 / content 层缺失）。
     const canReuse = _vl && _vl.container === listEl;
     if (!canReuse && _vl) { _vl.destroy(); _vl = null; }
     if (!canReuse) listEl.innerHTML = '';
 
-    // 重置滚动位置（与原实现一致：换数据即回到顶部）
     const scRoll = document.getElementById('content-pane');
     if (scRoll) scRoll.scrollTop = 0;
 
@@ -376,7 +381,6 @@
       return;
     }
 
-    // ── 创建虚拟列表 ──
     _vl = new window.VirtualList({
       container: listEl,
       scrollContainer: document.getElementById('content-pane'),
@@ -391,6 +395,12 @@
         if (item.type === 'header') {
           el.className = 'az-section-header vl-item';
           el.innerHTML = '<span class="az-section-letter">' + item.letter + '</span>';
+          if (window.App.azIndex && App.azIndex.isAlphabetical(_azLetters())) {
+            el.classList.add('az-header-action');
+            el.onclick = _openLetterIndex;
+          } else {
+            el.onclick = null;
+          }
         } else {
           const artist = item.artist;
           el.className = 'artist-row vl-item';
@@ -398,7 +408,6 @@
           const name = artist.name || '';
           const bg = App.utils.hashColor(name);
 
-          // 头像先落纯色 + 首字母占位，在线写真探测成功后再替换
           el.innerHTML =
             '<div class="artist-avatar" data-artist="' + App.utils.esc(name) + '" style="background:' + bg + ';color:#fff;">' +
               '<span style="font-size:20px;font-weight:700;color:#fff;">' + App.utils.initial(name) + '</span>' +
@@ -415,15 +424,15 @@
           if (url && avEl) {
             const state = _avatarProbeState(name, url);
             if (state === 'ok') {
-              // 已确认在线有图：直接贴图，跳过一次 Image 探测往返
+
               _applyAvatar(avEl, name, url);
             } else if (state === 'miss') {
-              // 已确认无图：保持纯色 + 首字母，不再发起探测
+
             } else {
               const probe = new Image();
               probe.onload = function () {
                 _avatarProbeCache.set(name, 'ok');
-                // 行可能已被回收给别的艺术家，只有仍是同一人才替换
+
                 if (avEl.dataset.artist !== name) return;
                 _applyAvatar(avEl, name, url);
               };
@@ -438,13 +447,12 @@
     });
   }
 
-  // 艺人详情页状态
-  let _allArtistAlbums = [];  // 当前艺人所有专辑（含 tracks）
-  let _allArtistTracks = [];  // 当前艺人全部曲目（含 tracks）
-  let _currentArtistName = '';  // 当前艺人名（供专辑点击跳转使用）
+  let _allArtistAlbums = [];
+  let _allArtistTracks = [];
+  let _currentArtistName = '';
 
   function _renderDetail(container, artist) {
-    // 保存列表滚动位置，以便返回时恢复
+
     App.scrollMemory.save('artists');
     container.innerHTML = `
       <div class="detail-header">
@@ -486,21 +494,18 @@
       </div>
     `;
 
-    // 对动态插入的 DOM 应用 i18n 翻译
     if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(container);
 
     const blurEl = document.getElementById('detail-cover-blur');
     const mainEl = document.getElementById('detail-avatar');
     const headerEl = container.querySelector('.detail-header');
 
-    // 占位：纯色 + 首字母（在线头像加载前/失败后的干净状态，不使用专辑封面）
     const placeholderColor = App.utils.hashColor(artist.name);
     const initial = App.utils.initial(artist.name);
     blurEl.style.background = placeholderColor;
     mainEl.style.background = placeholderColor;
     mainEl.innerHTML = `<span style="font-size:48px; color:#fff; font-weight:700;">${initial}</span>`;
 
-    // 从前端 allTracks 缓存过滤艺术家曲目
     const allTracks = (App.state && App.state.allTracks) ? App.state.allTracks : [];
     const tracks = allTracks.filter(function (t) {
       var names = t.artists || [t.artist || App.i18n.t('common.unknownArtist')];
@@ -512,10 +517,9 @@
       if (da !== db) return da - db;
       return (a.track_number || 0) - (b.track_number || 0);
     });
-    _allArtistTracks = tracks;  // 供下方歌曲预览使用（模块级，跨函数可见）
-    _currentArtistName = artist.name;  // 供专辑点击跳转使用
+    _allArtistTracks = tracks;
+    _currentArtistName = artist.name;
 
-    // ── 按专辑分组 ──
     var albumMap = {};
     var albumOrder = [];
     for (var i = 0; i < tracks.length; i++) {
@@ -539,23 +543,18 @@
       };
     });
 
-    // ── 渲染：pivot 两页（歌曲 / 专辑）──
     _renderSongsPanel();
     _renderAlbumsPanel();
     _setupPivot();
 
-    // ── 播放全部 ──
     document.getElementById('btn-play-artist').addEventListener('click', function () {
       App.backend.play_from_list(JSON.stringify(tracks), 0);
     });
 
-    // ── Apple Music 式横幅头图（hero）──
-    // 只在拿到真正的横版艺人图（/artist-banner/，TheAudioDB Fanart 1280x720）时触发；
-    // 方形头像绝不放大铺横幅（居中裁切会切掉头部/人脸），保持原紧凑头部。
     var heroApplied = false;
     var applyHero = function (url) {
       if (heroApplied) {
-        // 已是 hero：新的横版源到达时原地升级替换背景
+
         if (!url) return;
         var imgEl = headerEl.querySelector('.detail-hero-img');
         if (imgEl) imgEl.style.backgroundImage = 'url(' + url + ')';
@@ -565,7 +564,7 @@
       headerEl.classList.add('hero');
       var heroImg = document.createElement('div');
       heroImg.className = 'detail-hero-img';
-      heroImg.style.background = placeholderColor; // 加载期兜底底色
+      heroImg.style.background = placeholderColor;
       if (url) heroImg.style.backgroundImage = 'url(' + url + ')';
       headerEl.insertBefore(heroImg, headerEl.firstChild);
     };
@@ -575,19 +574,14 @@
       ? window.__coverBase + '/artist-banner/' + encodeURIComponent(artist.name)
       : null;
 
-    // ── 主色提取（别名 chips 晕染用）：从横版图/头像提取主色写入 --artist-rgb ──
-    // crossOrigin='anonymous' 必须在 src 之前设置，否则 canvas 被污染、
-    // extractDominantColor 的 getImageData 抛 SecurityError（cover-server 已带 ACAO:*）。
     var applyArtistColor = function (imgEl) {
       if (!imgEl || !App.utils.extractDominantColor) return;
       try {
         var rgb = App.utils.extractDominantColor(imgEl);
         if (rgb) headerEl.style.setProperty('--artist-rgb', rgb.join(', '));
-      } catch (e) { /* 提取失败：chips 用中性兜底色 */ }
+      } catch (e) {  }
     };
 
-    // 横版源探测（本地缓存命中时几乎即时；未缓存走 TheAudioDB 抓取）。
-    // 加横纵比保险：宽必须明显大于高，防止异常方图混入导致裁人。
     if (bUrl) {
       var bProbe = new Image();
       bProbe.crossOrigin = 'anonymous';
@@ -595,11 +589,10 @@
         if (bProbe.naturalWidth >= bProbe.naturalHeight) applyHero(bUrl);
         applyArtistColor(bProbe);
       };
-      bProbe.onerror = function () { /* 无横版图：保持方形头部 */ };
+      bProbe.onerror = function () {  };
       bProbe.src = bUrl;
     }
 
-    // 头像探测：仅用于原方形头部（环境光晕 + 圆形头像），不参与 hero
     if (aUrl) {
       var probe = new Image();
       probe.crossOrigin = 'anonymous';
@@ -619,12 +612,11 @@
         }
       };
       probe.onerror = function () {
-        // 抓取失败：保留纯色 + 首字母占位，不使用任何专辑封面
+
       };
       probe.src = aUrl;
     }
 
-    // ── 艺人别名（显示在头部；数据源 MusicBrainz/网易云，cover-server 落盘缓存）──
     var aliasEl = document.getElementById('detail-alias');
     if (aliasEl && artist.name && typeof window.__coverBase === 'string') {
       fetch(window.__coverBase + '/artist-aliases/' + encodeURIComponent(artist.name))
@@ -637,11 +629,9 @@
           }).join('');
           aliasEl.hidden = false;
         })
-        .catch(function () { /* 无别名：保持隐藏 */ });
+        .catch(function () {  });
     }
 
-    // ── 艺人简介（在线获取；cover-server 落盘缓存，百度百科 → 网易云 → TheAudioDB → Wikipedia）──
-    // 页签默认隐藏，抓到简介才显示；无简介/失败则保持隐藏，不打扰界面
     var aboutTab = document.getElementById('artist-about-tab');
     var bioEl = document.getElementById('artist-bio-text');
     if (bioEl && artist.name && typeof window.__coverBase === 'string') {
@@ -652,16 +642,15 @@
         })
         .then(function (text) {
           if (!text || !text.trim()) throw new Error('empty');
-          // 页面可能已被切换/重渲染，只在元素仍连接时填充
+
           if (!bioEl.isConnected) return;
           bioEl.textContent = text.trim();
           if (aboutTab) aboutTab.style.display = '';
         })
-        .catch(function () { /* 无简介：页签保持隐藏 */ });
+        .catch(function () {  });
     }
   }
 
-  // ── Pivot（复用正在播放页面的 .np-pivot pill 样式）──
   function _setupPivot() {
     var tabs = document.querySelectorAll('.artist-pivot .np-pivot-tab');
     var panels = document.querySelectorAll('.artist-detail-body .artist-panel');
@@ -682,7 +671,6 @@
     });
   }
 
-  // 歌曲页签：该艺人全部曲目（复用 .track-list / trackRow 样式）
   function _renderSongsPanel() {
     var listEl = document.getElementById('artist-songs-list');
     if (!listEl) return;
@@ -705,7 +693,6 @@
     listEl.appendChild(frag);
   }
 
-  // 专辑页签：该艺人专辑网格（复用 .album-grid / .album-card 样式）
   function _renderAlbumsPanel() {
     var gridEl = document.getElementById('artist-album-grid');
     if (!gridEl) return;
@@ -749,7 +736,7 @@
   }
 
   page.updatePlayState = function () {
-    // 歌曲页签的曲目列表更新播放态
+
     var list = document.getElementById('artist-songs-list');
     if (!list) return;
     var currentId = App.state.currentTrack ? App.state.currentTrack.id : null;

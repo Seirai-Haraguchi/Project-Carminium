@@ -4,29 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Carminium — 正在播放</title>
-  <!--
-    浮动窗口 = 「正在播放」面板的独立小窗版本。
 
-    ▸ 设计语言：结构、类名、度量与 index.html 的 .now-playing-pane 完全一致
-      （.np-pivot / .np-cover / .np-info / .np-progress-* / .np-main-controls /
-        .np-secondary-controls / .np-volume / .np-queue-* / .np-lyrics-*）。
-      样式在 floating.css 中，数值摘自 style.css，改一边记得同步另一边。
 
-    ▸ 为什么不用 style.css + i18n.js + pages/utils.js + bridge.js：
-      那 4 个文件合计约 600KB 源码（style.css 300KB 的 CSSOM、i18n.js 209KB
-      的字典、utils.js 的全量页面工具、bridge.js 的 SMTC 心跳），对这个小窗
-      几乎全是无用开销。这里改为按需子集：
-        floating.css        自包含样式（约 30KB）
-        floating_i18n.js    35 键 × 5 语言（由 scripts/gen_floating_i18n.js 生成）
-        pages/floating.js   自包含逻辑（不依赖 App.utils，不建 SMTC 心跳）
-      事件也在主进程按白名单过滤（见 electron/bridge.js 的 FLOATING_EVENTS）。
-  -->
   <link rel="stylesheet" href="floating.css">
 </head>
 <body>
   <div class="floating-root">
 
-    <!-- 顶栏：左侧拖拽区 + 右侧窗口按钮（M3E 图标按钮） -->
     <div class="floating-titlebar">
       <span class="floating-titlebar-label" data-i18n="common.nowPlaying">正在播放</span>
       <button class="icon-btn" id="btn-dock" data-i18n-title="floating.dock" title="还原到侧边栏">
@@ -40,14 +24,12 @@
       </button>
     </div>
 
-    <!-- 标签页（M3 choice chips） -->
     <div class="np-pivot" role="tablist">
       <button class="np-pivot-tab active" data-tab="info" role="tab" aria-selected="true" data-i18n="np.tab.info">音乐信息</button>
       <button class="np-pivot-tab" data-tab="queue" role="tab" aria-selected="false" data-i18n="np.tab.queue">接下来播放</button>
       <button class="np-pivot-tab" data-tab="lyrics" role="tab" aria-selected="false" data-i18n="np.tab.lyrics">歌词</button>
     </div>
 
-    <!-- 折叠曲目条（非「音乐信息」标签页时显示） -->
     <div class="np-mini-info" id="np-mini-info" style="display:none;">
       <div class="np-mini-cover" id="np-mini-cover">
         <span class="material-symbols-rounded" id="np-mini-cover-icon">music_note</span>
@@ -59,10 +41,8 @@
       </div>
     </div>
 
-    <!-- 面板 -->
     <div class="np-panels">
 
-      <!-- 音乐信息 -->
       <div class="np-panel np-panel--info active" data-panel="info">
         <div class="np-cover-wrap">
           <div class="np-cover" id="np-cover">
@@ -95,12 +75,10 @@
         </div>
       </div>
 
-      <!-- 接下来播放（懒渲染，由 JS 填充） -->
       <div class="np-panel np-panel--queue" data-panel="queue">
         <div class="np-queue-list" id="np-queue-list"></div>
       </div>
 
-      <!-- 歌词（懒渲染，由 JS 填充） -->
       <div class="np-panel np-panel--lyrics" data-panel="lyrics">
         <div class="np-lyrics-wrap" id="np-lyrics-wrap">
           <div class="np-lyrics" id="np-lyrics">
@@ -113,7 +91,6 @@
       </div>
     </div>
 
-    <!-- 主控制 -->
     <div class="np-main-controls">
       <button class="np-control-pill" id="btn-prev" data-i18n-aria-label="np.prev" data-i18n-title="np.prev" aria-label="上一首" title="上一首">
         <span class="material-symbols-rounded">skip_previous</span>
@@ -126,7 +103,6 @@
       </button>
     </div>
 
-    <!-- 辅助控制（M3E 分段组） -->
     <div class="np-secondary-controls">
       <button class="np-secondary-btn" id="btn-shuffle" data-i18n-aria-label="np.shuffle" data-i18n-title="np.shuffle" aria-label="随机" title="随机播放">
         <span class="material-symbols-rounded">shuffle</span>
@@ -142,7 +118,6 @@
       </button>
     </div>
 
-    <!-- 音量 -->
     <div class="np-volume">
       <button class="icon-btn volume-icon-btn" id="btn-mute" data-i18n-aria-label="np.mute" data-i18n-title="np.mute" aria-label="静音" title="静音">
         <span class="material-symbols-rounded" id="vol-icon">volume_up</span>

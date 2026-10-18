@@ -1,6 +1,3 @@
-/**
- * Carminium — 喜爱的音乐页
- */
 (function () {
   'use strict';
 
@@ -36,7 +33,6 @@
 
     const searchInput = document.getElementById('liked-search');
     searchInput.value = searchText;
-    // 防抖：每敲一个字符都会全量过滤 + 重建列表 DOM。
     var _searchDebounceTimer = null;
     searchInput.addEventListener('input', function (e) {
       searchText = e.target.value;
@@ -111,7 +107,6 @@
     });
   };
 
-  // 喜爱列表变化时刷新（若当前在喜爱页）
   page.onLikedTracksChanged = function (jsonStr) {
     try {
       allLiked = JSON.parse(jsonStr);

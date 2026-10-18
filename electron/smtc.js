@@ -1,12 +1,3 @@
-/**
- * Carminium — Windows System Media Transport Controls 集成
- *
- * Electron 版本中，SMTC 由 Chromium 内置的 navigator.mediaSession API 提供。
- * 本模块在主进程中：
- * 1. 监听 Player 事件，通过 IPC 转发到渲染进程更新 navigator.mediaSession
- * 2. 接收渲染进程的媒体按钮事件，转发到 Player
- * 3. 支持控制中心歌词模式（将当前歌词行作为标题显示）
- */
 'use strict';
 
 class SmtcController {
@@ -16,7 +7,6 @@ class SmtcController {
     this._settings = settings;
     this._mainWindow = null;
 
-    // 控制中心歌词状态
     this._lyricsEntries = [];
     this._currentLyricIdx = -1;
     this._smtcLyricsOn = false;
@@ -24,7 +14,6 @@ class SmtcController {
       this._smtcLyricsOn = !!settings.get('smtc_lyrics', false);
     }
 
-    // ── Player → SMTC 信号连接 ──
     player.on('track_changed', (trackJson) => this._onTrackChanged(trackJson));
     player.on('state_changed', (state) => this._onStateChanged(state));
     player.on('position_changed', (pos) => this._onPositionChanged(pos));
@@ -37,7 +26,6 @@ class SmtcController {
   setMainWindow(win) {
     this._mainWindow = win;
     if (win) {
-      // 窗口加载完成后推送初始 SMTC 状态
       if (win.webContents.isLoading()) {
         win.webContents.once('did-finish-load', () => this._sendInitialState());
       } else {
@@ -46,15 +34,11 @@ class SmtcController {
     }
   }
 
-  /**
-   * 向渲染进程推送当前播放状态（用于窗口加载后的初始化）
-   */
   async _sendInitialState() {
     const track = this._player.currentTrack;
     if (track) {
       await this._updateTrack(null);
     }
-    // 推送当前播放状态
     this._onStateChanged(this._player.state);
     this._onPositionChanged(this._player.position);
     this._onDurationChanged(this._player.duration);
@@ -63,7 +47,6 @@ class SmtcController {
   }
 
   setBridge(bridge) {
-    // Bridge 的 settings_changed 事件
     bridge.on('settings_changed', (settingsJson) => {
       this._onSettingsChanged(settingsJson);
     });
@@ -76,7 +59,6 @@ class SmtcController {
     }
   }
 
-  // ── Settings ─────────────────────────────────────────────────────────────
 
   _onSettingsChanged(settingsJson) {
     let data;
@@ -92,14 +74,12 @@ class SmtcController {
     }
   }
 
-  // ── 歌词更新处理 ─────────────────────────────────────────────────────────
 
   _onLyricsChanged(_trackId) {
     this._currentLyricIdx = -1;
     this._updateTrack(null);
   }
 
-  // ── Player 事件处理 ──────────────────────────────────────────────────────
 
   _onTrackChanged(trackJson) {
     this._updateTrack(trackJson);
@@ -116,7 +96,6 @@ class SmtcController {
 
   _onPositionChanged(pos) {
     this._sendToRenderer('smtc:position', { position: pos, duration: this._player.duration });
-    // 控制中心歌词模式：按播放位置更新标题
     this._updateLyricTitle(pos);
   }
 
@@ -137,7 +116,6 @@ class SmtcController {
     this._sendToRenderer('smtc:repeat', repeatMap[mode] || 'none');
   }
 
-  // ── 封面数据 ─────────────────────────────────────────────────────────────
 
   async _loadCoverDataUrl(track) {
     if (!this._library) return null;
@@ -164,7 +142,6 @@ class SmtcController {
     return null;
   }
 
-  // ── 曲目更新 ─────────────────────────────────────────────────────────────
 
   async _updateTrack(_trackJson) {
     const track = this._player.currentTrack;
@@ -174,18 +151,13 @@ class SmtcController {
     const artist = String(track.artist || '未知艺术家');
     const album = String(track.album || '');
 
-    // 获取封面（歌词模式下同样需要展示封面）
     const artwork = await this._loadCoverDataUrl(track);
 
-    // 控制中心歌词模式
     if (this._smtcLyricsOn) {
       const lrcText = String(track.lyrics || '');
       this._lyricsEntries = parseLrcOriginalLines(lrcText);
       this._currentLyricIdx = -1;
 
-      // 歌手位置固定显示「歌名 - 歌手」；
-      // 歌名位置由下方 _updateLyricTitle 在有歌词时填入当前歌词行，
-      // 无歌词时维持歌名（即本处 title）。
       this._sendToRenderer('smtc:metadata', {
         title,
         artist: `${title} - ${artist}`,
@@ -210,14 +182,12 @@ class SmtcController {
       });
     }
 
-    // 更新时间轴
     this._onDurationChanged(this._player.duration);
     this._onPositionChanged(this._player.position);
     this._onShuffleChanged(this._player.shuffle);
     this._onRepeatChanged(this._player.repeat);
   }
 
-  // ── 控制中心歌词：按播放位置更新标题 ───────────────────────────────────
 
   _updateLyricTitle(positionMs) {
     if (!this._smtcLyricsOn || this._lyricsEntries.length === 0) return;
@@ -241,9 +211,7 @@ class SmtcController {
   }
 }
 
-// ── LRC 解析（与前端 parseLRC 分组逻辑一致）─────────────────────────────────
 
-// 小数部分（.xx / .xxx）可选；缺失时按 .000 处理
 const LRC_TIME_REGEX = /\[(\d{2}):(\d{2})(?:[.:](\d{2,3}))?\]/g;
 const WORD_TIME_REGEX = /<\d{2}:\d{2}[.:]\d{2,3}>/g;
 
@@ -279,7 +247,6 @@ function parseLrcOriginalLines(lrcText) {
   }
   entries.sort((a, b) => a[0] - b[0]);
 
-  // 同时间戳分组（≤30ms），只取每组的第一个非空文本（原文）
   const result = [];
   let k = 0;
   while (k < entries.length) {

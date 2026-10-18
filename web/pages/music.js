@@ -1,6 +1,3 @@
-/**
- * Carminium — 音乐页（所有曲目）
- */
 (function () {
   'use strict';
 
@@ -12,25 +9,22 @@
   let allTracks = [];
   let filterStr = '';
   let searchText = '';
-  let sortMode = 'az'; // 'az', 'za', 'artist', 'album', 'year'
+  let sortMode = 'az';
 
-  // ── 排除筛选状态 ──
-  let _excludedArtists = new Set();       // 艺术家名
-  let _excludedAlbums  = new Set();       // key: "album|||album_artist"
-  let _excludedServers = new Set();       // server_id (string)
-  let _excludedUsernames = new Set();     // subsonic username
-  let _excludedPlaylists = new Set();     // playlist_id (string)
-  let _playlistTrackMap = null;           // { playlistId: Set(trackId) } 懒加载
-  let _filterStateLoaded = false;          // 标记是否已从设置加载过筛选状态
+  let _excludedArtists = new Set();
+  let _excludedAlbums  = new Set();
+  let _excludedServers = new Set();
+  let _excludedUsernames = new Set();
+  let _excludedPlaylists = new Set();
+  let _playlistTrackMap = null;
+  let _filterStateLoaded = false;
 
-  // ── 虚拟滚动实例 & 扁平化渲染数据 ──
   let _vl = null;
   let _flatList = [];
   let _renderedTracks = [];
   const ROW_HEIGHT = 56;
   const HEADER_HEIGHT = 32;
 
-  // 排序选项配置
   const SORT_OPTIONS = [
     { key: 'az', label: 'A-Z', icon: 'sort_by_alpha' },
     { key: 'za', label: 'Z-A', icon: 'sort_by_alpha' },
@@ -39,7 +33,6 @@
     { key: 'year', labelKey: 'music.sortYear', icon: 'calendar_today' },
   ];
 
-  // 筛选分类配置
   const FILTER_CATEGORIES = [
     { key: 'artist',   labelKey: 'music.excludeArtist',   icon: 'person' },
     { key: 'album',    labelKey: 'music.excludeAlbum',    icon: 'album' },
@@ -52,7 +45,6 @@
     allTracks = (App.state && App.state.allTracks) ? App.state.allTracks : [];
   }
 
-  // ── 筛选状态持久化 ──
   function _saveFilterState() {
     var state = {
       artists: Array.from(_excludedArtists),
@@ -63,7 +55,7 @@
     };
     try {
       App.utils.call('save_settings', JSON.stringify({ music_filter_state: state }));
-    } catch (e) { /* ignore */ }
+    } catch (e) {  }
   }
 
   function _loadFilterState() {
@@ -79,11 +71,10 @@
         if (raw.servers) _excludedServers = new Set(raw.servers);
         if (raw.usernames) _excludedUsernames = new Set(raw.usernames);
         if (raw.playlists) _excludedPlaylists = new Set(raw.playlists);
-      } catch (e) { /* ignore */ }
-    }).catch(function () { /* ignore */ });
+      } catch (e) {  }
+    }).catch(function () {  });
   }
 
-  // ── 分类数据获取 ──
   function _getArtistList() {
     const set = new Set();
     allTracks.forEach(t => {
@@ -104,9 +95,16 @@
     return Array.from(map.values()).sort((a, b) => a.album.localeCompare(b.album));
   }
 
+  let _serverListCache = { src: null, list: [] };
   function _getServerList() {
     const servers = (App.state && App.state.allSubsonicServers) ? App.state.allSubsonicServers : [];
-    return servers.map(s => ({ id: String(s.id), name: s.name, username: s.username || '' }));
+    if (_serverListCache.src !== servers) {
+      _serverListCache = {
+        src: servers,
+        list: servers.map(s => ({ id: String(s.id), name: s.name, username: s.username || '' })),
+      };
+    }
+    return _serverListCache.list;
   }
 
   function _getUsernameList() {
@@ -121,7 +119,6 @@
     return playlists.map(p => ({ id: String(p.id), name: p.name, track_count: p.track_count || 0 }));
   }
 
-  // ── 懒加载歌单曲目映射 ──
   function _ensurePlaylistTrackMap() {
     if (_playlistTrackMap) return Promise.resolve(_playlistTrackMap);
     return App.utils.call('get_all_playlist_track_ids').then(function (res) {
@@ -134,7 +131,6 @@
     });
   }
 
-  // ── 判断曲目是否被排除 ──
   function _isExcluded(track) {
     if (_excludedArtists.size > 0 && track.artist) {
       const artists = track.artists || [track.artist];
@@ -170,7 +166,20 @@
            _excludedPlaylists.size > 0;
   }
 
-  // ── 页面渲染 ──
+  function _clearAllExclusions() {
+    _excludedArtists.clear();
+    _excludedAlbums.clear();
+    _excludedServers.clear();
+    _excludedUsernames.clear();
+    _excludedPlaylists.clear();
+    _saveFilterState();
+  }
+
+  function _updateFilterBtnState() {
+    const btn = document.getElementById('btn-music-filter');
+    if (btn) btn.classList.toggle('active', _hasExclusions());
+  }
+
   page.render = function (container) {
     container.innerHTML = `
       <div class="page-sticky-header">
@@ -215,9 +224,7 @@
 
     const searchInput = document.getElementById('music-search');
     searchInput.value = searchText;
-    // 防抖：每敲一个字符都会触发一次「过滤全库 + 排序 + 重建扁平列表」，
-    // 1 万首规模下单个字符约 15-40ms，连续输入时明显卡顿。
-    // 180ms 静默后才真正渲染，交互上与浏览器原生搜索框的体感一致。
+
     var _searchDebounceTimer = null;
     searchInput.addEventListener('input', function (e) {
       searchText = e.target.value;
@@ -245,7 +252,6 @@
     _renderFilterChips();
     _renderList();
 
-    // 异步加载持久化筛选状态，加载后重新渲染
     _loadFilterState().then(function () {
       _updateCount();
       _renderFilterChips();
@@ -253,12 +259,8 @@
     });
   };
 
-  // ════════════════════════════════════════════════════════════════
-  //  筛选 Dialog
-  // ════════════════════════════════════════════════════════════════
-
   function _openFilterDialog() {
-    // 先确保歌单数据加载
+
     _ensurePlaylistTrackMap().then(function () {
       _buildFilterDialog();
     }).catch(function () {
@@ -267,14 +269,13 @@
   }
 
   function _buildFilterDialog() {
-    // 移除已有的
+
     _closeFilterDialog();
 
     let activeCategory = 'artist';
     let dialogSearchText = '';
-    let _lastCheckedIdx = -1; // shift 多选：上次勾选的索引
+    let _lastCheckedIdx = -1;
 
-    // ── 创建 overlay ──
     const overlay = document.createElement('div');
     overlay.className = 'mf-dialog-overlay';
     overlay.id = 'mf-dialog-overlay';
@@ -321,13 +322,12 @@
     document.body.appendChild(overlay);
     requestAnimationFrame(function () { overlay.classList.add('open'); });
 
-    // ── 渲染分类内容 ──
     function renderContent() {
       const contentEl = overlay.querySelector('#mf-category-content');
       const items = _getCategoryItems(activeCategory);
       const q = dialogSearchText.trim().toLowerCase();
 
-      const filtered = q ? items.filter(item => item.label.toLowerCase().includes(q)) : items;
+      const filtered = q ? items.filter(item => (item.label + ' ' + (item.sub || '')).toLowerCase().includes(q)) : items;
 
       if (filtered.length === 0) {
         contentEl.innerHTML = `
@@ -351,7 +351,6 @@
         `;
       }).join('');
 
-      // 绑定 checkbox 事件（支持 shift 多选）
       const checkboxes = Array.from(contentEl.querySelectorAll('.mf-check-item input[type="checkbox"]'));
       let _shiftActive = false;
 
@@ -359,7 +358,7 @@
         cb.addEventListener('click', function (e) {
           if (e.shiftKey && _lastCheckedIdx >= 0 && _lastCheckedIdx !== idx) {
             _shiftActive = true;
-            // cb.checked 此时已是 toggle 后的新状态
+
             var targetChecked = cb.checked;
             var start = Math.min(_lastCheckedIdx, idx);
             var end = Math.max(_lastCheckedIdx, idx);
@@ -383,7 +382,7 @@
         cb.addEventListener('change', function () {
           if (_shiftActive) {
             _shiftActive = false;
-            return; // shift 范围已在 click 中处理
+            return;
           }
           var label = this.closest('.mf-check-item');
           if (this.checked) {
@@ -416,7 +415,6 @@
       });
     }
 
-    // ── 分类切换 ──
     overlay.querySelectorAll('.mf-category-tab').forEach(tab => {
       tab.addEventListener('click', function () {
         activeCategory = this.dataset.category;
@@ -430,14 +428,12 @@
       });
     });
 
-    // ── 搜索 ──
     overlay.querySelector('#mf-dialog-search-input').addEventListener('input', function (e) {
       dialogSearchText = e.target.value;
       _lastCheckedIdx = -1;
       renderContent();
     });
 
-    // 统一的关闭+应用函数
     function _applyAndClose() {
       _closeFilterDialog();
       _saveFilterState();
@@ -447,39 +443,27 @@
       document.removeEventListener('keydown', onKeydown);
     }
 
-    // ── 关闭按钮 ──
     overlay.querySelector('#mf-dialog-close').addEventListener('click', _applyAndClose);
 
-    // ── 清除全部 ──
     overlay.querySelector('#mf-dialog-clear').addEventListener('click', function () {
-      _excludedArtists.clear();
-      _excludedAlbums.clear();
-      _excludedServers.clear();
-      _excludedUsernames.clear();
-      _excludedPlaylists.clear();
-      _saveFilterState();
+      _clearAllExclusions();
       renderContent();
       _updateTabBadges();
     });
 
-    // ── 应用按钮 ──
     overlay.querySelector('#mf-dialog-apply').addEventListener('click', _applyAndClose);
 
-    // ── 点击 overlay 背景关闭 ──
     overlay.addEventListener('click', function (e) {
       if (e.target === overlay) _applyAndClose();
     });
 
-    // ── ESC 关闭 ──
     function onKeydown(e) {
       if (e.key === 'Escape') _applyAndClose();
     }
     document.addEventListener('keydown', onKeydown);
 
-    // 初次渲染
     renderContent();
 
-    // 聚焦搜索框
     setTimeout(function () {
       const si = overlay.querySelector('#mf-dialog-search-input');
       if (si) si.focus();
@@ -494,7 +478,6 @@
     }
   }
 
-  // ── 获取分类下所有可选项 ──
   function _getCategoryItems(category) {
     switch (category) {
       case 'artist': {
@@ -531,7 +514,6 @@
     return [];
   }
 
-  // ── 判断项是否被排除 ──
   function _isItemExcluded(category, value) {
     switch (category) {
       case 'artist':   return _excludedArtists.has(value);
@@ -543,7 +525,6 @@
     return false;
   }
 
-  // ── 设置项排除状态 ──
   function _setItemExcluded(category, value, excluded) {
     const set = _getCategorySet(category);
     if (excluded) set.add(value);
@@ -565,9 +546,9 @@
     return _getCategorySet(category).size;
   }
 
-  // ── 渲染筛选 chips ──
   function _renderFilterChips() {
     const container = document.getElementById('music-filter-chips');
+    _updateFilterBtnState();
     if (!container) return;
 
     if (!_hasExclusions()) {
@@ -598,10 +579,8 @@
       chips.push({ type: 'playlist', value: pid, label: pl ? pl.name : pid, icon: 'playlist_play' });
     });
 
-    container.style.display = 'flex';
-
     if (chips.length > 3) {
-      // 超过3个：显示前3个 chip + 汇总文字
+
       const visible = chips.slice(0, 3);
       container.innerHTML = visible.map(chip => `
         <div class="chip music-filter-chip" data-type="${chip.type}" data-value="${App.utils.esc(chip.value)}">
@@ -650,7 +629,6 @@
     }
   }
 
-  // ── 排序选择器 ──
   function _setupSortSelect() {
     const select = document.getElementById('sort-select');
     if (!select) return;
@@ -716,9 +694,6 @@
     });
   };
 
-  // Release the virtual-list wrapper objects before a library refresh. The
-  // shared track array is repopulated by App.refreshLibraryCache(), and the
-  // visible page is rendered again after that completes.
   page.releaseLibraryViewMemory = function () {
     if (_vl) { _vl.destroy(); _vl = null; }
     if (window.CoverCache && window.CoverCache.clearViewport) {
@@ -728,9 +703,25 @@
     _renderedTracks = [];
   };
 
+  page.onPlaylistsChanged = function () {
+    _playlistTrackMap = null;
+    if (_hasExclusions()) {
+      _updateCount();
+      _renderFilterChips();
+      _renderList();
+    }
+  };
+
+  page.onServersChanged = function () {
+    if (_hasExclusions()) {
+      _updateCount();
+      _renderFilterChips();
+      _renderList();
+    }
+  };
+
   function _sortTracks(list) {
-    // Callers already own a filtered/copy array. Sorting it in place avoids
-    // retaining a second full reference array for large libraries.
+
     const sorted = list;
     switch (sortMode) {
       case 'az':
@@ -777,6 +768,39 @@
     }
   }
 
+  let _azCache = { src: null, list: [] };
+  function _azLetters() {
+    if (_azCache.src === _flatList) return _azCache.list;
+    const out = [];
+    for (let i = 0; i < _flatList.length; i++) {
+      if (_flatList[i].type === 'header') out.push(_flatList[i].letter);
+    }
+    _azCache = { src: _flatList, list: out };
+    return out;
+  }
+
+  function _openLetterIndex() {
+    const ul = document.getElementById('music-list');
+    const az = window.App && App.azIndex;
+    if (!ul || !az) return;
+    const letters = _azLetters();
+    if (!az.isAlphabetical(letters)) return;
+    az.open({
+      host: ul,
+      letters: letters,
+      onPick: function (letter) {
+        for (let i = 0; i < _flatList.length; i++) {
+          const it = _flatList[i];
+          if (it.type === 'header' && it.letter === letter) {
+
+            az.scrollTo(az.offsetOf(ul) + i * ROW_HEIGHT);
+            return;
+          }
+        }
+      },
+    });
+  }
+
   function _groupTracks(list) {
     const groups = [];
     let current = null;
@@ -796,16 +820,15 @@
     const ul = document.getElementById('music-list');
     if (!ul) return;
 
-    // 1. 排除筛选
+    if (window.App.azIndex) App.azIndex.reset();
+
     let list = _hasExclusions() ? allTracks.filter(t => !_isExcluded(t)) : allTracks.slice();
 
-    // 2. 搜索词过滤（支持罗马音/拼音搜索）
     if (filterStr) {
       const q = filterStr;
       list = list.filter(t => App.utils.matchTrack(q, t));
     }
 
-    // 3. 排序
     list = _sortTracks(list);
 
     if (list.length === 0) {
@@ -813,17 +836,38 @@
       _flatList = [];
       _renderedTracks = [];
       ul.classList.remove('az-list');
-      ul.innerHTML = `
-        <div class="empty-state">
-          <span class="material-symbols-rounded empty-icon">music_off</span>
-          <h2 class="empty-title" data-i18n="common.noResults">无结果</h2>
-        </div>
-      `;
-      if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(ul);
+      if (_hasExclusions() && allTracks.length > 0) {
+
+        ul.innerHTML = `
+          <div class="empty-state">
+            <span class="material-symbols-rounded empty-icon">filter_alt</span>
+            <h2 class="empty-title" data-i18n="music.noFilterResults"></h2>
+            <button class="btn-text" id="music-empty-clear-filters" data-i18n="music.clearFilters"></button>
+          </div>
+        `;
+        if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(ul);
+        var clearBtn = ul.querySelector('#music-empty-clear-filters');
+        if (clearBtn) {
+          clearBtn.addEventListener('click', function () {
+            _clearAllExclusions();
+            _updateCount();
+            _renderFilterChips();
+            _renderList();
+          });
+        }
+      } else {
+        ul.innerHTML = `
+          <div class="empty-state">
+            <span class="material-symbols-rounded empty-icon">music_off</span>
+            <h2 class="empty-title" data-i18n="common.noResults">无结果</h2>
+          </div>
+        `;
+        if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(ul);
+      }
       return;
     }
 
-    const showGroup = !filterStr && !_hasExclusions();
+    const showGroup = !filterStr;
 
     _flatList = [];
     _renderedTracks = list;
@@ -842,27 +886,19 @@
     });
 
     if (_vl && _vl.container === ul) {
-      // ── 复用已有实例 ──
-      // 原实现每次都 destroy + new：VirtualList 构造会新建 spacer/content
-      // 两个容器、重算整份偏移表，并把对象池（约 60 个已建节点）全部丢弃。
-      // 搜索每敲一个字符就走一遍。改为 setItems 后节点池得以保留，
-      // 且 _recycleAll 会正确重置范围缓存、_computeHeights 重算偏移表。
+
       ul.classList.add('az-list');
 
-      // 重置滚动位置，避免新 VL 渲染顶部位移但视口仍在下方导致空白
-      // （与原实现一致：换数据即回到顶部）
       var scrollContainer = document.getElementById('content-pane');
       if (scrollContainer) scrollContainer.scrollTop = 0;
 
       _vl.setItems(_flatList);
     } else {
-      // 容器已被换掉（离开页面再回来、或列表为空时销毁过）：
-      // 旧实例挂在已脱离文档的节点上，必须先销毁再基于新容器重建。
+
       if (_vl) { _vl.destroy(); _vl = null; }
       ul.classList.add('az-list');
       ul.innerHTML = '';
 
-      // 重置滚动位置，避免新 VL 渲染顶部位移但视口仍在下方导致空白
       var scrollContainer = document.getElementById('content-pane');
       if (scrollContainer) scrollContainer.scrollTop = 0;
 
@@ -889,6 +925,13 @@
             el.className = 'az-section-header vl-item';
             el.innerHTML = '<span class="az-section-letter">' + item.letter + '</span>';
             el.removeAttribute('data-track-id');
+
+            if (window.App.azIndex && App.azIndex.isAlphabetical(_azLetters())) {
+              el.classList.add('az-header-action');
+              el.onclick = _openLetterIndex;
+            } else {
+              el.onclick = null;
+            }
           } else {
             const track = item.track;
             const displayNum = item.displayNum;
@@ -897,6 +940,7 @@
               App.backend.play_from_list(JSON.stringify(_renderedTracks), playIdx);
             }, true);
             el.className = 'vl-track-row-wrapper';
+            el.onclick = null;
             el.innerHTML = '';
             el.appendChild(li);
             el.dataset.trackId = track.id;

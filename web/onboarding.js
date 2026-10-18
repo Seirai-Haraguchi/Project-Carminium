@@ -1,21 +1,3 @@
-/**
- * Carminium — 新手引导（Onboarding）
- *
- * 完全复用主程序既有组件：settings-row / settings-group-header / toggle /
- * md-dropdown / btn-filled / btn-outlined / btn-text。
- * 渲染到 #page-container 内（与设置页相同），标题栏和窗口三大键始终可见。
- *
- *   1. 欢迎      — 应用介绍
- *   2. 语言      — 选择界面语言
- *   3. 媒体库    — 添加本地文件夹 / 流媒体库
- *   4. 个性化    — 主题与配色方案
- *   5. 音频      — 输出与音效设置
- *   6. 自动化    — 播放过渡与行为
- *   7. 开始使用  — 完成并进入主界面
- *
- * 完成后写入 onboarding_complete=true，不再显示。
- * 设置页可通过 App.onboarding.restart() 重新启动引导。
- */
 (function () {
   'use strict';
 
@@ -33,7 +15,6 @@
     });
   }
 
-  // ── 步骤定义 ──────────────────────────────────────────────────────────
   var STEPS = [
     { id: 'welcome',      icon: 'rocket_launch' },
     { id: 'language',     icon: 'translate' },
@@ -44,7 +25,6 @@
     { id: 'start',        icon: 'play_circle' },
   ];
 
-  // 设置行 leading icon（与设置页 ROW_ICONS 同源；引导页只用到其中一小部分）
   var ROW_ICONS = {
     theme: 'contrast',
     color_scheme: 'palette',
@@ -73,11 +53,6 @@
     '</div>';
   }
 
-  // 每种语言以原生文字 + 国旗 emoji 显示
-  // 一个中国原则：简体中文和繁体中文均使用中华人民共和国国旗 🇨🇳
-  // Windows 的 Segoe UI Emoji 不渲染国旗 emoji，故在 style.css 注册本地
-  // Noto Color Emoji 国旗子集（'Noto Color Emoji Flags'，unicode-range 触发式加载，
-  // 见 --ui-font 末尾），仅国旗区段 693KB，替代原远程全表（20MB+）
   var LANGUAGES = [
     { value: 'zh-CN', flag: '🇨🇳', native: '简体中文',    english: 'Simplified Chinese' },
     { value: 'zh-TW', flag: '🇨🇳', native: '繁體中文',    english: 'Traditional Chinese' },
@@ -96,15 +71,13 @@
     { value: 'system' }, { value: 'light' }, { value: 'dark' },
   ];
 
-  // ── 运行时状态 ─────────────────────────────────────────────────────────
-  var _container = null;   // #page-container
-  var _page = null;        // .onboarding-page inside container
+  var _container = null;
+  var _page = null;
   var _current = 0;
   var _settings = null;
   var _libraryCount = 0;
   var _isRestart = false;
 
-  // ── 入口：检查是否需要显示 ──────────────────────────────────────────────
   ob.checkAndStart = function (settings) {
     if (settings && !settings.onboarding_complete) {
       _settings = settings;
@@ -115,7 +88,6 @@
     return false;
   };
 
-  // ── 外部からの再実行用（設定ページから呼び出し） ─────────────────────
   ob.restart = function () {
     if (_page) return;
     _isRestart = true;
@@ -125,7 +97,6 @@
     }).catch(function () { _settings = {}; start(); });
   };
 
-  // ── 启动引导 ───────────────────────────────────────────────────────────
   function start() {
     if (_page) return;
     _current = 0;
@@ -135,7 +106,6 @@
     _container = document.getElementById('page-container');
     if (!_container) return;
 
-    // 布局：与设置页一致 — 隐藏侧栏 + 播放器，保留标题栏（窗口三大键）
     document.body.classList.remove('settings-active');
     document.body.classList.add('onboarding-active');
     App.state.currentPage = 'onboarding';
@@ -163,7 +133,6 @@
     _renderStep();
   }
 
-  // ── 进度条（M3 线性进度指示器） ───────────────────────────────────────
   function _renderProgress() {
     var el = _container.querySelector('#ob-progress');
     if (!el) return;
@@ -173,10 +142,8 @@
     }).join('');
   }
 
-  // ── 步骤内容路由 ───────────────────────────────────────────────────────
   function _renderStep() {
     _renderProgress();
-    // 离开欢迎页时停止打字动画
     _stopTyping();
     var content = _container.querySelector('#ob-content');
     var actions = _container.querySelector('#ob-actions');
@@ -199,14 +166,12 @@
       case 'start':       _renderStart(content, actions, titleEl, subEl); break;
     }
 
-    // 进入动画
     void content.offsetWidth;
     content.classList.add('onboarding-content--enter');
 
     if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(_container);
   }
 
-  // ── 底部操作栏 ─────────────────────────────────────────────────────────
   function _buildActions(opts) {
     opts = opts || {};
     var html = '<div class="onboarding-actions-left">';
@@ -249,7 +214,6 @@
   function _next() { if (_current < STEPS.length - 1) { _current++; _renderStep(); } }
   function _prev() { if (_current > 0) { _current--; _renderStep(); } }
 
-  // ── 完成 ───────────────────────────────────────────────────────────────
   function _finish() {
     App.utils.call('save_settings', JSON.stringify({ onboarding_complete: true })).then(function () {
       _close();
@@ -264,13 +228,11 @@
     _page = null;
     _container = null;
     _isRestart = false;
-    // 初回 → your_mix；再実行 → settings
     if (window.App && App.navigate) {
       App.navigate(wasRestart ? 'settings' : 'your_mix');
     }
   }
 
-  // ── 即时保存设置字段 ───────────────────────────────────────────────────
   function _save(patch, applyFn) {
     if (_settings) Object.assign(_settings, patch);
     return App.utils.call('save_settings', JSON.stringify(patch)).then(function () {
@@ -278,7 +240,6 @@
     });
   }
 
-  // ── 标题/副标题 ────────────────────────────────────────────────────────
   function _setTitle(titleKey, subKey, titleEl, subEl) {
     if (titleKey) {
       titleEl.textContent = _t(titleKey);
@@ -297,7 +258,6 @@
     }
   }
 
-  // ── 下拉菜单绑定（复用 settings.js 的 .md-dropdown 组件模式） ──────────
   function _bindDropdown(content, bind, options, currentValue, onSelect) {
     var dropdown = content.querySelector('.md-dropdown[data-bind="' + bind + '"]');
     if (!dropdown) return;
@@ -319,14 +279,12 @@
     trigger._obSelectHandler = function (e) {
       e.stopPropagation();
       var isOpen = menu.classList.contains('open');
-      // 关闭其他菜单
       document.querySelectorAll('.md-dropdown-menu.open').forEach(function (m) {
         m.classList.remove('open');
         var t = m.parentElement.querySelector('.md-dropdown-trigger');
         if (t) t.setAttribute('aria-expanded', 'false');
       });
       if (isOpen) return;
-      // 定位 —— 与 settings.js 的同名逻辑保持一致：MD3 要求菜单宽度 = 字段宽度、顶边紧贴字段底边
       var rect = trigger.getBoundingClientRect();
       menu.style.top = rect.bottom + 'px';
       menu.style.right = (window.innerWidth - rect.right) + 'px';
@@ -357,7 +315,6 @@
     });
   }
 
-  // ── 开关行绑定 ─────────────────────────────────────────────────────────
   function _bindToggleRows(content, toggles) {
     content.querySelectorAll('.settings-row input[type="checkbox"]').forEach(function (input) {
       input.addEventListener('change', function () {
@@ -379,11 +336,7 @@
     if (_settings) _settings[bind] = false;
   }
 
-  // ====================================================================
-  // 步骤 1：欢迎 — 五语言"欢迎使用"打字特效
-  // ====================================================================
 
-  // 五种语言的欢迎语 + 对应的"下一步"按钮文字
   var WELCOME_LANGS = [
     { welcome: '欢迎使用',     next: '下一步' },
     { welcome: '歡迎使用',     next: '下一步' },
@@ -426,7 +379,6 @@
       if (charIdx < text.length) {
         _typingTimer = setTimeout(typeChar, 130);
       } else {
-        // 打字完成 → 停留 1.5s → 擦除
         _typingTimer = setTimeout(eraseChar, 1500);
       }
     }
@@ -439,7 +391,6 @@
       if (charIdx > 0) {
         _typingTimer = setTimeout(eraseChar, 60);
       } else {
-        // 切换到下一种语言
         langIdx = (langIdx + 1) % WELCOME_LANGS.length;
         if (nextBtn) nextBtn.querySelector('span').textContent = getLangNext(langIdx);
         _typingTimer = setTimeout(typeChar, 300);
@@ -456,9 +407,6 @@
     }
   }
 
-  // ====================================================================
-  // 步骤 2：语言 — 复用 folder-row 卡片列表，每种语言以原生文字展示
-  // ====================================================================
   function _renderLanguage(content, actions, titleEl, subEl) {
     _setTitle('onboarding.language.title', 'onboarding.language.subtitle', titleEl, subEl);
 
@@ -498,9 +446,6 @@
     });
   }
 
-  // ====================================================================
-  // 步骤 3：媒体库
-  // ====================================================================
   function _renderLibrary(content, actions, titleEl, subEl) {
     _setTitle('onboarding.library.title', 'onboarding.library.subtitle', titleEl, subEl);
 
@@ -631,9 +576,6 @@
     if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(list);
   }
 
-  // ====================================================================
-  // 步骤 4：个性化（复用 .md-dropdown 下拉选择组件）
-  // ====================================================================
   function _renderPersonalize(content, actions, titleEl, subEl) {
     _setTitle('onboarding.personalize.title', 'onboarding.personalize.subtitle', titleEl, subEl);
 
@@ -717,9 +659,6 @@
     }
   }
 
-  // ====================================================================
-  // 步骤 5：音频设置
-  // ====================================================================
   function _renderAudio(content, actions, titleEl, subEl) {
     _setTitle('onboarding.audio.title', 'onboarding.audio.subtitle', titleEl, subEl);
 
@@ -758,12 +697,9 @@
   }
 
   function _applyWasapiExclusive(enabled) {
-    App.utils.call('set_wasapi_exclusive', !!enabled).catch(function () { /* ignore */ });
+    App.utils.call('set_wasapi_exclusive', !!enabled).catch(function () {  });
   }
 
-  // ====================================================================
-  // 步骤 6：自动化与行为
-  // ====================================================================
   function _renderAutomation(content, actions, titleEl, subEl) {
     _setTitle('onboarding.automation.title', 'onboarding.automation.subtitle', titleEl, subEl);
 
@@ -806,9 +742,6 @@
     _bindToggleRows(content, toggles);
   }
 
-  // ====================================================================
-  // 步骤 7：开始使用
-  // ====================================================================
   function _renderStart(content, actions, titleEl, subEl) {
     _setTitle('onboarding.start.title', 'onboarding.start.subtitle', titleEl, subEl);
 

@@ -1,6 +1,3 @@
-/**
- * Carminium — 播放历史页
- */
 (function () {
   'use strict';
 
@@ -39,7 +36,6 @@
 
     const searchInput = document.getElementById('history-search');
     searchInput.value = searchText;
-    // 防抖：每敲一个字符都会全量过滤 + 重建列表 DOM（历史条目可达数千）。
     var _searchDebounceTimer = null;
     searchInput.addEventListener('input', function (e) {
       searchText = e.target.value;
@@ -131,7 +127,6 @@
     });
   };
 
-  // 历史变化时刷新（若当前在历史页）
   page.onHistoryChanged = function (jsonStr) {
     try {
       allHistory = JSON.parse(jsonStr);

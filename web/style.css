@@ -1,9 +1,4 @@
-/* ============================================================
-   Carminium — Material You (MD3) 设计系统
-   Light + Dark 主题，使用 CSS 自定义属性
-   ============================================================ */
 
-/* ── Fonts ───────────────────────────────────────────────── */
 @font-face {
   font-family: 'Material Symbols Rounded';
   font-style: normal;
@@ -22,11 +17,6 @@
   font-weight: 400;
   src: url(fonts/noto-sans.woff2) format('woff2');
 }
-/* Noto Color Emoji 国旗子集（本地）：仅覆盖区域指示符区段。
-   Windows 的 Segoe UI Emoji 无国旗字形（显示为字母组合），此字体补齐；
-   unicode-range 保证仅当内容真的出现国旗字符时才触发加载，平时零开销。
-   其余 emoji 走系统彩色 emoji（Segoe UI Emoji）回退，与全局加载
-   Noto Color Emoji 全表（解码后 20MB+）的观感一致。 */
 @font-face {
   font-family: 'Noto Color Emoji Flags';
   font-style: normal;
@@ -36,7 +26,6 @@
   unicode-range: U+1F1E6-1F1FF;
 }
 
-/* ── Roboto（内置） ───────────────────────────────────────── */
 @font-face {
   font-family: 'Roboto';
   font-style: normal;
@@ -115,7 +104,6 @@
   src: url(fonts/Roboto-BlackItalic.woff2) format('woff2');
 }
 
-/* ── Roboto Condensed（内置） ────────────────────────────── */
 @font-face {
   font-family: 'Roboto Condensed';
   font-style: normal;
@@ -152,7 +140,6 @@
   src: url(fonts/RobotoCondensed-BoldItalic.woff2) format('woff2');
 }
 
-/* ── 1. Material Symbols ──────────────────────────────────── */
 .material-symbols-rounded {
   font-family: 'Material Symbols Rounded', sans-serif;
   font-weight: normal;
@@ -177,34 +164,29 @@
 .icon-lg     { font-size: 40px; font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 40; }
 .icon-xl     { font-size: 48px; font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 48; }
 
-/* ── 2. Design Tokens — Light Theme ──────────────────────── */
 :root,
 [data-theme="light"] {
-  /* Primary */
+
   --md-primary:               #0061A4;
   --md-on-primary:            #FFFFFF;
   --md-primary-container:     #D1E4FF;
   --md-on-primary-container:  #001D36;
 
-  /* Secondary */
   --md-secondary:             #535F70;
   --md-on-secondary:          #FFFFFF;
   --md-secondary-container:   #D7E3F7;
   --md-on-secondary-container:#101C2B;
 
-  /* Tertiary */
   --md-tertiary:              #6B5778;
   --md-on-tertiary:           #FFFFFF;
   --md-tertiary-container:    #F2DAFF;
   --md-on-tertiary-container: #251431;
 
-  /* Error */
   --md-error:                 #BA1A1A;
   --md-on-error:              #FFFFFF;
   --md-error-container:       #FFDAD6;
   --md-on-error-container:    #410002;
 
-  /* Surface — keep primary HUE, boost SATURATION and lightness (not diluted by white) */
   --md-background:            hsl(from var(--md-primary) h calc(s * 1.45) 90%);
   --md-on-background:         #191C20;
   --md-surface:               hsl(from var(--md-primary) h calc(s * 1.45) 90%);
@@ -219,54 +201,43 @@
   --md-surface-container-high:    #DEE3E8;
   --md-surface-container-highest: #D8DCE2;
 
-  /* Outline */
   --md-outline:               #70787F;
   --md-outline-variant:       #C0C8CF;
 
-  /* Inverse */
   --md-inverse-surface:       #2E3135;
   --md-inverse-on-surface:    #F0F0F4;
   --md-inverse-primary:       #9ECAFF;
 
-  /* State layers（叠在 surface 上的不透明覆盖层）
-     不透明度统一由顶层 --md-sys-state-*-state-layer-opacity 控制
-     （M3：hover 8% / pressed 10% / focus 10%），此处仅绑定颜色 */
   --md-state-hover:   color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity), transparent);
   --md-state-pressed: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-pressed-state-layer-opacity), transparent);
   --md-state-focused: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-focus-state-layer-opacity), transparent);
 
-  /* Scrollbar */
   --scrollbar-thumb: rgba(0,0,0,0.18);
   --scrollbar-track: transparent;
 }
 
-/* ── 3. Design Tokens — Dark Theme ───────────────────────── */
 [data-theme="dark"] {
-  /* Primary */
+
   --md-primary:               #9ECAFF;
   --md-on-primary:            #003258;
   --md-primary-container:     #00497D;
   --md-on-primary-container:  #D1E4FF;
 
-  /* Secondary */
   --md-secondary:             #BBC7DB;
   --md-on-secondary:          #253140;
   --md-secondary-container:   #3B4858;
   --md-on-secondary-container:#D7E3F7;
 
-  /* Tertiary */
   --md-tertiary:              #D6BEE4;
   --md-on-tertiary:           #3B2948;
   --md-tertiary-container:    #523F60;
   --md-on-tertiary-container: #F2DAFF;
 
-  /* Error */
   --md-error:                 #FFB4AB;
   --md-on-error:              #690005;
   --md-error-container:       #93000A;
   --md-on-error-container:    #FFDAD6;
 
-  /* Surface */
   --md-background:            #111318;
   --md-on-background:         #E2E2E9;
   --md-surface:               #111318;
@@ -281,40 +252,25 @@
   --md-surface-container-high:    #272A2E;
   --md-surface-container-highest: #323539;
 
-  /* Outline */
   --md-outline:               #8A9299;
   --md-outline-variant:       #40484F;
 
-  /* Inverse */
   --md-inverse-surface:       #E2E2E9;
   --md-inverse-on-surface:    #2E3135;
   --md-inverse-primary:       #0061A4;
 
-  /* State layers（同浅色主题，颜色随 on-surface 变化） */
   --md-state-hover:   color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity), transparent);
   --md-state-pressed: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-pressed-state-layer-opacity), transparent);
   --md-state-focused: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-focus-state-layer-opacity), transparent);
 
-  /* Scrollbar */
   --scrollbar-thumb: rgba(255,255,255,0.18);
   --scrollbar-track: transparent;
 }
 
-/* ── 4. Shape & Motion（M3E / Material 3 Expressive 令牌层）────
-   命名对齐 m3e（matraic/m3e）与 M3 官方 sys token：
-     --md-sys-shape-corner-*   形状阶
-     --md-sys-motion-*         时长 / 缓动 / 弹簧
-     --md-sys-state-*          状态层不透明度
-     --md-sys-elevation-*      高度（仅用于临时浮层）
-   旧的短名（--shape-* / --motion-* / --ease-*）保留为别名，
-   全文件 120+ 处引用无需改动，且自动跟随新令牌升级。 */
 :root {
-  /* 'Google Sans Flex' 原远程链接一直 400（轴参数非法），从未真正加载，已移除；
-     'Noto Color Emoji Flags' 为本地国旗子集（unicode-range 触发式加载），
-     其余 emoji 由系统彩色 emoji 字体回退（Windows: Segoe UI Emoji）。 */
+
   --ui-font: 'Roboto', 'Google Sans Flex', 'Google Sans', 'Noto Sans SC', 'Noto Sans', 'Segoe UI Variable', 'Segoe UI', system-ui, 'Noto Color Emoji Flags', sans-serif;
 
-  /* ── Shape scale（M3 全阶；Expressive 补齐 large+/xl+/xxl 三档）── */
   --md-sys-shape-corner-none:                 0;
   --md-sys-shape-corner-extra-small:          4px;
   --md-sys-shape-corner-small:                8px;
@@ -325,7 +281,7 @@
   --md-sys-shape-corner-extra-large-increased:32px;
   --md-sys-shape-corner-extra-extra-large:    48px;
   --md-sys-shape-corner-full:                 9999px;
-  /* 非对称形状（朝向 start / end / top） */
+
   --md-sys-shape-corner-extra-small-top:   var(--md-sys-shape-corner-extra-small) var(--md-sys-shape-corner-extra-small) 0 0;
   --md-sys-shape-corner-small-top:         var(--md-sys-shape-corner-small) var(--md-sys-shape-corner-small) 0 0;
   --md-sys-shape-corner-large-top:         var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) 0 0;
@@ -333,12 +289,9 @@
   --md-sys-shape-corner-large-start:       var(--md-sys-shape-corner-large) 0 0 var(--md-sys-shape-corner-large);
   --md-sys-shape-corner-large-end:         0 var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) 0;
   --md-sys-shape-corner-extra-large-top:   var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large) 0 0;
-  /* 字段专用圆角（行内小控件档）。⚠️ 这是**项目自定义档**，不在 MD3 标准 shape 阶梯里 ——
-     因为字段本轮已按用户要求从"MD3 原生形态"转向"M3E 圆角形态"（四角全圆）。
-     取值理由见 --md-comp-field-shape 注释。 */
+
   --md-sys-shape-corner-field:                10px;
 
-  /* 旧短名别名（保持兼容） */
   --shape-xs:      var(--md-sys-shape-corner-extra-small);
   --shape-sm:      var(--md-sys-shape-corner-small);
   --shape-md:      var(--md-sys-shape-corner-medium);
@@ -349,15 +302,10 @@
   --shape-xxl:     var(--md-sys-shape-corner-extra-extra-large);
   --shape-full:    var(--md-sys-shape-corner-full);
 
-  /* 组件形变（M3E 签名交互：按下时圆角向对向形状"变形"）
-     m3e 的 --m3e-{button,icon-button}-shape-pressed-morph 默认均为 corner-small */
   --pressed-morph-shape: var(--md-sys-shape-corner-small);
 
-  /* Islands 浮岛圆角：导航/内容/正在播放/底栏四岛统一，改一处即可。
-     12px(medium) → 16px(large)：Expressive 偏好更大的容器圆角。 */
   --island-radius: var(--md-sys-shape-corner-large);
 
-  /* ── Typescale 语义度量（M3；用于列表/设置行/支持文字）── */
   --md-sys-typescale-body-large-size:        16px;
   --md-sys-typescale-body-large-line:        24px;
   --md-sys-typescale-body-large-tracking:    0.5px;
@@ -368,72 +316,40 @@
   --md-sys-typescale-title-small-line:       20px;
   --md-sys-typescale-title-small-tracking:   0.1px;
 
-  /* ── Slider 组件度量（M3 规范，实测自 m3e m3e-slider）──
-     尺寸档 track 高 / handle 高：XS 16/44 · S 24/44 · M 40/52 · L 56/68 · XL 96/108
-     handle 宽恒为 4px，按下收窄到 2px；handle 与两侧轨道各留 6px 空隙
-     （m3e 的 handle wrapper = handle 4px + 两侧 6px padding）。
-     轨道圆角 XS/S=8 · M=12 · L=16 · XL=28，与 ShapeToken 的 Start／End 非对称值一致。 */
-  --md-comp-slider-track-height:        16px;  /* XS 档，项目内统一使用 */
+  --md-comp-slider-track-height:        16px;
   --md-comp-slider-track-shape:         8px;
   --md-comp-slider-handle-width:        4px;
   --md-comp-slider-handle-width-pressed:2px;
-  --md-comp-slider-handle-height:       44px;  /* 规范 XS/S 档 = 44px（实测 handle 高 = host 高） */
-  /* 轨道在 handle 两侧让出的空隙（单侧）：m3e 的 handle wrapper 半宽 */
+  --md-comp-slider-handle-height:       44px;
+
   --md-comp-slider-track-gap:           6px;
-  --md-comp-slider-stop-size:           4px;   /* 轨道末端 stop indicator（M3E 新增） */
-  /* stop 圆点内缩：实测 m3e 圆点中心距轨道右端 8px = gap(6) + 半径(2)，即右缘留出一个 gap。
-     若贴到 right:0（旧实现）圆点会压在轨道边缘上，与官方不一致。 */
+  --md-comp-slider-stop-size:           4px;
+
   --md-comp-slider-stop-inset:          calc(var(--md-comp-slider-track-gap) + var(--md-comp-slider-stop-size) / 2);
 
-  /* ── Linear progress 组件度量（实测自 m3e m3e-linear-progress-indicator）──
-     thickness 4px · 圆角 corner-extra-small(4px) · 末端 4dp stop 圆点
-     实测（m3e 2.8.3，1× 截图逐像素）：活跃段 0→pct，之后留 6px 断口才接不活跃轨道，
-     不活跃轨道末端再内缩 8px 给 stop 点让位，stop 点贴容器右端（100% 时与活跃段末端重合）。
-     wavy 变体：amplitude 3px、wavelength 40px；
-     path 半振幅 = amplitude + thickness/2 = 5px，故总高 = thickness + amplitude*2 + 描边余量。 */
   --md-comp-progress-thickness:        4px;
   --md-comp-progress-shape:            var(--md-sys-shape-corner-extra-small);
   --md-comp-progress-stop-size:        4px;
-  --md-comp-progress-track-gap:        6px;  /* 活跃段 ↔ 不活跃轨道 的断口 */
-  --md-comp-progress-stop-inset:       8px;  /* 不活跃轨道末端内缩，给 stop 点让位 */
-  /* 进度条上的拖动 handle 是本项目自加的交互元素（M3 进度指示器本身没有 handle）。
-     高度按**宿主场景**伸缩（旧的全局写死 28px 骑在 4px 细轨道上，像一根文本光标）：
-     底栏/悬浮窗 16px → 正在播放页右栏 20px → 全屏 24px。
-     高度始终略大于波形（14px），使 handle 能"压住"波形；宽度恒 4px、按下收窄到 2px。 */
-  --md-comp-progress-handle-height:            16px; /* 基准：底栏迷你播放器 / 悬浮窗（compact 场景） */
-  --md-comp-progress-handle-height-pane:       20px; /* 正在播放页右栏（浮岛内） */
-  --md-comp-progress-handle-height-fullscreen: 24px; /* 全屏 / 影院模式（画面与控件同比放大） */
+  --md-comp-progress-track-gap:        6px;
+  --md-comp-progress-stop-inset:       8px;
+
+  --md-comp-progress-handle-height:            16px;
+  --md-comp-progress-handle-height-pane:       20px;
+  --md-comp-progress-handle-height-fullscreen: 24px;
   --md-comp-progress-wave-wavelength:  40px;
   --md-comp-progress-wave-amplitude:   3px;
   --md-comp-progress-wave-height:      14px;
-  /* 波形 mask：一个波长（40px）的 SVG tile，中心线 y=7、半振幅 5px（= amplitude + thickness/2），
-     描边 4px 圆头；tile 高 14px = 2*半振幅 + 描边。重复铺贴时边界圆头正好拼合，波形连续。 */
+
   --md-comp-progress-wave-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='14' viewBox='0 0 40 14'%3E%3Cpath d='M 0 7 Q 10 12 20 7 Q 30 2 40 7' fill='none' stroke='black' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E");
 
-  /* ── List / 设置行度量（2026-10-04 三易其稿，最终值 — 别再盲调）──
-     沿革：① 旧版 padding-block 10 + `min-height:72` 强制撑高 → 文本上下**真实留白 18px**，用户报「不自然/松散」；
-     ② 按官方 MD3 two-line 规范的 8dp 收到底 → 实测行高 54、留白 ~11px，用户报「**上下直接没边距了**」；
-     ③ **现行：padding-block = 12px** —— 8 太紧、18 太松，12 落在两者之间，
-        且与左右 padding-inline(16) 同属一个 4 的倍数节奏（8/12/16），左右上下才「和谐」。
-     行高 = 内容 + 2×12：两行 38+24 = **62px**（20 + 2 + 16 = 38，含 .settings-row-sub 的 margin-top 2），
-     单行 20+24 = **44px**。
-     min-height 只作**点击下限兜底**，不主导高度；控件更高时行随之增高（如 38px 下拉 → 62px）。
-     ⚠️ 官方规范标的 8dp 是以更大字号（body-large 16/24）为基准的，本项目设置行已降到 14/20 + 12/16，
-        直接套 8dp 会显得贴边 —— 规范值要按实际行高折算，不能硬抄。
-     形状与状态层由下方 .md-seglist 统一接管（分段列表不画分隔线，故 divider-inset 系列已移除）。 */
-  --md-comp-list-min-height:           44px;   /* 单行内容高（12+20+12） */
-  --md-comp-list-min-height-2line:     62px;   /* 两行内容高（12+38+12，含 sub 的 margin-top 2） */
-  --md-comp-list-item-padding-block:   12px;   /* 上下各 12（8 太紧 / 18 太松的折中） */
-  --md-comp-list-item-padding-inline:  16px;   /* 左右各 16 —— 两侧必须相等，勿单侧加 margin */
+  --md-comp-list-min-height:           44px;
+  --md-comp-list-min-height-2line:     62px;
+  --md-comp-list-item-padding-block:   12px;
+  --md-comp-list-item-padding-inline:  16px;
   --md-comp-list-padding-block:        14px;
   --md-comp-list-padding-inline:       24px;
   --md-comp-list-icon-size:            20px;
 
-  /* ── Segmented list（M3E m3e-list variant="segmented"，实测自源码）──
-     分段列表：项间留 2dp 缝，段内圆角 extraSmall(4)，一段的首/末项外侧
-     圆角放大到 large(16)，hover/press 整项形变到 medium(12)、focus 到
-     large(16)、selected 固定 large(16)。项内图标↔文字间距 10dp
-     （原型 space150=12dp，随行高一起收紧）。段内不画分隔线 —— 靠缝隙分层。 */
   --md-comp-seglist-gap:               2px;
   --md-comp-seglist-container-shape:   var(--md-sys-shape-corner-large);
   --md-comp-seglist-item-shape:        var(--md-sys-shape-corner-extra-small);
@@ -443,113 +359,52 @@
   --md-comp-seglist-item-container:    var(--md-surface-container-low);
   --md-comp-seglist-item-selected-container: var(--md-secondary-container);
   --md-comp-seglist-item-spacing:      12px;
-  /* 分段列表的段落外缘留白。桌面端 = 12px，别取 16px ——
-     16px 与行内 padding-inline(16) 等值，2dp 段缝在视觉上会与项内缘
-     连成一线，卡片读起来"缩进到文字里"、右侧够不到岛边。
-     与 DPI 无关：段缝 2px 是物理值，外缘却随缩放变厚，故桌面端一律 12。 */
+
   --md-comp-seglist-inset:             12px;
-  /* 卡内控件尺寸：**回到 M3E 化之前的原版（commit 2dbd256）**。
-     2026-10-04 用户明确「只有旧版比例更好看」，故撤销 2026-10-03 那轮
-     「桌面端收小控件」的改动 —— 见 docs 记忆 2026-10-03.md。
-     ⚠️ 历史教训仍在：控件不宜占到行高的 70%+；但用户已看过两种比例并选定这一版，
-     后续不要凭「占比 >50%」的判据再把它自动收小。
-     下拉/输入/快捷键 chip 的尺寸已直接写回各规则（旧版内联值），此处只留被复用的三项。 */
-  --md-comp-settings-switch-w:         56px;   /* 旧版 .toggle = 56×34 */
+
+  --md-comp-settings-switch-w:         56px;
   --md-comp-settings-switch-h:         34px;
-  /* ⚠️ --md-comp-settings-input-min-width(240px) 已删：输入框 2026-10-04 改为 MD3 Filled field 后
-     由 --md-comp-field-* 统一接管宽度语义，别把它加回来。 */
-  /* 设置行文字：比 M3 typescale 原型小一档（2026-10-04 用户要求「缩小字体大小」）。
-     主文案 14px（对齐 MD3 label-large / title-small 角色）、支持文案 12px（对齐 label-medium）。
-     ⚠️ 字距必须跟着字号选角色，不能沿用旧角色的 tracking ——
-     曾直接借用 body-large 的 0.5px 给 14px 主文案、body-medium 的 0.25px 给 12px 副文案，
-     两者都是大字号角色的值，压到小字号上会显得松、字与字之间发虚（用户报「文字排版有问题」）。
-     MD3 各角色实测（字号/行高/字距）：label-large 14 20 0.1；label-medium 12 16 0.5；
-     body-large 16 24 0.5；body-medium 14 20 0.25。
-     ⚠️ 只作用于设置/关于页的行文字，不改全局 typescale 令牌（其他页面仍用 16/14）。 */
+
   --md-comp-settings-label-size:       14px;
   --md-comp-settings-label-line:       20px;
-  --md-comp-settings-label-tracking:    0.1px;  /* label-large */
+  --md-comp-settings-label-tracking:    0.1px;
   --md-comp-settings-sub-size:         12px;
   --md-comp-settings-sub-line:         16px;
-  --md-comp-settings-sub-tracking:      0.5px;  /* label-medium */
+  --md-comp-settings-sub-tracking:      0.5px;
 
-  /* ── MD3 Filled field / Select 容器（2026-10-04 用户要求按 MD3 标准重做）──
-     结构按 MD3：容器色 surface-container-highest · 底部 active indicator 静默 1dp on-surface-variant
-     / hover 1dp on-surface / 聚焦 2dp primary · 图标 18dp · hover 状态层 on-surface 8%。
-     ⚠️ 两处**有意偏离** MD3 原生形态（都是为了贴合本项目的 M3E 视觉语言，见下方两个 🔑）：
-        ① 形状：原生 corner-extra-small-top（顶 4dp + 底直角）→ 改**四角全圆 10px**；
-        ② 字号：原生 body-large(16/24) → 改 **label-large(14/20/0.1)**，与设置行主文案同档。
-     （依据：material-web tokens v0.192 的 _md-comp-filled-select/_filled-text-field.scss）
-     ⚠️ material-web 把 filled-select 的聚焦指示线临时覆写成 3px（源码标 TODO，等官方 tokens 跟进），
-        官方 spec 仍是 2dp —— 取 2dp，否则同屏输入框与下拉聚焦粗细不一致。
-
-     🔑 尺寸**不照抄 56dp**：MD3 的 56dp 是手机竖屏手指标，本项目右栏字段宽 220–320px，
-        56 高会得到 3.9–5.7 的宽高比，而同页开关是 56×34=1.65 —— 控件比例体系会崩。
-        （2026-10-04 用户：「你直接把新做的 select 和 text field 比例调小啊，你看看其他控件的比例呢？」）
-        取值以**同页既有控件为标尺**，三轮下调：56 → 44 → 40 → **38**
-        （末轮用户明确「再小一点到 38px」）。行高 80 → 68 → 64 → **62**，与开关行 62 完全齐平。
-     🔑🔑 圆角改成**四角全圆 10px**（2026-10-04 用户在看过多方案后选定）。
-        沿革：MD3 规范 4dp 顶角 → 8dp 顶角（"加一点匹配 M3E 的圆角"）→ **四角 10px**（用户终选）。
-        ⚠️ 这一步主动**偏离了 MD3 原生形态** —— 原生 filled field 是「顶圆角 + 底直角 + 满宽底线」，
-           三者是一套的：直角底边配满宽直线才自洽。既然用户要 M3E 的圆角观感，就整体转成圆角语言：
-           四角圆 + 底线改**两端圆头、左右内缩 8px**（见 .md-dropdown-trigger::after）。
-        取值 10px 的理由：项目 M3E 阶梯是 段内项 4 → **行内控件 10** → 卡片 16 → 浮岛 16；
-           10/38 = 0.26，与卡片 16/68 = 0.24 几乎同比例，视觉上同族而不圆钝
-           （若取 16，16/38 = 0.42 会像个胶囊）。
-        ⚠️ 菜单圆角必须**跟随字段**（同 10px）：两者等宽且上下紧贴，圆角不一致接缝处会错位。 */
   --md-comp-field-height:                      38px;
   --md-comp-field-padding-inline:              14px;
   --md-comp-field-shape:            var(--md-sys-shape-corner-field);
-  /* 字段容器色 = surface-container-highest（本项目 light 主题实测 #D8DCE2 = 216,220,226）。
-     ⚠️ MD3 色阶方向：`highest` 是**最深/最突出**的，`lowest` 最浅 —— 别按字面理解成"最高=最亮"。
-        字段是卡片(surface-container-lowest #FFF)上最需要被发现的元素，用 highest 正确。
-     ⚠️ 菜单面板**不能**也用 highest，否则与字段同色、边界消失（见 --md-comp-menu-container）。 */
+
   --md-comp-field-container-color:    var(--md-surface-container-highest);
   --md-comp-field-indicator-height:            1px;
-  /* 指示线左右内缩：**必须 ≥ 圆角 + 1–2px**，这样短横的两端落在圆角起弧点内侧，
-     与容器底缘（含圆角）留出均匀的视觉间隙。10px 圆角 → 取 8px（曾配 8px 圆角时用 6px）。 */
+
   --md-comp-field-indicator-inset:              8px;
   --md-comp-field-indicator-color:    var(--md-on-surface-variant);
   --md-comp-field-hover-indicator-color: var(--md-on-surface);
   --md-comp-field-focus-indicator-height:      2px;
   --md-comp-field-focus-indicator-color: var(--md-primary);
   --md-comp-field-icon-size:                   18px;
-  /* 指示线**圆头内缩**（M3E 化）：MD3 原生是满宽直角线，配直角底边自洽；一旦容器改用圆角，
-     满宽线两端就会被 10px 圆角生硬切断。改成两端 round + 左右各让出 8px 后，与上方圆角呼应。
-     实现见 .md-dropdown-trigger::after（用伪元素，不用 border-bottom、也不用 inset box-shadow）。 */
-  /* 字段文字用 14/20/0.1 —— 即 label-large 角色，与设置行主文案、MD3 菜单项**同一档**。
-     ⚠️ 不用 body-large(16/24)：16px 在 38 高的容器里占比过大，且与行标签(14)不同档会显突兀。 */
+
   --md-comp-field-font-size:   var(--md-sys-typescale-label-large-size);
   --md-comp-field-font-line:   var(--md-sys-typescale-label-large-line);
   --md-comp-field-font-tracking: var(--md-sys-typescale-label-large-tracking);
-  /* 字段宽度：下拉与输入框**共用同一条**，这样两者同宽、叠放时整齐（值来自下拉旧版 220–320）。 */
+
   --md-comp-field-min-width:                   220px;
   --md-comp-field-max-width:                   320px;
-  /* ── MD3 Menu（承载 Select 的下拉面板）──
-     elevation level2 · corner-field(10px，跟随字段) · 上下各 6dp 留白 · 最小宽 112dp
-     · 菜单项左右各 12dp · 文字 label-large(14/20/0.1/500)。
-     ⚠️ 圆角**跟随字段**（同 10px）：菜单紧贴字段下方、横向等宽，两者圆角不一致会在接缝处错位。
-     ⚠️ 容器色必须是 surface-container(#E4E8EE)，**不能**跟字段一样用 highest：
-        菜单紧贴在字段下方、横向等宽，同色时两者会连成一坨，level2 阴影也救不回来
-        （2026-10-04 实测事故：字段与菜单底都是 216,220,226，看起来像一个大方块掉下来）。
-        菜单比字段**亮一档** → 阴影一打就"浮"在字段之上，边界自然。
-     ⚠️ 选中态用 surface-container-highest：filled-select 令牌给的就是这个值
-        （通用 menu 才是 secondary-container），且此处 ≥ 菜单底、恰好比周围项"凸"一档。 */
+
   --md-comp-menu-container:           var(--md-surface-container);
   --md-comp-menu-padding-block:                6px;
   --md-comp-menu-min-width:                    112px;
   --md-comp-menu-item-height:                  36px;
   --md-comp-menu-item-padding-inline:          12px;
   --md-comp-menu-item-selected-container: var(--md-surface-container-highest);
-  /* label-large 角色此前未定义，MD3 Menu 项与紧凑标签用它：14/20/0.1/重量 500。
-     与 title-small 数值完全相同，但语义不同 —— 别图省事复用 title-small 令牌。 */
+
   --md-sys-typescale-label-large-size:         14px;
   --md-sys-typescale-label-large-line:         20px;
   --md-sys-typescale-label-large-tracking:     0.1px;
   --md-sys-typescale-label-large-weight:       500;
 
-  /* ── Navigation rail（M3E nav-rail compact，实测自 m3e m3e-nav-rail）──
-     rail 宽 96dp · 指示器 56×32 · 图标 24dp · 标签 label-medium 12/500/16/0.5 · 项间距 8dp。 */
   --m3e-nav-rail-width:                 96px;
   --m3e-nav-item-indicator-width:       56px;
   --m3e-nav-item-indicator-height:      32px;
@@ -560,18 +415,11 @@
   --m3e-nav-item-label-weight:          500;
   --m3e-nav-item-gap:                   8px;
 
-  /* ── Navigation drawer（M3E navigation drawer item）──
-     项高 48dp · 全胶囊指示器 · 图标 24dp · 标签 label-large 14/500。
-     ⚠️ 项高沿革（同一问题被用户反复裁定，别再"好心"调高/调低）：
-       56（M3E 原型）→ 64（2026-10-04 早，用户报「每一项压扁」）
-       → **48（2026-10-04 晚，用户报「太高了！」，追问后明确「要比 56px 还窄」）**。
-     48 已是 = 图标 24 + 上下各 12，仍留得住 8px 段缝，是导航项的下限。 */
   --m3e-nav-drawer-width:               248px;
   --m3e-nav-drawer-item-height:         48px;
   --m3e-nav-drawer-item-gap:            4px;
   --m3e-nav-drawer-padding-inline:      12px;
 
-  /* ── Motion · Duration（M3 全阶）── */
   --md-sys-motion-duration-short-1:      50ms;
   --md-sys-motion-duration-short-2:     100ms;
   --md-sys-motion-duration-short-3:     150ms;
@@ -589,7 +437,6 @@
   --md-sys-motion-duration-extra-long-3:900ms;
   --md-sys-motion-duration-extra-long-4:1000ms;
 
-  /* ── Motion · Easing（M3 缓动）── */
   --md-sys-motion-easing-standard:             cubic-bezier(0.2, 0, 0, 1);
   --md-sys-motion-easing-standard-decelerate:  cubic-bezier(0, 0, 0, 1);
   --md-sys-motion-easing-standard-accelerate:  cubic-bezier(0.3, 0, 1, 1);
@@ -597,9 +444,6 @@
   --md-sys-motion-easing-emphasized-decelerate:cubic-bezier(0.05, 0.7, 0.1, 1);
   --md-sys-motion-easing-emphasized-accelerate:cubic-bezier(0.3, 0, 0.8, 0.15);
 
-  /* ── Motion · Spring（M3E 弹簧；此处取 motion="expressive" 的值）──
-     spatial = 位移/尺寸/形变；effects = 颜色/透明度/滤镜。
-     值为「时长 + 缓动」简写，可直接用于 transition / animation 的时序位。 */
   --md-sys-motion-spring-fast-spatial:    350ms cubic-bezier(0.42, 1.67, 0.21, 0.90);
   --md-sys-motion-spring-default-spatial: 500ms cubic-bezier(0.38, 1.21, 0.22, 1.00);
   --md-sys-motion-spring-slow-spatial:    650ms cubic-bezier(0.39, 1.29, 0.35, 0.98);
@@ -607,7 +451,6 @@
   --md-sys-motion-spring-default-effects: 200ms cubic-bezier(0.34, 0.80, 0.34, 1.00);
   --md-sys-motion-spring-slow-effects:    300ms cubic-bezier(0.34, 0.88, 0.34, 1.00);
 
-  /* 语义别名：写 transition 时用这两个，语义更清楚 */
   --motion-spatial-fast:    var(--md-sys-motion-spring-fast-spatial);
   --motion-spatial-default: var(--md-sys-motion-spring-default-spatial);
   --motion-spatial-slow:    var(--md-sys-motion-spring-slow-spatial);
@@ -615,38 +458,30 @@
   --motion-effects-default: var(--md-sys-motion-spring-default-effects);
   --motion-effects-slow:    var(--md-sys-motion-spring-slow-effects);
 
-  /* 兼容别名（原有引用不动，但语义与 M3 对齐） */
   --motion-short:    var(--md-sys-motion-duration-short-3);
   --motion-medium:   var(--md-sys-motion-duration-medium-1);
   --motion-long:     var(--md-sys-motion-duration-medium-4);
   --ease-standard:   var(--md-sys-motion-easing-emphasized);
   --ease-decel:      var(--md-sys-motion-easing-emphasized-decelerate);
   --ease-accel:      var(--md-sys-motion-easing-emphasized-accelerate);
-  /* 单个缓动曲线形式的弹簧（需要拆分 duration / easing 时用） */
+
   --ease-spring:     cubic-bezier(0.38, 1.21, 0.22, 1.00);
 
-  /* ── State layer 不透明度（M3 规范：hover 8% / focus 10% / pressed 10%）── */
   --md-sys-state-hover-state-layer-opacity:   8%;
   --md-sys-state-focus-state-layer-opacity:  10%;
   --md-sys-state-pressed-state-layer-opacity:10%;
 
-  /* ── Focus ring（M3E strong-focus：3px、secondary 色、外扩 2px、带生长动画）── */
   --m3e-focus-ring-color:          var(--md-secondary);
   --m3e-focus-ring-thickness:      3px;
   --m3e-focus-ring-outward-offset: 2px;
   --m3e-focus-ring-growth-factor:  2;
 
-  /* ── Typography（M3E emphasized 字重；Roboto 只提供 400/500/700，
-        600 会被字重回退规则解析为 700，故统一改用令牌，避免隐式取整 ── */
   --md-sys-typescale-emphasized-display-font-weight: 500;
   --md-sys-typescale-emphasized-headline-font-weight:500;
   --md-sys-typescale-emphasized-title-font-weight:   700;
   --md-sys-typescale-emphasized-body-font-weight:    500;
   --md-sys-typescale-emphasized-label-font-weight:   700;
 
-  /* ── Elevation（M3 三级阴影：umbra 20% / penumbra 14% / ambient 12%）
-        仅用于**临时浮层**（菜单 / 对话框 / Toast / 气泡）；浮岛仍按既定规则
-        只用圆角 + 描边 + 色阶，不用投影。 ── */
   --md-sys-color-shadow: #000000;
   --md-sys-elevation-level0: none;
   --md-sys-elevation-level1:
@@ -671,13 +506,11 @@
     color-mix(in srgb, var(--md-sys-color-shadow) 12%, transparent) 0 5px 22px 4px;
 }
 
-/* M3E 强焦点环的生长动画（decelerate 展开至目标粗细） */
 @keyframes m3e-focus-ring-in {
   from { outline-width: calc(var(--m3e-focus-ring-thickness) / var(--m3e-focus-ring-growth-factor)); }
   to   { outline-width: var(--m3e-focus-ring-thickness); }
 }
 
-/* ── 5. Reset & Base ──────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
@@ -692,11 +525,7 @@ body {
   font-size: 14px;
   line-height: 1.5;
   color: var(--md-on-surface);
-  /* 纯 M3E：背景只用色阶，不用氛围渐变（旧的 --md-ambient radial 光晕已移除）
-     ⚠️ 不用 background-attachment: fixed —— 它会把背景提升成 viewport 级绘制层，
-     Chromium 在滚动合成时该层会盖到滚动内容之上（卡片看起来「没有底色」），
-     而且每帧都要重绘整屏底。body 本身不滚动（overflow:hidden），
-     更不需要 fixed 来钉住背景。 */
+
   background-color: var(--md-background);
   -webkit-font-smoothing: antialiased;
   transition: color var(--motion-medium) var(--ease-standard);
@@ -710,13 +539,11 @@ button {
   color: inherit;
   outline: none;
 }
-/* 焦点环走 M3E strong-focus：3px、secondary 色、外扩 2px，带生长动画 */
 button:focus-visible {
   outline: var(--m3e-focus-ring-thickness) solid var(--m3e-focus-ring-color);
   outline-offset: var(--m3e-focus-ring-outward-offset);
   animation: m3e-focus-ring-in var(--md-sys-motion-duration-long-2) var(--md-sys-motion-easing-emphasized-decelerate);
 }
-/* 其余可聚焦元素（非 button）补齐同一规格，低特异度，具体组件规则仍可覆盖 */
 :where(a, input, select, textarea, [tabindex]):focus-visible {
   outline: var(--m3e-focus-ring-thickness) solid var(--m3e-focus-ring-color);
   outline-offset: var(--m3e-focus-ring-outward-offset);
@@ -725,7 +552,6 @@ button:focus-visible {
 img { display: block; }
 a   { color: var(--md-primary); text-decoration: none; }
 
-/* Scrollbars */
 ::-webkit-scrollbar       { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--scrollbar-track); }
 ::-webkit-scrollbar-thumb {
@@ -734,8 +560,6 @@ a   { color: var(--md-primary); text-decoration: none; }
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--md-outline); }
 
-/* 尊重「减少动态效果」偏好：把弹簧/过渡压到极限（M3E 对 reduced-motion 的处理）。
-   页面内两处更细粒度的 reduced-motion 覆盖仍然生效（它们只是在此之上再关动画）。 */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 1ms !important;
@@ -745,7 +569,6 @@ a   { color: var(--md-primary); text-decoration: none; }
   }
 }
 
-/* ── 6. App Shell (Three Columns) ────────────────────────── */
 .app-shell {
   display: grid;
   grid-template-columns: 1fr 340px;
@@ -754,18 +577,13 @@ a   { color: var(--md-primary); text-decoration: none; }
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  /* 纯 M3E：壳层与岛内都只用色阶（surface / surface-container-*），
-     不叠任何氛围渐变——渐变一旦放在岛下的公共层，就会从缝隙漏出、
-     在岛边缘形成被直角切断的亮带。 */
+
   background: var(--md-surface);
   transition:
     background-color var(--motion-medium) var(--ease-standard);
-  /* grid-template-columns 不再过渡：展开/收折时直接切换到最终尺寸 */
+
 }
 
-/* 窗口尺寸调整期间：禁用所有过渡，直接呈现最终布局。
-   拖拽窗口时给 <body> 加 .is-resizing（见 app.js），松手 120ms 后移除，
-   避免主内容区因过渡滞后/抖动而“追着”窗口大小变化。 */
 body.is-resizing,
 body.is-resizing *,
 body.is-resizing *::before,
@@ -773,7 +591,6 @@ body.is-resizing *::after {
   transition: none !important;
 }
 
-/* ── App Root：标题栏横跨顶部 + 下方（侧边栏 | 主区） ── */
 .app-root {
   display: grid;
   grid-template-columns: var(--m3e-nav-rail-width) 1fr;
@@ -798,14 +615,12 @@ body.is-resizing *::after {
   height: 100%;
 }
 
-/* ── 7. Navigation Rail ────────────────────────────────── */
-/* Islands：导航栏为左侧独立浮岛——悬浮于窗口边缘，纯圆角（M3 不用描边也不用投影） */
 .nav-drawer {
   display: flex;
   flex-direction: column;
   align-items: center;
   flex-shrink: 0;
-  margin: 4px 8px 8px; /* 顶部对齐标题栏、底部留出窗口呼吸感 */
+  margin: 4px 8px 8px;
   background: color-mix(in srgb, var(--md-surface-container-low) 84%, transparent);
   backdrop-filter: blur(2px);
   border-radius: var(--island-radius);
@@ -826,8 +641,6 @@ body.is-resizing *::after {
   flex: 1;
 }
 
-/* M3E nav-rail item：指示器 56×32 + 标签 label-medium(12/500/16/0.5)，
-   指示器↔标签 4dp、项高 64dp（触控目标），横向由 rail 96dp 居中。 */
 .nav-item {
   display: flex;
   flex-direction: column;
@@ -849,7 +662,6 @@ body.is-resizing *::after {
 .nav-item:hover, .nav-item:focus-visible {
   color: var(--md-on-surface);
 }
-/* 焦点环：M3E 由内向外生长（spatial 弹簧） */
 .nav-item:focus-visible .nav-indicator {
   outline: var(--m3e-focus-ring-thickness) solid var(--m3e-focus-ring-color);
   outline-offset: var(--m3e-focus-ring-outward-offset);
@@ -864,7 +676,7 @@ body.is-resizing *::after {
   height: var(--m3e-nav-item-indicator-height);
   border-radius: var(--md-sys-shape-corner-full);
   flex-shrink: 0;
-  /* M3E 动效分工：颜色 = effects 弹簧，形变/缩放 = spatial 弹簧 */
+
   transition: background var(--motion-effects-fast),
               color var(--motion-effects-fast),
               border-radius var(--motion-spatial-fast),
@@ -883,13 +695,11 @@ body.is-resizing *::after {
   line-height: var(--m3e-nav-item-label-line);
 }
 
-/* Active state */
 .nav-item.active .nav-indicator {
   background: var(--md-secondary-container);
   color: var(--md-on-secondary-container);
   animation: nav-indicator-in var(--motion-spatial-fast);
 }
-/* 选中指示器回弹进入（M3E 导航选中反馈） */
 @keyframes nav-indicator-in {
   from { transform: scale(0.72); }
   to   { transform: scale(1); }
@@ -901,25 +711,21 @@ body.is-resizing *::after {
   font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 24;
 }
 
-/* Hover (inactive) */
 .nav-item:not(.active):hover .nav-indicator {
   background: var(--md-state-hover);
 }
 .nav-item:not(.active):hover { color: var(--md-on-surface); }
 
-/* Pressed：M3E 按压回弹——指示器由胶囊形变为圆角矩形并微缩（spatial 弹簧驱动） */
 .nav-item:active .nav-indicator {
   background: var(--md-state-pressed);
   border-radius: var(--pressed-morph-shape);
   transform: scale(0.9);
 }
 
-/* Danger (quit) */
 .nav-item--danger { color: var(--md-error); }
 .nav-item--danger:hover .nav-indicator { background: var(--md-error-container); }
 .nav-item--danger .material-symbols-rounded { color: var(--md-error); }
 
-/* Has submenu indicator */
 .nav-has-submenu .nav-indicator { position: relative; }
 .nav-has-submenu[aria-expanded="true"] .nav-indicator {
   background: var(--md-secondary-container);
@@ -927,7 +733,6 @@ body.is-resizing *::after {
 }
 .nav-has-submenu[aria-expanded="true"] { color: var(--md-on-surface); }
 
-/* ── 7.5 Nav Submenu (Playlists flyout) ────────────────── */
 .nav-submenu {
   position: fixed;
   z-index: 60;
@@ -938,10 +743,10 @@ body.is-resizing *::after {
   background: var(--md-surface-container);
   border: 1px solid var(--md-outline-variant);
   border-radius: var(--md-sys-shape-corner-large);
-  /* 临时浮层：用 M3 高度令牌（level2）替代手写 rgba 阴影 */
+
   box-shadow: var(--md-sys-elevation-level2);
   overflow: hidden;
-  /* 出场用 M3E spatial 弹簧（轻微过冲） */
+
   animation: nav-submenu-in var(--motion-spatial-fast);
 }
 @keyframes nav-submenu-in {
@@ -975,7 +780,7 @@ body.is-resizing *::after {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* M3E 形变：圆形 → 按下瞬间收成小圆角方块，松开回弹 */
+
   transition: background var(--motion-effects-fast),
               color var(--motion-effects-fast),
               border-radius var(--motion-spatial-fast);
@@ -1073,7 +878,6 @@ body.is-resizing *::after {
   margin: 0;
 }
 
-/* Track row action button (e.g. remove from playlist) */
 .track-action-btn {
   width: 32px;
   height: 32px;
@@ -1097,42 +901,31 @@ body.is-resizing *::after {
 }
 .track-action-btn .material-symbols-rounded { font-size: 20px; }
 
-/* Empty state subtitle */
 .empty-state .empty-sub {
   font-size: 13px;
   color: var(--md-on-surface-variant);
   margin: 4px 0 0;
 }
 
-/* ── 8. Content Pane ─────────────────────────────────────── */
-/* Islands：中部内容区浮岛——四周留缝、纯圆角（M3 不用描边也不用投影） */
 .content-pane {
-  /* 纯 M3E：只用色阶，无氛围渐变 */
+
   background: var(--md-surface-container-lowest);
   overflow-y: auto;
   overflow-x: hidden;
   position: relative;
-  /* 顶部与导航岛顶对齐；左右缝由相邻岛的外边距形成
-     注意：不设 height:100%，靠栅格默认 stretch 填满，避免 100%+margin 溢出裁掉底圆角 */
+
   margin: 4px 0 8px 0;
   border-radius: var(--island-radius);
-  /* sticky header 带 backdrop-filter、详情页 hero 是自带背景的整块叠层，
-     Chromium 下这类层会溢出祖先圆角裁切出方角，补一层圆角 clip 兜住
-     （所有 fixed 弹层都挂在 body，不受影响） */
+
   clip-path: inset(0 round var(--island-radius));
 }
 
-/* ── 虚拟滚动适配 ──
-   content-pane 保持滚动容器，VirtualList 监听它的 scroll 事件。
-   sticky-header 在 content-pane 内部，backdrop-filter 模糊背后滚动的列表内容。
-   列表容器（vl-track-list 等）不需要自己滚动，只作为 spacer 的父元素。 */
 .vl-track-list,
 .vl-album-grid,
 .vl-artist-list {
   position: relative;
 }
 
-/* 虚拟列表中的曲目行：外层 wrapper */
 .vl-track-row-wrapper {
   display: block;
   padding: 0;
@@ -1147,11 +940,6 @@ body.is-resizing *::after {
   min-height: 56px;
 }
 
-/* Islands：内容岛内的「整块背景叠层」必须自己跟随岛的上缘圆角，
-   否则吸顶头 / 全宽 hero 这类自带背景的方块会在岛顶露出直角
-   （祖先的 overflow / clip-path 对 backdrop-filter、mix-blend-mode 层不可靠）。 */
-/* Islands：岛内滚动条轨道是方形的（thumb 才是圆角胶囊），轨道底色会在
-   圆角处露出直角小块——两个滚动岛内改为透明轨道，只保留圆角 thumb */
 .content-pane::-webkit-scrollbar-track,
 .now-playing-pane::-webkit-scrollbar-track {
   background: transparent;
@@ -1170,7 +958,6 @@ body.is-resizing *::after {
   position: relative;
 }
 
-/* ── 9. Splash / Loading ─────────────────────────────────── */
 .splash {
   display: flex;
   flex-direction: column;
@@ -1193,16 +980,6 @@ body.is-resizing *::after {
   50%       { opacity: 0.6; transform: scale(0.95); }
 }
 
-/* Page transition
-   ⚠️🔴 这里**绝对不能加 forwards**（2026-10-04 事故）：
-      app.js 只在下一次 navigate 时才 remove('page-enter')，加了 forwards 的话动画结束后终帧会被
-      **永久保留** —— 而 page-in 的终帧是 transform: translateY(0)，它 ≠ transform: none。
-      只要 transform 不等于 none，该元素就成为其所有 position:fixed 后代的**包含块**
-      （CSS Transforms §3），于是页面内所有 fixed 浮层都不再按视口定位，而是按 #page-container 的
-      内边距盒定位 → 实测下拉菜单整体下移 40px（= #page-container 距顶距离），用户反馈「为何分离了」。
-      page-in 的终帧恰好等于元素默认态（opacity:1 / transform 无），forwards 本来就是多余的；
-      去掉后动画期间照常生效，结束后 transform 回落 none，包含块自动释放。
-      同理已修 .settings-view-enter-left / -right（见 §「Settings 旧视图」）。 */
 .page-enter {
   animation: page-in var(--motion-medium) var(--ease-decel);
 }
@@ -1211,7 +988,6 @@ body.is-resizing *::after {
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── 10. Page Header ─────────────────────────────────────── */
 .page-header {
   display: flex;
   align-items: flex-end;
@@ -1243,7 +1019,7 @@ body.is-resizing *::after {
 }
 .page-title {
   font-size: 28px;
-  /* M3E emphasized headline = 500（大字轻 / 小字重，Expressive 的字重对比） */
+
   font-weight: var(--md-sys-typescale-emphasized-headline-font-weight);
   letter-spacing: -0.3px;
   color: var(--md-on-surface);
@@ -1256,7 +1032,6 @@ body.is-resizing *::after {
 }
 .page-actions { display: flex; gap: 8px; align-items: center; }
 
-/* Sticky wrapper for pages that need header + search pinned together */
 .page-sticky-header {
   position: sticky;
   top: 0;
@@ -1276,7 +1051,6 @@ body.is-resizing *::after {
   background-color: color-mix(in srgb, var(--md-surface-container-lowest) 85%, transparent);
 }
 
-/* ── 11. Search Bar ──────────────────────────────────────── */
 .search-bar {
   display: flex;
   align-items: center;
@@ -1290,7 +1064,6 @@ body.is-resizing *::after {
   transition: background var(--motion-effects-fast),
               border-color var(--motion-effects-fast);
 }
-/* M3 Search Bar：悬停 = on-surface 8% 状态层；聚焦 = on-surface 描边 + 表面提亮 */
 .search-bar:hover {
   background: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity), var(--md-surface-container));
 }
@@ -1310,7 +1083,6 @@ body.is-resizing *::after {
 }
 .search-bar input::placeholder { color: var(--md-on-surface-variant); }
 
-/* ── 11.5 Material Design 3 Filled Select ───────────────── */
 .md-select {
   position: relative;
   display: inline-flex;
@@ -1332,7 +1104,6 @@ body.is-resizing *::after {
   user-select: none;
   outline: none;
 }
-/* M3 filled 容器：状态层叠在容器色之上（而不是换成另一个 surface 色） */
 .md-select-trigger:hover {
   background: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity), var(--md-surface-container-highest));
 }
@@ -1368,7 +1139,7 @@ body.is-resizing *::after {
   background: var(--md-surface-container);
   border-radius: var(--md-sys-shape-corner-large);
   border: none;
-  /* M3 弹出层高度：level2 */
+
   box-shadow: var(--md-sys-elevation-level2);
   padding: 8px 0;
   opacity: 0;
@@ -1399,7 +1170,6 @@ body.is-resizing *::after {
 .md-select-option:hover {
   background: var(--md-state-hover);
 }
-/* M3 菜单选中项使用 secondary-container（而非 primary-container） */
 .md-select-option.selected {
   background: var(--md-secondary-container);
   color: var(--md-on-secondary-container);
@@ -1419,14 +1189,12 @@ body.is-resizing *::after {
   color: var(--md-on-secondary-container);
 }
 
-/* Page header right section */
 .page-header-right {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-/* ── 12. Track List ──────────────────────────────────────── */
 .track-list {
   list-style: none;
   padding: 0 12px;
@@ -1531,7 +1299,6 @@ body.is-resizing *::after {
   padding-left: 12px;
 }
 
-/* ── 13. Album Grid ──────────────────────────────────────── */
 .album-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
@@ -1544,11 +1311,9 @@ body.is-resizing *::after {
   border-radius: var(--md-sys-shape-corner-large);
   overflow: hidden;
   background: var(--md-surface-container);
-  /* M3E spatial 弹簧：卡片起落有轻微过冲 */
+
   transition: transform var(--motion-spatial-default);
-  /* 视口外的卡片跳过布局/绘制/解码：专辑数可达 1800+，
-     实测同时挂载 1823 个 <img> 是渲染进程内存的主要来源之一。
-     auto 关键字让浏览器记忆实测尺寸，避免滚动条跳动。 */
+
   content-visibility: auto;
   contain-intrinsic-size: auto 236px;
 }
@@ -1604,7 +1369,6 @@ body.is-resizing *::after {
   margin-top: 2px;
 }
 
-/* ── A-Z Section Headers ──────────────────────────────────── */
 .az-section-header {
   display: flex;
   align-items: center;
@@ -1623,7 +1387,6 @@ body.is-resizing *::after {
   text-transform: uppercase;
 }
 
-/* Album grid 中的 A-Z 表头需要跨整行 */
 .az-grid-header {
   grid-column: 1 / -1;
   display: flex;
@@ -1636,7 +1399,82 @@ body.is-resizing *::after {
   padding-top: 8px;
 }
 
-/* ── 14. Artist List ─────────────────────────────────────── */
+.az-header-action { cursor: pointer; }
+.az-header-action .az-section-letter {
+  transition: color var(--motion-effects-fast);
+}
+.az-header-action:hover .az-section-letter { color: var(--md-primary); }
+.az-header-action:active .az-section-letter { color: var(--md-on-surface); }
+
+.az-index-panel {
+  display: flex;
+  flex-direction: column;
+
+  justify-content: center;
+  padding: 24px 28px;
+
+  animation: az-index-in var(--motion-medium) var(--ease-decel);
+}
+@keyframes az-index-in {
+  from { opacity: 0; transform: scale(0.86); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.az-index-panel--out {
+  animation: az-index-out var(--motion-short) var(--ease-accel) forwards;
+  pointer-events: none;
+}
+@keyframes az-index-out {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.92); }
+}
+.az-index-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: 8px;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+}
+.az-index-key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 56px;
+  padding: 0;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-surface-container);
+  color: var(--md-on-surface);
+  font-family: inherit;
+  font-size: 18px;
+  font-weight: var(--md-sys-typescale-emphasized-title-font-weight);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background-color var(--motion-effects-fast),
+              color var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast);
+}
+.az-index-key:hover {
+  background: color-mix(in srgb,
+    var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity),
+    var(--md-surface-container));
+}
+.az-index-key:active {
+  border-radius: var(--pressed-morph-shape);
+  background: color-mix(in srgb,
+    var(--md-on-surface) var(--md-sys-state-pressed-state-layer-opacity),
+    var(--md-surface-container));
+}
+.az-index-key:focus-visible {
+  outline: 2px solid var(--md-primary);
+  outline-offset: 2px;
+}
+.az-index-key:disabled {
+  background: var(--md-surface-container-low);
+  color: color-mix(in srgb, var(--md-on-surface-variant) 45%, transparent);
+  cursor: default;
+}
+
 .artist-list { padding: 0 16px 24px; }
 .artist-row {
   display: flex;
@@ -1673,7 +1511,6 @@ body.is-resizing *::after {
 .artist-meta { font-size: 13px; color: var(--md-on-surface-variant); }
 .artist-chevron { color: var(--md-on-surface-variant); font-size: 20px; }
 
-/* ── 15. Section Heading ─────────────────────────────────── */
 .section-heading {
   display: flex;
   align-items: center;
@@ -1693,7 +1530,6 @@ body.is-resizing *::after {
   color: var(--md-on-surface-variant);
 }
 
-/* ── 16. Empty State ─────────────────────────────────────── */
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -1712,11 +1548,6 @@ body.is-resizing *::after {
 .empty-title { font-size: 20px; font-weight: var(--md-sys-typescale-emphasized-headline-font-weight); color: var(--md-on-surface); }
 .empty-body  { font-size: 14px; color: var(--md-on-surface-variant); max-width: 360px; line-height: 1.6; }
 
-/* ── 17. Buttons ─────────────────────────────────────────── */
-/* M3E 按钮三件套：① 状态层用「颜色×规范不透明度」而不是 filter: brightness
-   （M3 的做法，深色主题下也不会把色相拉飞）；② 按下时圆角向对向形状"变形"；
-   ③ 时序走 M3E 弹簧（形变 = spatial，颜色 = effects）。 */
-/* Filled button */
 .btn-filled {
   display: inline-flex;
   align-items: center;
@@ -1746,7 +1577,6 @@ body.is-resizing *::after {
 }
 .btn-filled .material-symbols-rounded { font-size: 18px; }
 
-/* Outlined button */
 .btn-outlined {
   display: inline-flex;
   align-items: center;
@@ -1773,7 +1603,6 @@ body.is-resizing *::after {
 }
 .btn-outlined .material-symbols-rounded { font-size: 18px; }
 
-/* Text button */
 .btn-text {
   display: inline-flex;
   align-items: center;
@@ -1795,7 +1624,6 @@ body.is-resizing *::after {
   border-radius: var(--pressed-morph-shape);
 }
 
-/* Icon button */
 .icon-btn {
   display: inline-flex;
   align-items: center;
@@ -1816,7 +1644,6 @@ body.is-resizing *::after {
 .icon-btn:active  { background: var(--md-state-pressed); border-radius: var(--pressed-morph-shape); }
 .icon-btn.active  { color: var(--md-primary); }
 
-/* ── 18. Chips ───────────────────────────────────────────── */
 .chip {
   display: inline-flex;
   align-items: center;
@@ -1842,7 +1669,6 @@ body.is-resizing *::after {
   color: var(--md-on-secondary-container);
 }
 
-/* ── Music Page Filter ──────────────────────────────────── */
 .music-filter-btn {
   flex-shrink: 0;
   width: 36px;
@@ -1889,7 +1715,6 @@ body.is-resizing *::after {
   white-space: nowrap;
 }
 
-/* ── Filter Dialog ──────────────────────────────────────── */
 .mf-dialog-overlay {
   position: fixed;
   inset: 0;
@@ -1967,7 +1792,6 @@ body.is-resizing *::after {
   padding: 8px 0 0;
 }
 
-/* Category tabs — horizontal pill row */
 .mf-category-tabs {
   display: flex;
   gap: 4px;
@@ -2015,7 +1839,6 @@ body.is-resizing *::after {
   font-weight: 700;
 }
 
-/* Category content — scrollable list */
 .mf-category-content {
   flex: 1;
   overflow-y: auto;
@@ -2024,7 +1847,6 @@ body.is-resizing *::after {
   max-height: 420px;
 }
 
-/* Individual check item */
 .mf-check-item {
   display: flex;
   align-items: center;
@@ -2065,7 +1887,6 @@ body.is-resizing *::after {
 }
 .mf-check-item.checked .mf-check-item-sub { color: var(--md-on-secondary-container); opacity: 0.8; }
 
-/* Empty state inside dialog */
 .mf-empty {
   display: flex;
   flex-direction: column;
@@ -2087,8 +1908,6 @@ body.is-resizing *::after {
   flex-shrink: 0;
 }
 
-/* ── 19. Now Playing Panel ───────────────────────────────── */
-/* Islands：右侧「正在播放」浮岛——与内容区之间留 8px 缝 */
 .now-playing-pane {
   background: var(--md-surface-container-low);
   overflow-y: auto;
@@ -2096,15 +1915,14 @@ body.is-resizing *::after {
   flex-direction: column;
   padding: 0;
   position: relative;
-  /* 不设 height:100%，靠栅格默认 stretch 填满，避免 100%+margin 溢出裁掉底圆角 */
+
   margin: 4px 8px 8px 8px;
   border-radius: var(--island-radius);
-  /* 同 content-pane：兜住 backdrop-filter 溢出圆角的情况 */
+
   clip-path: inset(0 round var(--island-radius));
-  /* width 由 grid 列宽控制，不再过渡 */
+
 }
 
-/* 影院/全窗口模式：整屏铺满，取消浮岛圆角与外边距 */
 .now-playing-pane.fullscreen {
   margin: 0;
   border-radius: 0;
@@ -2115,7 +1933,7 @@ body.is-resizing *::after {
   transform: translateX(100%);
   opacity: 0;
   pointer-events: none;
-  margin: 0; /* 折叠时列宽为 0，清掉浮岛外边距避免溢出残留 */
+  margin: 0;
   border-radius: 0;
   clip-path: none;
 }
@@ -2124,25 +1942,13 @@ body.is-resizing *::after {
   pointer-events: none;
 }
 
-/* ── 19a. 正在播放 — 模糊封面氛围背景 ─────────────────────── */
-/* 三层叠加：模糊封面（双层烘焙位图 + 交叉淡入淡出）+ 噪点颗粒 + Material You 遮罩
-   仅在全窗口视图（.fullscreen）下显示
-
-   性能设计（参考 folia-major 的 FluidBackground，2026-08 烘焙化改造）：
-   1. 模糊源图在 JS 侧降采样至 ≤384px，且 blur/saturate/brightness 已用
-      canvas ctx.filter 一次性烘进位图（_buildBgBlurSource）：96px 级模糊抹平一切
-      小于模糊半径的细节，烘焙小图放大后与全尺寸原图运行时模糊视觉完全等同，
-      但合成层只是普通图片 quad —— 无运行时 filter、无全屏模糊中间缓冲，
-      渲染进程与 GPU 进程双端各省数十至上百 MB 光栅/纹理内存。
-   2. 鼓点动态只通过 transform 与 opacity（合成器属性，跳过重光栅）表达。
-   3. 流体感来自基底层与涌动层的反向错动漂移（纯 transform 关键帧动画）。 */
 .np-bg {
   position: absolute;
   inset: 0;
   z-index: 0;
-  /* Islands：跟随所在浮岛圆角（全窗口视图时父级为 0，自动变直角） */
+
   border-radius: inherit;
-  /* 噪点层用 mix-blend-mode: overlay，隔离混合范围，防止溢出圆角外 */
+
   isolation: isolate;
   overflow: hidden;
   pointer-events: none;
@@ -2151,8 +1957,6 @@ body.is-resizing *::after {
   transition: opacity var(--motion-medium) var(--ease-standard);
 }
 
-/* 封面层容器：承载鼓点缩放脉动（transform 为合成器属性）。
-   缩放置于 .np-bg（overflow:hidden）之内，避免撑出父面板滚动条。 */
 .np-bg-covers {
   position: absolute;
   inset: 0;
@@ -2166,11 +1970,6 @@ body.is-resizing *::after {
   100% { transform: translate3d(-2%, 1.8%, 0) scale(1.06); }
 }
 
-/* 交叉淡入淡出包装层：只动 opacity（合成器属性），滤镜已烘焙进位图。
-   inset 过扫描用于容纳漂移动画的位移/缩放余量（烘焙模糊无边缘透明渗出，
-   过扫描从 -14% 收窄到 -8%，直接缩小全屏合成层纹理面积）。
-   will-change 不常驻：仅在 1.4s 交叉淡入期间由 JS 挂 .fading（见 now_playing.js），
-   避免两个全屏包装层常年独占合成层。 */
 .np-bg-cover {
   position: absolute;
   inset: -8%;
@@ -2184,9 +1983,6 @@ body.is-resizing *::after {
   opacity: 0.85;
 }
 
-/* 基底 / 涌动层：滤镜已分别烘焙进 --cover-image-base / --cover-image-surge
-   两张 ≤384px 位图（JS 在 _buildBgBlurSource 中一次性生成），此处只是普通
-   背景图 quad —— 无运行时 filter、无模糊中间缓冲，光栅/纹理开销与纯色层同级。 */
 .np-bg-cover-base,
 .np-bg-cover-surge {
   position: absolute;
@@ -2197,20 +1993,12 @@ body.is-resizing *::after {
   transform: translateZ(0);
 }
 
-/* 基底氛围层：烘焙滤镜位图，一次上传后稳定复用；
-   慢速漂移动画（纯 transform，合成器驱动）提供流体主运动。
-   无 will-change：infinite transform 动画运行期间 Chromium 自动提升，
-   暂停（.paused）时自动降级释放合成层。 */
 .np-bg-cover-base {
   background-image: var(--cover-image-base, none);
   background-color: var(--cover-color, var(--md-surface-container-low));
   animation: np-bg-drift 36s ease-in-out infinite alternate;
 }
 
-/* 涌动层：高饱和 + 高亮的烘焙副本，opacity 由频谱能量驱动（--beat-surge）。
-   与容器漂移反向错动，双层滑动形成流体感，全程零重光栅。
-   will-change 仅保留 opacity（beat-surge 由 JS 逐帧驱动，需常驻合成层避免逐帧重绘）；
-   transform 由 infinite 动画自动提升，无需列入。 */
 .np-bg-cover-surge {
   background-image: var(--cover-image-surge, none);
   opacity: var(--beat-surge, 0);
@@ -2223,20 +2011,14 @@ body.is-resizing *::after {
   100% { transform: translate3d(1.6%, -1.2%, 0) scale(1.1); }
 }
 
-/* ── 全窗口视图：鼓点驱动脉动 ──
-   JS RAF 每帧只写两个合成器属性变量（不触碰滤镜，零重光栅）：
-   --beat-scale: 整体缩放（1.00 静 → 1.07 峰值，bass 鼓点脉动）
-   --beat-surge: 涌动层不透明度（0 静 → 0.9 峰值，中高频色彩涌动 + 微光） */
 .now-playing-pane.fullscreen .np-bg-covers {
   transform: scale(var(--beat-scale, 1)) translateZ(0);
 }
-/* 流体动画在播放时继续，暂停时静止以节能 */
 .np-bg-covers.paused .np-bg-cover-base,
 .np-bg-covers.paused .np-bg-cover-surge {
   animation-play-state: paused;
 }
 
-/* 噪点颗粒层：细密胶片噪点，增加质感 */
 .np-bg-noise {
   position: absolute;
   inset: 0;
@@ -2246,30 +2028,20 @@ body.is-resizing *::after {
   mix-blend-mode: overlay;
 }
 
-/* Material You 色彩遮罩：用动态主题派生的表面色为背景定调，
-   保证文字可读性同时与封面主色和谐呼应 */
 .np-bg-mask {
 position: absolute;
 inset: 0;
-/* 使用 applyDynamicTheme 从封面主色派生的 Material You 表面色作为遮罩主调：
-   顶部略透保留一点封面氛围，底部近实色呈现派生背景色 */
 background: linear-gradient(180deg,
 color-mix(in srgb, var(--md-surface-container-low) 58%, transparent) 0%,
 var(--md-surface-container-low) 88%);
 }
 
-/* 全窗口视图下显示氛围背景 */
 .now-playing-pane.fullscreen .np-bg {
 opacity: 1;
 visibility: visible;
 }
 
-/* 收折状态下隐藏氛围背景，避免探出时的闪烁 */
 .now-playing-pane.collapsed .np-bg { opacity: 0; }
-
-/* ── 19b. 正在播放 — 视频背景（Canvas）─────────────────────── */
-/* 当同目录下有与歌曲同名的视频文件时，以 Canvas 逐帧绘制视频作为背景，
-   上方叠加半透明黑色遮罩，保证文字可读性。 */
 
 .np-bg-video {
 position: absolute;
@@ -2291,17 +2063,13 @@ transition: opacity 0.8s var(--ease-decel);
 z-index: 1;
 }
 
-/* 视频激活时：显示视频层与遮罩，隐藏封面氛围层与色彩遮罩 */
 .np-bg.video-active .np-bg-video { opacity: 1; }
 .np-bg.video-active .np-bg-video-overlay { opacity: 1; }
 .np-bg.video-active .np-bg-covers { opacity: 0; }
 .np-bg.video-active .np-bg-mask { opacity: 0; }
 
-/* 视频背景激活时（全窗口视图）：使用从封面主色派生的暗色 Material You 配色 + 实色组件背景变半透明。
-   --md-*-vd 变量由 applyDynamicTheme 始终以暗色模式亮度计算，保持与封面主色的色彩关联；
-   无封面时回退到默认暗色值。非封面派生色（error / inverse / state 等）保持固定暗色。 */
 .now-playing-pane.fullscreen:has(.np-bg.video-active) {
-  /* ── 封面派生 Design Tokens（暗色变体）── */
+
   --md-primary:               var(--md-primary-vd,               #9ECAFF);
   --md-on-primary:            var(--md-on-primary-vd,            #003258);
   --md-primary-container:     var(--md-primary-container-vd,     #00497D);
@@ -2314,7 +2082,7 @@ z-index: 1;
   --md-on-tertiary:           var(--md-on-tertiary-vd,           #3B2948);
   --md-tertiary-container:    var(--md-tertiary-container-vd,    #523F60);
   --md-on-tertiary-container: var(--md-on-tertiary-container-vd, #F2DAFF);
-  /* ── 非封面派生色（固定暗色）── */
+
   --md-error:                 #FFB4AB;
   --md-on-error:              #690005;
   --md-error-container:       #93000A;
@@ -2347,17 +2115,14 @@ z-index: 1;
   background: color-mix(in srgb, var(--md-surface-container-low) 30%, transparent);
 }
 
-/* 视频背景激活时：隐藏专辑图 */
 .now-playing-pane.fullscreen:has(.np-bg.video-active) .np-cover-wrap {
   display: none;
 }
 
-/* 视频背景激活时：歌曲信息区移至播放控制按键上方 */
 .now-playing-pane.fullscreen:has(.np-bg.video-active) .np-panel--info.active {
   justify-content: flex-end;
 }
 
-/* 视频背景激活时：实色子组件 → 半透明毛玻璃 */
 .now-playing-pane.fullscreen:has(.np-bg.video-active) .np-secondary-controls {
   background: color-mix(in srgb, var(--md-surface-container-low) 35%, transparent);
   backdrop-filter: blur(16px);
@@ -2409,7 +2174,7 @@ z-index: 1;
   background: color-mix(in srgb, var(--md-surface-container-highest) 40%, transparent);
 }
 .now-playing-pane.fullscreen:has(.np-bg.video-active) .volume-slider {
-  /* 视频背景上：不活跃轨道与 stop 点改为半透明，避免死板色块压住画面 */
+
   background:
     radial-gradient(circle at calc(100% - var(--md-comp-slider-stop-inset)) 50%,
       color-mix(in srgb, var(--md-on-surface) 70%, transparent) 0 calc(var(--md-comp-slider-stop-size) / 2),
@@ -2420,7 +2185,6 @@ z-index: 1;
     color-mix(in srgb, var(--md-secondary-container) 45%, transparent);
 }
 
-/* 将面板内容抬至氛围背景之上 */
 .now-playing-pane > .np-top-bar,
 .now-playing-pane > .np-pivot,
 .now-playing-pane > .np-mini-info,
@@ -2431,17 +2195,14 @@ z-index: 1;
   position: relative;
   z-index: 1;
 }
-/* 顶栏含 split-button 下拉菜单，需高于其他内容元素以避免菜单被遮挡 */
 .now-playing-pane > .np-top-bar {
   z-index: 20;
 }
-/* 全屏模式下 .np-panels 使用 display:contents，需直接抬升面板本身 */
 .now-playing-pane.fullscreen .np-panel {
   position: relative;
   z-index: 1;
 }
 
-/* 尊重「减少动态效果」用户偏好 */
 @media (prefers-reduced-motion: reduce) {
   .np-bg-cover-base,
   .np-bg-cover-surge { animation: none; }
@@ -2451,32 +2212,28 @@ z-index: 1;
   .now-playing-pane.fs-transitioning { animation: none; }
 }
 
-/* Mini Player (Bottom Bar) */
 .mini-player {
   position: fixed;
   bottom: 8px;
   left: 8px;
   right: 8px;
   height: 64px;
-  /* 模糊背景：直接用侧边栏容器色（不加封面取色混色），纯色阶 */
+
   background: color-mix(in srgb, var(--md-surface-container-low) 88%, transparent);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  /* Islands：底部播放栏浮岛——纯圆角，不用描边也不用投影（M3） */
+
   border-radius: var(--island-radius);
-  box-shadow: none; /* 不要阴影 */
-  overflow: hidden; /* 让顶部进度条贴合边缘（并被圆角裁切） */
+  box-shadow: none;
+  overflow: hidden;
   display: flex;
   align-items: center;
-  padding: 0 16px; /* 两侧内边距对称 */
+  padding: 0 16px;
   gap: 16px;
   z-index: 50;
   transition: transform var(--motion-medium) var(--ease-standard);
 }
 
-/* 展开/收折过渡期间：底栏播放组件做下沉/上滑动画。
-   覆盖 collapsed 状态对 .mini-player 的 display:none，
-   保证滑动过程全程可见。 */
 .mini-player.mini-leaving,
 .mini-player.mini-entering {
   display: flex !important;
@@ -2486,7 +2243,6 @@ z-index: 1;
   will-change: transform, opacity;
 }
 
-/* 底栏上滑进入（浮岛有 8px 下边距，需多移 8px 才能完全出视口） */
 .mini-player.mini-entering {
   animation: mini-slide-up 220ms cubic-bezier(0.05, 0.7, 0.1, 1) forwards;
 }
@@ -2495,7 +2251,6 @@ z-index: 1;
   to   { transform: translateY(0);            opacity: 1; }
 }
 
-/* 底栏下沉离开 */
 .mini-player.mini-leaving {
   animation: mini-slide-down 120ms cubic-bezier(0.3, 0, 0.8, 0.15) forwards;
 }
@@ -2504,20 +2259,17 @@ z-index: 1;
   to   { transform: translateY(calc(100% + 8px));    opacity: 0; }
 }
 
-/* 底栏扩展到侧边栏宽度：桌面端侧边栏不延伸到播放栏之下，停靠在栏上方
-   （Island 化后：nav margin-top 4；底栏占 8+64=72；再留 8px 缝 → 高度 = 100% - 84px） */
 @media (min-width: 601px) {
   body.player-collapsed .nav-drawer {
     height: calc(100% - 84px);
   }
 }
-/* 顶部细进度条（点击可跳转） */
 .mini-player-cover {
   width: 48px;
   height: 48px;
-  border-radius: 12px; /* 专辑图圆角 */
+  border-radius: 12px;
   background: var(--md-surface-container-highest);
-  box-shadow: none; /* 不要阴影 */
+  box-shadow: none;
   overflow: hidden;
   flex-shrink: 0;
   display: flex;
@@ -2537,14 +2289,12 @@ z-index: 1;
   display: flex;
   align-items: center;
   gap: 12px;
-  flex: 1 1 0; /* 与右侧控件区对称，使中间进度条真正横向居中 */
+  flex: 1 1 0;
   min-width: 0;
   max-width: 100%;
-  /* 长词模式下要收缩让宽，收放都得有过渡（max-width 用 100% 而不是 none，才可插值） */
+
   transition: max-width 320ms var(--ease-standard);
 }
-/* 长词模式：极长的一句放不下时，暂时隐去歌名 / 艺术家，把左区收成封面 + 爱心。
-   只降不消——封面上还在，用户不会失去"这是哪首"的全部线索。 */
 .mini-player.mini-lrc-wide .mini-player-left {
   max-width: 124px;
 }
@@ -2581,12 +2331,11 @@ z-index: 1;
   text-overflow: ellipsis;
   margin-top: 1px;
 }
-/* 控件区居中进度条（复用正在播放页 .np-progress-bar 样式） */
 .mini-player-progress-inline {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: 0 1 44%; /* 固定占比，由左右对称区域将其夹在真正的水平中心 */
+  flex: 0 1 44%;
   min-width: 200px;
   max-width: 560px;
   justify-content: center;
@@ -2602,8 +2351,6 @@ z-index: 1;
   text-align: center;
   letter-spacing: 0.2px;
 }
-/* 左侧当前时间：歌词态收成 0 宽让位（负 margin 抵消容器 gap），
-   宽度可过渡，所以歌词区是从左边"长出来"而不是整块跳位 */
 .mini-time-cur {
   width: 36px;
   overflow: hidden;
@@ -2612,7 +2359,6 @@ z-index: 1;
               margin-right 260ms var(--ease-standard),
               opacity 200ms var(--ease-standard);
 }
-/* 右侧时间：常规只留剩余时长；歌词态换成「当前 / 剩余」合并串 */
 .mini-time-dur .mini-time-joined { display: none; }
 .mini-time-joined {
   gap: 3px;
@@ -2621,7 +2367,7 @@ z-index: 1;
 .mini-time-sep { opacity: 0.45; }
 .mini-player-progress-inline.lrc-mode:not(:hover) .mini-time-cur {
   width: 0;
-  min-width: 0;      /* .mini-time 的 min-width 34 会挡住收窄，必须一并放开 */
+  min-width: 0;
   opacity: 0;
   margin-right: -10px;
 }
@@ -2630,34 +2376,24 @@ z-index: 1;
   display: inline-flex;
   align-items: baseline;
 }
-/* 复用正在播放页进度条：让 .np-progress-bar 在底栏中生长并居中
-   （handle 高度走基准档 16px，调档表见 .np-progress-bar 的场景调档） */
 .mini-progress-bar {
   margin-bottom: 0;
   flex: 1 1 auto;
   min-width: 0;
 }
 
-/* ── 进度条 / 底栏歌词共用槽位 ─────────────────────────────────────────
-   底栏中间那块默认显示当前歌词（有翻译则双行），指针进入槽位时让回
-   进度条——两者几何完全重合，只能用同一个槽位交叉淡入，不能各占一份
-   宽度（宽窄来回跳会带动左右时间标签位移）。 */
 .mini-progress-slot {
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
-  height: 42px;      /* 底栏 64，上下各留 11：够放原文 + 翻译两行 */
+  height: 42px;
   display: flex;
   align-items: center;
-  /* 放在基类：歌词态 ↔ 进度条态来回切时 width / margin 都有补间 */
+
   transition: width 300ms var(--ease-standard),
               margin 300ms var(--ease-standard);
 }
 
-/* 歌词态：中间块不再固定占 44%，改由歌词自身宽度决定 ——
-   左右两侧的喜爱按钮与时间会跟着歌词一起收放，短句不再甩出大片空白。
-   整条链路（容器 → 槽位 → 歌词层 → 当前层）都用 max-content + max-width:100%，
-   上下文宽度由容器的 max-width 兜底，所以长句会被 54% 截住并走两端渐隐。 */
 .mini-player-progress-inline.lrc-mode:not(:hover) {
   flex: 0 1 auto;
   width: max-content;
@@ -2666,14 +2402,13 @@ z-index: 1;
 }
 .mini-player-progress-inline.lrc-mode:not(:hover) .mini-progress-slot {
   flex: 0 1 auto;
-  /* --mini-lrc-w 由 JS 写入本句的自然宽度，宽度可过渡 → 两侧组件平滑跟随 */
+
   width: var(--mini-lrc-w, max-content);
   max-width: 100%;
   min-width: 0;
-  /* 与左右两侧（喜爱 / 时间）留一点呼吸，不贴着 */
+
   margin: 0 14px;
 }
-/* 歌词态里进度条退成绝对定位铺满同块，不再参与撑宽（hover 时再回到流内） */
 .mini-player-progress-inline.lrc-mode:not(:hover) .mini-progress-slot .mini-progress-bar {
   position: absolute;
   inset: 0;
@@ -2681,7 +2416,7 @@ z-index: 1;
 }
 .mini-player-progress-inline.lrc-mode:not(:hover) .mini-lrc {
   position: relative;
-  /* 进流后必须自己撑满 42px 并居中：否则作为块级元素会从顶部排版，整句看着偏上 */
+
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2689,7 +2424,6 @@ z-index: 1;
   max-width: 100%;
   height: 42px;
 }
-/* 当前层参与流，宽度即歌词宽度；旧层仍是绝对定位，只为退场动画存在 */
 .mini-player-progress-inline.lrc-mode:not(:hover) .mini-lrc .mini-lrc-swap.is-in {
   position: relative;
   inset: auto;
@@ -2702,11 +2436,10 @@ z-index: 1;
   width: 100%;
   margin-bottom: 0;
   transform-origin: 50% 50%;
-  /* 让位时横向收一档再淡出，回来时反之：比单纯 opacity 更有"交接"感 */
+
   transition: opacity var(--motion-effects-fast),
               transform var(--motion-spatial-fast);
 }
-/* 有歌词：默认只露歌词；hover 槽位即恢复进度条（底栏想拖进度就把指针移上来） */
 .mini-progress-slot.has-lyric .mini-lrc {
   opacity: 1;
   transform: none;
@@ -2726,7 +2459,6 @@ z-index: 1;
   pointer-events: auto;
 }
 
-/* 底栏歌词层（绝对定位盖在进度条之上，不吃指针事件） */
 .mini-lrc {
   position: absolute;
   inset: 0;
@@ -2738,7 +2470,6 @@ z-index: 1;
               transform var(--motion-spatial-fast);
   contain: layout paint;
 }
-/* 一次换行 = 一层；换行时新旧两层叠放做水平渐变交接，动画结束移除旧层 */
 .mini-lrc-swap {
   position: absolute;
   inset: 0;
@@ -2748,7 +2479,7 @@ z-index: 1;
   justify-content: center;
   gap: 2px;
   padding: 0 10px;
-  /* 字号随行数自适应：单行给足体量；有翻译时两行一起收紧，保证 42px 槽内不挤 */
+
   --mini-lrc-size: 16px;
   --mini-lrc-trans-size: 12.5px;
 }
@@ -2763,9 +2494,6 @@ z-index: 1;
 .mini-lrc-swap.is-out {
   animation: mini-lrc-out 200ms cubic-bezier(0.4, 0, 0.2, 1) both;
 }
-/* 行：默认不做两端渐隐——短句被虚化边缘只是脏，不是风格。
-   只有真的溢出（JS 测 scrollWidth）才挂 .is-overflow 的 10px 渐隐，
-   用来提示"这句还没完"。mask 与交接动画分别挂在行 / swap 上，互不抢属性。 */
 .mini-lrc-line,
 .mini-lrc-trans {
   max-width: 100%;
@@ -2786,11 +2514,10 @@ z-index: 1;
   font-variation-settings: 'wght' 700, 'GRAD' 40, 'opsz' 18;
   letter-spacing: 0.2px;
   color: var(--md-primary);
-  /* 逐字填充的两端色：已唱 = primary，未唱 = 45% primary（同主界面比例） */
+
   --wc: var(--md-primary);
   --wc-muted: color-mix(in srgb, var(--md-primary) 42%, transparent);
 }
-/* 底栏字号小，词/字容器的几何必须与主界面一致才能共用逐字渲染 */
 .mini-lrc .np-lyrics-word {
   display: inline-block;
   white-space: pre;
@@ -2825,7 +2552,6 @@ z-index: 1;
   opacity: 0.8;
 }
 
-/* 行切换：新行自右侧水平渐显（遮罩从左往右展开），旧行向左渐隐 */
 @keyframes mini-lrc-in {
   from {
     opacity: 0;
@@ -2862,16 +2588,15 @@ z-index: 1;
 .mini-player-controls {
   display: flex;
   align-items: center;
-  gap: 6px; /* 按钮之间间距 */
-  padding: 0 4px; /* 按钮组两侧留白 */
-  flex: 1 1 0; /* 与左侧区域对称，把进度条夹在正中 */
+  gap: 6px;
+  padding: 0 4px;
+  flex: 1 1 0;
   justify-content: flex-end;
 }
-/* 底栏控件复用侧边播放控件(.np-control-pill / .np-play-pill)的样式与风格，整体比例缩小一档 */
 .mini-btn {
   width: 40px;
   height: 40px;
-  border-radius: var(--shape-full); /* 同 .np-control-pill */
+  border-radius: var(--shape-full);
   background: var(--md-surface-container-high);
   color: var(--md-on-surface);
   display: inline-flex;
@@ -2891,10 +2616,10 @@ z-index: 1;
 .mini-btn-play {
   width: 80px;
   height: 46px;
-  border-radius: 23px; /* 同 .np-play-pill（比例缩放） */
+  border-radius: 23px;
   background: var(--md-primary);
   color: var(--md-on-primary);
-  box-shadow: none; /* 不要阴影 */
+  box-shadow: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2914,27 +2639,25 @@ z-index: 1;
   font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 28;
   transform-origin: center;
 }
-/* 底栏歌名右侧爱心按钮：去背景，透明图标按钮；点赞只变红心 */
 .mini-btn-like {
-  background: transparent; /* 不要实色背景 */
+  background: transparent;
 }
 .mini-btn-like:hover {
-  background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); /* MD3 极淡 state layer */
+  background: color-mix(in srgb, var(--md-on-surface) 8%, transparent);
   color: var(--md-on-surface);
 }
 .mini-btn-like.liked,
 .mini-btn-like.liked:hover {
-  background: transparent; /* 点赞仍无背景，仅图标变红 */
+  background: transparent;
   color: var(--md-error);
 }
 .mini-btn-like.liked .material-symbols-rounded {
   color: var(--md-error);
 }
-/* 还原侧边按钮：与 .mini-btn 同属侧边控件风格 */
 .mini-btn-expand {
   width: 40px;
   height: 40px;
-  border-radius: var(--shape-full); /* 同 .np-control-pill */
+  border-radius: var(--shape-full);
   background: var(--md-surface-container-high);
   color: var(--md-on-surface);
   display: inline-flex;
@@ -2952,16 +2675,13 @@ z-index: 1;
   font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
 
-/* 折りたたみ時のレイアウト調整 */
 body.player-collapsed .app-shell {
   grid-template-columns: 1fr 0;
 }
-/* Islands：底栏浮岛出现时，内容岛与右岛同步上抬收在浮岛上方（留8px 缝） */
 body.player-collapsed .content-pane {
   padding-bottom: 0;
-  margin-bottom: 80px; /* 底栏 8 + 64 + 缝 8 */
-  /* 右栏收折后栅格列宽为 0，内容岛会顶到窗口右缘、右侧圆角被切掉；
-     补一条右缝，让四边都保持 Islands 留白 */
+  margin-bottom: 80px;
+
   margin-right: 8px;
 }
 body.player-collapsed .mini-player {
@@ -2971,17 +2691,11 @@ body:not(.player-collapsed) .mini-player {
   display: none;
 }
 
-/* ── Player Expand/Collapse Animation ──────────────────────
-   编排（FLIP 缩放）：
-   展开 = 底栏下沉 → grid 瞬切 + 主内容区 FLIP 缩放 + 侧边面板淡入
-   收折 = 侧边面板淡出 → grid 瞬切 + 主内容区 FLIP 缩放 + 底栏上滑
-   grid 列宽即时切换，主内容区以 transform 缩放过渡（Windows 最大化风格）。 */
 body.player-expanding .app-shell,
 body.player-collapsing .app-shell {
   transition: background-color var(--motion-medium) var(--ease-standard);
 }
 
-/* 侧边面板从右侧滑入（展开时） */
 .now-playing-pane.expanding {
   animation: np-slide-in 200ms var(--ease-decel) both;
   margin: 0;
@@ -2993,10 +2707,9 @@ body.player-collapsing .app-shell {
   to   { transform: translateX(0);    opacity: 1; }
 }
 
-/* 侧边面板向右侧滑出（收折时） */
 .now-playing-pane.collapsing {
   animation: np-slide-out 120ms var(--ease-accel) both;
-  /* 动画期间列宽已为 0：清掉浮岛外边距与圆角，避免边缘残留 */
+
   margin: 0;
   border-radius: 0;
   clip-path: none;
@@ -3006,7 +2719,6 @@ body.player-collapsing .app-shell {
   to   { transform: translateX(100%); opacity: 0; }
 }
 
-/* ── 全窗口视图切换过渡 ───────────────────────────── */
 .now-playing-pane.fs-transitioning.fullscreen {
   animation: fs-expand 300ms var(--ease-decel) both;
 }
@@ -3035,9 +2747,6 @@ border-left: none;
 background: var(--md-surface-container-low);
 }
 
-/* ── 全窗口视图：背景延伸到标题栏 ─────────────────────────── */
-/* 全窗口视图下，正在播放面板覆盖整个窗口（含标题栏区域），
-   标题栏变透明仅保留窗口控制三键 */
 body.np-fullscreen .now-playing-pane.fullscreen {
   top: 0;
   height: 100vh;
@@ -3058,12 +2767,10 @@ body.np-fullscreen .title-bar-left {
   display: none;
 }
 
-/* 全窗口视图下隐藏标题栏设置按钮（设置页激活时恢复） */
 body.np-fullscreen:not(.settings-active) .title-bar-settings {
   display: none;
 }
 
-/* Fullscreen tablet layout — grid-template-areas to avoid row sharing */
 .now-playing-pane.fullscreen {
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(360px, 480px);
@@ -3076,7 +2783,7 @@ body.np-fullscreen:not(.settings-active) .title-bar-settings {
     "volume  queue";
   gap: 12px;
   padding: 12px;
-  padding-top: 48px; /* 标题栏区域，为窗口控制按钮留空间 */
+  padding-top: 48px;
   height: 100vh;
   overflow: hidden;
   justify-content: center;
@@ -3092,7 +2799,6 @@ padding: 0;
 .now-playing-pane.fullscreen .np-pivot-tab[data-tab="info"] { display: none; }
 .now-playing-pane.fullscreen .np-pivot-tab { flex: 0 0 auto; }
 
-/* Use display:contents on .np-panels so .np-panel become direct grid children */
 .now-playing-pane.fullscreen .np-panels { display: contents; }
 .now-playing-pane.fullscreen .np-panel {
   position: static;
@@ -3118,27 +2824,24 @@ padding: 0;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding-top: 48px; /* space for pivot tabs */
-  overflow: hidden; /* 外层裁剪，内层 .np-queue-list / .np-lyrics-wrap 自己滚动 */
+  padding-top: 48px;
+  overflow: hidden;
 }
 .now-playing-pane.fullscreen .np-panel--lyrics.active {
-  position: relative; /* 让工具栏相对于歌词面板定位 */
+  position: relative;
 }
 .now-playing-pane.fullscreen .np-lyrics-wrap { padding-top: 0; -webkit-mask-image: linear-gradient(transparent 0%, #000 8%, #000 96%, transparent 100%); mask-image: linear-gradient(transparent 0%, #000 8%, #000 96%, transparent 100%); }
 .now-playing-pane.fullscreen .np-lyrics { padding: 18% 36px 40%; min-height: 100%; justify-content: flex-start; }
 .now-playing-pane.fullscreen .np-mini-info { display: none !important; }
-/* 全屏视图下歌词工具栏常驻显示 */
 .now-playing-pane.fullscreen .np-lyrics-toolbar {
   opacity: 1;
   pointer-events: auto;
 }
 
-/* Controls in left column rows 3-5 */
 .now-playing-pane.fullscreen .np-main-controls { grid-area: main; }
 .now-playing-pane.fullscreen .np-secondary-controls { grid-area: secondary; }
 .now-playing-pane.fullscreen .np-volume { grid-area: volume; }
 
-/* Limit cover size in fullscreen to prevent overflow */
 .now-playing-pane.fullscreen .np-cover-wrap {
   max-height: min(40vh, 360px);
   flex-shrink: 1;
@@ -3148,10 +2851,6 @@ padding: 0;
   aspect-ratio: 1;
 }
 
-/* ── 19b. 全屏视图（影院模式）— 自动隐藏播放控制区 ───────────── */
-/* 影院模式在全窗口视图基础上启用，10秒无操作后添加 .controls-hidden
-   隐藏所有播放控制元素（顶栏、标签页、控制按钮、音量、歌词工具栏等），
-   任意鼠标移动/触摸/按键恢复显示。过渡使用 opacity + transform 实现平滑淡出。 */
 .now-playing-pane.theater .np-top-bar,
 .now-playing-pane.theater .np-pivot,
 .now-playing-pane.theater .np-main-controls,
@@ -3164,7 +2863,6 @@ padding: 0;
               transform 0.4s var(--ease-standard);
 }
 
-/* 隐藏状态：淡出 + 轻微下移（控制区）或上移（顶栏） */
 .now-playing-pane.theater.controls-hidden .np-top-bar {
   opacity: 0;
   transform: translateY(-100%);
@@ -3187,13 +2885,11 @@ padding: 0;
   opacity: 0;
   pointer-events: none;
 }
-/* 影院模式下进度条也淡出，但保留极细的进度指示线 */
 .now-playing-pane.theater.controls-hidden .np-progress-wrap {
   opacity: 0;
   pointer-events: none;
 }
 
-/* 影院模式下隐藏收折按钮（已在顶栏中随顶栏一起隐藏） */
 .now-playing-pane.theater .np-collapse-btn {
   transition: opacity 0.4s var(--ease-standard);
 }
@@ -3202,16 +2898,12 @@ padding: 0;
   pointer-events: none;
 }
 
-/* ── 影院模式控制区隐藏后：信息面板纵向居中 ────────── */
-
-/* 信息面板扩展为左栏全高，内容偏上居中 */
 .now-playing-pane.theater.controls-hidden .np-panel--info.active {
   grid-row: 2 / -1;
   justify-content: flex-start;
   padding-top: 12%;
 }
 
-/* 进度条折叠（释放空间让封面+曲目信息居中） */
 .now-playing-pane.theater .np-progress-wrap {
   transition: opacity 0.4s var(--ease-standard),
               transform 0.4s var(--ease-standard),
@@ -3237,7 +2929,6 @@ padding: 0;
   gap: 8px;
 }
 
-/* 上部バー（Split button を右寄せ） */
 .np-top-bar {
   display: flex;
   justify-content: space-between;
@@ -3248,7 +2939,6 @@ padding: 0;
   position: relative;
 }
 
-/* 折りたたみボタン */
 .np-collapse-btn {
   width: 40px;
   height: 40px;
@@ -3271,7 +2961,6 @@ padding: 0;
   font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 22;
 }
 
-/* Pivot tabs → Pills (M3 choice chips) */
 .np-pivot {
   position: relative;
   display: flex;
@@ -3308,16 +2997,10 @@ padding: 0;
   color: var(--md-on-secondary-container);
   font-weight: 600;
 }
-/* 旧スライドインジケーターは使用しない（pills では不要） */
 .np-pivot-indicator { display: none; }
 
-/* ── 19c. 内容切换分段控件（仅全窗口视图顶栏显示） ──────────────── */
-/* 单正在播放 / 正在播放+歌词·播放列表 / 单歌词 三种布局模式，
-   MD3 轨道式（switch track）：胶囊轨道（surface-container-high，
-   与 .np-control-pill 一致）+ 滑块（secondary-container，
-   与 .np-pivot-tab.active 一致）随选中段平移 */
 .np-content-switch {
-  display: none; /* 侧边栏模式不显示（三种布局均为全窗口概念） */
+  display: none;
   position: relative;
   align-items: center;
   height: 40px;
@@ -3328,21 +3011,20 @@ padding: 0;
 }
 .now-playing-pane.fullscreen .np-content-switch {
   display: flex;
-  position: absolute; /* 顶栏正中央，不随两侧按钮宽度偏移 */
+  position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
 }
-/* 滑块：位置由面板上的 np-content-* 类驱动，默认为中段（duo） */
 .np-content-thumb {
   position: absolute;
   top: 4px;
-  left: 44px; /* duo 段位（4px 轨道内边距 + 40px 第一段宽） */
+  left: 44px;
   width: 40px;
   height: 32px;
   border-radius: var(--md-sys-shape-corner-full);
   background: var(--md-secondary-container);
-  /* M3E spatial 弹簧（fast）：轻微过冲后回正，取代之前手写的 (0.3,0,0.2,1.1) */
+
   transition: left var(--motion-spatial-fast);
 }
 .now-playing-pane.np-content-solo .np-content-thumb { left: 4px; }
@@ -3350,7 +3032,7 @@ padding: 0;
 .now-playing-pane.np-content-lyrics .np-content-thumb { left: 84px; }
 .np-content-seg {
   position: relative;
-  z-index: 1; /* 图标浮于滑块之上 */
+  z-index: 1;
   width: 40px;
   height: 32px;
   border: none;
@@ -3378,15 +3060,6 @@ padding: 0;
   font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 20;
 }
 
-/* ── 19d. 全窗口视图内容布局模式 ────────────────────────────── */
-/* 列宽与双列模式严格一致：solo 沿用左栏 minmax(280px,360px)，
-   lyrics 沿用右栏 minmax(360px,480px)，控制区一律与左栏同宽，
-   独立展示时元素尺寸不发生漂移。
-   np-content-solo：单列居中（封面+曲目信息+控制），隐藏 Pivot
-   np-content-lyrics：歌词独占内容区，信息面板隐藏
-   np-content-duo（默认）：沿用 19 节双列网格，无需覆盖 */
-/* 顶栏与双列模式的网格块同宽并居中（360 左列 + 12 列距 + 480 右列），
-   三种内容模式下顶栏按钮位置逐像素一致，不贴窗口边缘 */
 .now-playing-pane.fullscreen.np-content-solo .np-top-bar,
 .now-playing-pane.fullscreen.np-content-lyrics .np-top-bar {
   width: min(100%, 852px);
@@ -3405,9 +3078,8 @@ padding: 0;
 .now-playing-pane.fullscreen.np-content-solo .np-pivot,
 .now-playing-pane.fullscreen.np-content-lyrics .np-pivot { display: none; }
 .now-playing-pane.fullscreen.np-content-solo .np-panel--info.active {
-  justify-content: flex-start; /* 与双列模式左栏同：内容靠顶，不居中 */
+  justify-content: flex-start;
 }
-/* 影院模式下控制区隐藏后，封面信息同样扩展占满（沿用 19b 的行跨越） */
 .now-playing-pane.theater.controls-hidden.np-content-solo .np-panel--info.active {
   justify-content: flex-start;
   padding-top: 0;
@@ -3421,33 +3093,29 @@ padding: 0;
     ".      lyrics     ."
     ".      main       .";
 }
-/* 单歌词模式隐藏功能键与音量行，仅保留主播放控制，
-   网格行随元素塌陷（避免空轨道残留 gap），歌词区向下扩展 */
 .now-playing-pane.fullscreen.np-content-lyrics .np-secondary-controls,
 .now-playing-pane.fullscreen.np-content-lyrics .np-volume {
   display: none;
 }
 .now-playing-pane.fullscreen.np-content-lyrics .np-panel--info.active {
-  display: none; /* 单歌词模式不显示信息面板（JS 仍保持其 active 状态以便退出时恢复） */
+  display: none;
 }
 .now-playing-pane.fullscreen.np-content-lyrics .np-panel--lyrics.active {
   grid-area: lyrics;
-  padding-top: 48px; /* 与双列模式一致：Pivot 标签虽隐藏，但内容顶部起位不变 */
+  padding-top: 48px;
 }
 .now-playing-pane.fullscreen.np-content-lyrics .np-lyrics {
   padding: 14% 36px 32%;
 }
 .now-playing-pane.fullscreen.np-content-lyrics .np-main-controls {
-  width: min(100%, 360px); /* 与双列模式左栏（正在播放栏）同宽 */
+  width: min(100%, 360px);
   margin-left: auto;
   margin-right: auto;
 }
-/* 影院模式下控制区隐藏后，歌词扩展占满全高 */
 .now-playing-pane.theater.controls-hidden.np-content-lyrics .np-panel--lyrics.active {
   grid-row: 2 / -1;
 }
 
-/* Panels container */
 .np-panels {
   flex: 1;
   min-height: 0;
@@ -3466,23 +3134,18 @@ padding: 0;
   flex-direction: column;
 }
 
-/* Info panel — 元のレイアウトを維持 */
 .np-panel--info {
   padding: 0;
 }
 
-/* Queue panel */
 .np-panel--queue .np-queue-list {
   padding: 8px;
   flex: 1;
-  min-height: 0;          /* flex 子项允许缩小，否则 overflow 不生效 */
-  overflow-y: auto;        /* 内容超出时滚动，不再溢出被裁切 */
+  min-height: 0;
+  overflow-y: auto;
   overflow-x: hidden;
 }
 
-/* 窗口化队列（VirtualList）：spacer 撑滚动高度、content 用 transform 偏移、
-   行绝对定位。这里只重置 padding，布局交给 VirtualList 自管——
-   若加 contain:paint 会裁掉内容高度为 0 的绝对定位行，切勿添加。 */
 .np-queue-list.np-queue-vl {
   padding: 0;
 }
@@ -3490,7 +3153,6 @@ padding: 0;
   padding: 8px 0;
 }
 
-/* ── 24. Lyrics ──────────────────────────────────────────── */
 .np-lyrics-wrap {
   flex: 1;
   overflow-y: auto;
@@ -3510,7 +3172,6 @@ padding: 0;
   min-height: 100%;
   justify-content: center;
 }
-/* 歌词居中排版 */
 .np-lyrics.lyrics-centered {
   align-items: center;
   text-align: center;
@@ -3520,8 +3181,7 @@ padding: 0;
 }
 .np-lyrics-line {
   font-size: var(--lyrics-font-size, 16px);
-  /* 全部大歌词字重统一为真正最粗(900/black)：当前行/非当前行、逐字激活/未激活不分化，
-     彻底消除激活时字重变化导致的整行重新换行跳动 */
+
   font-weight: 900;
   font-variation-settings: 'wght' 900, 'GRAD' 120, 'opsz' 18;
   color: var(--md-on-surface-variant);
@@ -3534,28 +3194,14 @@ padding: 0;
   user-select: none;
   width: 100%;
   word-break: break-word;
-  /* line 本身从不设置 transform（逐字动画在 .np-lyrics-char 上）。
-     🔴 filter 必须**排除**在基类 transition 之外：filter 是强制提升合成层的属性，
-     只要它出现在 transition 列表中，Chromium 就会为**每一行**预建 compositing
-     layer（以便过渡时无需重排）。722 行 × 每层纹理后备实测约 109MB RSS，
-     而收益仅仅是「某行 blur 档位变化时平滑插值」——每行随激活行推进最多发生一次。
-     故 filter 过渡下沉到 .np-lyrics-line.np-near（激活行 ±4，仅 9 行），
-     这些行本就挂 will-change 已建层，零额外开销。
-     opacity / color 不强制提升合成层，可安全保留在基类。 */
+
   transition:
     opacity 0.42s cubic-bezier(0.2, 0, 0, 1),
     color 0.42s cubic-bezier(0.2, 0, 0, 1);
-  /* 屏外行跳过样式/布局/绘制（DOM 保留，querySelector/offsetTop 等全部照常工作）：
-     数千节点的逐字歌词 DOM 只渲染可见窗口附近的行。
-     contain-intrinsic-height 的 auto 关键字记住已渲染行的真实高度，
-     未渲染行按 42px 估算（16px 字 ×1.6 行高 + padding 的典型值），滚动条稳定。 */
+
   content-visibility: auto;
   contain-intrinsic-height: auto 42px;
 }
-/* 仅激活行附近保留合成层提升提示（激活行高亮/逐字/渐进模糊的频繁变化需要）。
-   范围 ±4：_blurForDistance 的档位是 0/1.5/3/4.5/6，距离 ≥4 已封顶 6px 不再变化，
-   因此 blur 过渡只可能发生在 ±4 以内 —— 覆盖它即可让全部 9 行都获得平滑 blur，
-   同时把合成层从 722 个压到 9 个（基类已不含 filter transition，见上）。 */
 .np-lyrics-line.np-near {
   will-change: opacity, filter, transform;
   transition:
@@ -3564,8 +3210,6 @@ padding: 0;
     filter 0.36s cubic-bezier(0.2, 0, 0, 1);
 }
 
-/* 切行时的逐行上提：滚动速度较快时提供连续的空间层次，
-   仅作用于当前行附近，动画结束后回到原始布局位置。 */
 .np-lyrics-line.np-lyrics-lift {
   animation: np-lyrics-line-lift 180ms cubic-bezier(0.2, 0, 0, 1)
              var(--lyrics-lift-delay, 0ms) both;
@@ -3575,8 +3219,6 @@ padding: 0;
   to   { transform: translateY(0); }
 }
 
-/* 渐进模糊模式：由 JS 根据行距离设置 inline filter，
-   此 class 仅用于标记容器状态，不直接应用 blur */
 .np-lyrics-wrap.progressive-blur .np-lyrics-line.np-lyrics-static {
   filter: none !important;
 }
@@ -3592,18 +3234,10 @@ padding: 0;
   opacity: 0.2;
 }
 
-/* ── 点击歌词跳转播放位置 ──────────────────────────────────────────────
-   有 data-time 的行（时间轴歌词）可点击；静态歌词行无此属性，天然不可点。
-   hover 用状态层提亮 + 右侧浮出时间戳（纯 CSS，不碰逐字动画的 JS 路径）。
-   时间戳绝对定位在行右侧、行内垂直居中，不占布局宽度故不触发重排。 */
 .np-lyrics-line[data-time],
 .np-lyrics-interlude[data-next-time] {
   cursor: pointer;
 }
-/* 可点行的 hover 高亮：歌词行是通栏（width:100%），直接在行上铺状态层会糊成
-   一条贯通全宽的直角带，与列表行的圆角语汇不一致。
-   改用伪元素画一块「内缩 4px 的圆角底板」叠在文字下层——不参与布局，
-   因此不影响文字排版、居中模式的居中点、以及逐字动画的 offsetTop 计算。 */
 .np-lyrics-line[data-time] {
   position: relative;
 }
@@ -3642,12 +3276,9 @@ padding: 0;
 .np-lyrics-line[data-time]:hover::after {
   opacity: 0.75;
 }
-/* 已播放行平时压到 0.2，hover 提回可读态，否则「点过去听一遍」时看不清 */
 .np-lyrics-line.past[data-time]:hover {
   opacity: 0.75;
 }
-/* 间奏点组的呼吸 scale 由 60fps RAF 逐帧写 transform，这里只叠加透明度反馈，
-   避免与 RAF 抢 transform 通道造成抖动。 */
 .np-lyrics-interlude[data-next-time]:hover .np-il-dots {
   opacity: 0.75;
   transition: opacity var(--motion-effects-fast);
@@ -3694,14 +3325,12 @@ padding: 0;
   opacity: 0.25;
 }
 
-/* 增强 LRC 逐字歌词：当前行仍整体高亮，行内未激活字较浅 */
 .np-lyrics-word {
   display: inline;
   position: relative;
   top: 0;
   opacity: 1;
-  /* 整行字重已统一为真正最粗(900/black)，此处与行容器一致；
-     激活只切换颜色/填充，因字重恒定，整行永不重新换行 */
+
   font-weight: 900;
   font-variation-settings: 'wght' 900, 'GRAD' 120, 'opsz' 18;
   transition:
@@ -3709,8 +3338,6 @@ padding: 0;
     color 0.25s cubic-bezier(0.2, 0, 0, 1),
     top 0.25s cubic-bezier(0.2, 0, 0, 1);
 }
-/* 含逐字词的行：整行字重已统一 700（见 .np-lyrics-line），
-   此处与基础一致，确保词间空白宽度与激活态完全相同，换行点稳定 */
 .np-lyrics-line:has(.np-lyrics-word) {
   font-weight: 900;
   font-variation-settings: 'wght' 900, 'GRAD' 120, 'opsz' 18;
@@ -3725,9 +3352,6 @@ padding: 0;
   top: 0;
 }
 
-/* ── 逐字歌词动画（MediaIsland/AMLL 风格，仅主窗口正在播放页）──
-   字级渐变填充由 JS 逐帧写 --fo/--fe（羽化边界），
-   transform/text-shadow 由 JS 逐帧驱动，CSS 只负责静态几何与配色 */
 .now-playing-pane .np-lyrics-word {
   display: inline-block;
   white-space: pre;
@@ -3737,7 +3361,6 @@ padding: 0;
   white-space: pre;
   transform-origin: 50% 50%;
 }
-/* word-sync：激活行进入逐字驱动模式（未唱部分颜色由渐变 muted 端给出） */
 .now-playing-pane .np-lyrics-line.word-sync .np-lyrics-word {
   opacity: 1;
   top: 0;
@@ -3767,7 +3390,6 @@ padding: 0;
   background-clip: text;
 }
 
-/* 静态歌词（无时间戳）—— 从顶部对齐显示 */
 .np-lyrics-line.np-lyrics-static {
   opacity: 0.7;
   line-height: 1.7;
@@ -3782,13 +3404,9 @@ padding: 0;
   justify-content: flex-start;
 }
 
-/* ── Apple Music 风格间奏指示器（三点） ────────────────────── */
-/* 动画由 JS 逐帧驱动（参考 MediaIsland InterludeDotsPresenter），
-   CSS 只负责静态几何与配色，不做 transition/animation */
 .np-lyrics-interlude {
   width: 100%;
-  /* 空闲时折叠为 0 高度（grid 0fr）不占布局；激活/收尾用 grid-template-rows
-     过渡平滑展开与收起，让下方歌词平移上来而非硬切 */
+
   display: grid;
   grid-template-rows: 0fr;
   transition: grid-template-rows 0.175s cubic-bezier(0.22, 1, 0.36, 1);
@@ -3805,11 +3423,11 @@ padding: 0;
 .np-il-dots {
   display: flex;
   align-items: center;
-  /* 点心距 = 3.3r（r = 0.22em），flex gap = 1.3r ≈ 0.29em */
+
   gap: 0.29em;
-  /* 行高由 padding 提供（而非 min-height），以便 grid 0fr 能平滑收起 */
+
   padding: 0.45em 0;
-  /* 包裹宽度贴合三点，使呼吸缩放以点组中心为原点（而非整行中心） */
+
   width: fit-content;
   overflow: hidden;
   transform-origin: center center;
@@ -3825,7 +3443,6 @@ padding: 0;
   opacity: 0;
 }
 
-/* 歌词制作信息（独立显示在歌词末尾） */
 .np-lyrics-credits {
   flex: none;
   margin-top: 24px;
@@ -3841,7 +3458,6 @@ padding: 0;
   text-align: center;
 }
 
-/* Lyrics panel placeholder (inside .np-lyrics) */
 .np-lyrics .np-lyrics-placeholder {
   flex: none;
   display: flex;
@@ -3858,21 +3474,18 @@ padding: 0;
 .np-lyrics .np-lyrics-placeholder p {
   font-size: 13px;
 }
-/* 自动搜索中：旋转动画 */
 .np-lyrics .np-lyrics-placeholder.lyrics-searching .material-symbols-rounded {
   animation: np-lyrics-search-spin 0.8s linear infinite;
 }
 @keyframes np-lyrics-search-spin {
   to { transform: rotate(360deg); }
 }
-/* 搜索失败提示文字 */
 .np-lyrics .np-lyrics-placeholder .np-lyrics-placeholder-hint {
   font-size: 11px;
   opacity: 0.6;
   margin-top: -4px;
 }
 
-/* Japanese lyrics font — only for main text, not translation */
 .np-lyrics.jp .np-lyrics-line {
   font-family: "Yu Gothic UI", "Yu Gothic", "Hiragino Kaku Gothic ProN", "Meiryo", "MS PGothic", sans-serif;
 }
@@ -3880,18 +3493,13 @@ padding: 0;
   font-family: var(--ui-font);
 }
 
-/* ── 24b. Lyrics Toolbar & Search ─────────────────────────── */
-
-/* 歌词面板容器需要裁剪工具栏和搜索面板，position: absolute 已由 .np-panel 基类提供 */
 .np-panel--lyrics {
   overflow: hidden;
 }
 
-/* 翻译/罗马音显隐控制 */
 .np-lyrics-wrap.hide-translation .np-lyrics-trans { display: none !important; }
 .np-lyrics-wrap.hide-romaji .np-lyrics-romaji { display: none !important; }
 
-/* 右下角功能工具栏 */
 .np-lyrics-toolbar {
   position: absolute;
   bottom: 12px;
@@ -3942,7 +3550,6 @@ padding: 0;
   background: var(--md-primary-container);
 }
 
-/* 左下角歌词来源标记 + 词源选择器 */
 .np-lyrics-source {
   position: absolute;
   bottom: 12px;
@@ -3967,7 +3574,6 @@ padding: 0;
 .np-panel--lyrics:hover .np-lyrics-source {
   opacity: 1;
 }
-/* 全屏视图下来源标记常驻显示 */
 .now-playing-pane.fullscreen .np-lyrics-source {
   opacity: 1;
 }
@@ -4007,7 +3613,6 @@ padding: 0;
   transform: rotate(180deg);
 }
 
-/* 词源选择下拉菜单 — M3 menu */
 .np-lyrics-source-dropdown {
   display: none;
   position: absolute;
@@ -4067,10 +3672,9 @@ padding: 0;
   display: none;
 }
 
-/* ── 歌词设置弹出面板 ── */
 .np-lyrics-settings-popup {
   position: absolute;
-  bottom: 56px;   /* 工具栏上方 */
+  bottom: 56px;
   right: 12px;
   width: 260px;
   z-index: 25;
@@ -4169,7 +3773,6 @@ padding: 0;
   background: var(--md-outline-variant);
 }
 
-/* 步进按钮（offset +/-） */
 .np-lyrics-setting-step-btn {
   display: flex;
   align-items: center;
@@ -4191,7 +3794,6 @@ padding: 0;
   font-size: 16px;
 }
 
-/* 滑块 */
 .np-lyrics-setting-slider {
   -webkit-appearance: none;
   appearance: none;
@@ -4213,7 +3815,6 @@ padding: 0;
   border: none;
 }
 
-/* 开关 */
 .np-lyrics-setting-switch {
   position: relative;
   display: inline-block;
@@ -4256,7 +3857,6 @@ padding: 0;
   background: var(--md-on-primary);
 }
 
-/* 歌词搜索覆盖面板 */
 .np-lyrics-search-overlay {
   position: absolute;
   inset: 0;
@@ -4350,7 +3950,6 @@ padding: 0;
   border-radius: 3px;
 }
 
-/* 搜索结果行 */
 .np-lyrics-result {
   display: flex;
   align-items: center;
@@ -4418,7 +4017,6 @@ padding: 0;
   font-size: 18px;
 }
 
-/* 搜索状态提示 */
 .np-lyrics-search-status {
   padding: 24px 16px;
   text-align: center;
@@ -4441,7 +4039,6 @@ padding: 0;
   to { transform: rotate(360deg); }
 }
 
-/* Mini info bar — 非音楽情報タブ時に上部に表示 */
 .np-mini-info {
   display: flex;
   align-items: center;
@@ -4503,7 +4100,6 @@ padding: 0;
   text-overflow: ellipsis;
 }
 
-/* Material 3 Split button：一つのピルから中央で切り離したような外観 */
 .split-button {
   position: relative;
   display: flex;
@@ -4598,13 +4194,11 @@ padding: 0;
   color: var(--md-on-surface-variant);
 }
 
-/* 上向きドロップダウン */
 .split-dropdown-up {
   top: auto;
   bottom: calc(100% + 4px);
 }
 
-/* 右下に浮かせる Split button */
 .np-split-floating {
   position: absolute;
   right: 12px;
@@ -4620,7 +4214,6 @@ padding: 0;
   color: var(--md-on-surface-variant);
 }
 
-/* Cover art */
 .np-cover-wrap {
   padding: 8px 20px 20px;
   flex-shrink: 0;
@@ -4638,7 +4231,6 @@ padding: 0;
   position: relative;
   transition: border-radius 0.3s cubic-bezier(0.2, 0, 0, 1);
 }
-/* 圆形专辑图 */
 .np-cover.circular {
   border-radius: 50%;
 }
@@ -4657,7 +4249,6 @@ padding: 0;
   border-radius: inherit;
 }
 
-/* 滚轮/触屏调节播放速率时的浮层提示 */
 .np-cover-rate {
   position: absolute;
   top: 50%;
@@ -4684,7 +4275,6 @@ padding: 0;
   transform: translate(-50%, -50%) scale(1);
 }
 
-/* 加载指示器（Subsonic 等网络音频加载时显示） */
 .np-cover-loading {
   position: absolute;
   inset: 0;
@@ -4710,7 +4300,6 @@ padding: 0;
   to { transform: rotate(360deg); }
 }
 
-/* Track info */
 .np-info {
   display: flex;
   align-items: flex-start;
@@ -4752,27 +4341,17 @@ padding: 0;
   font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
 
-/* Progress — M3 linear progress indicator
-   规格（实测自 m3e m3e-linear-progress-indicator）：
-     · 轨道 thickness 4px，圆角 corner-extra-small(4px)
-     · inactive = secondary-container，active = primary
-     · 末端 stop indicator：固定贴右端的 4dp 圆点（M3E 新增），100% 时与 active 末端重合
-   wavy 变体按 M3 参数重做：wavelength 40px、amplitude 3px（path 半振幅 = amplitude + thickness/2），
-   描边 4px 圆头，走一个完整波长的平滑循环（1.5s linear）。 */
 .np-progress-wrap { padding: 0 20px 8px; flex-shrink: 0; min-height: 0; }
 .np-progress-bar {
-  /* handle 高按场景伸缩：本变量是所有宿主唯一的调档入口，各宿主在下方覆盖，
-     不要在 .np-progress-thumb 上再写死高度。 */
+
   --progress-handle-h: var(--md-comp-progress-handle-height);
-  height: 24px;                       /* 行高保持不变，handle 只做溢出绘制，避免影响各处布局 */
+  height: 24px;
   display: flex;
   align-items: center;
   cursor: pointer;
   position: relative;
   margin-bottom: 4px;
 }
-/* 场景调档：底栏迷你播放器 / 悬浮窗走基准值，右栏与全屏逐级加大。
-   新增宿主时只需在这里加一条覆盖，不要在 .np-progress-thumb 上写死高度。 */
 .now-playing-pane .np-progress-bar {
   --progress-handle-h: var(--md-comp-progress-handle-height-pane);
 }
@@ -4784,9 +4363,7 @@ padding: 0;
   height: var(--md-comp-progress-thickness);
   border-radius: var(--md-comp-progress-shape);
   position: relative;
-  /* M3 进度条：不活跃轨道从「活跃段末端 + 断口」起，到「容器末端 − stop 点让位」止。
-     --progress-val 由 JS 与 fill/thumb 同步写入；未写入时回退到 −gap，
-     使断口落在 0 处（等价于无断口），避免初始态左侧凭空多一个缺口。 */
+
   background: linear-gradient(to right,
     transparent 0
       calc(var(--progress-val, calc(-1 * var(--md-comp-progress-track-gap))) + var(--md-comp-progress-track-gap)),
@@ -4795,7 +4372,6 @@ padding: 0;
       calc(100% - var(--md-comp-progress-stop-inset)),
     transparent calc(100% - var(--md-comp-progress-stop-inset)));
 }
-/* 轨道末端 stop indicator（M3E 进度条签名元素） */
 .np-progress-track::after {
   content: '';
   position: absolute;
@@ -4816,7 +4392,6 @@ padding: 0;
   width: 0%;
   pointer-events: none;
 
-  /* wavy 形态：高 = thickness + amplitude*2 + 描边余量 */
   height: var(--md-comp-progress-wave-height);
   background: var(--md-primary);
 
@@ -4831,7 +4406,6 @@ padding: 0;
   mask-size: var(--md-comp-progress-wave-wavelength) var(--md-comp-progress-wave-height);
 }
 
-/* flat 形态：与轨道同厚同形，无波形 */
 .np-progress-fill.flat {
   height: var(--md-comp-progress-thickness);
   border-radius: var(--md-comp-progress-shape);
@@ -4858,8 +4432,6 @@ padding: 0;
   }
 }
 
-/* handle：M3 slider 的 4dp 竖条（宽度恒 4px，按下收窄到 2px）；
-   高度由宿主的 --progress-handle-h 决定（见 .np-progress-bar 的场景调档）。 */
 .np-progress-thumb {
   width: var(--md-comp-slider-handle-width);
   height: var(--progress-handle-h);
@@ -4884,7 +4456,6 @@ padding: 0;
   outline-offset: var(--m3e-focus-ring-outward-offset);
 }
 
-/* AutoMix 过渡文字（进度条下方） */
 .np-transition-label {
   font-size: 11px;
   font-weight: 600;
@@ -4898,14 +4469,68 @@ padding: 0;
   opacity: 1;
 }
 .np-time-row {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
   font-size: 11px;
   color: var(--md-on-surface-variant);
   font-variant-numeric: tabular-nums;
 }
+/* 「过渡」与「音质」共占据左右时间之间的同一格：同一时间只显示一个 */
+.np-time-mid {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+}
+.np-time-mid > * {
+  grid-area: 1 / 1;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.np-quality-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  max-width: 100%;
+  line-height: 1;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--md-on-surface-variant);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+  user-select: none;
+}
+/* Dolby 双 D 标志（内联 SVG），随文字颜色与字号缩放 */
+.np-quality-icon {
+  display: block;
+  flex: 0 0 auto;
+  height: 1.08em;
+  width: auto;
+  fill: currentColor;
+}
+.np-quality-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.np-quality-label.visible {
+  opacity: 1;
+  /* 仅在可见时可悬停，用于显示编解码/采样率/码率详情（title） */
+  pointer-events: auto;
+  cursor: default;
+}
+.np-time-row.is-transitioning .np-quality-label {
+  opacity: 0;
+  pointer-events: none;
+}
 
-/* Controls */
 .np-main-controls {
   display: flex;
   align-items: center;
@@ -4952,7 +4577,7 @@ padding: 0;
   justify-content: center;
   border: none;
   cursor: pointer;
-  /* M3E 形变：播放中胶囊 ↔ 暂停时更方的形状，全程由 spatial 弹簧驱动 */
+
   transition: background var(--motion-effects-fast),
               transform var(--motion-spatial-fast),
               border-radius var(--motion-spatial-fast);
@@ -4974,14 +4599,7 @@ padding: 0;
 }
 
 .np-secondary-controls {
-  /* 段高与「外侧胶囊半径」必须成对定义：外侧只能取**有限值**（= 段高的一半）。
-     ⚠️ 这里曾经写 --md-sys-shape-corner-full(9999px)，是错的：
-     CSS 规定「同一边上两角之和 > 该边长」时，会把该元素**所有**圆角按同一比例缩小
-     （f = min(1, 边长 / 两角和)）。首段是 9999px + 8px、段高 44 → f ≈ 0.0022，
-     于是外侧 9999→22（仍是胶囊，看不出问题），而**内侧 8px → 0.02px 被压成直角**；
-     末段同理。结果就是「首尾两段的外侧是圆的、内侧是方的」，与中间段的 8px 圆角对不上，
-     整组看起来不含 M3E 的连通感。用 22px（= 高度一半，真胶囊）则不触发缩放：
-     22+8 < 74、22+22 = 44（等于边长不触发），内侧 8px 得以保留。 */
+
   --np-seg-height: 44px;
   --np-seg-outer: calc(var(--np-seg-height) / 2);
   display: flex;
@@ -4996,8 +4614,6 @@ padding: 0;
   min-height: 0;
 }
 
-/* 分段按钮：细微间距，独立圆角，选中状态形变为完整胶囊（spatial 弹簧）
-   形状＝外侧 full / 内侧 small（见 .np-secondary-controls 的注释） */
 .np-secondary-controls > button {
   flex: 1;
   height: var(--np-seg-height);
@@ -5012,9 +4628,6 @@ padding: 0;
               border-radius var(--motion-spatial-fast);
 }
 
-/* 首尾保持外侧胶囊、内侧 small。
-   ⚠️ 外侧必须写有限值 var(--np-seg-outer)，不能写 --md-sys-shape-corner-full，
-   否则 9999px 会触发 CSS 圆角等比缩放、把内侧 8px 压成直角（详见上方注释）。 */
 .np-secondary-controls > button:first-child {
   border-radius: var(--np-seg-outer) var(--md-sys-shape-corner-small) var(--md-sys-shape-corner-small) var(--np-seg-outer);
 }
@@ -5022,7 +4635,6 @@ padding: 0;
   border-radius: var(--md-sys-shape-corner-small) var(--np-seg-outer) var(--np-seg-outer) var(--md-sys-shape-corner-small);
 }
 
-/* 交互状态：Hover */
 .np-secondary-controls > button:hover {
   background: var(--md-surface-container-highest);
   color: var(--md-on-surface);
@@ -5031,7 +4643,6 @@ padding: 0;
   background: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-pressed-state-layer-opacity), var(--md-surface-container-high));
 }
 
-/* 交互状态：Active（选中状态变成完全胶囊，高优先级覆盖首尾圆角） */
 .np-secondary-controls > button.active {
   border-radius: var(--md-sys-shape-corner-full);
   color: var(--md-on-secondary-container);
@@ -5041,7 +4652,6 @@ padding: 0;
   background: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity), var(--md-secondary-container));
 }
 
-/* 交互状态：Liked */
 .np-secondary-controls > button.liked {
   border-radius: var(--md-sys-shape-corner-full);
   color: var(--md-on-error-container);
@@ -5053,7 +4663,6 @@ padding: 0;
 
 .np-secondary-controls > button .material-symbols-rounded { font-size: 20px; }
 
-/* 音频模式特殊修饰 */
 .np-secondary-controls > .np-audio-mode-btn {
   flex: 0 0 auto;
   min-width: 56px;
@@ -5067,7 +4676,6 @@ padding: 0;
   text-transform: lowercase;
 }
 
-/* 快进/快退按钮的秒数角标：叠在图标右下角的小字，随按钮文字色 */
 .np-secondary-btn { position: relative; }
 .np-secondary-badge {
   position: absolute;
@@ -5080,7 +4688,6 @@ padding: 0;
   pointer-events: none;
 }
 
-/* 确认对话框（Material You 标准样式，遵循 design.md dialog 规范） */
 .cmd-dialog-overlay {
   position: fixed;
   inset: 0;
@@ -5088,7 +4695,7 @@ padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.32);            /* scrim 32% */
+  background: rgba(0, 0, 0, 0.32);
   opacity: 0;
   transition: opacity 0.18s cubic-bezier(0.2, 0, 0, 1);
 }
@@ -5098,9 +4705,9 @@ padding: 0;
   max-width: 360px;
   background: var(--md-surface-container-low);
   color: var(--md-on-surface);
-  border-radius: 28px;                        /* M3 dialog 容器圆角 */
-  padding: 24px 24px 0 24px;                  /* 顶部 24px，底部由 actions 自撑 */
-  box-shadow: var(--md-sys-elevation-level3); /* M3 高度 level3 */
+  border-radius: 28px;
+  padding: 24px 24px 0 24px;
+  box-shadow: var(--md-sys-elevation-level3);
   border: 1px solid var(--md-outline-variant);
   transform: scale(0.96);
   transition: transform var(--motion-spatial-default);
@@ -5109,7 +4716,7 @@ padding: 0;
   transform: scale(1);
 }
 .cmd-dialog-title {
-  font-size: 24px;                            /* M3 headline-large */
+  font-size: 24px;
   font-weight: var(--md-sys-typescale-emphasized-headline-font-weight);
   color: var(--md-on-surface);
   line-height: 1.3;
@@ -5125,14 +4732,14 @@ padding: 0;
   display: flex;
   justify-content: flex-end;
   gap: 0;
-  margin: 0 -24px;          /* 抵消容器左右 padding */
-  padding: 8px 24px 24px 24px;  /* 顶部 8px 按钮间距，底部 24px */
+  margin: 0 -24px;
+  padding: 8px 24px 24px 24px;
 }
 .cmd-dialog-btn {
   height: 40px;
   padding: 0 12px;
   border: none;
-  border-radius: 20px;        /* M3 text button: 完全圆角 */
+  border-radius: 20px;
   font-family: inherit;
   font-size: 14px;
   font-weight: 500;
@@ -5154,7 +4761,7 @@ padding: 0;
   transition: opacity var(--motion-short) var(--ease-standard);
 }
 .cmd-dialog-btn:hover::before {
-  opacity: 0.08;              /* M3 state-layer: 8% primary */
+  opacity: 0.08;
 }
 .cmd-dialog-btn:active {
   transform: scale(0.97);
@@ -5164,7 +4771,6 @@ padding: 0;
   position: relative;
   z-index: 1;
 }
-/* 取消 / 确认：均为 text button —— primary 文字 */
 .cmd-dialog-btn--cancel {
   color: var(--md-primary);
 }
@@ -5172,7 +4778,6 @@ padding: 0;
   color: var(--md-primary);
 }
 
-/* ── Subsonic 同步全屏遮罩（Material 3 Dialog 规范） ──────────────── */
 .sync-overlay {
   position: fixed;
   inset: 0;
@@ -5186,7 +4791,6 @@ padding: 0;
 }
 .sync-overlay.open { opacity: 1; }
 
-/* M3 Dialog 容器 */
 .sync-overlay-card {
   width: calc(100vw - 48px);
   max-width: 360px;
@@ -5203,7 +4807,6 @@ padding: 0;
   transform: scale(1);
 }
 
-/* 头部区域（居中对齐） */
 .sync-overlay-head {
   display: flex;
   flex-direction: column;
@@ -5212,7 +4815,6 @@ padding: 0;
   margin-bottom: 16px;
 }
 
-/* Headline Small — 24px Regular */
 .sync-overlay-title {
   font-size: 24px;
   font-weight: 400;
@@ -5221,7 +4823,6 @@ padding: 0;
   margin: 0;
 }
 
-/* Body Medium — 14px 说明文字 */
 .sync-overlay-server {
   font-size: 14px;
   line-height: 1.5;
@@ -5229,12 +4830,10 @@ padding: 0;
   word-break: break-all;
 }
 
-/* Body 区域（左对齐，与标题/按钮一致） */
 .sync-overlay-body {
   margin-bottom: 24px;
 }
 
-/* Progress Indicator 轨道（M3 Linear Progress：4px / inactive=secondary-container / 末端 stop 圆点） */
 .sync-progress-track {
   display: flex;
   flex-direction: column;
@@ -5245,8 +4844,7 @@ padding: 0;
   width: 100%;
   height: var(--md-comp-progress-thickness);
   border-radius: var(--md-comp-progress-shape);
-  /* 与 .np-progress-track 同构（M3 进度条：活跃段断口 + 末端 stop 点让位），
-     --progress-val 由 folders.js 与填充条宽度同步写入。 */
+
   background: linear-gradient(to right,
     transparent 0
       calc(var(--progress-val, calc(-1 * var(--md-comp-progress-track-gap))) + var(--md-comp-progress-track-gap)),
@@ -5274,7 +4872,6 @@ padding: 0;
   transition: width var(--md-sys-motion-spring-fast-spatial);
 }
 
-/* 阶段标签 + 计数 */
 .sync-progress-label {
   font-size: 14px;
   line-height: 1.5;
@@ -5283,7 +4880,6 @@ padding: 0;
   font-variant-numeric: tabular-nums;
 }
 
-/* 当前处理项（小字 secondary） */
 .sync-current-item {
   font-size: 14px;
   line-height: 1.5;
@@ -5294,7 +4890,6 @@ padding: 0;
   text-overflow: ellipsis;
 }
 
-/* 错误信息 */
 .sync-overlay-error {
   font-size: 14px;
   line-height: 1.5;
@@ -5307,7 +4902,6 @@ padding: 0;
   overflow-y: auto;
 }
 
-/* 重启提示文字 */
 .sync-restart-hint {
   font-size: 13px;
   line-height: 1.5;
@@ -5316,7 +4910,6 @@ padding: 0;
   text-align: center;
 }
 
-/* Actions 区域 — 右对齐，M3 Text Button 样式 */
 .sync-overlay-actions {
   display: flex;
   justify-content: flex-end;
@@ -5359,7 +4952,6 @@ padding: 0;
   z-index: 1;
 }
 
-/* Outlined Text Field —— M3 规范 */
 .cmd-text-field {
   position: relative;
   width: 100%;
@@ -5403,18 +4995,11 @@ padding: 0;
   transform: translateY(-50%) scale(0.75);
   color: var(--md-primary);
 }
-/* select 无 placeholder，label 始终上浮 */
 select.cmd-text-field__input + .cmd-text-field__label {
   top: 0;
   transform: translateY(-50%) scale(0.75);
 }
 
-/* ==============================================================
-   Volume — M3 slider（XS 档）
-   形态照搬 m3e m3e-slider：不活跃轨道 secondary-container、活跃 primary、
-   handle 为 4px 宽竖条（按下收窄 2px）、轨道在 handle 两侧各让出空隙、
-   轨道末端 4dp stop indicator。
-   ============================================================== */
 .np-volume {
   display: flex;
   align-items: center;
@@ -5433,7 +5018,7 @@ select.cmd-text-field__input + .cmd-text-field__label {
   border-radius: var(--md-comp-slider-track-shape);
   outline: none;
   cursor: pointer;
-  /* 三层背景：① 末端 stop 圆点 ② 活跃轨道（到 handle 左侧空隙为止） ③ 不活跃轨道底色 */
+
   background:
     radial-gradient(circle at calc(100% - var(--md-comp-slider-stop-inset)) 50%,
       var(--md-on-secondary-container) 0 calc(var(--md-comp-slider-stop-size) / 2),
@@ -5465,7 +5050,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   height: calc(var(--md-comp-slider-handle-height) + 6px);
 }
 
-/* Firefox 等价实现 */
 .volume-slider::-moz-range-thumb {
   width: var(--md-comp-slider-handle-width);
   height: var(--md-comp-slider-handle-height);
@@ -5496,9 +5080,7 @@ select.cmd-text-field__input + .cmd-text-field__label {
   text-align: right; 
   font-variant-numeric: tabular-nums; 
 }
-/* ============================================================== */
 
-/* Queue */
 .np-queue-item {
   display: grid;
   grid-template-columns: 20px 40px 1fr auto auto;
@@ -5585,13 +5167,10 @@ select.cmd-text-field__input + .cmd-text-field__label {
 .np-queue-remove {
   opacity: 0.45;
   transition: opacity var(--motion-short) var(--ease-standard), transform 0.2s cubic-bezier(0.2, 0, 0, 1);
-  /* 不挂 will-change：长队列下每个移除按钮一个常驻合成层纯属浪费，
-     hover 过渡期间 Chromium 会自动临时提升 */
+
 }
 .np-queue-item:hover .np-queue-remove { opacity: 1; }
 
-/* ── 20. Folder Page ─────────────────────────────────────── */
-/* 水平节奏统一为 28px，与 page-header / search-bar 对齐 */
 .folder-list { padding: 0 28px 24px; }
 .folder-row {
   display: flex;
@@ -5609,7 +5188,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   background: var(--md-surface-container-high);
   border-color: var(--md-outline-variant);
 }
-/* 图标底色徽章：本地=secondary，流媒体=tertiary */
 .folder-icon-badge {
   display: inline-flex;
   align-items: center;
@@ -5637,7 +5215,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   font-size: 12px;
   color: var(--md-on-surface-variant);
 }
-/* 信息徽章 chip */
 .folder-chip {
   display: inline-flex;
   align-items: center;
@@ -5652,14 +5229,12 @@ select.cmd-text-field__input + .cmd-text-field__label {
   max-width: 100%;
 }
 .folder-chip .material-symbols-rounded { font-size: 13px; }
-/* URL chip 允许收缩截断 */
 .folder-chip--url {
   min-width: 0;
   max-width: 320px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 操作按钮默认隐藏，悬停/聚焦行时显现；有禁用按钮（同步中）时保持可见 */
 .folder-actions {
   display: flex;
   gap: 4px;
@@ -5676,10 +5251,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   transform: none;
 }
 
-/* ── 20.5 Subsonic ─────────────────────────────────────────── */
-/* 媒体库已改为本地文件夹与流媒体库混排，类型靠图标区分，无需分组样式 */
-
-/* Subsonic 浏览页 tabs */
 .subsonic-tabs {
   display: flex;
   gap: 4px;
@@ -5708,10 +5279,8 @@ select.cmd-text-field__input + .cmd-text-field__label {
   border-bottom-color: var(--md-primary);
 }
 
-/* Subsonic 内容区 */
 .subsonic-content { padding: 8px 16px 24px; }
 
-/* A-Z 分组（艺术家列表） */
 .subsonic-artist-grid .az-group {
   display: flex;
   align-items: flex-start;
@@ -5736,7 +5305,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   min-width: 0;
 }
 
-/* Subsonic 卡片（艺术家/专辑/歌单通用） */
 .subsonic-album-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
@@ -5815,7 +5383,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   text-overflow: ellipsis;
 }
 
-/* 详情页头（专辑/艺术家/歌单详情） */
 .subsonic-detail-header {
   display: flex;
   align-items: center;
@@ -5861,7 +5428,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   padding: 0 16px;
 }
 
-/* 搜索结果分区与 chip */
 .subsonic-search-section { padding: 8px 0 16px; }
 .subsonic-search-section-title {
   font-size: 13px;
@@ -5895,7 +5461,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   border-color: var(--md-primary);
 }
 
-/* 添加服务器对话框表单 */
 .subsonic-add-dialog { max-width: 420px; }
 .subsonic-form-row {
   display: flex;
@@ -5910,9 +5475,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   letter-spacing: 0.04em;
 }
 
-/* ── 21. Settings Page ───────────────────────────────────── */
-
-/* 二级页面标题右对齐（返回按钮仍靠左） */
 .page-header-left--right {
   flex: 1;
   justify-content: flex-end;
@@ -5921,7 +5483,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   text-align: right;
 }
 
-/* 设置页整体视图滑动 */
 .settings-view {
   min-height: 100%;
 }
@@ -5943,9 +5504,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   to { opacity: 0; transform: translateX(40px); }
 }
 
-/* ⚠️ enter-* 同样禁止 forwards —— 理由见 §「Page transition」的 .page-enter 注释：
-   终帧 transform: translateX(0) ≠ none，会被永久保留并改写页面内 fixed 浮层的包含块。
-   exit-* 必须保留 forwards（离场后要保持不可见/移出视口），不要顺手一起删。 */
 .settings-view-landing {
   animation: settings-view-enter-left var(--motion-medium) var(--ease-decel);
 }
@@ -6004,36 +5562,24 @@ select.cmd-text-field__input + .cmd-text-field__label {
   padding: 16px var(--md-comp-list-padding-inline) 8px;
 }
 
-/* ── M3E Segmented List（m3e-list variant="segmented"）────────────────
-   分段列表：项与项之间留 2dp 缝，靠缝隙而非分隔线分层。每项独立成卡：
-   段内四项圆角 extraSmall(4)，一段的首项顶角 / 末项底角放大到 large(16)，
-   于是整段读作一个"被切开的胶囊"。hover/press 时整项形变到 medium(12)、
-   focus 到 large(16)，但首项顶角与末项底角保持 large（外轮廓不参与形变）——
-   这正是 m3e ListItemElement 里 --_list-item-top/bottom-container-shape
-   优先于 hover/focus 形状的语义。selected 固定 large(16)。 */
 .md-seglist {
   display: flex;
   flex-direction: column;
   gap: var(--md-comp-seglist-gap);
   margin-inline: var(--md-comp-seglist-inset);
 }
-/* 同一分组内被独立块（如 notice）切开的相邻两段：补回段缝。
-   没有这条，两段会紧贴 —— 上一段的末项(底角 large)与下一段的首项(顶角 large)
-   相对，读成一个"花生"形而不是一段。 */
 .md-seglist + .md-seglist {
   margin-top: var(--md-comp-seglist-gap);
 }
-/* 每项的上下角半径默认值（4dp）；hover/selected 规则在其后覆盖 */
 .md-seglist > * {
   --_seg-top: var(--md-comp-seglist-item-shape);
   --_seg-bottom: var(--md-comp-seglist-item-shape);
   border-radius: var(--_seg-top) var(--_seg-top) var(--_seg-bottom) var(--_seg-bottom);
   background-color: var(--md-comp-seglist-item-container);
-  /* 颜色走 effects 弹簧，形状走 spatial 弹簧（项目动效分工铁律） */
+
   transition: background-color var(--motion-effects-fast),
               border-radius var(--motion-spatial-fast);
 }
-/* hover / press：内角形变到 medium(12) */
 .md-seglist > *:hover {
   --_seg-top: var(--md-comp-seglist-item-hover-shape);
   --_seg-bottom: var(--md-comp-seglist-item-hover-shape);
@@ -6048,17 +5594,12 @@ select.cmd-text-field__input + .cmd-text-field__label {
     var(--md-on-surface) var(--md-sys-state-pressed-state-layer-opacity),
     var(--md-comp-seglist-item-container));
 }
-/* focus-within：整项到 large(16) */
 .md-seglist > *:focus-within {
   --_seg-top: var(--md-comp-seglist-item-focus-shape);
   --_seg-bottom: var(--md-comp-seglist-item-focus-shape);
 }
-/* 段外两角：首项顶角、末项底角放大到 large(16)。
-   放在 hover/press 之后声明 —— 同特异性下靠后胜出，
-   于是 hover 时外角不参与形变，与 m3e 的 var() 回退顺序一致。 */
 .md-seglist > *:first-child { --_seg-top: var(--md-comp-seglist-container-shape); }
 .md-seglist > *:last-child  { --_seg-bottom: var(--md-comp-seglist-container-shape); }
-/* 选中态：四角逐 large(16) 填满，secondary-container 铺底 */
 .md-seglist > .selected,
 .md-seglist > [aria-selected='true'] {
   --_seg-top: var(--md-comp-seglist-item-selected-shape);
@@ -6072,25 +5613,17 @@ select.cmd-text-field__input + .cmd-text-field__label {
     var(--md-on-secondary-container) var(--md-sys-state-hover-state-layer-opacity),
     var(--md-comp-seglist-item-selected-container));
 }
-/* 禁用项：仅降透明度，不参与形状形变 */
 .md-seglist > .disabled {
   opacity: 0.38;
   pointer-events: none;
 }
 
-/* 独立块（notice / EQ / 内存面板）：不在 .md-seglist 内，
-   需自带卡片底色与 large 圆角，并加 16px inset 与分段列表对齐。
-   另加 6px 上下外边距 —— 否则 2dp 段缝会让它与上下段读作同一段。 */
 .settings-row-full {
   margin: 6px var(--md-comp-seglist-inset);
   border-radius: var(--md-comp-seglist-container-shape);
   background-color: var(--md-comp-seglist-item-container);
 }
 
-/* 设置行 = M3E list item（实测自 m3e m3e-list-item）：
-   one-line 56dp / two-line 72dp（带支持文字）；leading icon 24dp + 16dp 间隙。
-   在分段列表里项内间距收到 12dp（m3e segmented 的 --m3e-list-item-between-space），
-   圆角与状态层由上面 .md-seglist > * 统一接管。 */
 .settings-row {
   position: relative;
   display: flex;
@@ -6103,7 +5636,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
 .settings-row:has(.settings-row-sub) {
   min-height: var(--md-comp-list-min-height-2line);
 }
-/* 前导图标槽（M3E list-item leading slot） */
 .settings-row-icon {
   flex-shrink: 0;
   font-size: var(--md-comp-list-icon-size);
@@ -6115,27 +5647,19 @@ select.cmd-text-field__input + .cmd-text-field__label {
 .settings-row:focus-within .settings-row-icon {
   color: var(--md-on-surface);
 }
-/* 主文案 + 支持文案（M3E list-item headline / supporting-text slot） */
 .settings-row-body {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
 }
-/* 尾部控件槽（M3E list-item trailing slot）
-   ⚠️ 勿再给这里加 margin —— 2026-10-04 曾加 `margin-right: 24px`，导致行**左右内缩不对称**
-   （左 16、右 16+24=40），用户报「不像左侧那样和谐」后已删。
-   行的左右留白统一由 padding-inline(16) 提供，两侧必须相等。 */
 .settings-row-trailing {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 8px;
 }
-/* 分段列表用 2dp 缝隙分层，不再绘制 M3 inset divider —— 见 .md-seglist */
 
-/* 分组标题 — M3E section header：与段内文字左缘对齐（inset 16 + 项内 16 = 32），
-   主色 + emphasized 字重 */
 .settings-group-header {
   font-size: var(--md-sys-typescale-title-small-size);
   line-height: var(--md-sys-typescale-title-small-line);
@@ -6147,11 +5671,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
 .settings-group-header:first-child {
   padding-top: 4px;
 }
-/* 主文案 · 支持文案：**比 M3 typescale 原型各小一档**（14 / 12）。
-   2026-10-04 用户要求「缩小字体大小」——原型 16/14 在满宽卡片里偏大。
-   字号与**字距**一一对应 MD3 角色（14→label-large 0.1 / 12→label-medium 0.5），
-   ⚠️ 字距不再借用 body-large(0.5) / body-medium(0.25) —— 那是大字号的值，会让小字发虚。
-   主文案字重 = emphasized body-large（Roboto 无 500 时回退），与 supporting text 拉开层级。 */
 .settings-row-label {
   font-size: var(--md-comp-settings-label-size);
   line-height: var(--md-comp-settings-label-line);
@@ -6164,18 +5683,11 @@ select.cmd-text-field__input + .cmd-text-field__label {
   line-height: var(--md-comp-settings-sub-line);
   letter-spacing: var(--md-comp-settings-sub-tracking);
   font-weight: 400;
-  /* margin-top 2px 是**基线原值**（重写这条规则时曾漏掉，2026-10-04 找回）——
-     14/20 与 16/16 的行盒上下各有 ~2px 内间距，两行直接贴着会粘成一坨；
-     补 2px 后视觉间隙约 4–5px，与左右 16 形成「外松内紧」的正确层级。
-     `.settings-row-empty .settings-row-sub { margin-top: 0 }` 负责在空态里还原。 */
+
   margin-top: 2px;
   color: var(--md-on-surface-variant);
 }
 
-/* Discord RPC 连接状态点（settings-row-trailing 槽内）。
-   四态由 JS 写 data-state：disabled=灰 / disconnected=error / connecting=
-   tertiary 呼吸 / connected=primary。纯色阶 + 形状区分，不用 box-shadow；
-   呼吸动画复用全局 pulse（颜色类过渡用 effects 曲线，不掺 spatial）。 */
 .settings-discord-dot {
   width: 8px;
   height: 8px;
@@ -6195,9 +5707,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   background: var(--md-primary);
 }
 
-/* Toggle switch — **M3E 化之前的原版几何**：56×34、轨道描边 2.5px、thumb 23px。
-   2026-10-03 曾按 52×32 等比缩到 44×26，2026-10-04 用户要求还原旧版比例，故回退。
-   几何链：thumb 23 → 26（按下）；开启时靠 right 定位（`calc(100% - 28px)`）。 */
 .toggle {
   position: relative;
   width: var(--md-comp-settings-switch-w);
@@ -6252,7 +5761,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   pointer-events: none;
   z-index: 2;
 }
-/* Icon inside the knob: ✕ when off, ✓ when on (color follows currentColor) */
 .toggle-thumb::after {
   content: '';
   position: absolute;
@@ -6278,12 +5786,10 @@ select.cmd-text-field__input + .cmd-text-field__label {
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5.5 12.5l4.2 4.2L18.5 7.5' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
           mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5.5 12.5l4.2 4.2L18.5 7.5' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
 }
-/* Pressed：handle 微微放大（旧版即如此） */
 .toggle input:active ~ .toggle-thumb {
   width: 26px;
   height: 26px;
 }
-/* Disabled */
 .toggle input:disabled {
   cursor: not-allowed;
 }
@@ -6292,22 +5798,10 @@ select.cmd-text-field__input + .cmd-text-field__label {
   opacity: 0.38;
 }
 
-/* Material dropdown (shared by device select and settings select)
-   触发器按 M3 outlined button：高 40dp、全圆角、1px outline、label 用 primary、
-   hover 8% / pressed 10% 状态层；菜单容器 corner-small(8dp) + elevation level3，
-   菜单项 48dp 高、corner-extra-small(4dp)、选中态 secondary-container。 */
 .md-dropdown {
   position: relative;
   display: inline-block;
 }
-/* ── MD3 Filled field / M3E 圆角化（2026-10-04 用户要求按 MD3 标准，后按 M3E 加圆角）──
-   Select 触发器与文本输入框**共用同一条容器配方** —— 在 MD3 里 Select 就是"带菜单的 text field"，
-   两者容器几何逐值相同（见 --md-comp-field-* 令牌组，数值取自 material-web tokens v0.192）。
-   ⚠️ active indicator 用**伪元素**画，不用 border-bottom，也**不用 inset box-shadow**：
-      · border 参与布局 —— 聚焦 1dp→2dp 会让内容盒缩 1px、文字跳动。
-      · inset box-shadow 的线**满宽且直角**，在 8dp 圆角容器里两端会被生硬切断（实测 1152→1471 直切）。
-        改成伪元素后可以同时做到：**两端圆头** + **左右内缩对齐圆角** + 内容盒尺寸不变。
-   ⚠️ 本项目把标题留在行左侧（用户裁定），字段是**无浮动标签**形态，故内容在 40dp 内垂直居中。 */
 .md-dropdown-trigger,
 .settings-font-input {
   position: relative;
@@ -6326,14 +5820,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   text-align: left;
   transition: background-color var(--md-sys-motion-spring-fast-effects);
 }
-/* 底部 active indicator（伪元素）：贴在容器底缘的圆角短横。
-   四角全圆形态下（--md-comp-field-shape = 10px），直线的两端会与底部圆角打架，
-   故让它**沿底缘内缩**（inset 比圆角略小，正好落在圆角起弧点内侧）并自身带圆头。
-   高度/颜色由 --md-comp-field-indicator-* 令牌驱动，聚焦时 height 变 2px 并染 primary。
-   ⚠️ 用 height 而非 border-width，改高度不影响任何布局。
-   ⚠️🔴 这段**只允许出现一份**（2026-10-04 事故）：曾因重复粘贴留下一份只写 `content:''` 的
-      残缺副本，残缺块的 `{` 没闭合 → 后面的 `.md-dropdown-menu`/`.md-dropdown-item` 被解析
-      器吞掉，菜单圆角变 0、背景透明、项高塌成 21px，且肉眼只能看到"菜单怪怪的"。 */
 .md-dropdown-trigger::after,
 .settings-font-input::after {
   content: '';
@@ -6363,7 +5849,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   height: var(--md-comp-field-focus-indicator-height);
   background: var(--md-comp-field-focus-indicator-color);
 }
-/* Select 触发器：值与尾部图标两端顶开，图标展开时旋转成 arrow_drop_up */
 .md-dropdown-trigger {
   display: inline-flex;
   align-items: center;
@@ -6371,8 +5856,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   gap: 8px;
   width: 100%;
 }
-/* 下拉与输入框共用宽度上下限 —— 两者同宽，叠放整齐。
-   ⚠️ 高度/内边距/字号也来自 --md-comp-field-* 令牌组，别在这里写死。 */
 .md-select-dropdown {
   width: var(--md-comp-field-max-width);
   max-width: 100%;
@@ -6385,7 +5868,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 尾部图标：MD3 field 规定 24dp；聚焦/展开时染 primary（对应 focus-trailing-icon-color 令牌） */
 .md-dropdown-arrow {
   flex-shrink: 0;
   font-size: var(--md-comp-field-icon-size);
@@ -6403,10 +5885,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
 .md-dropdown-trigger[aria-expanded="true"] .md-dropdown-arrow {
   transform: rotate(180deg);
 }
-/* MD3 Menu 面板（Select 的下拉层）：surface-container 容器 + elevation level2 + 10dp 圆角 +
-   上下各 6dp 留白 + 最小宽 112dp。⚠️ 不画 1px 描边 —— MD3 靠 elevation 分层，描边+投影重复。
-   ⚠️ 容器色必须比字段**亮一档**（见 --md-comp-menu-container 注释），否则与字段连成一片。
-   ⚠️ 圆角用 --md-sys-shape-corner-field 跟随字段，别退回 4dp（见 --md-comp-field-shape 注释）。 */
 .md-dropdown-menu {
   position: fixed;
   top: 0;
@@ -6433,8 +5911,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   visibility: visible;
   transform: translateY(0);
 }
-/* MD3 菜单项：36px 高 · 左右各 12dp · 文字 label-large(14/20/0.1/500) · hover 状态层 8%
-   · 选中态 = surface-container-highest（比菜单底凸一档，见令牌注释）。 */
 .md-dropdown-item {
   display: flex;
   align-items: center;
@@ -6461,15 +5937,11 @@ select.cmd-text-field__input + .cmd-text-field__label {
   background: var(--md-comp-menu-item-selected-container);
 }
 
-/* Settings — text input 的外观由上方「MD3 Filled field」统一配方提供，此处只留占位符样式。
-   ⚠️ 旧版这里自带背景/描边/圆角/min-width 240 —— 已随 MD3 化删除（与 .md-dropdown-trigger
-      共用配方后重复声明只会互相覆盖）。若确需给某个输入框单独宽度，在调用容器上写，不要改这里。 */
 .settings-font-input::placeholder {
   color: var(--md-on-surface-variant);
   opacity: 0.6;
 }
 
-/* Settings — text row 布局（leading icon 与标题同排，输入框另起一行，避免长字符串挤压） */
 .settings-row-text {
   align-items: flex-start;
 }
@@ -6487,15 +5959,12 @@ select.cmd-text-field__input + .cmd-text-field__label {
   width: 100%;
   max-width: var(--md-comp-field-max-width);
 }
-/* 字体名/路径这类输入框内容可能很长（如 "Google Sans Flex, Noto Sans SC, sans-serif"），
-   ≤320 会截断得厉害，故单独放宽到 480；仍保留上限，不做通栏（通栏 1188×44 会成扁带）。 */
 .settings-row-text .settings-font-input[data-bind="ui_font"],
 .settings-row-text .settings-font-input[data-bind="lyrics_font"],
 .settings-row-text .settings-font-input[data-bind="lyrics_jp_font"] {
   max-width: 480px;
 }
 
-/* Settings — file_picker 行（输入框 + 浏览按钮） */
 .settings-file-picker-control {
   display: flex;
   align-items: center;
@@ -6505,14 +5974,13 @@ select.cmd-text-field__input + .cmd-text-field__label {
 .settings-file-picker-control .settings-font-input {
   flex: 1 1 240px;
   min-width: 0;
-  max-width: none;   /* file_picker 行是「输入框 + 浏览按钮」并排，由 flex 分配，不吃字段宽上限 */
+  max-width: none;
 }
 .settings-file-picker-btn {
   flex-shrink: 0;
   white-space: nowrap;
 }
 
-/* Settings footer */
 .settings-footer {
   padding: 16px var(--md-comp-list-padding-inline);
 }
@@ -6529,9 +5997,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   opacity: 0.7;
 }
 
-/* Settings — 独占模式不可用功能提示（遵循 design.md notice 规范）
-   段内条件性提示：display:none 时不参与 flex gap，隐藏后该段自然合拢。
-   非交互块 —— 固定 large 圆角 + primary-container，不参与 hover 形变。 */
 .settings-notice {
   align-items: flex-start;
   gap: 12px;
@@ -6594,7 +6059,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   background: var(--md-primary);
 }
 
-/* Settings — 独占模式下不可用设置项的禁用态 */
 .settings-row.settings-row-disabled {
   opacity: 0.5;
   pointer-events: none;
@@ -6603,7 +6067,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   cursor: not-allowed;
 }
 
-/* Settings — shortcut row */
 .settings-row-shortcut {
   cursor: pointer;
 }
@@ -6645,14 +6108,10 @@ select.cmd-text-field__input + .cmd-text-field__label {
   display: none;
 }
 
-/* ── 22. About Page ──────────────────────────────────────── */
-
-/* 关于页容器 */
 .about-page {
   margin: 0;
 }
 
-/* 版本卡片行 */
 .about-version-card {
   cursor: pointer;
 }
@@ -6667,7 +6126,7 @@ select.cmd-text-field__input + .cmd-text-field__label {
   flex-shrink: 0;
   user-select: none;
   -webkit-user-drag: none;
-  /* 揃取灰度后用莫奈色混色 */
+
   filter: grayscale(1) brightness(0.85);
   mix-blend-mode: multiply;
 }
@@ -6685,7 +6144,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   opacity: 0.6;
 }
 
-/* 折叠区（版本 + 鸣谢共用） */
 .about-version-expander {
   max-height: 0;
   opacity: 0;
@@ -6696,7 +6154,7 @@ select.cmd-text-field__input + .cmd-text-field__label {
   padding: 0 var(--md-comp-list-item-padding-inline);
   border-top: 1px solid transparent;
   pointer-events: none;
-  /* 折叠时高度为 0，形状形变无意义 */
+
   --_seg-top: var(--md-comp-seglist-item-shape);
   --_seg-bottom: var(--md-comp-seglist-item-shape);
 }
@@ -6707,8 +6165,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   border-top-color: var(--md-outline-variant);
   pointer-events: auto;
 }
-/* 折叠时展开区高度为 0，但段缝仍会留 2px 且吞掉版本卡的末项圆角。
-   用 -2px 外边距抵消缝隙，并让版本卡恢复整段圆角（:has 需 Chromium 105+）。 */
 .about-version-expander:not(.active) {
   margin-top: -2px;
 }
@@ -6735,7 +6191,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   margin: 0;
 }
 
-/* 链接区 */
 .about-links {
   display: flex;
   gap: 10px;
@@ -6745,7 +6200,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   text-decoration: none;
 }
 
-/* 操作行 */
 .about-action-row {
   cursor: pointer;
 }
@@ -6753,11 +6207,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   margin-left: auto;
 }
 
-/* ⚠️ .about-info-row（平台/架构/系统版本 展示行）已随该卡片删除（2026-10-04），勿复活。
-   平台信息统一走「诊断信息」对话框里的 SystemOsVersion / SystemOsArch。 */
-
-/* ── 23. Detail View (Album / Artist / Playlist) ────────── */
-/* Material You Expressive 紧凑头部：左侧封面 + 右侧信息卡片 */
 .detail-header {
   position: relative;
   display: flex;
@@ -6805,7 +6254,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   transform: scale(1.18);
   border-radius: 24px;
 }
-/* Expressive 拼贴色块在紧凑头部中隐藏，保留封面环境光晕 */
 .detail-cover-shape { display: none; }
 .detail-cover-main {
   position: relative;
@@ -6896,9 +6344,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 22;
 }
 
-/* ── 23b. Artist Hero — Apple Music 式横幅头图 ─────────────
-   触发条件由 artists.js 控制（横版图可用或头像 ≥900px）：
-   .detail-header.hero 全宽铺满艺人图，信息叠加于左下角渐变之上 */
 .detail-header.hero {
   display: block;
   position: relative;
@@ -6948,10 +6393,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
 .detail-header.hero .detail-sub   { color: rgba(255,255,255,0.82); text-shadow: 0 1px 8px rgba(0,0,0,0.35); }
 .detail-header.hero .detail-actions { margin-top: 18px; }
 
-/* ── 23c. 艺人别名 chips（详情头部，MusicBrainz/网易云 数据） ──
-   毛玻璃模糊 + 艺人图主色晕染：--artist-rgb 由 artists.js 从
-   横版图/头像提取（utils.extractDominantColor），未提取到时用中性灰兜底。
-   纯 M3E：纯色半透明底 + 模糊，不做渐变流动/外晕发光。 */
 .detail-alias {
   display: flex;
   flex-wrap: wrap;
@@ -6977,18 +6418,15 @@ select.cmd-text-field__input + .cmd-text-field__label {
   color: rgba(255,255,255,0.95);
 }
 
-/* ── 23a. Artist Detail — Pivot 两页（歌曲 / 专辑）───────── */
 .artist-detail-body {
   padding: 0 0 24px;
 }
 
-/* Pivot：复用正在播放页的 .np-pivot pill 样式，仅调整外边距 */
 .artist-pivot {
   margin: 0 12px 4px;
   padding: 8px 0;
 }
 
-/* Pivot 面板 */
 .artist-panel {
   display: none;
 }
@@ -6996,14 +6434,10 @@ select.cmd-text-field__input + .cmd-text-field__label {
   display: block;
 }
 
-/* 歌曲页签：曲目列表沿用 .track-list 默认 12px 内边距，无需额外样式 */
-
-/* 专辑页签：复用 .album-grid，调整内边距与页面其余列表（12px）对齐 */
 .artist-album-grid {
   padding: 4px 12px 24px;
 }
 
-/* 简介页签：在线艺人传记（TheAudioDB / Wikipedia），纯文本段落排版 */
 .artist-bio-text {
   max-width: 860px;
   margin: 0;
@@ -7022,12 +6456,11 @@ select.cmd-text-field__input + .cmd-text-field__label {
   font-size: 14px;
 }
 
-/* ── 15. Context Menu ────────────────────────────────────── */
 .context-menu-layer {
   position: fixed;
   inset: 0;
   z-index: 9999;
-  background: rgba(0, 0, 0, 0.32);            /* M3 scrim 32% */
+  background: rgba(0, 0, 0, 0.32);
   opacity: 0;
   transition: opacity 0.18s cubic-bezier(0.2, 0, 0, 1);
   pointer-events: none;
@@ -7040,10 +6473,10 @@ select.cmd-text-field__input + .cmd-text-field__label {
   position: absolute;
   display: flex;
   flex-direction: column;
-  width: 280px;                                /* M3 menu: 280px */
+  width: 280px;
   background: var(--md-surface-container-high);
-  border-radius: 16px;                         /* M3 menu 圆角 */
-  box-shadow: var(--md-sys-elevation-level2);  /* M3 高度 level2 */
+  border-radius: 16px;
+  box-shadow: var(--md-sys-elevation-level2);
   border: 1px solid var(--md-outline-variant);
   overflow: hidden;
   transform: scale(0.96);
@@ -7057,7 +6490,7 @@ select.cmd-text-field__input + .cmd-text-field__label {
   display: flex;
   align-items: center;
   gap: 12px;
-  border-bottom: 1px solid var(--md-outline-variant); /* 与列表分隔 */
+  border-bottom: 1px solid var(--md-outline-variant);
 }
 .context-menu-header img, .cm-cover-placeholder {
   width: 40px;
@@ -7122,7 +6555,7 @@ select.cmd-text-field__input + .cmd-text-field__label {
   transition: opacity var(--motion-short) var(--ease-standard);
 }
 .context-menu-item:hover::before {
-  opacity: var(--md-sys-state-hover-state-layer-opacity);   /* M3 state-layer: hover 8% */
+  opacity: var(--md-sys-state-hover-state-layer-opacity);
 }
 .context-menu-item:active {
   transform: scale(0.98);
@@ -7141,9 +6574,8 @@ select.cmd-text-field__input + .cmd-text-field__label {
 .context-menu-item.danger { color: var(--md-error); }
 .context-menu-item.danger .material-symbols-rounded { color: var(--md-error); }
 
-/* ── 右键菜单子菜单（添加到歌单） ──────────────────────────────── */
 .context-menu-item.has-submenu {
-  /* hover 时高亮，提示有子菜单 */
+
 }
 .context-menu-item.has-submenu:hover {
   background: color-mix(in srgb, var(--md-primary) 8%, transparent);
@@ -7236,16 +6668,12 @@ select.cmd-text-field__input + .cmd-text-field__label {
   font-weight: 500;
 }
 
-/* ── 歌单副菜单拖拽高亮 ─────────────────────────────────────────── */
 .nav-submenu-item.drag-over {
   background: color-mix(in srgb, var(--md-primary) 16%, transparent);
   outline: 2px solid var(--md-primary);
   outline-offset: -2px;
 }
 
-/* ── Toast 轻提示（M3 Snackbar 规范）─────────────────────────────
-   容器 = inverse-surface / 内容 = inverse-on-surface，圆角 extraSmall(4px)，
-   高度 level3，无描边；入场走 M3E spatial 弹簧。 */
 .toast-snackbar {
   position: fixed;
   bottom: 24px;
@@ -7273,7 +6701,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   opacity: 1;
 }
 
-/* ── Settings — M3 slider（XS 档，形态与音量条一致）────────────── */
 .settings-row-slider {
   gap: 16px;
 }
@@ -7345,12 +6772,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   border: none;
 }
 
-/* ── Settings — Material Select Dropdown ─────────────────────── */
-/* ⚠️ 宽度/上下限的唯一定义在 §「MD3 Filled field」附近的 .md-select-dropdown，此处只留旧注释占位。
-   曾在这里写 min-width:140px，与上方的 width 声明重复 —— 改宽度时两处会互相打架，已删。 */
-
-/* ── Settings — 普通页面左右分栏 ──────────────────────────────────── */
-/* 设置页主体：填满页面容器，左侧导航 + 右侧内容 */
 .settings-page {
   position: absolute;
   inset: 0;
@@ -7360,11 +6781,9 @@ select.cmd-text-field__input + .cmd-text-field__label {
   overflow: hidden;
 }
 
-/* ── 设置页激活时：隐藏侧边栏 + 禁用侧边播放器 ────────────────────── */
 body.settings-active .nav-drawer {
   display: none;
 }
-/* 导航岛隐藏后：内容岛补上左侧 8px 缝，保持与其他岛一致的留白 */
 body.settings-active .content-pane {
   margin-left: 8px;
 }
@@ -7379,7 +6798,7 @@ body.settings-active .now-playing-pane {
   display: none;
 }
 body.settings-active .content-pane {
-  margin-bottom: 80px; /* 底栏浮岛 8 + 64 + 缝 8 */
+  margin-bottom: 80px;
 }
 body.settings-active .mini-player {
   display: flex;
@@ -7387,7 +6806,6 @@ body.settings-active .mini-player {
 body.settings-active .mini-btn-expand {
   display: none;
 }
-/* 全窗口视图下进入设置时：恢复标题栏正常布局 */
 body.settings-active.np-fullscreen .title-bar {
   position: relative;
 }
@@ -7398,8 +6816,6 @@ body.settings-active.np-fullscreen .title-bar-center {
   display: none !important;
 }
 
-/* ── Settings — 旧弹出式模态 CSS（已废弃，保留以备回退）─────────── */
-/* 遮罩层 */
 .settings-modal-overlay {
   position: fixed;
   inset: 0;
@@ -7420,7 +6836,6 @@ body.settings-active.np-fullscreen .title-bar-center {
   opacity: 0;
 }
 
-/* 弹窗定位容器（尺寸与进出动画挂在这里，关闭按钮随之一齐动画） */
 .settings-modal-wrap {
   position: relative;
   width: min(1280px, calc(100vw - 48px));
@@ -7439,7 +6854,6 @@ body.settings-active.np-fullscreen .title-bar-center {
   opacity: 0;
 }
 
-/* 弹窗卡片（圆角须 ≥ 内层分栏卡片，否则会裁掉同心弧） */
 .settings-modal {
   position: relative;
   display: flex;
@@ -7448,11 +6862,10 @@ body.settings-active.np-fullscreen .title-bar-center {
   height: 100%;
   background: var(--md-surface-container-lowest);
   border-radius: 30px;
-  box-shadow: var(--md-sys-elevation-level5); /* M3 高度 level5（模态容器） */
+  box-shadow: var(--md-sys-elevation-level5);
   overflow: hidden;
 }
 
-/* 关闭按钮：悬浮在弹窗内部右上角，不占布局位置、无阴影 */
 .settings-modal-close {
   position: absolute;
   top: 12px;
@@ -7465,8 +6878,6 @@ body.settings-active.np-fullscreen .title-bar-center {
   color: var(--md-on-error-container);
 }
 
-/* 左右分栏主体：单张卡片，左右同底色，中间以分割线分隔；背景占满弹窗
-   圆角 30px = 导航内边距(8px) + pill 半径(~22px)，与左侧项构成同心圆 */
 .settings-split-body {
   flex: 1;
   min-height: 0;
@@ -7477,7 +6888,6 @@ body.settings-active.np-fullscreen .title-bar-center {
   overflow: hidden;
 }
 
-/* 左侧导航列：分段列表的滚动容器（自身只负责滚动与底部留白） */
 .settings-nav {
   display: flex;
   flex-direction: column;
@@ -7493,7 +6903,6 @@ body.settings-active.np-fullscreen .title-bar-center {
   height: 0;
 }
 
-/* 导航标题 — M3 headline-small，左缘与段内文字对齐（inset 16 + 项内 16 = 32） */
 .settings-nav-header {
   display: flex;
   align-items: center;
@@ -7507,9 +6916,6 @@ body.settings-active.np-fullscreen .title-bar-center {
   color: var(--md-on-surface);
   white-space: nowrap;
 }
-/* 导航项 = M3E segmented list item：项高 48dp（见 --m3e-nav-drawer-item-height）、
-   icon 24dp、label-large 14/500、icon↔label 12dp。
-   分段列表接管圆角/底色/形变，这里只留排版与焦点环。 */
 .settings-nav-item {
   display: flex;
   align-items: center;
@@ -7553,14 +6959,12 @@ body.settings-active.np-fullscreen .title-bar-center {
   white-space: nowrap;
 }
 
-/* 右侧内容列 */
 .settings-content {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
   padding: 14px 0 20px;
 }
-/* 隐藏右侧滚动条（仍可滚动），避免方头戳进弹窗圆角 */
 .settings-content {
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -7570,35 +6974,23 @@ body.settings-active.np-fullscreen .title-bar-center {
   width: 0;
   height: 0;
 }
-/* 右侧内容列：卡片**撑到岛边**（2026-10-04 用户要求「卡片宽度延伸到右侧」）。
-   历史：① 曾挂 `max-width: 720px` → 1500 窗口下卡片右端 x=960、右侧空 540px；
-   ② 曾改为 `min(calc(100% - 248px), 1320px)`「右侧留一段与左栏等宽的收尾留白」
-      → 1500 窗口下卡片右端 x=1252、右侧仍空 248px（= 岛宽 17%），
-      用户判定「卡片宽度没有延伸到右侧」，要求撤掉这段留白。
-   现为**不封顶、不人为留白**：卡片右端 = 岛右缘 − .md-seglist inset(12)。
-   用户明确以「延伸到右侧」为准，故不再为配重/居中保留对称留白。
-   超宽窗口仍给 1320px 上限兜底（单行文本可读性），但该上限在 ≤1580 岛宽下不生效。 */
 .settings-content > * {
   max-width: 1320px;
 }
-/* 内嵌「关于」页：隐藏其独立页头（返回按钮 + 大标题） */
 .settings-content .about-page > .page-header {
   display: none;
 }
 .settings-content .about-page {
   min-height: 0;
 }
-/* 内嵌关于页：分组间距与设置项一致（段列表自带 16px inset） */
 .about-page-inline .settings-group {
   margin: 0 0 8px;
 }
 
-/* 分类内容体：分组标题 + 若干 .md-seglist 依次排列 */
 .settings-section-body {
   padding-bottom: 20px;
 }
 
-/* ── Settings — 内存信息面板 ──────────────────────────────────────────── */
 .settings-memory-info {
   display: flex;
   flex-direction: column;
@@ -7655,7 +7047,6 @@ body.settings-active.np-fullscreen .title-bar-center {
   font-size: 18px;
 }
 
-/* ── Settings — EQ 垂直滑块（整段独立的宽卡）────────────────────────── */
 .settings-eq-fullwidth {
   position: relative;
   padding: 18px var(--md-comp-list-item-padding-inline) 10px;
@@ -7687,7 +7078,7 @@ body.settings-active.np-fullscreen .title-bar-center {
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--md-primary);
-  /* 0 dB 降权显示，让真正被调过的频段更醒目 */
+
   opacity: 1;
 }
 .settings-eq-band-value[data-zero="true"] {
@@ -7707,7 +7098,7 @@ body.settings-active.np-fullscreen .title-bar-center {
   width: 120px;
   height: 8px;
   border-radius: var(--md-comp-slider-track-shape);
-  /* 垂直密集排列（16 条并排），沿用 M3 slider 的分层结构但收窄轨道 */
+
   background:
     linear-gradient(to right,
       var(--md-primary) 0 calc(var(--slider-val, 50%) - 3px),
@@ -7748,12 +7139,10 @@ body.settings-active.np-fullscreen .title-bar-center {
   font-variant-numeric: tabular-nums;
 }
 
-/* ── 无边框窗口拖拽区域（Electron）────────────────────────── */
 .pywebview-drag-region {
   -webkit-app-region: drag;
 }
 
-/* ── 自绘标题栏 ─────────────────────────────────────────────── */
 .title-bar {
   -webkit-app-region: drag;
   display: flex;
@@ -7761,7 +7150,7 @@ body.settings-active.np-fullscreen .title-bar-center {
   justify-content: space-between;
   height: 36px;
   padding: 0 4px 0 0;
-  /* 标题栏不是独立的栏：底色透明、无分割线，控件直接落在应用背景上 */
+
   background: transparent;
   color: var(--md-on-surface);
   user-select: none;
@@ -7830,7 +7219,7 @@ body.settings-active.np-fullscreen .title-bar-center {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  /* 三大金刚键用 Segoe Fluent Icons 系统字体（返回键为内联 SVG 不受影响） */
+
   font-family: 'Segoe Fluent Icons', sans-serif;
   font-size: 10px;
   line-height: 1;
@@ -7878,9 +7267,6 @@ body.settings-active.np-fullscreen .title-bar-center {
   color: var(--md-primary);
 }
 
-/* ── macOS 风格红绿灯按钮（Linux / macOS） ─────────────────────── */
-/* 当 body 有 .platform-non-win class 时生效 */
-
 .platform-non-win .traffic-light-group {
   display: flex;
   align-items: center;
@@ -7922,7 +7308,6 @@ body.settings-active.np-fullscreen .title-bar-center {
   height: 8px;
 }
 
-/* 默认状态颜色 */
 .platform-non-win .title-bar-btn.title-bar-close {
   background: #ff5f57;
 }
@@ -7933,12 +7318,10 @@ body.settings-active.np-fullscreen .title-bar-center {
   background: #28c840;
 }
 
-/* hover 时显示图标 */
 .platform-non-win .traffic-light-group:hover .title-bar-glyph {
   opacity: 1;
 }
 
-/* hover 时颜色稍微变暗 */
 .platform-non-win .title-bar-btn.title-bar-close:hover {
   background: #e5403a;
   color: rgba(0, 0, 0, 0.6);
@@ -7952,7 +7335,6 @@ body.settings-active.np-fullscreen .title-bar-center {
   color: rgba(0, 0, 0, 0.6);
 }
 
-/* 红绿灯模式下移除 Windows 的红色关闭按钮 hover 效果 */
 .platform-non-win .title-bar-close {
   background: #ff5f57 !important;
 }
@@ -7961,12 +7343,10 @@ body.settings-active.np-fullscreen .title-bar-center {
   color: rgba(0, 0, 0, 0.6) !important;
 }
 
-/* 红绿灯模式下隐藏右侧的设置按钮之外的一切（min/max/close 已移到左侧） */
 .platform-non-win .title-bar-right {
-  /* 设置按钮仍在右侧 */
+
 }
 
-/* ── 标题栏 Logo（Material You 着色） ── */
 .title-bar-logo {
   display: flex;
   align-items: center;
@@ -7980,8 +7360,7 @@ body.settings-active.np-fullscreen .title-bar-center {
   width: 100%;
   height: 100%;
   display: block;
-  /* 保留 SVG 原有品牌色（色度），仅随明暗主题做轻微亮度/饱和度微调；
-     图标自带圆盘底，无需混合模式，避免颜色被冲淡 */
+
   filter: saturate(0.95) brightness(0.97);
   transition: filter var(--motion-medium) var(--ease-standard);
 }
@@ -7990,75 +7369,41 @@ body.settings-active.np-fullscreen .title-bar-center {
   filter: saturate(1.1) brightness(1.05);
 }
 
-/* ── 全屏模式：隐藏标题栏 ──────────────────────────────────── */
 body.window-fullscreen .title-bar {
   display: none;
 }
-/* 标题栏隐藏（窗口全屏）或浮层（全窗口视图）时，收起其预留栅格行，避免顶部留白 */
 body.np-fullscreen .app-root,
 body.window-fullscreen .app-root {
   grid-template-rows: 0 1fr;
 }
 
-/* 全屏模式：全窗口视图（now-playing-pane）覆盖整个屏幕 */
 body.window-fullscreen .now-playing-pane.fullscreen {
 top: 0;
 height: 100vh;
 }
 
-/* 影院模式下标题栏已隐藏，不需要 padding-top */
 body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   padding-top: 12px;
 }
 
-
-/* ── Your Mix Page ──────────────────────────────────────────────────────────
-   布局参考 Apple Music 主页：Hero 大卡 + 横向滚动的卡片架（shelf/rail）。
-   M3E 约束：层次只用圆角 + 1px outline + 色阶，不用 box-shadow；
-   唯一例外是浮在封面上的播放按钮（临时浮层）用 elevation。
-   卡片上的底部 scrim 是图片之上的可读性遮罩（内容层），不是装饰性氛围渐变。 */
-
 .ym-page {
-  --ym-gutter: 28px;   /* 与 .album-grid / .search-bar / .page-header 的 28px 对齐 */
-  --ym-rail-gap: 16px; /* 与 .album-grid gap 一致 */
-  /* 🔑 卡片宽度必须等于 `.album-grid` 在该宽度下实际算出的列宽，
-     否则「比例和专辑页一致」只是嘴上说说。
-     .album-grid = repeat(auto-fill, minmax(156px, 1fr)) + gap 16，其列宽
-       = (可用宽 - (n-1)·gap) / n ,  n = floor((可用宽 + gap) / (156 + gap))
-     这里用**同一条公式**在 rail 上复刻（rail 是滚动条带，子项定宽，
-     不能直接用 1fr）。列数 n 由下面针对本页的容器查询给出，
-     宽度公式与栅格解一致，于是 rail 卡 / hero 卡 / 专辑页卡永远同宽。 */
+  --ym-gutter: 28px;
+  --ym-rail-gap: 16px;
+
   --ym-cols: 5;
-  /* 轨道可用宽 = 页宽 - 两侧 gutter。用 cqw 拿到本页宽度，
-     卡片占 1/n 列，列间留 gap。 */
+
   --ym-card-w: calc(
     (100cqw - var(--ym-gutter) * 2
       - (var(--ym-cols) - 1) * var(--ym-rail-gap)) / var(--ym-cols)
   );
-  /* 卡片圆角直接用 corner-large —— 与 .album-card 同一档，
-     不再走 --island-radius（那是浮岛的语义，探新页没有浮岛）。 */
+
   --ym-card-radius: var(--md-sys-shape-corner-large);
   padding: 0 0 40px;
 }
-/* 🔑 列数查询的参照容器**必须是 .ym-page 的祖先**，不能是它自己 ——
-   `.ym-page` 上的 `container-type: inline-size` 只让它成为**后代**的容器，
-   而下面 `@container ympage` 的规则目标恰恰是 `.ym-page` 本身，
-   属于「元素查自己」，规范不允许 → 查询恒不命中，`--ym-cols` 永远停在基值 5，
-   卡片宽度被钉死在「5 列」上（1064px 时 188.8px 恰好与专辑页巧合相等，
-   窗宽一变立刻发散：1404px 时 rail=256.8 而专辑页=178.9，差 +44%）。
-   改挂到 #page-container：.ym-page 成为它的后代，查询成立。
-   .ym-page 无内边距/外边距，宽度与 #page-container 相等，
-   故 `100cqw` 仍等于页宽，宽度公式不变。 */
 #page-container {
   container-type: inline-size;
   container-name: ympage;
 }
-/* 列数与 .album-grid 的 auto-fill 解析结果一一对应。
-   查询容器 = #page-container，故这里的 min-width 判定的是**页宽**；
-   而 .album-grid 的 auto-fill 判定的是**可用宽** = 页宽 - 2×28。
-   两者换算：专辑页取到 n 列 ⇔ 可用宽 ≥ 172n-16 ⇔ 页宽 ≥ 172n+40。
-   故阈值 = 172n+40（旧值 172n-16 是「可用宽」口径，挂在自身容器上时
-   因自查询失效从未生效，等于一直锁 5 列）。 */
 @container ympage (min-width: 212px) { .ym-page { --ym-cols: 1; } }
 @container ympage (min-width: 384px) { .ym-page { --ym-cols: 2; } }
 @container ympage (min-width: 556px) { .ym-page { --ym-cols: 3; } }
@@ -8072,35 +7417,12 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
 @container ympage (min-width: 1932px) { .ym-page { --ym-cols: 11; } }
 @container ympage (min-width: 2104px) { .ym-page { --ym-cols: 12; } }
 
-/* ── Your Mix 头部 ─────────────────────────────────────────────────────── */
-/* 头部**不复用任何自定义样式** —— 直接用全局 `.page-header` / `.page-header-left` /
-   `.page-title` / `.page-subtitle`（与专辑页、所有音乐页完全同构）。
-   原先的 `.ym-header` / `.ym-header-left` / `.ym-title` 覆盖已删除：它们把
-   `.page-title` 从 28px 顶到 40px、把 `align-items` 从 `flex-end` 改成 `center`、
-   给左栏塞了 `min-width: 230px`，导致问候语标题和下方 section 标题的左边缘
-   与其它页面不在同一条垂直线上。 */
-
-/* ── Section 骨架 ──────────────────────────────────────────────────────── */
-/* 区块标题**不定义任何私有样式** —— 直接用全局
-   `.section-heading > .section-title + .section-count`（专辑页同一套）。
-   旧实现造了 `.ym-section-head`(21px 标题 + 3px 强调色短棒 + 12px desc)，
-   与全站 13px uppercase 的 `.section-title` 完全不成比例，且短棒还会
-   把标题文字推右 13px 造成对齐问题。整块删除，问题随之消失。 */
-
-/* 区块之间的垂直节奏 = 全站间距基准 24px（`.album-grid` 的 padding-bottom 同值）。
-   旧实现用 32px，与全站其它页面的呼吸感不成体系。
-   首段紧接 sticky header，高度由 header 自身 padding 撑开，这里只留 8px 起点。 */
 .ym-section { margin-top: 24px; }
 .ym-section:first-of-type { margin-top: 8px; }
-
-/* ── 横向卡片轨（rail）─────────────────────────────────────────────────── */
 
 .ym-rail-wrap {
   position: relative;
 }
-/* 右侧渐隐提示还有内容可滚。
-   刻意做窄（28px）且末尾才接近实色：卡片上有徽章/标题，
-   遮罩太宽会把它们糊掉，反而像渲染错误。 */
 .ym-rail-wrap::after {
   content: '';
   position: absolute;
@@ -8128,15 +7450,9 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   scrollbar-width: none;
 }
 .ym-rail::-webkit-scrollbar { height: 0; }
-/* ⚠️ `scroll-snap-align: start` 的 start 是**内容盒**的起点，
-   `.ym-rail` 有 28px 左内边距，而 `scroll-snap-type: x proximity` 会在
-   渲染后立刻把第一张卡吸到内容盒起点 → 轨道自动 scrollLeft=28，
-   首卡被裁掉 28px、与上方 .page-title / .section-title 的左缘错位。
-   用 `scroll-padding-left` 把吸附原点推回到 padding 内侧，首卡才落在 28px。 */
 .ym-rail { scroll-padding-left: var(--ym-gutter); }
 .ym-rail > * { scroll-snap-align: start; }
 
-/* 轨道两侧翻页箭头：M3 Filled Icon Button（surface-container-lowest + 状态层） */
 .ym-rail-btn {
   position: absolute;
   top: 50%;
@@ -8155,7 +7471,7 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   cursor: pointer;
   opacity: 0;
   pointer-events: none;
-  /* 状态层用 primary：M3 规定状态层色 = on-surface，但图标按钮用 primary 更贴合强调 */
+
   --ym-rail-state: var(--md-primary);
   transition: opacity var(--motion-effects-fast),
               background var(--motion-effects-fast),
@@ -8173,7 +7489,6 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   transition: opacity var(--motion-effects-fast);
 }
 .ym-rail-btn > .material-symbols-rounded { position: relative; font-size: 22px; }
-/* 字体子集里没有 chevron_left，用 chevron_right 旋转 180° 代替 */
 .ym-rail-btn--prev .material-symbols-rounded { transform: rotate(180deg); }
 .ym-rail-wrap:hover .ym-rail-btn.can-scroll,
 .ym-rail-wrap.ym-force-hover .ym-rail-btn.can-scroll { opacity: 1; pointer-events: auto; }
@@ -8183,30 +7498,16 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
 .ym-rail-btn--prev { left: 8px; }
 .ym-rail-btn--next { right: 8px; }
 
-/* ── 卡片 = .album-card + 探新专属扩展 ──────────────────────────────────
-   探新页**不重新发明卡片**：DOM 就是专辑页那一套
-   `.album-card > .album-cover + .album-info > .album-name/.album-meta`
-   （见 albums.js），几何、底色、hover 起落、按下形变全部由 .album-card
-   提供 —— 这里一条都不重复声明，否则「复用」就只是嘴上说说。
-
-   探新只加两样它没有的东西：
-     ① 卡级内容取色变量（--ym-a*，由 card_color.js 覆写）+ 固定卡宽
-     ② 封面上浮的类型徽章 / 播放按钮（.album-card 没有）
-     ↑ 这两样**随 .album-card 一起被裁切**（.album-card 自带 overflow:hidden），
-       不另外套一层带底色的壳 —— 双层容器会出现两层底色与双重描边。 */
-
 .ym-card {
   position: relative;
   flex: 0 0 auto;
   width: var(--ym-card-w);
-  /* Material You：强调色先回落到全局 primary，取到封面主色后由 JS 覆写为卡级色阶 */
+
   --ym-a: var(--md-primary);
   --ym-on-a: var(--md-on-primary);
   --ym-a-container: var(--md-primary-container);
   --ym-on-a-container: var(--md-on-primary-container);
 }
-/* 描边染上该卡的强调色 —— Material You 的「组件随内容染色」。
-   几何（圆角/底色/hover 起落/按下形变）不在这里重复，全部交给 .album-card。 */
 .ym-card:hover {
   outline-color: color-mix(in srgb, var(--ym-a) 55%, transparent);
 }
@@ -8214,12 +7515,10 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   outline: var(--m3e-focus-ring-thickness) solid var(--m3e-focus-ring-color);
   outline-offset: var(--m3e-focus-ring-outward-offset);
 }
-/* 无头浏览器无真实指针，探针用此 class 复现 hover 态（_preview/_ym_probe.html?hover=） */
 .ym-force-hover { transform: translateY(-4px); }
 .ym-force-hover .ym-card-play { opacity: 1; transform: scale(1); }
 .ym-force-hover .ym-card-art > img { transform: scale(1.06); }
 
-/* M3 状态层：hover 时在封面上叠一层该卡强调色的状态层（替代纯缩放） */
 .ym-card-art::before {
   content: '';
   position: absolute;
@@ -8240,8 +7539,6 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   opacity: var(--md-sys-state-hover-state-layer-opacity);
 }
 
-/* 封面：几何已由 .album-cover 提供（aspect-ratio 1 / overflow hidden /
-   surface-container-high 底），这里只补「相对定位」以便徽章/按钮定位。 */
 .ym-card-art { position: relative; }
 .ym-card-art > img,
 .ym-card-art > svg,
@@ -8251,13 +7548,9 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   display: block;
   object-fit: cover;
 }
-/* 内部图片随 hover 轻微放大（spatial 动效：transform 走 spatial） */
 .ym-card-art > img { transition: transform var(--motion-long) var(--ease-standard); }
 .ym-card:hover .ym-card-art > img { transform: scale(1.06); }
 
-/* 类型徽章：左上角胶囊。
-   Material You：底色用**该卡的强调色**（--ym-a-container，明度恒定 30%，
-   压在任何深浅封面上白字都够对比），文字用 on-a-container。 */
 .ym-card-badge {
   position: absolute;
   top: 10px;
@@ -8280,9 +7573,6 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
 }
 .ym-card-badge .material-symbols-rounded { font-size: 13px; }
 
-
-/* 播放按钮：浮在封面右下（临时浮层 → elevation 是唯一允许的 shadow 例外）。
-   Material You：Filled Icon Button 用该卡的强调色，取色后每张卡按钮也不同色。 */
 .ym-card-play {
   position: absolute;
   right: 10px;
@@ -8316,25 +7606,12 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
 }
 .ym-card-play:active { border-radius: var(--pressed-morph-shape); transform: scale(0.9); }
 
-/* ── Hero：一张大卡 + 最多 4 张小卡 ──────────────────────────────────────
-   比例铁律：Hero 卡的宽度必须与专辑页 .album-grid 同档。
-   早期写法 `repeat(4, 1fr)` 把 4 列拉满页宽 → 1064px 下每卡 240px，
-   而专辑页同宽是 188.8px（+27%），一眼就是两套比例。
-   改为与 .album-grid **逐字同构**的表达式：
-       repeat(auto-fill, minmax(var(--ym-card-w), 1fr))
-   --ym-card-w 已经由容器查询（#page-container）解析为专辑页在**当前页宽**下
-   的列宽，故这里 auto-fill 的解析结果与专辑页**完全一致**：同为 n 轨、同为该列宽。
-   ⚠️ 不能用 `minmax(下限, 上限)` 的**固定上限** —— auto-fill 会优先取上限
-   （轨道"尽量大"），导致列数骤减、卡片变胖（实测 724px 下变成 2 轨 265px，
-   而专辑页是 3 轨 212px）。上限必须是 `1fr` 才会与 auto-fill 的 n 轨解一致。 */
 .ym-hero {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(var(--ym-card-w), 1fr));
   gap: var(--ym-rail-gap);
   padding: 0 var(--ym-gutter);
 }
-/* Hero 内的卡拉伸到网格单元：封面 flex 吃掉剩余高度，.album-info 固定在底部。
-   （grid 只拉伸卡片整体，若封面仍是 aspect-ratio:1 会在底部露白） */
 .ym-hero .ym-card {
   width: auto;
   height: 100%;
@@ -8343,21 +7620,10 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
 }
 .ym-hero .ym-card-art { flex: 1; min-height: 0; aspect-ratio: auto; }
 .ym-hero .ym-card--lead { grid-row: span 2; grid-column: span 2; }
-/* 大卡字级只放大标题一档；meta/badge 与 rail 卡同号 ——
-   M3E 的层级靠容器尺寸与留白，不靠把每行字都撑大。 */
 .ym-hero .ym-card--lead .album-name { font-size: 17px; }
 .ym-hero .ym-card--lead .ym-card-play { width: 44px; height: 44px; }
 .ym-hero .ym-card--lead .ym-card-play .material-symbols-rounded { font-size: 26px; }
 
-/* ── Hero 的稀疏分支 ──
-   轨道数由 auto-fill 随页宽解析，小卡按 1 轨自然流动。
-   数据不足时（小卡 1~3 张）最后一行的右侧会留空轨 —— 这与 .album-grid
-   行末留空是同一现象，属正常栅格行为，不再用 :has() 强行收列
-   （收列会让卡片宽度偏离 --ym-card-w，反而破坏比例一致性）。 */
-
-/* 大卡独占整行（推荐与探索都空）：封面回到宽幅比例，占满内容宽。
-   auto-fill 轨道是 `minmax(--ym-card-w, 1.25×)`，`1 / -1` 只能跨到解析出的
-   轨道数，未必等于内容宽 → 独占时改回单列满宽。 */
 .ym-hero:has(> .ym-card:only-child) {
   grid-template-columns: minmax(0, 1fr);
 }
@@ -8367,15 +7633,11 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
 }
 .ym-hero > .ym-card--lead:only-child .ym-card-art { aspect-ratio: 21 / 8; flex: none; }
 
-/* 通栏卡（探索降级位）：宽封面 + 下方信息块，与 .album-card 同构。
-   宽度交给栅格（跨满一行），不再硬编码 min-width。 */
 .ym-card--wide {
   width: 100%;
   grid-column: 1 / -1;
 }
 .ym-card--wide .ym-card-art { aspect-ratio: 21 / 8; }
-
-/* ── Genre Mosaic Cover (multi-album geometric layout) ──────────────────── */
 
 .ym-mosaic-wrapper {
   width: 100%;
@@ -8397,20 +7659,11 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   display: block;
 }
 
-/* 1 image: full bleed */
 .ym-mosaic-cover:has(.m1) { grid-template: 1fr / 1fr; }
-/* 2 images: left/right halves */
 .ym-mosaic-cover:has(.m2-l) { grid-template: 1fr / 1fr 1fr; }
-/* 3 images: left big + right top/bottom */
 .ym-mosaic-cover:has(.m3-l) { grid-template: 1fr 1fr / 1fr 1fr; }
 .ym-mosaic-cover .m3-l { grid-row: 1 / span 2; }
-/* 4 images: 2×2 grid */
 .ym-mosaic-cover:has(.m4-tl) { grid-template: 1fr 1fr / 1fr 1fr; }
-
-/* 最近播放：直接复用全局 .track-row（由 App.utils.trackRow 生成），
-   与 history / liked 等页完全一致 —— 这里不定义任何私有样式。 */
-
-/* ── 听歌统计 ─────────────────────────────────────────────────────────── */
 
 .ym-stats-wrap { padding: 0 var(--ym-gutter); }
 
@@ -8421,9 +7674,7 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
 }
 .ym-stat-card {
   background: var(--md-surface-container);
-  /* M3E 形状阶梯：形状随容器尺寸放大。
-     统计卡是「整块面板」量级（比卡片大得多），按阶梯取 corner-extra-large(28)，
-     与卡片 corner-large(16) 形成清晰的两级——这是 M3E 的表达力所在。 */
+
   border-radius: var(--md-sys-shape-corner-extra-large);
   padding: 20px 22px;
   display: flex;
@@ -8456,7 +7707,6 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   margin-left: 3px;
 }
 
-/* Chart card */
 .ym-stats-chart-card {
   margin-top: 16px;
   background: var(--md-surface-container);
@@ -8525,7 +7775,6 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   margin-top: 8px;
 }
 
-/* Top lists */
 .ym-stats-lists {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -8585,12 +7834,6 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   transition: width var(--motion-long) var(--ease-standard);
 }
 
-/* ── Empty States ─────────────────────────────────────────────────────── */
-/* 空态**完全复用全站 `.empty-state`**（见上方 § 空态）——
-   DOM 固定 `.empty-icon + .empty-title + .empty-sub`，
-   与 albums / history / playlists 逐字同构，探新不另造任何私有空态类。
-   仅一条收敛：Hero 空态直接坐在卡片位上（宽 ≈ 一张卡），
-   72px 的全局图标会顶爆这个比例，故在 Hero 语境下收到 40px。 */
 .ym-hero > .empty-state {
   grid-column: 1 / -1;
   background: var(--md-surface-container);
@@ -8599,13 +7842,7 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
 }
 .ym-hero > .empty-state .empty-icon { font-size: 40px; }
 
-/* ── Mix Detail Page ───────────────────────────────────────────────────── */
-
 .ym-mix-detail-page { padding: 0 0 24px; }
-/* 详情页头部与全站 `.detail-header`（歌单 / 专辑 / 艺人详情）同构：
-   同样的 28px gap、208px 封面、24px 封面圆角、底部 1px 分隔线。
-   原先探新自造了一套（200px 封面 / 24px 内缩 / 无分隔线 / 标题 700 字重），
-   比例和其余详情页对不上。 */
 .ym-mix-detail-header {
   display: flex;
   align-items: flex-end;
@@ -8646,8 +7883,6 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   margin-bottom: 8px;
 }
 .ym-mix-detail-badge .material-symbols-rounded { font-size: 14px; }
-/* 标题按 M3E emphasized headline（与 .page-title 同档），不再用 700 字重。
-   M3E 的「大字轻」是 500，700 会让它比全站标题明显更重。 */
 .ym-mix-detail-title {
   font-size: 28px;
   font-weight: var(--md-sys-typescale-emphasized-headline-font-weight);
@@ -8665,8 +7900,6 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   margin: 0 0 12px;
 }
 .ym-mix-detail-actions { display: flex; gap: 10px; }
-
-/* ── Playlists Submenu: Mix entry & section headers ────────── */
 
 .nav-submenu-section-header {
   display: flex;
@@ -8698,8 +7931,6 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   opacity: 0.5;
 }
 
-
-/* ── Remote Playlists Styles ───────────────────────────────────────────────────── */
 .page-title-with-badge {
   display: flex;
   align-items: center;
@@ -8751,8 +7982,6 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   font-size: 20px;
 }
 
-/* ── 远程歌单创建者信息 ─────────────────────────────────────────── */
-
 .playlist-owner {
   display: inline-flex;
   align-items: center;
@@ -8798,7 +8027,6 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   margin: 4px 0;
 }
 
-/* 英雄布局中的创建者信息 */
 .detail-meta .playlist-owner-name {
   color: rgba(255, 255, 255, 0.75);
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
@@ -8811,8 +8039,6 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
 .detail-meta .playlist-owner-avatar-wrap .material-symbols-rounded {
   color: rgba(255, 255, 255, 0.8);
 }
-
-/* ── 手柄控制器提示（标题栏中间） ──────────────────────────── */
 
 .title-bar-center {
   -webkit-app-region: no-drag;
@@ -8864,11 +8090,8 @@ body.gamepad-connected .title-bar-center {
   letter-spacing: 0.2px;
 }
 
-/* ── 手柄焦点高亮 ───────────────────────────────────────────── */
-
 .gp-focused {
-  /* 手柄焦点沿用 M3E focus ring 规格（3px / secondary / 外扩）；原实现叠加了
-     outline 与 box-shadow 两道环，视觉上重复，这里统一为单道 */
+
   outline: var(--m3e-focus-ring-thickness) solid var(--m3e-focus-ring-color) !important;
   outline-offset: calc(var(--m3e-focus-ring-outward-offset) * -1) !important;
   border-radius: var(--shape-sm);
@@ -8878,7 +8101,6 @@ body.gamepad-connected .title-bar-center {
   z-index: 1;
 }
 
-/* 卡片类元素的焦点：轻微放大 + 阴影 */
 .album-card.gp-focused,
 .artist-card.gp-focused,
 .folder-item.gp-focused,
@@ -8892,12 +8114,9 @@ body.gamepad-connected .title-bar-center {
   transform: scale(0.98);
 }
 
-/* 全窗口视图时隐藏标题栏手柄提示，仅显示 np-top-bar 中的提示 */
 body.np-fullscreen .title-bar-center {
   display: none !important;
 }
-
-/* ── 全窗口视图 np-top-bar 中的手柄提示 ──────────────────── */
 
 .np-gamepad-hints {
   position: absolute;
@@ -8916,7 +8135,7 @@ body.np-fullscreen .title-bar-center {
 
 body.gamepad-connected .now-playing-pane.fullscreen .np-gamepad-hints {
   opacity: 1;
-  /* 内容切换轨道占据顶栏正中，连接手柄时提示下移一行避让 */
+
   top: calc(100% + 6px);
 }
 
@@ -8956,15 +8175,6 @@ body.gamepad-connected .now-playing-pane:not(.fullscreen) .np-gamepad-hints {
   letter-spacing: 0.2px;
 }
 
-/* ============================================================
-   Onboarding — 新手引导
-   渲染到 #page-container 内，与设置页共用同一套布局规则和组件类。
-   完全复用 settings-row / settings-group-header / toggle /
-   md-dropdown / btn-* 组件，不使用任何独立样式类。
-   标题栏和窗口三大键始终可见。
-   ============================================================ */
-
-/* ── 布局：与 settings-active 一致，保留标题栏 ──────────────── */
 body.onboarding-active .nav-drawer { display: none; }
 body.onboarding-active .app-root {
   grid-template-columns: 0 1fr;
@@ -8980,13 +8190,11 @@ body.onboarding-active .mini-btn-expand { display: none; }
 body.onboarding-active.np-fullscreen .title-bar { position: relative; }
 body.onboarding-active.np-fullscreen .title-bar-left { display: flex; }
 
-/* 新手引导阶段：标题栏仅保留 logo + 三大键 */
 body.onboarding-active .title-bar-back { display: none; }
 body.onboarding-active .title-bar-title-wrap { display: none; }
 body.onboarding-active .title-bar-center { display: none !important; }
 body.onboarding-active .title-bar-settings { display: none; }
 
-/* ── 页面容器（与 .settings-page 相同的 absolute fill） ────── */
 .onboarding-page {
   position: absolute;
   inset: 0;
@@ -8996,7 +8204,6 @@ body.onboarding-active .title-bar-settings { display: none; }
   overflow: hidden;
 }
 
-/* ── M3 线性进度指示器 ─────────────────────────────────────── */
 .onboarding-progress {
   display: flex;
   align-items: center;
@@ -9015,7 +8222,6 @@ body.onboarding-active .title-bar-settings { display: none; }
 .onboarding-progress-dot.done { background: var(--md-primary); }
 .onboarding-progress-dot.current { background: var(--md-primary); height: 6px; }
 
-/* ── 页面头部 ──────────────────────────────────────────────── */
 .onboarding-header {
   display: flex;
   align-items: flex-start;
@@ -9073,7 +8279,6 @@ body.onboarding-active .title-bar-settings { display: none; }
   line-height: 1.5;
 }
 
-/* ── 内容滚动区 ────────────────────────────────────────────── */
 .onboarding-scroll {
   flex: 1;
   overflow-y: auto;
@@ -9082,8 +8287,7 @@ body.onboarding-active .title-bar-settings { display: none; }
 }
 .onboarding-content {
   padding-bottom: 24px;
-  /* 与设置页同源：卡片撑到岛右缘（2026-10-04 起设置页已取消右侧 248px 对称留白，
-     引导页同步取消，两页卡片右端都落在岛右缘）。 */
+
 }
 .onboarding-content--enter {
   animation: onboarding-fade-in var(--motion-medium) var(--ease-decel);
@@ -9093,7 +8297,6 @@ body.onboarding-active .title-bar-settings { display: none; }
   to   { opacity: 1; transform: none; }
 }
 
-/* ── 底部操作栏 ────────────────────────────────────────────── */
 .onboarding-actions {
   display: flex;
   align-items: center;
@@ -9111,7 +8314,6 @@ body.onboarding-active .title-bar-settings { display: none; }
   gap: 8px;
 }
 
-/* ── 步骤 1：欢迎页 — 五语言打字特效 ──────────────────────── */
 .onboarding-welcome {
   display: flex;
   flex-direction: column;
@@ -9143,18 +8345,15 @@ body.onboarding-active .title-bar-settings { display: none; }
   51%, 100% { opacity: 0; }
 }
 
-/* ── 库扫描旋转动画 ────────────────────────────────────────── */
 .ob-library-spin { animation: pulse 1.4s ease-in-out infinite; color: var(--md-primary) !important; opacity: 1 !important; }
 
-/* ── 语言列表国旗 ──────────────────────────────────────────── */
 .ob-lang-flag {
   font-size: 26px;
   line-height: 1;
-  /* 强制使用本地 Noto Color Emoji 国旗子集渲染国旗（Windows Segoe UI Emoji 不支持国旗） */
+
   font-family: 'Noto Color Emoji Flags', 'Material Symbols Rounded', sans-serif;
 }
 
-/* ── 响应式 ────────────────────────────────────────────────── */
 @media (max-width: 640px) {
   .onboarding-progress { padding: 10px 16px 0; }
   .onboarding-header { padding: 12px 16px 8px; }
@@ -9164,7 +8363,6 @@ body.onboarding-active .title-bar-settings { display: none; }
   .onboarding-header-icon { width: 36px; height: 36px; font-size: 20px; }
 }
 
-/* ── Settings: action row (re-run onboarding button) ────────── */
 .settings-row-action {
   display: flex;
   align-items: center;
@@ -9176,8 +8374,6 @@ body.onboarding-active .title-bar-settings { display: none; }
   white-space: nowrap;
 }
 
-/* ── Settings: 正在播放功能区自定义卡片 ─────────────────────────
-   独立整宽卡片（.settings-row-full），内含：标题 + 已选 chip 行 + 编辑入口。 */
 .settings-np-secondary {
   padding: 16px var(--md-comp-list-item-padding-inline);
   display: flex;
@@ -9212,7 +8408,6 @@ body.onboarding-active .title-bar-settings { display: none; }
 }
 .settings-np-secondary .settings-action-btn { height: 36px; padding: 0 18px; }
 
-/* .md-chip：M3 chip（展示型 / 可移除） */
 .md-chip {
   display: inline-flex;
   align-items: center;
@@ -9227,22 +8422,17 @@ body.onboarding-active .title-bar-settings { display: none; }
 }
 .settings-np-chip .material-symbols-rounded { font-size: 18px; }
 
-/* ── Settings: 功能选择对话框 ───────────────────────────────────
-   外壳复用项目标准对话框 .cmd-dialog（about.js / context_menu.js 同源），
-   候选列表复用 M3E 分段列表语义（.md-seglist > * 提供底色/圆角/状态层），
-   单格即一个 .settings-row（leading 图标 + 主文案 + trailing 勾选）。
-   此处只写"对话框内网格布局"的尺寸覆写，不重造视觉。 */
 .np-actions-editor {
-  /* 对话框内的列表用更紧的项内边距：两列网格下 16px 会挤掉文字 */
+
   --md-comp-list-item-padding-inline: 12px;
-  /* 本对话框内容较宽（两列网格），比默认 .cmd-dialog 更宽一点 */
+
   max-width: 420px;
 }
 .np-actions-editor-body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  /* 列表超长时内部滚动，不撑破对话框 */
+
   max-height: min(56vh, 460px);
   overflow: hidden;
 }
@@ -9252,21 +8442,18 @@ body.onboarding-active .title-bar-settings { display: none; }
   line-height: 1.5;
   color: var(--md-on-surface-variant);
 }
-/* 网格形态：每格是一个 M3E list item。
-   .md-seglist 类同时挂上 —— 底色/圆角/hover/selected/disabled 状态层全部由
-   `.md-seglist > *` 统一提供（与设置页列表同源），此处只负责"两列网格"排版。 */
 .np-actions-editor-grid {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));   /* minmax(0,1fr) 防内容撑破列宽 */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   column-gap: 4px;
   row-gap: 4px;
-  /* 覆盖 .md-seglist 的 flex 列布局与 12px inset（网格不再需要） */
+
   flex-direction: unset;
   margin-inline: 0;
-  /* 溢出时才显示滚动条，未溢出不留空白轨道 */
+
   scrollbar-width: thin;
 }
 .np-actions-editor-grid::-webkit-scrollbar { width: 6px; }
@@ -9275,16 +8462,16 @@ body.onboarding-active .title-bar-settings { display: none; }
   border-radius: var(--md-sys-shape-corner-full);
 }
 .np-actions-editor-item {
-  /* 网格里的按钮撑满列宽（.md-seglist > * 不管宽度） */
+
   width: 100%;
   min-width: 0;
-  /* 覆盖 .settings-row 的 justify-content: space-between（内容按 左-中-右 三槽排） */
+
   justify-content: flex-start;
   border: none;
   font-family: inherit;
   text-align: left;
   cursor: pointer;
-  /* 项内边距收窄：两列网格下 16px 会挤掉文字 */
+
   padding-inline: 12px;
   gap: 8px;
 }
@@ -9304,14 +8491,11 @@ body.onboarding-active .title-bar-settings { display: none; }
   gap: 8px;
 }
 .np-actions-editor-count {
-  margin-right: auto;        /* 计数贴左，按钮组贴右 */
+  margin-right: auto;
   font-size: 13px;
   color: var(--md-on-surface-variant);
 }
 
-/* ── 拖入窗口播放提示 ───────────────────────────────────────────────
-   Explorer 拖入音频文件时显示；drop / 拖出后由 JS 去掉 .visible。
-   纯 M3E：surface-container-high + outline-variant，不用阴影做层次。 */
 .drop-hint {
   position: fixed;
   inset: 0;
@@ -9349,15 +8533,10 @@ body.onboarding-active .title-bar-settings { display: none; }
 .drop-hint.visible .drop-hint-card { transform: scale(1); }
 .drop-hint-icon { font-size: 28px; color: var(--md-primary); }
 
-/* 库外文件（拖入播放）不可收藏：功能区爱心置灰 */
 .np-secondary-btn:disabled { opacity: 0.38; cursor: default; }
 .np-secondary-btn:disabled:hover { background: transparent; }
 .mini-btn-like:disabled { opacity: 0.38; pointer-events: none; }
 
-/* ── 过长标题跑马灯（marquee.js）────────────────────────────────────────
-   结构：容器 .mq > 内层 span.mq-inner，滚动只动内层 transform。
-   溢出时加 .mq-rolling：两侧 mask 渐变透明，文字进出不硬切。
-   数值须与 floating.css 的同一段保持同步。 */
 .mq {
   overflow: hidden;
   text-overflow: clip;
@@ -9376,7 +8555,6 @@ body.onboarding-active .title-bar-settings { display: none; }
   mask-image: linear-gradient(90deg, transparent 0, #000 var(--mq-fade-l),
     #000 calc(100% - var(--mq-fade-r)), transparent 100%);
 }
-/* 小字号（底栏 / 面板折叠条）渐隐带更窄，避免吃掉首尾字 */
 .mini-player-title.mq-rolling {
   --mq-fade-l: 10px;
   --mq-fade-r: 18px;

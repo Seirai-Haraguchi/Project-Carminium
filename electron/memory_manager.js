@@ -1,29 +1,7 @@
-/**
- * Carminium — 主进程严格内存管理器
- *
- * 升级要点（v3 — 2026-08 内存压缩）：
- *   - 监控指标从 V8 heap 切换为总进程 RSS（含 native/buffer/子进程）
- *   - 三级渐进式管制：SOFT(150MB) → HARD(200MB) → CRITICAL(260MB)
- *   - 内存压力升高时自动缩短监控间隔（20s → 10s → 5s）
- *   - 紧急模式：级联清理所有缓存模块 + 强制 GC + 渲染进程通知
- *   - GPU 进程独立运行，主进程 RSS 不含 GPU 侧分配
- *   - 目标总 RSS（主+GPU+渲染+工具）~350-400MB
- *
- * 设计约束：
- *   - 所有功能不阻塞音频播放关键路径
- *   - IPC 接口向后兼容现有渲染进程调用
- *   - 低开销：正常状态下 20s 监控周期
- */
 'use strict';
 
 const { ipcMain } = require('electron');
 
-// ── 内存管制阈值（按优化等级和总进程 RSS）──
-// GPU 进程独立运行，主进程 RSS 不含 GPU 侧分配。
-// 阈值根据 memory_optimization 设置等级动态调整：
-//   off       — SOFT=300, HARD=400, CRITICAL=500（宽松，不限制 V8 堆/不关沙箱）
-//   normal    — SOFT=200, HARD=280, CRITICAL=350（适度）
-//   aggressive — SOFT=150, HARD=200, CRITICAL=260（激进，已关沙箱+V8 堆 96MB）
 const _THRESHOLDS = {
   off:        { soft: 300, hard: 400, critical: 500 },
   normal:     { soft: 200, hard: 280, critical: 350 },
@@ -34,21 +12,18 @@ let RSS_SOFT_MB = 200;
 let RSS_HARD_MB = 280;
 let RSS_CRITICAL_MB = 350;
 
-// ── 监控间隔（按压力级别自适应）──
 const MONITOR_NORMAL_MS = 20_000;
 const MONITOR_ELEVATED_MS = 10_000;
 const MONITOR_CRITICAL_MS = 5_000;
 const CLEANUP_INTERVAL_MS = 30_000;
-const RENDERER_REPORT_TIMEOUT_MS = 90_000; // 渲染进程超时未上报则标记为 stale
+const RENDERER_REPORT_TIMEOUT_MS = 90_000;
 
-// ── MemoryManager ──────────────────────────────────────────────────────────
 
 class MemoryManager {
   constructor() {
     this._monitorTimer = null;
     this._cleanupTimer = null;
 
-    // 可处置资源注册表
     this._disposables = new Map();
     this._nextId = 1;
 
@@ -56,41 +31,32 @@ class MemoryManager {
       this._disposables.delete(id);
     });
 
-    // RSS 历史记录（检测增长趋势）
     this._history = [];
     this._maxHistory = 20;
 
-    // 渲染进程内存上报
     this._rendererStats = null;
     this._rendererLastReport = 0;
 
-    // IPC 注册状态
     this._ipcRegistered = false;
 
-    // GC 函数引用
     this._gc = (typeof global.gc === 'function') ? global.gc : null;
 
-    // 清理回调链
     this._cleanupCallbacks = [];
 
-    // 当前压力级别
-    this._pressureLevel = 'normal'; // 'normal' | 'elevated' | 'critical'
+    this._pressureLevel = 'normal';
     this._emergencyMode = false;
 
-    // 紧急清理回调（比普通清理更激进）
     this._emergencyCallbacks = [];
 
-    // 紧急清理触发次数（供诊断面板展示）
     this._killCount = 0;
   }
 
-  // ── 启动 / 停止 ────────────────────────────────────────────────────────
 
   start() {
     if (this._monitorTimer) return;
     this._scheduleMonitor(MONITOR_NORMAL_MS);
     this._cleanupTimer = setInterval(() => this._runCleanup(), CLEANUP_INTERVAL_MS);
-    this._monitor(); // 立即采基线
+    this._monitor();
     this._startMetricsProbe();
 
     if (!this._ipcRegistered) {
@@ -108,10 +74,6 @@ class MemoryManager {
     if (this._cleanupTimer) { clearInterval(this._cleanupTimer); this._cleanupTimer = null; }
   }
 
-  // ── 诊断采样探针（仅当 CARMINIUM_MEM_PROBE 环境变量存在时启用）──────────
-  // 用途：把 app.getAppMetrics() 得到的**每个子进程真实 RSS**（含渲染进程）
-  // 定时追加到指定文件。外部测量台架只需写入同名 marker 行即可按阶段聚合。
-  // 生产环境该变量不存在，此方法直接返回，零开销。
   _startMetricsProbe() {
     const probePath = process.env.CARMINIUM_MEM_PROBE;
     if (!probePath) return;
@@ -123,13 +85,12 @@ class MemoryManager {
         const rows = [];
         const ts = Date.now();
         for (const m of app.getAppMetrics()) {
-          // m.type: Browser | Tab | GPU | Utility | Zygote ...
           const rssMB = ((m.memory && m.memory.workingSetSize) || 0) / 1024;
           const cpu = (m.cpu && m.cpu.percentCPUUsage) || 0;
           rows.push(`${ts},${m.type},${m.pid},${rssMB.toFixed(2)},${cpu.toFixed(1)}`);
         }
         if (rows.length) fsMod.appendFileSync(probePath, rows.join('\n') + '\n');
-      } catch (_) { /* ignore */ }
+      } catch (_) {  }
     }, 500);
     if (timer.unref) timer.unref();
     this._probeTimer = timer;
@@ -142,7 +103,6 @@ class MemoryManager {
     if (this._monitorTimer.unref) this._monitorTimer.unref();
   }
 
-  // ── 核心监控 ──────────────────────────────────────────────────────────
 
   _monitor() {
     const mem = process.memoryUsage();
@@ -151,11 +111,9 @@ class MemoryManager {
     const heapTotalMB = mem.heapTotal / (1024 * 1024);
     const externalMB = mem.external / (1024 * 1024);
 
-    // 记录历史
     this._history.push({ time: Date.now(), rss: mem.rss, heapUsed: mem.heapUsed });
     if (this._history.length > this._maxHistory) this._history.shift();
 
-    // ── 三级管制判定 ──
     const prevLevel = this._pressureLevel;
 
     if (rssMB >= RSS_CRITICAL_MB) {
@@ -190,7 +148,6 @@ class MemoryManager {
       this._emergencyMode = false;
     }
 
-    // 自适应监控间隔
     if (this._pressureLevel !== prevLevel) {
       if (this._pressureLevel === 'critical') {
         this._scheduleMonitor(MONITOR_CRITICAL_MS);
@@ -201,7 +158,6 @@ class MemoryManager {
       }
     }
 
-    // 渲染进程超时检测
     if (this._rendererLastReport && (Date.now() - this._rendererLastReport) > RENDERER_REPORT_TIMEOUT_MS) {
       this._rendererStats = null;
     }
@@ -220,15 +176,12 @@ class MemoryManager {
     };
   }
 
-  // ── 清理 ──────────────────────────────────────────────────────────────
 
   _runCleanup() {
-    // 外部清理回调
     for (const cb of this._cleanupCallbacks) {
       try { cb(); } catch (e) { console.warn('[MemoryManager] Cleanup error:', e.message); }
     }
 
-    // 清理失效 WeakRef
     let cleaned = 0;
     for (const [id, entry] of this._disposables) {
       if (entry.weakRef.deref() === undefined) { this._disposables.delete(id); cleaned++; }
@@ -236,33 +189,26 @@ class MemoryManager {
     if (cleaned > 0) console.debug('[MemoryManager] Cleaned', cleaned, 'finalized entries');
   }
 
-  /** 紧急清理：级联释放所有非关键资源 */
   _emergencyCleanup() {
     this._killCount++;
     console.warn('[MemoryManager] EMERGENCY CLEANUP — cascading resource release');
 
-    // 1. 执行所有紧急回调
     for (const cb of this._emergencyCallbacks) {
       try { cb(); } catch (e) { console.warn('[MemoryManager] Emergency callback error:', e.message); }
     }
 
-    // 2. 处置所有注册的可处置资源
     for (const [id, entry] of this._disposables) {
       try { entry.dispose(); } catch (_) {}
     }
     this._disposables.clear();
 
-    // 3. 执行普通清理回调
     this._runCleanup();
 
-    // 4. 强制 GC
     if (this._gc) {
       try { this._gc(); } catch (_) {}
-      // 二次 GC（清理第一次 GC 暴露的垃圾）
       setImmediate(() => { try { this._gc(); } catch (_) {} });
     }
 
-    // 5. 通知渲染进程紧急清理
     const win = require('electron').BrowserWindow.getAllWindows()[0];
     if (win && !win.isDestroyed()) {
       win.webContents.executeJavaScript(
@@ -271,7 +217,6 @@ class MemoryManager {
     }
   }
 
-  // ── 可处置资源注册 ────────────────────────────────────────────────────
 
   registerDisposable(target, dispose, label) {
     if (!target || typeof dispose !== 'function') return 0;
@@ -294,15 +239,10 @@ class MemoryManager {
     if (typeof callback === 'function') this._cleanupCallbacks.push(callback);
   }
 
-  /** 注册紧急清理回调（在 CRITICAL 级别触发） */
   onEmergencyCleanup(callback) {
     if (typeof callback === 'function') this._emergencyCallbacks.push(callback);
   }
 
-  /**
-   * 根据内存优化等级设置阈值
-   * @param {string} level — 'off' | 'normal' | 'aggressive'
-   */
   setOptimizationLevel(level) {
     const t = _THRESHOLDS[level] || _THRESHOLDS.normal;
     RSS_SOFT_MB = t.soft;
@@ -312,7 +252,6 @@ class MemoryManager {
       '— soft:', RSS_SOFT_MB + 'MB, hard:', RSS_HARD_MB + 'MB, critical:', RSS_CRITICAL_MB + 'MB');
   }
 
-  // ── 内存状态查询 ──────────────────────────────────────────────────────
 
   getStats() {
     const mem = process.memoryUsage();
@@ -341,7 +280,6 @@ class MemoryManager {
   get pressureLevel() { return this._pressureLevel; }
   get isEmergency() { return this._emergencyMode; }
 
-  // ── IPC 注册 ──────────────────────────────────────────────────────────
 
   _registerIpc() {
     ipcMain.handle('memory:get_stats', () => JSON.stringify(this.getStats()));
@@ -364,12 +302,10 @@ class MemoryManager {
       return true;
     });
 
-    // 新增：查询压力级别
     ipcMain.handle('memory:get_pressure', () => this._pressureLevel);
   }
 }
 
-// ── 单例 ────────────────────────────────────────────────────────────────────
 
 let _instance = null;
 

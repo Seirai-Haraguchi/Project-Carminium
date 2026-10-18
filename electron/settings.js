@@ -1,10 +1,3 @@
-/**
- * Carminium — 应用设置持久化
- * 将设置存储为 JSON 文件，位于平台标准配置目录：
- *   Windows: %APPDATA%/Carminium/settings.json
- *   Linux:   ~/.config/Carminium/settings.json  (XDG_CONFIG_HOME)
- *   macOS:   ~/Library/Application Support/Carminium/settings.json
- */
 'use strict';
 
 const fs = require('fs');
@@ -14,10 +7,10 @@ const os = require('os');
 const DEFAULTS = {
   volume: 80,
   shuffle: false,
-  repeat: 'off',      // "off" | "all" | "one"
-  theme: 'system',    // "light" | "dark" | "system"
+  repeat: 'off',
+  theme: 'system',
   music_folders: [],
-  playback_state: {}, // { track_id, position_ms, was_playing }
+  playback_state: {},
   audio_output_device: '',
   wasapi_exclusive: false,
   automix: false,
@@ -36,21 +29,19 @@ const DEFAULTS = {
   video_background: false,
   ui_font: '',
   color_scheme: 'tonal_spot',
-  monet_source: 'album_cover',  // "album_cover" | "system_wallpaper"
-  language: 'zh-CN',  // "zh-CN" | "zh-TW" | "ja" | "en" | "ru"
+  monet_source: 'album_cover',
+  language: 'zh-CN',
   smtc_lyrics: false,
-  // Windows 任务栏缩略图预览下方的媒体控制按钮（上一首/播放·暂停/下一首）。
-  // 关闭后不再调用 setThumbarButtons，任务栏预览恢复系统默认外观。
+
   taskbar_thumb_controls: true,
   artist_separators: ';',
-  tag_editor_path: '',          // 外部音乐标签编辑应用路径（如 Mp3tag）
-  // Discord Rich Presence
-  discord_rpc: false,           // 总开关
-  discord_rpc_show_paused: true, // 暂停时仍在 Discord 显示当前曲目（无进度）
-  // 简略状态（Discord 第二行）模板，占位符：{title} {artist} {album} {album_artist}
+  tag_editor_path: '',
+
+  discord_rpc: false,
+  discord_rpc_show_paused: true,
+
   discord_rpc_brief_format: '{artist}',
-  // Discord 开发者门户的应用 ID（discord.com/developers/applications）。
-  // RPC 握手必须携带有效的 application ID；留空 = 不连接。
+
   discord_rpc_client_id: '',
   eq_enabled: false,
   eq_bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -58,34 +49,33 @@ const DEFAULTS = {
   compressor_enabled: false,
   vocal_enhance: false,
   guitar_friendly: false,
-  hearing_protection: false,     // 听觉系统保护：削减损伤听力的频段 + 限制最大音量
-  onboarding_complete: false,   // 新手引导是否已完成
-  // 内存优化等级: 'off' | 'normal' | 'aggressive'
-  //   off       — 不做任何 Chromium 内存优化
-  //   normal    — 常规优化（默认）：关闭无用后台服务，限制渲染进程数，适度裁剪 features
-  //   aggressive — 激进优化：normal 全部 + no-sandbox + low-end-device-mode + 大量 disable-features + V8 堆 96MB
+  hearing_protection: false,
+
+  volume_normalization: false,
+  volume_normalization_target: '-14',
+  onboarding_complete: false,
+
   memory_optimization: 'normal',
-  // Virtual Bass Enhancement (modern smartphone DSP pipeline)
+
   vbe_enabled: false,
-  vbe_cutoff: 90,            // Speaker model HPF cutoff (50–300 Hz)
-  vbe_harm: 0.35,             // Bass harmonic mix λ (0.0–1.0)
-  vbe_sub: 0.15,              // Subharmonic mix (0.0–1.0)
-  vbe_body: 0.18,             // Mid-bass body mix (0.0–1.0)
-  vbe_reson: 0.25,            // Attack resonance mix (0.0–1.0)
-  vbe_dry: 1.0,               // Dry/main gain (0.0–1.0)
-  vbe_a2: 0.15,               // NLD x² coefficient (even harmonics)
-  vbe_a3: 0.85,               // NLD x³ coefficient (odd harmonics)
-  vbe_trans_drive: 2.0,       // Transient saturation drive (1.0–5.0)
-  vbe_reson_freq: 2200,        // Attack resonance center freq (1000–4000 Hz)
-  library_auto_watch: true,          // 本地库文件夹 FileWatcher 自动刷新
-  library_watch_poll_minutes: 10,    // 本地库轮询兜底间隔（0 = 关闭轮询）
-  library_watch_debounce_ms: 3000,   // FileWatcher 事件去抖窗口
-  subsonic_auto_sync: true,          // 远程库定期 re-sync（刷新本地缓存数据库）
-  subsonic_sync_interval_minutes: 30, // 远程库 re-sync 间隔（0 = 禁用）
-  // 正在播放界面下方功能区（.np-secondary-controls）的按钮配置。
-  // 有序数组，元素为功能 id；顺序即显示顺序，最多 5 个。
-  // 空数组 = 使用默认（见 DEFAULT_NP_SECONDARY_ACTIONS）。
+  vbe_cutoff: 90,
+  vbe_harm: 0.35,
+  vbe_sub: 0.15,
+  vbe_body: 0.18,
+  vbe_reson: 0.25,
+  vbe_dry: 1.0,
+  vbe_a2: 0.15,
+  vbe_a3: 0.85,
+  vbe_trans_drive: 2.0,
+  vbe_reson_freq: 2200,
+  library_auto_watch: true,
+  library_watch_poll_minutes: 10,
+  library_watch_debounce_ms: 3000,
+  subsonic_auto_sync: true,
+  subsonic_sync_interval_minutes: 30,
+
   np_secondary_actions: [],
+  show_quality: true,
   shortcuts: {
     play_pause: 'Space',
     next_track: 'MediaTrackNext',
@@ -97,8 +87,6 @@ const DEFAULTS = {
   },
 };
 
-// 正在播放功能区候选功能（id 白名单 + 上限），供持久化层做基本校验。
-// 前端 UI 注册表见 web/pages/now_playing.js 的 NP_SECONDARY_ACTIONS。
 const NP_SECONDARY_ACTIONS = {
   ids: [
     'shuffle', 'repeat', 'like', 'audio_mode',
@@ -111,23 +99,22 @@ const NP_SECONDARY_ACTIONS = {
 
 class AppSettings {
   constructor() {
-    // 优先使用 Electron 的 app.getPath('userData')（跨平台标准路径）
-    // 若 app 模块不可用（理论上不会发生），则回退到平台手动计算
+
     let baseDir;
     try {
       const { app } = require('electron');
       if (app && app.getPath) {
         baseDir = app.getPath('userData');
       }
-    } catch { /* electron not available yet */ }
+    } catch {  }
     if (!baseDir) {
-      // 手动回退：遵循各平台规范
+
       if (process.platform === 'win32') {
         baseDir = path.join(process.env.APPDATA || os.homedir(), 'Carminium');
       } else if (process.platform === 'darwin') {
         baseDir = path.join(os.homedir(), 'Library', 'Application Support', 'Carminium');
       } else {
-        // Linux: XDG_CONFIG_HOME or ~/.config
+
         baseDir = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'Carminium');
       }
     }
@@ -136,13 +123,11 @@ class AppSettings {
     try {
       fs.mkdirSync(this._dir, { recursive: true });
     } catch {
-      // ignore
+
     }
     this._data = { ...DEFAULTS };
     this._load();
   }
-
-  // ── I/O ──────────────────────────────────────────────────────────────────
 
   _load() {
     try {
@@ -152,13 +137,13 @@ class AppSettings {
         Object.assign(this._data, stored);
       }
     } catch (e) {
-      // File corrupted: rename to .bak so settings aren't silently lost
+
       try {
         const bak = this._path + '.bak';
         if (fs.existsSync(bak)) fs.unlinkSync(bak);
         fs.renameSync(this._path, bak);
       } catch {
-        // ignore
+
       }
     }
   }
@@ -172,13 +157,11 @@ class AppSettings {
       try {
         if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
       } catch {
-        // ignore
+
       }
       throw e;
     }
   }
-
-  // ── Access ────────────────────────────────────────────────────────────────
 
   get(key, defaultVal) {
     return key in this._data ? this._data[key] : defaultVal;
@@ -201,8 +184,6 @@ class AppSettings {
   getAll() {
     return this.all();
   }
-
-  // ── Paths ─────────────────────────────────────────────────────────────────
 
   get dataDir() {
     return this._dir;

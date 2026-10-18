@@ -1,24 +1,10 @@
-/**
- * Carminium - 音乐播放器
- * 管理播放队列、随机和循环模式。
- *
- * 常にネイティブレンダラー (Zig + miniaudio + SoundTouch) で音声を再生。
- * 共有モード / 排他モードは設定で切り替え。デコードは ffmpeg が担当。
- * 本モジュールはキュー管理と状態調整を担当し、EventEmitter 経由で信号を転送する。
- */
 'use strict';
 
 const { EventEmitter } = require('events');
 const { SHARE_SHARED, SHARE_EXCLUSIVE } = require('./wasapi');
 
-// WASAPI 独占モードは Windows 専用。Linux (PulseAudio/ALSA) / macOS (CoreAudio) では無効。
 const IS_WIN = process.platform === 'win32';
 
-// 队列广播用的轻量投影：省略 lyrics。
-// 队列 UI 只渲染 标题/艺术家/专辑/时长/封面，不读歌词；
-// 而 lyrics 是内嵌 LRC 文本（常 2-8KB/首），大队列下它会占队列 JSON 的 90%+ 体积。
-// 逐首浅拷贝一次即可（成本远低于少序列化几 MB），且不修改 _queue 本体，
-// 因此 track_changed 仍能拿到完整字段。
 function _stripLyricsForQueue(track) {
   if (!track || track.lyrics === undefined) return track;
   const out = {};
@@ -35,7 +21,6 @@ class MusicPlayer extends EventEmitter {
     this._settings = settings;
     this._library = library;
 
-    // ネイティブオーディオレンダラー（null の場合は再生不可）
     this._renderer = renderer;
 
     this._fe_state = 'stopped';
@@ -43,17 +28,12 @@ class MusicPlayer extends EventEmitter {
     this._fe_duration = 0;
     this._fe_volume = 80;
 
-    // 排他モードフラグ（設定から復元）
-    // Linux/macOS では WASAPI 独占モードが存在しないため常に false
     this._exclusive = IS_WIN && settings ? !!settings.get('wasapi_exclusive', false) : false;
 
-    // _playNative の同時実行抑制用トークン（monotonic）
     this._nativePlayToken = 0;
 
-    // Dummy mode notification flag (prevent repeated toasts)
     this._dummyModeNotified = false;
 
-    // SoundTouch パラメータ（レンダラーと同期）
     this._tempo = 1.0;
     this._pitch = 1.0;
     this._rate = 1.0;
@@ -62,107 +42,64 @@ class MusicPlayer extends EventEmitter {
     this._queue = [];
     this._current_index = -1;
     this._shuffle = false;
-    this._repeat = 'off'; // "off" | "all" | "one"
+    this._repeat = 'off';
     this._shuffle_history = [];
     this._liked_tracks = new Set();
     this._media_base_url = '';
 
-    // 从库中加载已持久化的喜爱曲目
     if (library) {
       try {
         this._liked_tracks = library.getLikedTrackIds();
       } catch {
-        // ignore
       }
     }
 
-    // AutoMix
     this._automix_active = false;
     this._automixEnabled = settings ? !!settings.get('automix', false) : false;
     this._radicalTransitions = settings ? !!settings.get('radical_transitions', false) : false;
     this._crossfadeDurationMs = settings ? parseInt(settings.get('crossfade_duration', 4000), 10) || 4000 : 4000;
 
-    // Crossfade 状态跟踪
-    // AudioEngine 启动 crossfade（next 源淡入）时设为 true，完成/取消时设为 false。
-    // 用于 setRepeat 等切歌无关操作判断是否在过渡期内，避免清理 next 导致过渡中断。
     this._inCrossfade = false;
 
-    // Gapless
     this._gaplessEnabled = settings ? !!settings.get('gapless', false) : false;
 
-    // Web Audio API 模式标志
     this._webAudioEnabled = false;
 
-    // ── 切歌瞬间的延迟任务定时器 ──
-    // gapless/crossfade 切换时，把重的非听觉工作（下一曲解码预加载、队列广播）
-    // 推迟几百毫秒~1秒，避开曲目边界，防止主线程风暴阻塞 PCM 转发造成欠载卡顿。
     this._preloadDelayTimer = null;
     this._queueChangedDelayTimer = null;
 
-    // ネイティブレンダラーのイベントハンドリング
     if (this._renderer) {
-      // Gapless と AutoMix は相互排他: 両方有効なら AutoMix 優先
       if (this._automixEnabled && this._gaplessEnabled) {
         this._gaplessEnabled = false;
         if (settings) settings.set('gapless', false);
       }
 
-      // DLL state tracking (play/pause/stop)
       this._renderer.on('state_changed', (state) => {
         this._fe_state = state;
         this.emit('state_changed', state);
       });
 
-      // AudioEngine control: renderer に初期設定を送る
       this.emit('audio_control', JSON.stringify({ action: 'set_gapless', enabled: this._gaplessEnabled }));
       this.emit('audio_control', JSON.stringify({ action: 'set_crossfade', enabled: this._automixEnabled }));
       this.emit('audio_control', JSON.stringify({ action: 'set_radical_transitions', enabled: this._radicalTransitions }));
       this.emit('audio_control', JSON.stringify({ action: 'set_crossfade_duration', ms: this._crossfadeDurationMs }));
-      // AudioEngine に出力先の種別(独占/共有)を通知。
-      // 独占時は Chromium にハードウェアデバイスを一切開かせない(null sink)。
-      // init より先に送ることで「起動時から独占」のパスも明示的に null sink になり、
-      // Chromium の暗黙フォールバックに依存しなくなる。
       this.emit('audio_control', JSON.stringify({ action: 'set_output_sink', nullSink: this._exclusive }));
     }
   }
 
-  // ── 内部ヘルパー ──────────────────────────────────────────────────────────
 
-  /** 設定から現在の出力デバイスインデックスを取得 */
   _getDeviceIndex() {
     const devId = this._settings ? this._settings.get('audio_output_device', '') : '';
     const idx = parseInt(devId, 10);
     return isNaN(idx) ? -1 : idx;
   }
 
-  // ── AudioEngine 制御ヘルパー ──────────────────────────────────────────────
-  // これらのヘルパーは setExclusiveMode / _reinitRenderer / _playNative で
-  // 共通して使われる audio_control 送信ロジックを一元化し、
-  // 将来のアクション追加や送信方式の変更(例: executeJavaScript → IPC)を
-  // 簡単にするための拡張ポイントでもある。
 
-  /**
-   * audio_control アクションを1つ送信する。
-   * @param {string} action - 'play' | 'stop' | 'seek' | ...
-   * @param {object} [params] - 追加パラメータ(省略可)
-   */
   _emitAudioControl(action, params) {
     const payload = params ? { action, ...params } : { action };
     this.emit('audio_control', JSON.stringify(payload));
   }
 
-  /**
-   * audio_control アクションを送信し、レンダラー側の完了を待つ。
-   *
-   * bridge が executeJavaScript の戻り値(Promise)を待って resolve するため、
-   * 「レンダラーである処理が終わってから次に進む」順序保証が必要な場面で使う
-   * (例: AudioContext を閉じてから DLL にデバイスを開かせる)。
-   * bridge が居ない / 応答が無い場合はタイムアウトで resolve して処理を止めない。
-   *
-   * @param {string} action
-   * @param {object} [params]
-   * @returns {Promise<any>}
-   */
   _invokeAudioControl(action, params) {
     const payload = params ? { action, ...params } : { action };
     const json = JSON.stringify(payload);
@@ -170,40 +107,21 @@ class MusicPlayer extends EventEmitter {
       let settled = false;
       const done = (v) => { if (!settled) { settled = true; resolve(v); } };
       this.emit('audio_control_await', json, done);
-      // レンダラーが応答しない場合の保険(起動直後・ウィンドウ破棄など)
       const t = setTimeout(() => done(undefined), 4000);
       if (t.unref) t.unref();
     });
   }
 
-  /**
-   * AudioEngine を完全に停止させる(stop + clear_next)。
-   * レンダラー(WASAPI DLL)を再初期化する前に必ず呼ぶ。
-   * そうしないと AudioEngine の古いソース/ストリーミングノードが
-   * 生き続け、PCM ルーティング不整合やサイレント状態に陥る。
-   */
   _stopAudioEngine() {
     this._emitAudioControl('stop');
     this._emitAudioControl('clear_next');
   }
 
-  /**
-   * WASAPI レンダラーを指定モードで(再)初期化し、結果を AudioEngine に通知する。
-   * @param {boolean} exclusive - true=排他, false=共有
-   * @returns {Promise<boolean>} 成功時に true、失敗時に false
-   */
   async _reinitRendererWithMode(exclusive) {
     if (!this._renderer) return false;
 
-    // 0. レンダラーの AudioContext を先に解放する(Chromium の共有出力ストリームを閉じる)。
-    //    共有モードの context は実際にハードウェア端点を開いているため、独占ストリームを
-    //    開く前に必ず手放させる。順序が逆だと DLL がデバイスを掴めない / 互いの Stream を
-    //    無効化し合って device error になる。
-    //    ⚠️ これだけでは不十分: 権独占後に作り直した context も device error で死ぬ。
-    //    本当の対策は step 3 の nullSink(下記)。
     await this._releaseAudioContext();
 
-    // レンダラーが初期化済みなら一旦閉じる
     if (this._renderer.isInitialized) {
       await this._renderer.close();
     }
@@ -216,20 +134,10 @@ class MusicPlayer extends EventEmitter {
       channels: 2,
     });
 
-    // 独占模式自动回退检测：wasapi.js init() 失败时会自动重试共享模式
     if (shareMode === SHARE_EXCLUSIVE && initInfo.shareMode !== SHARE_EXCLUSIVE) {
       this._fallbackToShared();
     }
 
-    // AudioEngine に新しいサンプリングレート/チャンネル数を通知。
-    // デバイスを開き直したあとは AudioEngine 側の AudioContext を作り直す必要がある
-    // (rebuild: true → web/audio_engine.js の recreateContext())。
-    // nullSink: 独占時は Chromium にハードウェアデバイスを一切開かせない
-    // (null sink でオーディオグラフを描画させる)。これを指定しないと、DLL が掴んで
-    // いるデバイスを Chromium が開こうとして
-    // "The AudioContext encountered an error from the audio device" → 永久 suspended
-    // → OutputCaptureWorklet が PCM を出さず「切替後そのまま無音」になる。
-    // 実際のモード判定はフォールバック後の initInfo.shareMode を使う。
     const effectiveExclusive = exclusive && initInfo.shareMode === SHARE_EXCLUSIVE;
     this._emitAudioControl('init', {
       sampleRate: this._renderer._sampleRate,
@@ -237,36 +145,24 @@ class MusicPlayer extends EventEmitter {
       rebuild: true,
       nullSink: effectiveExclusive,
     });
-    // 音量を AudioEngine に同期(DLL 側は常に 1.0)
     this._emitAudioControl('set_volume', { level: this._fe_volume / 100 });
 
     return true;
   }
 
-  /**
-   * レンダラーの AudioContext を解放する(Chromium の共有出力ストリームを閉じる)。
-   * WASAPI 独占ストリームを開く / 出力デバイスを開き直す前に必ず待つこと。
-   * 理由は _reinitRendererWithMode() のコメントを参照。
-   */
   _releaseAudioContext() {
     return this._invokeAudioControl('release_context');
   }
 
-  /** 排他モード回退時に設定を同期し、UI を更新 */
   _fallbackToShared() {
     this._exclusive = false;
     if (this._settings) {
       this._settings.set('wasapi_exclusive', false);
     }
-    // 共有へ戻ったので null sink を解除(Chromium に通常の出力デバイスを使わせる)
     this._emitAudioControl('set_output_sink', { nullSink: false });
     this.emit('settings_changed', JSON.stringify(this._settings.all()));
   }
 
-  /**
-   * Web Audio API 模式を有効/無効にする。
-   * 有効時、ブラウザでデコード可能な形式は FFmpeg を使用しない。
-   */
   setWebAudioEnabled(enabled) {
     this._webAudioEnabled = !!enabled;
     if (this._renderer) {
@@ -275,25 +171,16 @@ class MusicPlayer extends EventEmitter {
     console.log('[player] Web Audio mode:', enabled ? 'enabled' : 'disabled');
   }
 
-  /**
-   * 指定されたトラックが FFmpeg デコードを必要とするかどうか。
-   * Web Audio 模式が無効、または形式が wma/ape 等の場合は true。
-   */
   _needsFFmpegForTrack(track) {
     if (!this._webAudioEnabled) return true;
     const path = this._resolvePlayablePath(track);
     if (!path) return true;
-    // 远程 URL（Subsonic 等）总是使用 FFmpeg 流式播放：
-    // 浏览器解码需要把整个文件通过 IPC 传到渲染进程再 decodeAudioData()，
-    // 会阻塞渲染进程主线程，导致 UI 冻结。FFmpeg 在独立进程解码，不影响 UI。
     if (path.startsWith('http://') || path.startsWith('https://')) return true;
-    // 拡張子で判定
     const ext = path.split('.').pop().toLowerCase();
     const browserDecodable = ['mp3', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'flac', 'mp4', 'weba', 'webm'];
     return !browserDecodable.includes(ext);
   }
 
-  // ── AudioEngine IPC handlers (Renderer → Main) ────────────────────────────
 
   _handleAudioPositionTick(ms) {
     this._fe_position = ms;
@@ -313,37 +200,22 @@ class MusicPlayer extends EventEmitter {
     this._onCrossfadeComplete(positionMs);
   }
 
-  /**
-   * AudioEngine 启动 crossfade（next 源开始淡入）时被调用。
-   * 设置 _inCrossfade 标志，setRepeat 等操作据此跳过 next 清理，避免中断过渡。
-   */
   _handleAudioCrossfadeStart() {
     this._inCrossfade = true;
   }
 
-  /**
-   * Web Audio API 模式：无缝切换完成后的处理。
-   * AudioEngine 已在 renderer 侧完成 next → current 的内部状态迁移。
-   * ここではキューインデックスの advancement とイベント通知のみ行う。
-   *
-   * Streaming gapless の場合、FFmpeg プロセスの promoteNextToCurrent() が必要。
-   * Buffer gapless の場合、promoteNextToCurrent() は no-op（FFmpeg プロセス不存在）。
-   */
   _handleGaplessSwitch() {
     this._inCrossfade = false;
-    // Streaming gapless: promote FFmpeg process from next → main
     if (this._renderer && this._renderer.promoteNextToCurrent) {
       this._renderer.promoteNextToCurrent();
     }
 
-    // 次のトラックに移動
     if (this._repeat !== 'one') {
       this._current_index += 1;
       if (this._current_index >= this._queue.length) {
         if (this._repeat === 'all') {
           this._current_index = 0;
         } else {
-          // キューの終端に達した
           this._fe_state = 'stopped';
           this.emit('state_changed', 'stopped');
           return;
@@ -354,8 +226,6 @@ class MusicPlayer extends EventEmitter {
     const track = this._queue[this._current_index];
     if (!track) return;
 
-    // AudioEngine が内部で next → current に移行済みなので、
-    // position は 0 に近い（seekOffsetMs = 0）
     this._fe_position = 0;
     this._fe_duration = this._resolveDuration(
       this._renderer ? this._renderer._durationMs : 0,
@@ -366,10 +236,8 @@ class MusicPlayer extends EventEmitter {
     this.emit('liked_changed', this.isCurrentLiked);
     this.emit('duration_changed', this._fe_duration);
     this.emit('position_changed', 0);
-    // 队列广播延迟到边界之后，避免大队列序列化/DOM 重渲染阻塞 PCM 转发
     this._emitQueueChangedDelayed(400);
 
-    // シャッフル履歴
     if (this._shuffle && this._current_index >= 0) {
       if (!this._shuffle_history.length ||
           this._shuffle_history[this._shuffle_history.length - 1] !== this._current_index) {
@@ -377,11 +245,9 @@ class MusicPlayer extends EventEmitter {
       }
     }
 
-    // さらに次の曲をプリロード（遅延：decodeAudioData/GC が境界に集中するのを防ぐ）
     this._schedulePreloadNext(1200);
   }
 
-  // ── Queue management ──────────────────────────────────────────────────────
 
   playTracks(tracks, startIndex = 0) {
     this._original_queue = [...tracks];
@@ -419,8 +285,6 @@ class MusicPlayer extends EventEmitter {
 
     this._emitQueueChanged();
 
-    // 次曲がプリロード済みならキャンセルして、新しく挿入した曲をプリロードする。
-    // これを行わないと AutoMix/Gapless が古いプリロード曲に切り替わってしまう。
     if (this._renderer && this._renderer.hasNextPreloaded()) {
       this._renderer.cancelPreloadNext();
       this.emit('audio_control', JSON.stringify({ action: 'clear_next' }));
@@ -435,7 +299,6 @@ class MusicPlayer extends EventEmitter {
       this.playTracks([track]);
       return;
     }
-    // 追加前に次曲が存在しなかった場合、プリロードが必要
     const needsPreload = (this._current_index === this._queue.length - 1);
     this._queue.push(track);
     this._original_queue.push(track);
@@ -450,7 +313,6 @@ class MusicPlayer extends EventEmitter {
     if (index < 0 || index >= this._queue.length) return;
     if (index === this._current_index) return;
 
-    // 削除対象がプリロード済みの次曲かどうかを splice 前に判定
     const wasPreloadedNext = (index === this._current_index + 1);
 
     const removed = this._queue.splice(index, 1)[0];
@@ -460,17 +322,14 @@ class MusicPlayer extends EventEmitter {
       const origIdx = this._original_queue.findIndex((t) => t.id === removed.id);
       if (origIdx >= 0) this._original_queue.splice(origIdx, 1);
     } catch {
-      // ignore
     }
 
-    // Update shuffle history
     this._shuffle_history = this._shuffle_history
       .filter((h) => h !== index)
       .map((h) => (h > index ? h - 1 : h));
 
     this._emitQueueChanged();
 
-    // プリロード済みの次曲が削除された場合、キャンセルして新しい次曲をプリロード
     if (wasPreloadedNext && this._renderer && this._renderer.hasNextPreloaded()) {
       this._renderer.cancelPreloadNext();
       this.emit('audio_control', JSON.stringify({ action: 'clear_next' }));
@@ -480,28 +339,19 @@ class MusicPlayer extends EventEmitter {
     }
   }
 
-  /**
-   * 将队列中 fromIndex 位置的曲目移动到 toIndex 位置。
-   * 不允许移动当前正在播放的曲目（与 removeFromQueue 一致）。
-   * 自动维护 _current_index / _shuffle_history。
-   */
   reorderQueue(fromIndex, toIndex) {
     if (fromIndex < 0 || fromIndex >= this._queue.length) return;
     if (toIndex < 0 || toIndex >= this._queue.length) return;
     if (fromIndex === toIndex) return;
-    if (fromIndex === this._current_index) return; // 不允许移动当前播放曲
+    if (fromIndex === this._current_index) return;
 
     const moved = this._queue.splice(fromIndex, 1)[0];
     this._queue.splice(toIndex, 0, moved);
 
-    // 同步 _original_queue：在 original 队列中找到对应曲目并执行相同的移动
     try {
       const origIdx = this._original_queue.findIndex((t) => t.id === moved.id);
       if (origIdx >= 0) {
         const origMoved = this._original_queue.splice(origIdx, 1)[0];
-        // 在 original 队列中找到目标位置的前驱曲目
-        // toIndex 指的是 shuffled 队列中的目标位置，splice 之后该位置上的曲已经在那里
-        // 对于 original_queue，我们简单地按相同方向移动
         let origTo = origIdx;
         if (toIndex > fromIndex) {
           origTo = Math.min(origIdx + (toIndex - fromIndex), this._original_queue.length);
@@ -511,17 +361,14 @@ class MusicPlayer extends EventEmitter {
         this._original_queue.splice(Math.min(origTo, this._original_queue.length), 0, origMoved);
       }
     } catch {
-      // ignore
     }
 
-    // 更新 current_index
     if (fromIndex < this._current_index && toIndex >= this._current_index) {
       this._current_index--;
     } else if (fromIndex > this._current_index && toIndex <= this._current_index) {
       this._current_index++;
     }
 
-    // 更新 shuffle_history
     this._shuffle_history = this._shuffle_history.map((h) => {
       if (h === fromIndex) return toIndex;
       if (fromIndex < h && toIndex >= h) return h - 1;
@@ -531,7 +378,6 @@ class MusicPlayer extends EventEmitter {
 
     this._emitQueueChanged();
 
-    // 如果移动后下一曲发生变化，需要重新预加载
     if (toIndex === this._current_index + 1 || fromIndex === this._current_index + 1) {
       if (this._renderer && this._renderer.hasNextPreloaded()) {
         this._renderer.cancelPreloadNext();
@@ -553,22 +399,12 @@ class MusicPlayer extends EventEmitter {
 
   _emitQueueChanged() {
     const data = {
-      // 队列 UI（now_playing / floating）只消费 id / title / artist / album /
-      // duration_ms / has_cover，不读 lyrics。剥离它可让大队列的
-      // JSON 序列化与 IPC 传输量下降一个数量级（内嵌 LRC 常 2-8KB/首）。
-      // 真正需要歌词的是 track_changed，那条路径由 bridge 按 id 回填。
       queue: this._queue.map(_stripLyricsForQueue),
       current_index: this._current_index,
     };
     this.emit('queue_changed', JSON.stringify(data));
   }
 
-  /**
-   * 延迟广播 queue_changed（合并多次调用，只保留最后一次）。
-   * 用于切歌边界：大队列的 JSON 序列化 + IPC + 渲染进程 DOM 重渲染
-   * 会阻塞主线程，延迟到边界之后执行，避免与 PCM 转发争抢。
-   * 由于总是发送当前状态快照，延迟期间内的队列变更会自然合并、状态一致。
-   */
   _emitQueueChangedDelayed(delayMs) {
     if (this._queueChangedDelayTimer) clearTimeout(this._queueChangedDelayTimer);
     this._queueChangedDelayTimer = setTimeout(() => {
@@ -577,12 +413,6 @@ class MusicPlayer extends EventEmitter {
     }, delayMs);
   }
 
-  /**
-   * 延迟预加载下一曲。
-   * 切歌瞬间立即解码下一曲会让 decodeAudioData、大 ArrayBuffer IPC 和 GC
-   * 全部挤在曲目边界上，与 PCM 转发争抢主线程 → 欠载卡顿。
-   * 推迟 ~1.2s 对几分钟的曲目毫无影响（下一轮边界还很远）。
-   */
   _schedulePreloadNext(delayMs) {
     if (this._preloadDelayTimer) {
       clearTimeout(this._preloadDelayTimer);
@@ -597,7 +427,6 @@ class MusicPlayer extends EventEmitter {
     }, delayMs);
   }
 
-  /** 取消延迟的预加载（手动切歌/停止时调用，避免旧定时器干扰新播放流程） */
   _cancelScheduledPreload() {
     if (this._preloadDelayTimer) {
       clearTimeout(this._preloadDelayTimer);
@@ -610,28 +439,23 @@ class MusicPlayer extends EventEmitter {
   }
 
   _resolvePlayablePath(track) {
-    // Subsonic 曲目：如果本地库存在相同歌曲，优先使用本地文件
     if (track.source === 'subsonic' && this._library) {
       const localTrack = this._library.findLocalTrackForSubsonic(track);
       if (localTrack && localTrack.path) {
-        return localTrack.path; // 直接返回本地文件路径
+        return localTrack.path;
       }
     }
-    // WebDAV 曲目：如果本地库存在相同歌曲，优先使用本地文件
     if (track.source === 'webdav' && this._library) {
       const localTrack = this._library.findLocalTrackForSubsonic(track);
       if (localTrack && localTrack.path) {
         return localTrack.path;
       }
     }
-    // SMB 曲目：挂载后有本地路径，直接使用
     if (track.source === 'smb') {
       return track.path || '';
     }
-    // 非 Subsonic/WebDAV 曲目直接返回路径
     if (track.source !== 'subsonic' && track.source !== 'webdav') return track.path || '';
 
-    // Subsonic 曲目路径解析
     if (track.source === 'subsonic') {
       const p = track.path || '';
       if (!p.startsWith('subsonic://')) return p;
@@ -643,15 +467,11 @@ class MusicPlayer extends EventEmitter {
       return `${this._media_base_url}/subsonic/stream/${serverId}/${subsonicId}`;
     }
 
-    // WebDAV 曲目路径解析
     if (track.source === 'webdav') {
       const p = track.path || '';
-      // path 格式: webdav://<serverId><relativePath>
-      // 需要转换为 cover-server 的 /webdav/stream/<serverId>/<relativePath> URL
       const prefix = 'webdav://';
       if (!p.startsWith(prefix)) return p;
-      const rest = p.slice(prefix.length); // <serverId><relativePath>
-      // 提取 serverId（数字部分）
+      const rest = p.slice(prefix.length);
       const match = rest.match(/^(\d+)(.*)/);
       if (!match) return p;
       const serverId = match[1];
@@ -663,11 +483,6 @@ class MusicPlayer extends EventEmitter {
     return track.path || '';
   }
 
-  /**
-   * 再生位置のフォールバックを解決。
-   * ffprobe が HTTP ストリームで失敗した場合 (probeMs=0)、
-   * トラックのメタデータ長をフォールバックとして使用。
-   */
   _resolveDuration(probeMs, track) {
     if (probeMs > 0) return probeMs;
     if (track && track.duration_ms > 0) return track.duration_ms;
@@ -676,7 +491,6 @@ class MusicPlayer extends EventEmitter {
 
   _playAt(index) {
     if (index < 0 || index >= this._queue.length) return;
-    // 手动切歌：取消切歌边界延迟的预加载（_playNative 末尾会立即预加载新下一曲）
     this._cancelScheduledPreload();
     this._current_index = index;
     if (this._shuffle) {
@@ -691,19 +505,10 @@ class MusicPlayer extends EventEmitter {
     this._playNative(track);
   }
 
-  /**
-   * ネイティブレンダラーでトラックを再生する
-   *
-   * 同時実行の抑制には monotonic なトークンを使う。古い呼び出しは await 後に
-   * トークンが無効化されていれば早期リターンし、新しい呼び出しが支配する。
-   * これにより「2曲が交互に再生される」競合を防ぐ。
-   */
   async _playNative(track) {
     if (!this._renderer || !track) return;
     const myToken = ++this._nativePlayToken;
-    // 新播放流程会自己立即预加载下一曲，取消切歌边界遗留的延迟预加载
     this._cancelScheduledPreload();
-    // 切歌：清零 crossfade 状态（旧过渡已被 stop 中断）
     this._inCrossfade = false;
 
     const filePath = this._resolvePlayablePath(track);
@@ -712,19 +517,16 @@ class MusicPlayer extends EventEmitter {
       return;
     }
 
-    // 前の再生を確実に停止（音声スレッド + ffmpeg + バッファ）
     try {
       if (this._renderer.isInitialized) {
         this._renderer.stop();
       }
-    } catch { /* ignore */ }
+    } catch {  }
 
-    // AudioEngine に停止を通知（リングバッファクリア + 次曲状態クリア）
     this.emit('audio_control', JSON.stringify({ action: 'stop' }));
     this.emit('audio_control', JSON.stringify({ action: 'clear_next' }));
 
     try {
-      // レンダラー未初期化なら初期化
       if (!this._renderer.isInitialized) {
         const shareMode = this._exclusive ? SHARE_EXCLUSIVE : SHARE_SHARED;
         const initInfo = await this._renderer.init({
@@ -734,23 +536,15 @@ class MusicPlayer extends EventEmitter {
           channels: 2,
         });
         if (myToken !== this._nativePlayToken) return;
-        // 独占模式自动回退检测：wasapi.js init() 失败时会自动重试共享模式
         if (shareMode === SHARE_EXCLUSIVE && initInfo.shareMode !== SHARE_EXCLUSIVE) {
           this._fallbackToShared();
         }
-        // AudioEngine に初期化パラメータを通知
-        // nullSink: 独占時は Chromium にハードウェアデバイスを一切開かせない
-        // (詳細は _reinitRendererWithMode() のコメント参照)。
-        // ここも initInfo.shareMode を見る(独占 init が共有へフォールバックした場合に
-        // nullSink にしてしまうと、共有なのに音が出なくなる)。
         this.emit('audio_control', JSON.stringify({
           action: 'init',
           sampleRate: this._renderer._sampleRate,
           channels: this._renderer._channels,
           nullSink: initInfo.shareMode === SHARE_EXCLUSIVE,
         }));
-        // Dummy mode: native audio device unavailable. Notify the frontend
-        // once so the user sees a toast. Playback continues without sound.
         if (this._renderer.isDummyMode && !this._dummyModeNotified) {
           this._dummyModeNotified = true;
           this.emit('playback_error', JSON.stringify({
@@ -761,23 +555,19 @@ class MusicPlayer extends EventEmitter {
       }
       this._renderer._currentFilePath = filePath;
 
-      // トラック変更通知
       this.emit('state_changed', 'loading');
       this.emit('track_changed', JSON.stringify(track));
       this.emit('liked_changed', this.isCurrentLiked);
       this._emitQueueChanged();
 
-      // Web Audio 模式：浏览器可解码的格式使用 setupForBrowserDecode()
       const needsFFmpeg = this._needsFFmpegForTrack(track);
       let info;
       if (this._webAudioEnabled && !needsFFmpeg) {
-        // 浏览器解码路径：不启动 FFmpeg，由 Web Audio API 处理
         info = await this._renderer.setupForBrowserDecode(filePath);
       } else {
-        // FFmpeg 解码路径：传统方式
         info = await this._renderer.playFile(filePath);
       }
-      if (myToken !== this._nativePlayToken) return; // より新しい呼び出しが勝った
+      if (myToken !== this._nativePlayToken) return;
 
       const durationMs = this._resolveDuration(info.durationMs, track);
       if (!info.durationMs && durationMs > 0) {
@@ -787,7 +577,6 @@ class MusicPlayer extends EventEmitter {
       this._fe_duration = durationMs;
       this.emit('duration_changed', this._fe_duration);
 
-      // AudioEngine に再生開始を通知
       this.emit('audio_control', JSON.stringify({
         action: 'play',
         filePath: filePath,
@@ -798,14 +587,10 @@ class MusicPlayer extends EventEmitter {
         artist: track.artist || track.album_artist || '',
       }));
 
-      // 再生開始
       await this._renderer.play();
-      if (myToken !== this._nativePlayToken) return; // より新しい呼び出しが勝った
-      // 音量を AudioEngine に同期
+      if (myToken !== this._nativePlayToken) return;
       this.emit('audio_control', JSON.stringify({ action: 'set_volume', level: this._fe_volume / 100 }));
 
-      // Web Audio 模式：浏览器可解码格式使用 playStreaming 通知 AudioEngine
-      // FFmpeg 格式需要 AudioEngine 创建 streaming node 来接收 PCM 数据
       if (this._webAudioEnabled && needsFFmpeg) {
         this.emit('audio_control', JSON.stringify({
           action: 'play_streaming',
@@ -818,34 +603,28 @@ class MusicPlayer extends EventEmitter {
         }));
       }
 
-      // AutoMix / Gapless: 有効なら次曲をプリロード
       if (this._automixEnabled || this._gaplessEnabled) {
         this._preloadNextTrack();
       }
     } catch (e) {
-      if (myToken !== this._nativePlayToken) return; // もう無効
+      if (myToken !== this._nativePlayToken) return;
       console.error('[player] Native playback failed:', e);
     }
   }
 
-  // ── AutoMix ───────────────────────────────────────────────────────────────
 
-  /** 次のトラックを取得（キューから、シャッフル/リピートを考慮） */
   _getNextTrackForPreload() {
     if (!this._queue.length || this._current_index < 0) return null;
 
-    // リピート1曲の場合、同じ曲
     if (this._repeat === 'one') {
       return this._queue[this._current_index];
     }
 
-    // 次のインデックスを計算
     const nextIdx = this._current_index + 1;
     if (nextIdx < this._queue.length) {
       return this._queue[nextIdx];
     }
 
-    // リピート all なら最初に戻る（単曲キューの場合も自身に戻る）
     if (this._repeat === 'all') {
       return this._queue[0];
     }
@@ -853,7 +632,6 @@ class MusicPlayer extends EventEmitter {
     return null;
   }
 
-  /** 次曲をプリロードする（非同期、エラーは無視） */
   async _preloadNextTrack() {
     console.log('[player] _preloadNextTrack called:',
       'renderer:', !!this._renderer,
@@ -880,26 +658,16 @@ class MusicPlayer extends EventEmitter {
       return;
     }
 
-    // 決定：次曲に FFmpeg を起動するかどうか
-    // - 現在曲が FFmpeg 流式の場合：次曲の形式に関わらず FFmpeg を起動する
-    //   （ストリーム→ストリーム过渡のため、次曲 PCM も 'next' チャンネルに必要）
-    // - 現在曲が Buffer の場合：次曲がブラウザデコード可能なら FFmpeg 不要
     const currentNeedsFFmpeg = this._webAudioEnabled && currentTrack && this._needsFFmpegForTrack(currentTrack);
     const nextNeedsFFmpeg = this._webAudioEnabled && this._needsFFmpegForTrack(nextTrack);
     const skipFFmpeg = this._webAudioEnabled && !currentNeedsFFmpeg && !nextNeedsFFmpeg;
 
-    // forceStreaming: 現在曲がストリームの場合、次曲がローカルファイルでも
-    // FFmpeg PCM として 'next' チャンネルで処理するよう AudioEngine に指示
     const forceStreaming = currentNeedsFFmpeg;
 
     const mode = this._gaplessEnabled ? 'Gapless' : 'AutoMix';
     console.log(`[player] ${mode}: preloading next track:`, nextTrack.title || nextTrack.id,
       'skipFFmpeg:', skipFFmpeg, 'forceStreaming:', forceStreaming);
 
-    // ── 先用元数据时长发送 set_next_info，让 AudioEngine 立即开始解码 buffer ──
-    // 旧实现先 await preloadNext()（含 ffprobe + FFmpeg 启动）再发送 set_next_info，
-    // 导致 AudioEngine 解码延迟启动，过渡触发点到达时下一曲可能尚未就绪。
-    // 现在 set_next_info 与 preloadNext 并行执行，大幅缩短下一曲就绪时间。
     const metaDurationMs = this._resolveDuration(0, nextTrack);
     this.emit('audio_control', JSON.stringify({
       action: 'set_next_info',
@@ -912,8 +680,6 @@ class MusicPlayer extends EventEmitter {
     }));
     console.log(`[player] ${mode}: set_next_info sent early (duration=${metaDurationMs}ms from metadata)`);
 
-    // ── 并行执行 renderer 预加载（ffprobe + FFmpeg 启动）──
-    // 如果 ffprobe 返回了更精确的时长，补发更新
     try {
       const info = await this._renderer.preloadNext(filePath, { skipFFmpeg });
       const probedMs = this._resolveDuration(info.durationMs, nextTrack);
@@ -934,23 +700,17 @@ class MusicPlayer extends EventEmitter {
     }
   }
 
-  /** クロスフェード完了時の処理 */
   _onCrossfadeComplete(mixerPositionMs) {
-    // wasapi.js 側で next ffmpeg を main ffmpeg に昇格させる。
-    // これを行わないと、crossfade 後の新曲の PCM データが 'next' channel に
-    // 送られ続け、AudioEngine の mainRing が枯渇して静音死锁になる。
     if (this._renderer && this._renderer.promoteNextToCurrent) {
       this._renderer.promoteNextToCurrent();
     }
 
-    // 次のトラックに移動
     if (this._repeat !== 'one') {
       this._current_index += 1;
       if (this._current_index >= this._queue.length) {
         if (this._repeat === 'all') {
           this._current_index = 0;
         } else {
-          // キューの終端に達した
           this._fe_state = 'stopped';
           this.emit('state_changed', 'stopped');
           return;
@@ -958,25 +718,18 @@ class MusicPlayer extends EventEmitter {
       }
     }
 
-    // 現在のトラックを更新して通知
     const track = this._queue[this._current_index];
     if (!track) return;
 
-    // クロスフェード完了後の位置を通知
     const seekOffset = (mixerPositionMs != null) ? mixerPositionMs : (this._renderer ? (this._renderer._seekOffsetMs || 0) : 0);
     this._fe_position = seekOffset;
-    // promoteNextToCurrent() の呼び出しにより、_durationMs は新曲の値に更新済み
-    // ffprobe が HTTP ストリームで失敗した場合、メタデータからフォールバック
     this._fe_duration = this._resolveDuration(this._renderer._durationMs, track);
     this.emit('track_changed', JSON.stringify(track));
     this.emit('liked_changed', this.isCurrentLiked);
     this.emit('duration_changed', this._fe_duration);
-    // 即座に位置を通知（100ms タイマーを待たずに UI/歌詞を正しい位置に合わせる）
     this.emit('position_changed', seekOffset);
-    // 队列广播延迟到边界之后，避免大队列序列化/DOM 重渲染阻塞 PCM 转发
     this._emitQueueChangedDelayed(400);
 
-    // シャッフル履歴に追加
     if (this._shuffle && this._current_index >= 0) {
       if (!this._shuffle_history.length ||
           this._shuffle_history[this._shuffle_history.length - 1] !== this._current_index) {
@@ -984,13 +737,11 @@ class MusicPlayer extends EventEmitter {
       }
     }
 
-    // さらに次の曲をプリロード（遅延：decodeAudioData/GC が境界に集中するのを防ぐ）
     this._schedulePreloadNext(1200);
   }
 
   setAutomixEnabled(enabled) {
     this._automixEnabled = !!enabled;
-    // AutoMix と Gapless は相互排他
     if (this._automixEnabled && this._gaplessEnabled) {
       this._gaplessEnabled = false;
       if (this._settings) this._settings.set('gapless', false);
@@ -1000,7 +751,6 @@ class MusicPlayer extends EventEmitter {
     if (this._settings) {
       this._settings.set('automix', this._automixEnabled);
     }
-    // 有効にした直後ならプリロードを試みる
     if (this._automixEnabled && this._fe_state === 'playing') {
       this._preloadNextTrack();
     }
@@ -1034,11 +784,9 @@ class MusicPlayer extends EventEmitter {
     return this._crossfadeDurationMs;
   }
 
-  // ── Gapless ───────────────────────────────────────────────────────────────
 
   setGaplessEnabled(enabled) {
     this._gaplessEnabled = !!enabled;
-    // Gapless と AutoMix は相互排他
     if (this._gaplessEnabled && this._automixEnabled) {
       this._automixEnabled = false;
       if (this._settings) this._settings.set('automix', false);
@@ -1048,7 +796,6 @@ class MusicPlayer extends EventEmitter {
     if (this._settings) {
       this._settings.set('gapless', this._gaplessEnabled);
     }
-    // 有効にした直後ならプリロードを試みる
     if (this._gaplessEnabled && this._fe_state === 'playing') {
       this._preloadNextTrack();
     }
@@ -1058,14 +805,9 @@ class MusicPlayer extends EventEmitter {
     return this._gaplessEnabled;
   }
 
-  // ── Playback control ──────────────────────────────────────────────────────
 
   play() {
-    // Initialization can fail when a packaged Linux build is missing its
-    // native backend. Do not call into NativeRenderer in that state; callers
-    // may invoke play independently after an asynchronous _playNative error.
     if (this._renderer && this._renderer.isInitialized) {
-      // AudioEngine に再生再開を通知（_posTimer / _pumpTimer 再開）
       this.emit('audio_control', JSON.stringify({ action: 'resume' }));
       this._renderer.play();
       return;
@@ -1074,7 +816,6 @@ class MusicPlayer extends EventEmitter {
 
   pause() {
     if (this._renderer) {
-      // AudioEngine に暂停を通知（_posTimer / _pumpTimer 停止）
       this.emit('audio_control', JSON.stringify({ action: 'pause' }));
       this._renderer.pause();
       return;
@@ -1097,7 +838,6 @@ class MusicPlayer extends EventEmitter {
     if (this._repeat === 'one') {
       const track = this.currentTrack;
       if (this._webAudioEnabled && track && this._needsFFmpegForTrack(track)) {
-        // FFmpeg 流式模式：seek(0) 无效，需要重新建立流
         if (this._renderer) {
           this._renderer.stop();
         }
@@ -1164,7 +904,6 @@ class MusicPlayer extends EventEmitter {
   seek(positionMs) {
     if (this._renderer) {
       this._renderer.seek(positionMs);
-      // 通知 AudioEngine 清空 ring buffer 并更新位置
       this.emit('audio_control', JSON.stringify({
         action: 'seek',
         positionMs: Math.max(0, parseInt(positionMs, 10) || 0),
@@ -1182,11 +921,9 @@ class MusicPlayer extends EventEmitter {
     this.emit('volume_changed', level);
   }
 
-  // ── SoundTouch パラメータ ──────────────────────────────────────────────────
 
   setTempo(tempo) {
     this._tempo = Math.max(0.25, Math.min(4.0, parseFloat(tempo) || 1.0));
-    // tempo/pitch/rate がすべて 1.0 でなければ AutoMix / Gapless 非対応
     const stActive = (this._tempo !== 1.0 || this._pitch !== 1.0 || this._rate !== 1.0);
     if (this._automixEnabled) {
       this.emit('audio_control', JSON.stringify({ action: 'set_crossfade', enabled: !stActive }));
@@ -1216,7 +953,6 @@ class MusicPlayer extends EventEmitter {
     if (this._gaplessEnabled) {
       this.emit('audio_control', JSON.stringify({ action: 'set_gapless', enabled: !stActive }));
     }
-    // 通知渲染进程应用变速变调（AudioBufferSourceNode.playbackRate）
     this.emit('audio_control', JSON.stringify({ action: 'set_rate', value: this._rate }));
   }
 
@@ -1224,7 +960,6 @@ class MusicPlayer extends EventEmitter {
   get pitch() { return this._renderer ? this._renderer.pitch : 1.0; }
   get rate() { return this._rate; }
 
-  /** 是否正在播放（供 main.js 冻结判定使用） */
   get isPlaying() { return this._fe_state === 'playing'; }
 
   setShuffle(enabled) {
@@ -1245,32 +980,19 @@ class MusicPlayer extends EventEmitter {
     this._repeat = mode;
     this.emit('repeat_changed', mode);
 
-    // 切换 repeat 模式时，需要更新已预加载的下一曲：
-    // 例：repeat='one' 时预加载了当前曲自己 → 切到 'off' 应改为队列下一首或停止
-    //     repeat='off' 队列末尾无预加载 → 切到 'one' 应预加载当前曲
-    //
-    // 例外：如果当前正在 crossfade 过渡中（next 源已开始淡入），
-    // 强行清理 next 会导致过渡中断、音频断流。此时让过渡完成，
-    // 由 _onCrossfadeComplete / _handleGaplessSwitch 中的 _repeat 检查处理后续索引推进。
     if (this._inCrossfade) {
       console.log('[player] setRepeat during crossfade, skip next reload');
       return;
     }
 
-    // 取消延迟的预加载定时器
     this._cancelScheduledPreload();
 
-    // 清除 AudioEngine 的 next 状态（已预加载的旧下一曲信息）
     this._emitAudioControl('clear_next');
 
-    // 清除 renderer 的 next ffmpeg 进程（如果存在）
     if (this._renderer && this._renderer.cancelPreloadNext) {
       try { this._renderer.cancelPreloadNext(); } catch (_) {}
     }
 
-    // 重新预加载新 repeat 模式下的下一曲
-    // 异步执行：避免阻塞 repeat 状态变更的事件传播
-    // 如果新模式下无下一曲（如 repeat='off' 且队列末尾），_preloadNextTrack 会自行跳过
     this._preloadNextTrack().catch(e => {
       console.warn('[player] setRepeat: re-preload failed:', e.message);
     });
@@ -1292,34 +1014,16 @@ class MusicPlayer extends EventEmitter {
 
   setOutputDevice(deviceId) {
     this._settings.set('audio_output_device', deviceId || '');
-    // Reset the native init failure flag — the user may have connected
-    // an audio device since the last failure. This allows init() to
-    // retry the native audio backend instead of immediately entering
-    // dummy mode.
     if (this._renderer && this._renderer.isDummyMode) {
       const { NativeRenderer } = require('./wasapi');
       NativeRenderer.resetNativeInitFailed();
       this._dummyModeNotified = false;
     }
-    // デバイス切り替えは再初期化が必要
     if (this._renderer && this._renderer.isInitialized) {
       this._reinitRenderer();
     }
   }
 
-  /**
-   * レンダラーを再初期化し、現在のトラックを再読み込みする。
-   * デバイス切り替え時に呼ばれる。
-   *
-   * 設計上の注意:
-   * - AudioEngine を先に停止(stop + clear_next)してから DLL を再初期化する。
-   *   逆にすると古いソースノードが生き続け、PCM ルーティング不整合で
-   *   サイレント状態に陥る(切替後に音が出ない主原因)。
-   * - seek 位置は play/play_streaming の seekOffsetMs に統合する。
-   *   buffer モードでは _loadAndDecode 完了前に別途 seek を送ると
-   *   _currentBuffer が null で早期リターンされ、seek が失われる。
-   * - paused トラックは再再生せず paused 状態を維持する。
-   */
   async _reinitRenderer() {
     if (!this._renderer) return;
 
@@ -1328,15 +1032,12 @@ class MusicPlayer extends EventEmitter {
     const wasPlaying = this._fe_state === 'playing';
     const wasPaused = this._fe_state === 'paused';
 
-    // 1. AudioEngine を先に完全停止(古いソース/ストリーミングノードを破棄)
     this._stopAudioEngine();
 
     try {
-      // 2. WASAPI レンダラーを再初期化(現在のモードを維持)
       const ok = await this._reinitRendererWithMode(this._exclusive);
       if (!ok) return;
 
-      // 3. 現在のトラックを新しいモードで再読み込み
       if (currentTrack) {
         const seekOffset = savedPosition > 0 ? savedPosition : 0;
         const filePath = this._resolvePlayablePath(currentTrack);
@@ -1352,7 +1053,6 @@ class MusicPlayer extends EventEmitter {
         this._fe_duration = this._resolveDuration(info.durationMs, currentTrack);
         this.emit('duration_changed', this._fe_duration);
 
-        // 4. AudioEngine に再生開始を通知(seek 位置と paused フラグを統合)
         this._emitAudioControl('play', {
           filePath,
           durationMs: this._fe_duration,
@@ -1363,7 +1063,6 @@ class MusicPlayer extends EventEmitter {
           artist: currentTrack.artist || currentTrack.album_artist || '',
         });
         if (this._webAudioEnabled && needsFFmpeg) {
-          // FFmpeg ストリーミング: FFmpeg を seek 位置から再起動
           if (seekOffset > 0) {
             this._renderer.seek(seekOffset);
           }
@@ -1378,7 +1077,6 @@ class MusicPlayer extends EventEmitter {
           });
         }
 
-        // 5. WASAPI デバイスを開始(playing のみ)
         if (wasPlaying) {
           await this._renderer.play();
         } else if (wasPaused) {
@@ -1390,22 +1088,7 @@ class MusicPlayer extends EventEmitter {
     }
   }
 
-  /**
-   * WASAPI 排他モードを有効/無効にする。
-   * 切替後、現在のトラックを新しいモードで再読み込みする。
-   *
-   * 修正履歴:
-   * - AudioEngine への stop+clear_next 通知を先に行わないと、DLL 再初期化中に
-   *   古いソースノードが生き続け PCM ルーティング不整合 → サイレント状態。
-   * - init() に sampleRate:44100 を渡さないと DLL がデバイスネイティブレート
-   *   (例: 48000Hz) で初期化され、AudioEngine(44100Hz 固定)と不一致 → 音質崩れ。
-   * - seek を別途 emit すると buffer モードで _currentBuffer 未ロード時に
-   *   早期リターンで seek が失われる → play の seekOffsetMs に統合。
-   * - wasPlaying に 'paused' を含めると一時停止中のトラックが再再生される。
-   * - トラック再読み込み失敗時に true を返すと UI が誤ったモードを表示する。
-   */
   async setExclusiveMode(enabled) {
-    // Linux/macOS では独占モードをサポートしない（WASAPI 専用機能）
     if (!IS_WIN && enabled) {
       console.warn('[player] Exclusive mode is not supported on this platform');
       return false;
@@ -1416,51 +1099,39 @@ class MusicPlayer extends EventEmitter {
     }
     if (this._exclusive === enabled) return true;
 
-    // 現在のトラックと位置を保存
     const currentTrack = this.currentTrack;
     const savedPosition = this._fe_position;
     const wasPlaying = this._fe_state === 'playing';
     const wasPaused = this._fe_state === 'paused';
 
-    // 1. AudioEngine を先に完全停止(古いソース/ストリーミングノードを破棄)
-    //    これを renderer.stop() の前に行うのが重要:
-    //    さもないと DLL 再初期化中に AudioEngine が古いノードで動き続け、
-    //    PCM ルーティング不整合でサイレント状態に陥る
     this._stopAudioEngine();
 
-    // 2. レンダラー(WASAPI DLL + FFmpeg)を停止
     if (this._renderer) {
-      try { this._renderer.stop(); } catch { /* ignore */ }
+      try { this._renderer.stop(); } catch {  }
     }
     this._fe_state = 'stopped';
     this._fe_position = 0;
 
-    // 新モードを適用(失敗時にロールバックできるよう旧値を保存)
     const prevExclusive = this._exclusive;
     this._exclusive = enabled;
     if (this._settings) {
       this._settings.set('wasapi_exclusive', enabled);
     }
 
-    // 3. レンダラーを新しいモードで再初期化
     try {
       const ok = await this._reinitRendererWithMode(enabled);
       if (!ok) {
-        // _reinitRendererWithMode が false を返した場合(レンダラー null 等)
-        // 旧モードへロールバックして整合性を保つ
         this._exclusive = prevExclusive;
         if (this._settings) { this._settings.set('wasapi_exclusive', prevExclusive); }
         return false;
       }
     } catch (e) {
       console.error('[player] Failed to initialize renderer:', e);
-      // ハード失敗(例: デバイス抜け等)時にフラグを旧値に戻す
       this._exclusive = prevExclusive;
       if (this._settings) { this._settings.set('wasapi_exclusive', prevExclusive); }
       return false;
     }
 
-    // 4. 現在のトラックを新しいモードで再読み込み
     if (currentTrack) {
       try {
         const seekOffset = savedPosition > 0 ? savedPosition : 0;
@@ -1477,7 +1148,6 @@ class MusicPlayer extends EventEmitter {
         this._fe_duration = this._resolveDuration(info.durationMs, currentTrack);
         this.emit('duration_changed', this._fe_duration);
 
-        // 5. AudioEngine に再生開始を通知(seek 位置と paused フラグを統合)
         this._emitAudioControl('play', {
           filePath,
           durationMs: this._fe_duration,
@@ -1488,7 +1158,6 @@ class MusicPlayer extends EventEmitter {
           artist: currentTrack.artist || currentTrack.album_artist || '',
         });
         if (this._webAudioEnabled && needsFFmpeg) {
-          // FFmpeg ストリーミング: seek 位置から FFmpeg を再起動
           if (seekOffset > 0) {
             this._renderer.seek(seekOffset);
           }
@@ -1503,7 +1172,6 @@ class MusicPlayer extends EventEmitter {
           });
         }
 
-        // 6. WASAPI デバイスを開始(playing のみ)
         if (wasPlaying) {
           await this._renderer.play();
         } else if (wasPaused) {
@@ -1511,7 +1179,6 @@ class MusicPlayer extends EventEmitter {
         }
       } catch (e) {
         console.error('[player] Failed to reload track:', e);
-        // トラック再読み込み失敗時は false を返し、UI が実際の状態を反映できるようにする
         return false;
       }
     }
@@ -1519,24 +1186,18 @@ class MusicPlayer extends EventEmitter {
     return true;
   }
 
-  // ── Liked ─────────────────────────────────────────────────────────────────
 
-  /**
-   * 从数据库重新加载喜爱曲目集合（删除源后清理内存状态）
-   */
   reloadLikedTracks() {
     if (this._library) {
       try {
         this._liked_tracks = this._library.getLikedTrackIds();
       } catch {
-        // ignore
       }
     }
   }
 
   toggleLiked() {
     if (!this.currentTrack) return;
-    // 库外文件（拖入窗口播放）没有 tracks 行，无法收藏
     if (this.currentTrack.external) return;
     const trackId = this.currentTrack.id || '';
     if (!trackId) return;
@@ -1559,7 +1220,7 @@ class MusicPlayer extends EventEmitter {
     if (liked) this._liked_tracks.add(trackId);
     else this._liked_tracks.delete(trackId);
     if (this._library) {
-      try { this._library.setLiked(trackId, liked); } catch { /* ignore */ }
+      try { this._library.setLiked(trackId, liked); } catch {  }
     }
   }
 
@@ -1573,7 +1234,6 @@ class MusicPlayer extends EventEmitter {
     return this._liked_tracks.has(trackId);
   }
 
-  // ── AutoMix 接管接口 ──────────────────────────────────────────────────────
 
   setAutomixActive(active) {
     this._automix_active = active;
@@ -1641,7 +1301,6 @@ class MusicPlayer extends EventEmitter {
     return null;
   }
 
-  // ── Shuffle helpers ───────────────────────────────────────────────────────
 
   _shuffleArray(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
@@ -1683,7 +1342,6 @@ class MusicPlayer extends EventEmitter {
     this._shuffle_history = [0];
   }
 
-  // ── State accessors ───────────────────────────────────────────────────────
 
   get currentTrack() {
     if (this._current_index >= 0 && this._current_index < this._queue.length) {
@@ -1701,7 +1359,6 @@ class MusicPlayer extends EventEmitter {
   get isExclusive() { return this._exclusive; }
   get frontendPlayback() { return false; }
 
-  // ── State persistence ─────────────────────────────────────────────────────
 
   getPersistentState() {
     const track = this.currentTrack;
@@ -1723,12 +1380,10 @@ class MusicPlayer extends EventEmitter {
     this._fe_position = Math.max(0, parseInt(positionMs, 10) || 0);
     this._fe_state = autoPlay ? 'playing' : 'paused';
 
-    // ネイティブレンダラーで復元
     this._playNative(track).then(() => {
       if (this._renderer && this._renderer.isInitialized) {
         if (this._fe_position > 0) {
           this._renderer.seek(this._fe_position);
-          // AudioEngine にも seek を通知
           this.emit('audio_control', JSON.stringify({
             action: 'seek',
             positionMs: this._fe_position,
@@ -1748,7 +1403,7 @@ class MusicPlayer extends EventEmitter {
 
   close() {
     if (this._renderer) {
-      try { this._renderer.close(); } catch { /* ignore */ }
+      try { this._renderer.close(); } catch {  }
     }
   }
 }

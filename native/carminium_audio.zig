@@ -1,12 +1,3 @@
-//! Carminium — WASAPI ネイティブオーディオ DLL (Zig + miniaudio)
-//!
-//! 音声管線:
-//!   JS (ffmpeg decode + 合成) → ca_push_pcm() → 入力リングバッファ (f32)
-//!     → dataCallback → WASAPI 出力
-//!
-//! 共有モードと排他モードの両方をサポート。
-//! PCM は常に f32 interleaved。
-//! Gapless/AutoMix は JS 側で合成された後、この DLL に渡す。
 
 const std = @import("std");
 
@@ -17,20 +8,14 @@ const c = @cImport({
     @cInclude("miniaudio.h");
 });
 
-// ── 定数 ────────────────────────────────────────────────────────────────────
 
-// 4MB = roughly 11.9 seconds of 44.1kHz stereo f32 audio. This keeps a wide
-// margin over the 800ms pre-roll target while avoiding a large always-resident
-// DLL buffer.
 const RING_SIZE: u64 = 4 * 1024 * 1024;
 const RING_MASK: u64 = RING_SIZE - 1;
 
-// ── 共有モード定数 ──────────────────────────────────────────────────────────
 
 pub const SHARE_SHARED: i32 = 0;
 pub const SHARE_EXCLUSIVE: i32 = 1;
 
-// ── グローバル状態 ──────────────────────────────────────────────────────────
 
 var g_device: c.ma_device = undefined;
 var g_context: c.ma_context = undefined;
@@ -50,14 +35,6 @@ var g_ring_r: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
 var g_frames_consumed: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
-// Ubuntu and other current Linux desktops normally expose audio through
-// PipeWire's PulseAudio compatibility server.  Do not let miniaudio choose
-// ALSA first: an ALSA hardware device can exist while being unavailable to
-// the desktop session, which makes enumeration empty and playback fail.
-//
-// We try PulseAudio + ALSA first, then fall back to trying all available
-// backends (including JACK) if neither works. This maximises the chance of
-// finding a usable audio device on diverse Linux setups.
 var g_linux_fallback_tried: bool = false;
 
 fn initContext(context: *c.ma_context) c.ma_result {
@@ -68,8 +45,6 @@ fn initContext(context: *c.ma_context) c.ma_result {
         };
         const result = c.ma_context_init(&backends, backends.len, null, context);
         if (result == c.MA_SUCCESS) return result;
-        // Preferred backends failed — try all available backends as fallback.
-        // This includes JACK and any other compiled-in backend.
         if (!g_linux_fallback_tried) {
             g_linux_fallback_tried = true;
             std.log.warn("Preferred audio backends failed, trying all available", .{});
@@ -80,7 +55,6 @@ fn initContext(context: *c.ma_context) c.ma_result {
     return c.ma_context_init(null, 0, null, context);
 }
 
-// ── miniaudio データコールバック ────────────────────────────────────────────
 
 fn dataCallback(
     pDevice: ?*c.ma_device,
@@ -148,7 +122,6 @@ fn applyVolume(buf: []f32, vol: f32) void {
     }
 }
 
-// ── エクスポート C API ──────────────────────────────────────────────────────
 
 export fn ca_init(
     share_mode: i32,
@@ -329,7 +302,6 @@ export fn ca_close() void {
     g_frames_consumed.store(0, .monotonic);
 }
 
-// ── デバイス列挙 ────────────────────────────────────────────────────────────
 
 var g_devices_json: ?[*:0]u8 = null;
 

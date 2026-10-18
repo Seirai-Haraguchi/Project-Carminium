@@ -1,7 +1,3 @@
-/**
- * Carminium — 音乐库管理
- * 使用 SQLite (better-sqlite3) 存储曲目元数据，使用 music-metadata 解析音频文件。
- */
 'use strict';
 
 const crypto = require('crypto');
@@ -10,21 +6,10 @@ const fsp = fs.promises;
 const path = require('path');
 const { makeSortKey, makeFirstLetter } = require('./sortkey');
 
-// ── 扫描并发与批写参数 ──────────────────────────────────────────────────────
-// 元数据解析是 IO 密集（读文件头）+ 少量 CPU（标签解析），4 路并发可让
-// libuv 线程池的磁盘读并行；写库按 SCAN_FLUSH_SIZE 条一个事务，
-// 把「每条 INSERT 一次 WAL fsync」变成「每批一次」，这是大库导入慢的
-// 主要原因（6500 首 = 6500 次 fsync，机械盘上光 fsync 就要几十秒）。
 const SCAN_PARSE_PARALLEL = 4;
 const SCAN_FLUSH_SIZE = 200;
-// 启动期元数据回填的并发度：刻意低于扫描，避免与用户正在进行的
-// 播放（audio_output IPC）抢占主进程。
 const BACKFILL_PARSE_PARALLEL = 2;
 
-// music-metadata v10+ 是纯 ESM 包。
-// 在 Electron 31 (Node.js 20) 中，require() 仅返回 { loadMusicMetadata }，
-// 需要通过 loadMusicMetadata() 异步获取 parseFile 等命名导出。
-// 在 Node.js 22+ 中，require() 可直接返回命名导出（含 parseFile）。
 const _mm = require('music-metadata');
 let _parseFile = _mm.parseFile || null;
 
@@ -39,9 +24,6 @@ async function _ensureParseFile() {
 
 const SUPPORTED_EXT = new Set(['.mp3', '.flac', '.ogg', '.wav', '.m4a', '.aac', '.opus', '.wma']);
 
-// 别名标题的自定义标签名（类似 osu! 谱面的 Title / TitleUnicode 双标题约定：
-// 一首曲子同时有罗马字（ASCII）标题和本地化 Unicode 标题，搜索任意一个都能命中）。
-// 兼容 ID3v2 TXXX 帧、Vorbis/APE 自定义字段、MP4 freeform（----:xxxx:NAME）。
 const ALIAS_TITLE_KEYS = [
   'ASCII_TITLE', 'LOCALIZED_TITLE', 'TITLE_UNICODE', 'UNICODE_TITLE',
   'ROMAJI_TITLE', 'ALT_TITLE',
@@ -49,25 +31,14 @@ const ALIAS_TITLE_KEYS = [
 
 const FEAT_PATTERNS = ['feat.', 'ft.', 'vs.', 'with'];
 
-// 提取内嵌封面时预读的文件头字节数。
-// 24MB 足以覆盖 ID3v2 / FLAC PICTURE / MP4 covr / Ogg 图形块等常见布局，
-// 同时把单次同步读取的分配量从「整个音频文件（可达 100MB）」降到有界值。
-// 头部未命中时仍会回退整文件读取，因此不改变提取结果。
 const COVER_HEAD_READ_BYTES = 24 * 1024 * 1024;
-// 磁盘"无封面"负标记的有效期：过期后允许重新提取一次以自我修正。
-// 设得较长（24h），因为绝大多数负标记是真实的（曲目确实没有内嵌封面），
-// 重提取只是兜底，不应成为常态开销。
 const COVER_NEGATIVE_TTL_MS = 24 * 60 * 60 * 1000;
 
-// 艺术家分隔符正则缓存：_splitArtists 对全库每首曲目调用一次，
-// 原本每次都 new RegExp（1 万首 = 1 万次正则编译）。分隔符是设置项，
-// 实际取值极少，按字符串缓存编译结果即可。
 const _artistSepRegexCache = new Map();
 function _getArtistSepRegex(seps) {
   let re = _artistSepRegexCache.get(seps);
   if (!re) {
     re = new RegExp('[' + seps.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\x00]');
-    // 设置项数量有界（用户可自定义），但仍设上限防止异常扩张
     if (_artistSepRegexCache.size > 16) {
       _artistSepRegexCache.delete(_artistSepRegexCache.keys().next().value);
     }
@@ -211,49 +182,28 @@ class MusicLibrary {
     this._db = require('better-sqlite3')(dbPath);
     this._db.pragma('journal_mode = WAL');
     this._db.pragma('foreign_keys = ON');
-    // 限制 SQLite 页面缓存（默认 2000 页 × 页大小，大库下可占 30MB+）
-    this._db.pragma('cache_size = -2000'); // -2000 = 2000 KB ≈ 2MB
+    this._db.pragma('cache_size = -2000');
     this._db.exec(CREATE_SQL);
     this._migrateSchema();
     this._closed = false;
-    this._dedupCache = null;       // { dupIds: Set<string>, localMap: Map<string, object> }
-    this._dedupLocalPathCache = null; // Map<dedupKey, localTrackPath>
+    this._dedupCache = null;
+    this._dedupLocalPathCache = null;
 
-    // ── 封面数据缓存：磁盘持久化 + 小内存 LRU ──
-    // getCoverData() 每次都会 fs.readFileSync 整个音频文件 + 同步解析 picture frame，
-    // 大规模列表渲染时（100+ 曲目）会让 main 进程 event loop 被阻塞 →
-    // 后续 HTTP /cover 请求超时 → 封面加载失败。
-    //
-    // 策略：
-    //   1. 磁盘缓存（dataDir/cover_cache/<sha1(trackId)>.jpg）— 持久化，跨重启有效
-    //   2. 内存 LRU（最近访问的 20 张）— 加速热数据，避免反复读磁盘
-    //
-    // 2026-08：内存上限从 50 降至 20。FLAC 等格式的内嵌封面可达 1-5MB/张，
-    // 50 张最坏情况占 50-250MB 主进程 RSS。20 张 + 磁盘缓存已足够覆盖热数据。
-    //
-    // 流程：
-    //   - 请求 → 内存命中？返回
-    //   - 内存未命中 → 磁盘缓存命中？读磁盘 + 提升到内存 → 返回
-    //   - 磁盘未命中 → 读音频文件 + 提取 → 写磁盘 + 写内存 → 返回
-    this._coverDataCache = new Map();  // track_id → Buffer（内存热缓存）
-    this._coverDataCacheMax = 48;       // 内存条数上限
-    this._coverDataCacheBytes = 0;      // 当前缓存字节数
-    this._coverDataCacheByteMax = 32 * 1024 * 1024; // 字节预算 32MB（硬上限，防止大图撑爆 RSS）
+    this._coverDataCache = new Map();
+    this._coverDataCacheMax = 48;
+    this._coverDataCacheBytes = 0;
+    this._coverDataCacheByteMax = 32 * 1024 * 1024;
     this._coverCacheDir = path.join(settings.dataDir, 'cover_cache');
     try {
       fs.mkdirSync(this._coverCacheDir, { recursive: true });
-    } catch { /* 已存在或无权限 */ }
-    // 并发去重：同一 trackId 的多个并发请求（列表渲染 + SMTC + 多尺寸）
-    // 共享同一个提取 Promise，避免重复读文件、重复解析封面。
-    // value 形如 Promise<{ data: Buffer|null, confirmed: boolean }>
+    } catch {  }
     this._coverInflight = new Map();
   }
 
-  // ── Schema migration ─────────────────────────────────────────────────────
 
   _migrateSchema() {
     const tryAlter = (sql) => {
-      try { this._db.exec(sql); } catch { /* already exists */ }
+      try { this._db.exec(sql); } catch {  }
     };
     tryAlter('ALTER TABLE tracks ADD COLUMN lyrics TEXT');
     tryAlter('ALTER TABLE tracks ADD COLUMN alias_title TEXT');
@@ -265,7 +215,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       tryAlter(`ALTER TABLE tracks ADD COLUMN ${col} TEXT`);
     }
 
-    // ── 远程歌单支持：playlists 表添加 source / server_id / remote_id / remote_changed 列 ──
     tryAlter("ALTER TABLE playlists ADD COLUMN source TEXT DEFAULT 'local'");
     tryAlter('ALTER TABLE playlists ADD COLUMN server_id INTEGER');
     tryAlter('ALTER TABLE playlists ADD COLUMN remote_id TEXT');
@@ -274,19 +223,9 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     tryAlter('ALTER TABLE playlists ADD COLUMN owner TEXT');
     tryAlter('ALTER TABLE playlists ADD COLUMN owner_email TEXT');
 
-    // ── WebDAV / SMB 曲目支持：tracks 表添加 webdav_path 列 ──
     tryAlter('ALTER TABLE tracks ADD COLUMN webdav_path TEXT');
 
-    // ── 历史上的歌词/封面回填循环已删除 ──────────────────────────────────
-    // 原实现每次启动都对 lyrics IS NULL / has_cover=0 的曲目全量做
-    // fs.existsSync（6500+ 首 = 上万次同步系统调用，阻塞主进程事件循环
-    // 数秒），且封面回填用的 _hasCoverSync 恒返回 false —— 从未生效过。
-    // 歌词在扫描时已由 _parseMetadata 提取；封面按需由 getCoverDataAsync
-    // 提取，都不需要启动期回填。
 
-    // ── 孤儿曲目清理 ──────────────────────────────────────────
-    // 删除 folder_id 不在 folders 表中、且 source IS NULL 的本地曲目
-    // （文件夹已被删除但曲目残留，常见于旧后端迁移数据）
     const orphanFolderIds = this._db.prepare(
       `SELECT t.id FROM tracks t
        WHERE t.source IS NULL AND t.folder_id IS NOT NULL
@@ -298,8 +237,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       );
     }
 
-    // 删除 server_id 不在 subsonic_sources 表中、且 source='subsonic' 的曲目
-    // （Subsonic 服务器已被删除但曲目残留）
     const orphanSubsonicIds = this._db.prepare(
       `SELECT t.id FROM tracks t
        WHERE t.source='subsonic' AND t.server_id IS NOT NULL
@@ -311,7 +248,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       );
     }
 
-    // 删除 server_id 不在 webdav_sources 表中、且 source='webdav' 的曲目
     const orphanWebdavIds = this._db.prepare(
       `SELECT t.id FROM tracks t
        WHERE t.source='webdav' AND t.server_id IS NOT NULL
@@ -323,7 +259,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       );
     }
 
-    // 删除 server_id 不在 smb_sources 表中、且 source='smb' 的曲目
     const orphanSmbIds = this._db.prepare(
       `SELECT t.id FROM tracks t
        WHERE t.source='smb' AND t.server_id IS NOT NULL
@@ -336,7 +271,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     }
   }
 
-  // ── Folder management ─────────────────────────────────────────────────────
 
   addFolder(folderPath) {
     const p = path.resolve(folderPath);
@@ -353,7 +287,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     if (fid !== null) {
       this._deleteTracksByCondition('folder_id=?', fid);
     }
-    // 兜底：删除 folder_id 为 NULL 但路径属于该文件夹的遗留曲目（旧后端迁移数据）
     this._deleteTracksByCondition(
       "folder_id IS NULL AND source IS NULL AND (path LIKE ? OR path LIKE ?)",
       p.replace(/\\/g, '/') + '/%',
@@ -363,11 +296,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
   }
 
   rescanFolder(folderPath) {
-    // 不再删除曲目！旧实现调用 _deleteTracksByCondition('folder_id=?', fid)
-    // 会级联清空 liked_tracks / play_history / playlist_tracks，
-    // 导致重新扫描后「喜欢的音乐」「播放历史」「Your Mix」全部清零。
-    // 现在改为仅返回文件夹信息，实际同步交由 syncFolderIncremental 增量执行，
-    // 仅对真正消失的曲目做级联删除，保留仍然存在曲目的关联数据。
     const p = path.resolve(folderPath);
     return this._folderInfo(p) || {};
   }
@@ -381,13 +309,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return rows;
   }
 
-  /**
-   * 查询文件夹 id。
-   * folders.path 存的始终是 path.resolve() 后的规范形式（见 addFolder），
-   * 因此这里必须同样 resolve 再查 —— 否则传入 'C:/x' 这类使用正斜杠、
-   * 或含相对段的路径会查不到行，导致 scanFolder 静默 return undefined
-   * （调用方看起来"扫描成功"但一首都没入库）。
-   */
   _folderId(folderPath) {
     const p = path.resolve(folderPath);
     const row = this._db.prepare('SELECT id FROM folders WHERE path=?').get(p);
@@ -404,21 +325,16 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return row || null;
   }
 
-  // ── Scanning ──────────────────────────────────────────────────────────────
 
-  async scanFolder(folderPath) {
+  async scanFolder(folderPath, opts = {}) {
+    const onProgress = opts.onProgress || null;
     const fid = this._folderId(folderPath);
     if (fid === null) return;
     if (!fs.statSync(folderPath).isDirectory()) return;
     const now = Date.now() / 1000;
 
-    // 阶段1: 遍历目录收集音频文件（纯 readdir，开销极小）
     const filesToInsert = this._walkAudioPaths(folderPath);
 
-    // 阶段2: 并发解析元数据 + 批量事务写入
-    // 原实现：逐条 await parseFile + 每条独立 autocommit（每次 commit 触发
-    // WAL fsync）+ 每文件一条 SELECT 查重。6500 首在 HDD 上要数分钟。
-    // 现在：查重一次性载入 Set；解析 4 路并发；写入按批包进事务。
     let inserted = 0;
     let alreadyCount = 0;
 
@@ -431,7 +347,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     );
     const linkFidStmt = this._db.prepare('UPDATE tracks SET folder_id=? WHERE path=?');
 
-    // 已有曲目集合（含 folder_id 为 NULL 的遗留行，用于补关联）
     const knownRows = this._db.prepare('SELECT path, folder_id FROM tracks').all();
     const knownPaths = new Set();
     const nullFidPaths = new Set();
@@ -440,8 +355,8 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       if (r.folder_id === null || r.folder_id === undefined) nullFidPaths.add(r.path);
     }
 
-    const pendingRows = [];   // 已解析、待事务写入的参数数组
-    const pendingLinks = [];  // 待补 folder_id 的 [fid, path]
+    const pendingRows = [];
+    const pendingLinks = [];
     const insertTx = this._db.transaction((rows, links) => {
       for (const p of links) linkFidStmt.run(p[0], p[1]);
       for (const r of rows) insertStmt.run(...r);
@@ -461,7 +376,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
         try {
           const meta = await this._parseMetadata(filePath);
           let size = 0;
-          try { size = (await fsp.stat(filePath)).size; } catch { /* 保留 0 */ }
+          try { size = (await fsp.stat(filePath)).size; } catch {  }
           pendingRows.push([
             trackId(filePath), filePath, fid,
             meta.title || path.basename(filePath, path.extname(filePath)),
@@ -486,9 +401,12 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
         } catch (e) {
           console.error(`[MusicLibrary] Failed to insert track: ${filePath}`, e.message || e);
         }
-        // 周期性让出事件循环：扫描期间 audio_output IPC / 封面请求
-        // 仍能被及时处理，避免播放卡顿
-        if ((i & 15) === 15) await new Promise((r) => setImmediate(r));
+        if ((i & 15) === 15) {
+          if (onProgress) {
+            try { onProgress({ phase: 'scanning', scanned: i + 1, total: filesToInsert.length, inserted }); } catch {  }
+          }
+          await new Promise((r) => setImmediate(r));
+        }
       }
     };
     await Promise.all(Array.from({ length: SCAN_PARSE_PARALLEL }, worker));
@@ -501,14 +419,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return { inserted, already: alreadyCount, total: filesToInsert.length };
   }
 
-  // ── 增量同步（FileWatcher 分层扫描）──────────────────────────────────────
 
-  /**
-   * 分层扫描 L1：仅遍历目录（readdir），收集受支持的音频文件路径。
-   * 不 stat、不解析元数据，开销极小。
-   * @param {string} rootDir
-   * @returns {string[]}
-   */
   _walkAudioPaths(rootDir) {
     const paths = [];
     const stack = [rootDir];
@@ -534,21 +445,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return paths;
   }
 
-  /**
-   * 分层增量同步（供 FileWatcher / 定期校验调用）：
-   *   L1  数量比对：磁盘遍历结果数 vs DB 记录数
-   *   L2  路径 diff：定位 新增 / 移除 的文件
-   *   L2b 大小校验：对 watch 事件精确命中的文件 stat，检测同路径内容变动
-   *   L3  元数据：仅对差异文件解析并写库
-   *
-   * 安全保护：
-   *   - 磁盘目录不存在（驱动器掉线）→ 跳过，不删任何记录
-   *   - 磁盘扫到 0 个音频但 DB 非空（疑似驱动器异常）→ 跳过，防止误清空库
-   *
-   * @param {string} folderPath
-   * @param {{sizeCheckPaths?: string[]}} [opts] - 需做大小校验的精确路径（来自 watch 事件）
-   * @returns {Promise<{added:number, removed:number, updated:number, total:number, changed:boolean, skipped?:boolean}|null>}
-   */
   async syncFolderIncremental(folderPath, opts = {}) {
     const p = path.resolve(folderPath);
     const fid = this._folderId(p);
@@ -558,7 +454,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     }
     const now = Date.now() / 1000;
 
-    // ── L1 + L2：遍历磁盘并与 DB 索引比对 ──
     const diskPaths = this._walkAudioPaths(p);
     const dbRows = this._db.prepare(
       'SELECT id, path, file_size FROM tracks WHERE folder_id=?'
@@ -586,7 +481,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       if (!dbPathSet.has(dp)) toAdd.push(dp);
     }
 
-    // ── L2b 大小校验（仅针对 watch 事件精确命中的文件）──
     const toUpdate = [];
     if (opts.sizeCheckPaths && opts.sizeCheckPaths.length > 0) {
       const checkSet = new Set(opts.sizeCheckPaths.map((sp) => path.resolve(sp)));
@@ -603,7 +497,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       return { added: 0, removed: 0, updated: 0, total: diskPaths.length, changed: false };
     }
 
-    // ── L3 移除：分批删除（含收藏/历史/歌单关联）──
     const CHUNK = 400;
     for (let i = 0; i < toRemoveIds.length; i += CHUNK) {
       const chunk = toRemoveIds.slice(i, i + CHUNK);
@@ -613,9 +506,9 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       );
     }
 
-    // ── L3 新增 / 更新：并发解析元数据 + 批量事务写库 ──
     let added = 0;
     {
+      const onProgress = opts.onProgress || null;
       const insertStmt = this._db.prepare(
         `INSERT OR IGNORE INTO tracks
          (id, path, folder_id, title, artist, album, album_artist,
@@ -636,7 +529,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
           try {
             const meta = await this._parseMetadata(filePath);
             let size = 0;
-            try { size = (await fsp.stat(filePath)).size; } catch { /* 保留 0 */ }
+            try { size = (await fsp.stat(filePath)).size; } catch {  }
             pendingRows.push([
               trackId(filePath), filePath, fid,
               meta.title || path.basename(filePath, path.extname(filePath)),
@@ -661,7 +554,12 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
           } catch (e) {
             console.error(`[MusicLibrary] 增量同步新增失败: ${filePath}`, e.message || e);
           }
-          if ((i & 15) === 15) await new Promise((r) => setImmediate(r));
+          if ((i & 15) === 15) {
+            if (onProgress) {
+              try { onProgress({ phase: 'scanning', scanned: i + 1, total: toAdd.length, inserted: added }); } catch {  }
+            }
+            await new Promise((r) => setImmediate(r));
+          }
         }
       };
       await Promise.all(Array.from({ length: SCAN_PARSE_PARALLEL }, worker));
@@ -713,7 +611,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     };
   }
 
-  // ── Metadata ──────────────────────────────────────────────────────────────
 
   async _parseMetadata(filePath) {
     const meta = {};
@@ -735,7 +632,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
       meta.has_cover = !!(common.picture && common.picture.length > 0);
       meta.genre = (common.genre && common.genre.length > 0) ? common.genre[0] : null;
-      // 侧车 .lrc 探测走异步（扫描热路径，见 _findSidecarLrcAsync 注释）
       meta.lyrics = await this._extractLrcAsync(filePath, metadata);
       meta.alias_title = this._extractAliasTitle(metadata, meta.title);
     } catch (e) {
@@ -744,14 +640,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return meta;
   }
 
-  /**
-   * 从原生标签中提取别名标题（osu! 风格双标题）。
-   * 遍历 music-metadata 的 native 标签：
-   *   - ID3v2 TXXX 帧：music-metadata 将其展开为 { id: 'TXXX:ASCII_TITLE', value: '...' }
-   *   - Vorbis/APE 自定义字段：{ id: 'ASCII_TITLE', value: '...' }
-   *   - MP4 freeform：{ id: '----:com.apple.iTunes:ASCII_TITLE', value: '...' }
-   * 返回第一个与主标题不同的非空候选值，找不到返回 null。
-   */
   _extractAliasTitle(metadata, title) {
     if (!metadata || !metadata.native) return null;
     const found = [];
@@ -762,7 +650,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
         let name = String(tag.id);
         let value = tag.value;
         if (name.toUpperCase() === 'TXXX') {
-          // 兜底：未展开形态，value = { description, text }
           if (!value || typeof value !== 'object') continue;
           name = String(value.description || '');
           value = Array.isArray(value.text) ? value.text[0] : value.text;
@@ -782,10 +669,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return found.length > 0 ? found[0] : null;
   }
 
-  /**
-   * 从 music-metadata 解析结果中提取内嵌歌词（纯内存，无 IO）。
-   * 侧车 .lrc 文件的探测见 _findSidecarLrcAsync。
-   */
   _extractEmbeddedLyrics(metadata) {
     if (!metadata || !metadata.native) return null;
     try {
@@ -794,9 +677,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
           const id = tag.id.toLowerCase();
           if (id === 'uslt' || id === '©lyr' || id === 'lyrics' || id === 'unsyncedlyrics') {
             if (!tag.value) continue;
-            // music-metadata v10+ では USLT/COMM フレームの value が
-            // { language, descriptor, text } オブジェクトになるため、
-            // text プロパティを抽出する
             if (typeof tag.value === 'object' && tag.value !== null) {
               if (typeof tag.value.text === 'string' && tag.value.text) {
                 return tag.value.text;
@@ -810,17 +690,10 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
         }
       }
     } catch {
-      // ignore
     }
     return null;
   }
 
-  /**
-   * 异步读取侧车 .lrc（同目录同名）。
-   * 原实现用 fs.existsSync + readFileSync，每个文件两次同步系统调用 ——
-   * 大库扫描（6500 首）时全部串在主线程上，是可观的开销。
-   * ENOENT 是常态（大多数曲目没有 .lrc），用异步 stat 直接吞掉。
-   */
   async _findSidecarLrcAsync(filePath) {
     const lrcPath = filePath.replace(/\.[^.]+$/, '.lrc');
     try {
@@ -831,7 +704,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     }
   }
 
-  /** 同步版本（保留给无法 await 的调用点）。 */
   _extractLrcSync(filePath, metadata = null) {
     try {
       const lrcPath = filePath.replace(/\.[^.]+$/, '.lrc');
@@ -844,50 +716,26 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     }
   }
 
-  /** 异步版本：侧车 .lrc 优先，其次内嵌歌词。 */
   async _extractLrcAsync(filePath, metadata = null) {
     const sidecar = await this._findSidecarLrcAsync(filePath);
     if (sidecar !== null) return sidecar;
     return this._extractEmbeddedLyrics(metadata);
   }
 
-  // ── Cover extraction ──────────────────────────────────────────────────────
 
-  /**
-   * 提取内嵌封面（异步，主入口）。
-   *
-   * 与旧的同步 getCoverData 的区别：
-   *   - 全部 IO 走 fs.promises（libuv 线程池），不阻塞主进程事件循环
-   *     —— 这是大库列表滚动时 PCM 断流 / 封面请求超时的根因。
-   *   - 返回 { data, confirmed }：
-   *       data      = Buffer | null
-   *       confirmed = true  → 解析流程完整跑完，"无封面"是确定结论，可写负缓存
-   *                   false → IO 错误（文件被锁 / 网络盘掉线 / 权限），
-   *                           不得写负缓存，下次请求应重试
-  /**
-   * 获取封面数据（入口）。返回 Promise，且**并发去重依赖返回同一个 Promise
-   * 实例**，因此本方法刻意不使用 async —— async 函数的 return 会把内部
-   * Promise 再包一层，导致 p1 !== p2，Map 里的去重条目形同虚设。
-   *
-   * @param {string} trackId
-   * @returns {Promise<{data: Buffer|null, confirmed: boolean}>}
-   */
   getCoverDataAsync(trackId) {
     const MISS = { data: null, confirmed: true };
     if (!trackId) return Promise.resolve(MISS);
 
-    // ── 1. 内存热缓存命中 ──
     const memCached = this._coverDataCache.get(trackId);
     if (memCached !== undefined) {
       if (memCached !== null) {
-        // LRU touch
         this._coverDataCache.delete(trackId);
         this._coverDataCache.set(trackId, memCached);
       }
       return Promise.resolve({ data: memCached, confirmed: true });
     }
 
-    // ── 2. 并发去重：同一 trackId 共享同一 Promise ──
     const inflight = this._coverInflight.get(trackId);
     if (inflight) return inflight;
 
@@ -898,10 +746,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return p;
   }
 
-  /**
-   * 封面加载的实际实现（含磁盘缓存 / 提取 / 回写）。
-   * 调用方应通过 getCoverDataAsync 进入以获得去重与内存缓存。
-   */
   async _loadCoverDataAsync(trackId) {
     let row;
     try {
@@ -910,73 +754,55 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       return { data: null, confirmed: false };
     }
     if (!row || !row.path) {
-      // 外部拖入播放的文件（不在 tracks 内）：它只在 external_tracks 里，
-      // 但仍需要封面 → 反查路径后照常走「磁盘缓存 → 从文件提取」链路。
       try {
         const ext = this._db.prepare('SELECT path FROM external_tracks WHERE id=?').get(trackId);
         if (ext && ext.path) row = { path: ext.path, source: 'external' };
-      } catch { /* ignore */ }
+      } catch {  }
     }
     if (!row || !row.path) return { data: null, confirmed: true };
-    // 远程来源由 cover-server 的专用代理负责，此处不处理
     if (row.source === 'subsonic' || row.source === 'webdav') return { data: null, confirmed: true };
 
-    // ── 3. 磁盘缓存 ──
-    // 空文件 = 已确认无封面；非空 = 封面数据；ENOENT = 无记录。
-    // 0 字节标记带 TTL：极少数情况下负标记可能是"临时 IO 失败"被误写
-    // （或文件后来被打上了标签），过期后重新提取一次以自我修正。
     const diskPath = this._coverCachePath(trackId);
     let data = null;
     try {
       const buf = await fsp.readFile(diskPath);
       if (buf && buf.length === 0) {
-        // 负标记：检查是否过期
         let stale = false;
         try {
           const st = await fsp.stat(diskPath);
           stale = (Date.now() - st.mtimeMs) > COVER_NEGATIVE_TTL_MS;
-        } catch { /* stat 失败 → 当作已确认 */ }
+        } catch {  }
         if (!stale) {
           this._putCoverCache(trackId, null);
           return { data: null, confirmed: true };
         }
-        // 过期：无视该负标记，走下面的重新提取
       } else {
         this._putCoverCache(trackId, buf);
         return { data: buf, confirmed: true };
       }
     } catch (e) {
       if (e && e.code !== 'ENOENT') {
-        // 读磁盘缓存失败（少见）：不写负缓存，继续尝试从音频文件提取
       }
     }
 
-    // ── 4. 从音频文件提取 ──
     let confirmed = true;
     try {
       data = await this._extractCoverAsync(row.path);
     } catch {
-      // 提取过程 IO 异常（文件被独占 / 网络盘断开）→ 不可写负缓存
       confirmed = false;
     }
     if (!confirmed) {
-      // 不写内存缓存，允许下次重试
       return { data: null, confirmed: false };
     }
 
-    // ── 5. 回写磁盘缓存（null 写 0 字节标记）──
     try {
       await fsp.writeFile(diskPath, data || Buffer.alloc(0));
-    } catch { /* 磁盘写入失败，仅靠内存缓存 */ }
+    } catch {  }
 
     this._putCoverCache(trackId, data);
     return { data, confirmed: true };
   }
 
-  /**
-   * 同步取封面数据（保留给无法 await 的遗留调用点）。
-   * 新代码应优先使用 getCoverDataAsync。
-   */
   getCoverData(trackId) {
     if (!trackId) return null;
     const memCached = this._coverDataCache.get(trackId);
@@ -989,11 +815,10 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     }
     let row = this._db.prepare('SELECT path, source FROM tracks WHERE id=?').get(trackId);
     if (!row || !row.path) {
-      // 外部拖入播放的文件：反查路径（同 _loadCoverDataAsync）
       try {
         const ext = this._db.prepare('SELECT path FROM external_tracks WHERE id=?').get(trackId);
         if (ext && ext.path) row = { path: ext.path, source: 'external' };
-      } catch { /* ignore */ }
+      } catch {  }
     }
     if (!row || !row.path) return null;
     if (row.source === 'subsonic' || row.source === 'webdav') return null;
@@ -1005,21 +830,16 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       const buf = fs.readFileSync(diskPath);
       hasDiskRecord = true;
       data = (buf && buf.length === 0) ? null : buf;
-    } catch { /* ENOENT → 走提取 */ }
+    } catch {  }
 
     if (!hasDiskRecord) {
       data = this._extractCoverSync(row.path);
-      try { fs.writeFileSync(diskPath, data || Buffer.alloc(0)); } catch { /* ignore */ }
+      try { fs.writeFileSync(diskPath, data || Buffer.alloc(0)); } catch {  }
     }
     this._putCoverCache(trackId, data);
     return data;
   }
 
-  /**
-   * 写入封面内存 LRU，同时维护字节预算。
-   * 条数与字节数双阈值：条数控制索引开销，字节数防止大图（FLAC 内嵌可达
-   * 数 MB）把主进程 RSS 推高。淘汰按插入顺序（Map 迭代序 = LRU）。
-   */
   _putCoverCache(trackId, data) {
     const prev = this._coverDataCache.get(trackId);
     if (prev !== undefined) {
@@ -1038,36 +858,20 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     }
   }
 
-  /**
-   * 存储封面数据到磁盘缓存（供 WebDAV 等远程曲目使用）。
-   * @param {string} trackId
-   * @param {Buffer} data - JPEG 封面数据
-   */
   storeCoverData(trackId, data) {
     if (!trackId || !data) return;
     const diskPath = this._coverCachePath(trackId);
     try {
       fs.writeFileSync(diskPath, data);
-    } catch { /* 磁盘写入失败，忽略 */ }
-    // 同时更新内存 LRU
+    } catch {  }
     this._putCoverCache(trackId, data);
   }
 
-  /**
-   * 磁盘缓存路径：cover_cache/<sha1(trackId)>.jpg
-   * 使用 SHA1 哈希避免 trackId 中的特殊字符破坏文件系统。
-   * null 封面用 0 字节文件标记，区分"未提取过"和"已确认无封面"。
-   */
   _coverCachePath(trackId) {
     const hash = crypto.createHash('sha1').update(trackId, 'utf-8').digest('hex');
     return path.join(this._coverCacheDir, `${hash}.jpg`);
   }
 
-  /**
-   * 清除封面数据缓存（单条或全部）。
-   * 在曲目元数据变更、文件移动、手动刷新时调用。
-   * @param {string} [trackId] - 指定 track_id 清除单条；省略则清除全部
-   */
   clearCoverDataCache(trackId) {
     if (trackId) {
       const prev = this._coverDataCache.get(trackId);
@@ -1075,36 +879,19 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
         this._coverDataCacheBytes -= prev ? prev.length : 0;
         this._coverDataCache.delete(trackId);
       }
-      try { fs.unlinkSync(this._coverCachePath(trackId)); } catch { /* ignore */ }
+      try { fs.unlinkSync(this._coverCachePath(trackId)); } catch {  }
     } else {
       this._coverDataCache.clear();
       this._coverDataCacheBytes = 0;
-      // 清空整个磁盘缓存目录
       try {
         const files = fs.readdirSync(this._coverCacheDir);
         for (const f of files) {
-          try { fs.unlinkSync(path.join(this._coverCacheDir, f)); } catch { /* ignore */ }
+          try { fs.unlinkSync(path.join(this._coverCacheDir, f)); } catch {  }
         }
-      } catch { /* 目录不存在或无权限 */ }
+      } catch {  }
     }
   }
 
-  /**
-   * 提取内嵌封面（同步）。
-   *
-   * 性能：原实现 fs.readFileSync 整个音频文件（FLAC 常 30-100MB），
-   * 在主进程事件循环上同步分配这么大的 Buffer，会长时间阻塞 IPC
-   * （PCM 转发 / 播放控制）与并发封面请求 —— 这是列表快速滚动时
-   * 出现偶发卡顿的直接原因之一。
-   *
-   * 优化：只读取文件头部。封面元数据在四种格式里都位于文件前部：
-   *   MP3 → ID3v2 标签（文件头，含 APIC 帧）
-   *   FLAC → fLaC 后的 metadata blocks（PICTURE 为 block type 6）
-   *   MP4 → moov/trak/.../covr（moov 通常在文件头）
-   *   OGG → Vorbis comment 头（含 METADATA_BLOCK_PICTURE）
-   * 因此读前 _COVER_HEAD_BYTES 即可覆盖绝大多数情况；
-   * 若头部未找到封面，回退到整文件读取，保证不漏封面（仅在罕见布局时发生）。
-   */
   _extractCoverSync(filePath) {
     try {
       const ext = path.extname(filePath).toLowerCase();
@@ -1135,25 +922,15 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       const found = extract(head);
       if (found) return found;
 
-      // 头部没找到（moov 在文件尾等布局）→ 回退整文件读取，行为与原实现一致
       if (stat.size > headSize) {
         return extract(fs.readFileSync(filePath));
       }
       return null;
     } catch {
-      // ignore
     }
     return null;
   }
 
-  /**
-   * 提取内嵌封面（异步）。逻辑与 _extractCoverSync 等价，但：
-   *   - IO 全部走 fs.promises，不阻塞事件循环
-   *   - 手写解析器不支持的格式（.wma / .aiff 等）回退到 music-metadata
-   *
-   * @param {string} filePath
-   * @returns {Promise<Buffer|null>}
-   */
   async _extractCoverAsync(filePath) {
     const ext = path.extname(filePath).toLowerCase();
     const handWritten = (ext === '.mp3' || ext === '.flac' ||
@@ -1165,14 +942,13 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
         if (ext === '.mp3') return _extractMp3Cover(buf);
         if (ext === '.flac') return _extractFlacCover(buf);
         if (ext === '.m4a' || ext === '.aac' || ext === '.mp4') return _extractMp4Cover(buf);
-        return _extractOggCover(buf);  // .ogg / .opus
+        return _extractOggCover(buf);
       };
 
       let stat;
       try {
         stat = await fsp.stat(filePath);
       } catch {
-        // stat 失败（文件被锁 / 网络盘断开）→ 交调用方判定为不可信结论，不写负缓存
         throw new Error('cover:stat-failed');
       }
       const headSize = Math.min(stat.size, COVER_HEAD_READ_BYTES);
@@ -1187,7 +963,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       const found = extract(head);
       if (found) return found;
 
-      // 头部未命中（moov 在文件尾等布局）→ 整文件读取兜底
       if (stat.size > headSize) {
         const full = await fsp.readFile(filePath);
         return extract(full);
@@ -1195,9 +970,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       return null;
     }
 
-    // 手写解析器不支持的格式：用 music-metadata 兜底。
-    // 旧实现对这些格式直接返回 null，使 has_cover=1 的曲目永远 404，
-    // 前端又把 404 永久记为 no-cover —— 封面偶发不显示的成因之一。
     return this._extractCoverViaMetadata(filePath);
   }
 
@@ -1213,7 +985,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return null;
   }
 
-  // ── Artist splitting ────────────────────────────────────────────────────
 
   _splitArtists(raw) {
     if (!raw || !raw.trim()) return [];
@@ -1221,7 +992,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
     const seps = this._settings.get('artist_separators', ';') || ';';
 
-    // 处理 feat./ft./vs./with 模式
     let lower = text.toLowerCase();
     for (const pat of FEAT_PATTERNS) {
       let idx = lower.indexOf(pat);
@@ -1252,15 +1022,8 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return result;
   }
 
-  // ── Library queries ───────────────────────────────────────────────────────
 
-  // ── 库去重：当 Subsonic 和本地同时存在相同歌曲时，优先保留本地版本 ────────
 
-  /**
-   * Unicode 兼容性归一化（NFKC）：统一全角/半角、兼容性字符。
-   * @param {string} s
-   * @returns {string}
-   */
   _nfkc(s) {
     try {
       return s.normalize('NFKC');
@@ -1269,17 +1032,10 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     }
   }
 
-  /**
-   * 规范化标题：Unicode 归一化、小写、去括号内容、去 feat./ft. 等后缀、去首尾空格。
-   * @param {string} title
-   * @returns {string}
-   */
   _normalizeTitle(title) {
     if (!title) return '';
     let s = this._nfkc(title).toLowerCase().trim();
-    // 去除括号及括号内内容：(xxx) [xxx] {xxx} （含全角括号）
     s = s.replace(/\s*[([（【].*?[)\]）】]\s*/g, ' ');
-    // 去除 feat./ft./vs./with 及之后内容
     for (const pat of FEAT_PATTERNS) {
       const idx = s.indexOf(pat);
       if (idx > 0) s = s.slice(0, idx);
@@ -1287,13 +1043,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return s.replace(/\s+/g, ' ').trim();
   }
 
-  /**
-   * 把艺术家串分割成多个规范化后的艺术家名（用于逐一对齐匹配）。
-   * 处理：NFKC 归一化、多艺术家分隔符分割、排序名反转、去冠词。
-   * 与展示用的 _splitArtists 不同：此处返回小写、去冠词的规范化形式以构建去重 key。
-   * @param {string} artist
-   * @returns {string[]}
-   */
   _splitArtistsForMatch(artist) {
     if (!artist) return [];
     const seps = ['&', ' feat.', ' ft.', ' vs.', ' with', ',', '、', '/', ';'];
@@ -1314,7 +1063,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     for (let p of parts) {
       p = p.trim();
       if (!p) continue;
-      // 排序名反转（针对单个艺术家部分）："beatles, the" → "the beatles"
       const ci = p.lastIndexOf(',');
       if (ci > 0) {
         const before = p.slice(0, ci).trim();
@@ -1323,7 +1071,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
           p = (after + ' ' + before).trim();
         }
       }
-      // 去前导冠词
       const na = p.replace(/^(the|a|an)\s+/, '');
       if (na) p = na;
       p = p.replace(/\s+/g, ' ').trim();
@@ -1336,13 +1083,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return result;
   }
 
-  /**
-   * 为一条曲目生成所有去重匹配 key。
-   * key 形式：normalizedTitle \0 normalizedArtist。artist 已分割为多个并逐个比对，
-   * album_artist 同样分割纳入，任一命中即视为同一首歌（顺序无关）。
-   * @param {{title:string, artist?:string, album_artist?:string}} track
-   * @returns {Set<string>}
-   */
   _trackKeys(track) {
     const titleKey = this._normalizeTitle(track.title);
     const keys = new Set();
@@ -1363,21 +1103,12 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return keys;
   }
 
-  /**
-   * 计算并缓存去重信息。
-   * 匹配规则：规范化 title + artist 相同即视为同一首歌。
-   * 当本地和 Subsonic 同时存在时，标记 Subsonic 版本为重复（需排除）。
-   * @returns {{dupIds: Set<string>, localMap: Map<string, object>}}
-   *   dupIds: 需排除的 Subsonic 曲目 ID 集合
-   *   localMap: Subsonic 曲目 ID → 对应的本地曲目对象（用于播放时重定向到本地）
-   */
   _getDedupInfo() {
     if (this._dedupCache !== null) return this._dedupCache;
 
     const localRows = this._db.prepare(
       "SELECT id, title, artist, album_artist, path, source FROM tracks WHERE source IS NULL"
     ).all();
-    // 远程曲目包括 subsonic, webdav, smb
     const remoteRows = this._db.prepare(
       "SELECT id, title, artist, album_artist, source FROM tracks WHERE source IN ('subsonic', 'webdav', 'smb')"
     ).all();
@@ -1387,7 +1118,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       return this._dedupCache;
     }
 
-    // 构建本地曲目 key → 本地曲目对象 映射
     const localKeyMap = new Map();
     for (const r of localRows) {
       for (const k of this._trackKeys(r)) {
@@ -1395,7 +1125,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
     }
 
-    // 找出远程中与本地重复的曲目，并建立远程 ID → 本地曲目 映射
     const dupIds = new Set();
     const localMap = new Map();
     for (const r of remoteRows) {
@@ -1412,20 +1141,10 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return this._dedupCache;
   }
 
-  /**
-   * 获取需排除的 Subsonic 曲目 ID 集合（兼容旧调用）。
-   * @returns {Set<string>}
-   */
   _getDuplicateSubsonicIds() {
     return this._getDedupInfo().dupIds;
   }
 
-  /**
-   * 查找远程曲目对应的本地版本（用于播放时优先使用本地文件）。
-   * 支持 subsonic, webdav, smb 来源。
-   * @param {{id: string, source?: string}} track
-   * @returns {object|null} 本地曲目对象，或 null
-   */
   findLocalTrackForSubsonic(track) {
     if (!track) return null;
     if (track.source !== 'subsonic' && track.source !== 'webdav' && track.source !== 'smb') return null;
@@ -1433,10 +1152,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return localMap.get(track.id) || null;
   }
 
-  /**
-   * 使去重缓存失效（在库内容变更后调用）。
-   * 同时清空封面数据缓存，避免删除/移动曲目后返回陈旧数据。
-   */
   _invalidateDedupCache() {
     this._dedupCache = null;
     this._dedupLocalPathCache = null;
@@ -1446,22 +1161,12 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     }
   }
 
-  /**
-   * 从曲目数组中过滤掉与本地重复的 Subsonic 曲目。
-   * @template {{id:string, source?:string}} T
-   * @param {T[]} tracks
-   * @returns {T[]}
-   */
   _dedupeTracks(tracks) {
     const dupIds = this._getDuplicateSubsonicIds();
     if (dupIds.size === 0) return tracks;
     return tracks.filter((t) => !dupIds.has(t.id));
   }
 
-  /**
-   * 生成 SQL NOT IN 子句用于排除重复 Subsonic 曲目。
-   * 返回 { clause: string, params: string[] }
-   */
   _dedupExcludeClause() {
     const dupIds = this._getDuplicateSubsonicIds();
     if (dupIds.size === 0) return { clause: '', params: [] };
@@ -1470,12 +1175,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
   }
 
   getAllTracks(opts) {
-    // 列表负载默认剔除 lyrics：它是全表唯一的大文本列（内嵌 LRC 常 2-8KB/首），
-    // 1 万首即 20-80MB。它只在「正在播放」时被读取（now_playing 判断
-    // track.lyrics 决定 embedded/自动搜索），而播放入口拿到的 track 一律经
-    // 主进程按 id 从 DB 回填（见 bridge 的 _hydrateTrackLyrics），
-    // 因此列表侧不携带它不影响任何歌词显示路径。
-    // 调用方若确实需要全字段（导出/标签编辑等）可传 { withLyrics: true }。
     const withLyrics = !!(opts && opts.withLyrics);
     const sql = withLyrics
       ? 'SELECT * FROM tracks ORDER BY added_at'
@@ -1485,8 +1184,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
          FROM tracks ORDER BY added_at`;
     const rows = this._db.prepare(sql).all();
     const tracks = this._dedupeTracks(rows);
-    // 先算排序键再排序：原实现把 makeSortKey 放在比较器里，n log n 次调用；
-    // 且比较器用的就是 t.sort_key，先算后比得到完全相同的顺序。
     for (const t of tracks) {
       t.sort_key = makeSortKey(t.title);
       t.artist_sort_key = makeSortKey(t.artist);
@@ -1501,16 +1198,9 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return tracks;
   }
 
-  /**
-   * 按 id 批量取歌词（供播放入口回填列表剥离掉的 lyrics 字段）。
-   * 单次 IN 查询，避免逐条 getTrack 的 N 次往返。
-   * @param {string[]} trackIds
-   * @returns {Map<string,string>} 仅包含 lyrics 非空的条目
-   */
   getLyricsByIds(trackIds) {
     const out = new Map();
     if (!trackIds || trackIds.length === 0) return out;
-    // SQLite 变量上限 999，分批查询
     const CHUNK = 900;
     for (let i = 0; i < trackIds.length; i += CHUNK) {
       const slice = trackIds.slice(i, i + CHUNK);
@@ -1533,14 +1223,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
        GROUP BY album, COALESCE(album_artist, artist)`
     ).all(...params);
 
-    // 封面曲目：原实现对每个专辑单独查一次（N+1，2000 专辑 = 2001 次查询）。
-    // 改为一次查询取每个 album 的首个 has_cover 曲目。
-    //
-    // 选曲语义必须与原SQL 完全一致：原语句 `... WHERE album=? AND has_cover=1
-    // LIMIT 1` 无 ORDER BY，SQLite 走 rowid 顺序（已实测：全库逐专辑比对，
-    // `ORDER BY rowid LIMIT 1` 与原语句 100% 命中同一首）。
-    // 因此这里用 MIN(rowid) 关联，而不是 MIN(id) —— id 是 TEXT，
-    // 字符串序（'v201' < 'v81'）与 rowid 序不一致，会选到另一首曲目。
     const coverRows = this._db.prepare(
       `SELECT t.album AS album, t.id AS cover_id FROM tracks t
        JOIN (SELECT album, MIN(rowid) AS rid FROM tracks
@@ -1558,7 +1240,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       r.cover_track_id = coverMap.get(r.album) || null;
       result.push(r);
     }
-    // 先算排序键再排序（与 getAllTracks 同样去掉比较器内的重复计算）
     for (const a of result) {
       a.sort_key = makeSortKey(a.album);
       a.album_artist_sort_key = makeSortKey(a.album_artist);
@@ -1604,7 +1285,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
         cover_track_id: info._cover_id,
       });
     }
-    // 先算排序键再排序（去掉比较器内的重复 makeSortKey 调用）
     for (const a of artists) {
       a.sort_key = makeSortKey(a.name);
     }
@@ -1659,18 +1339,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return this._db.prepare('SELECT * FROM tracks WHERE id=?').get(trackId) || null;
   }
 
-  /**
-   * 解析「拖入窗口」的一组文件路径 → 可播放的曲目对象数组。
-   *
-   * 两种待遇（用户明确要求）：
-   *   1. 文件在媒体库内 → 返回库内 track（与在播放器里点歌完全一致，
-   *      播放历史/统计/封面/歌词都走正常链路）；
-   *   2. 文件不在库内 → 返回带 `external: true` 的临时曲目：只解析标签供显示，
-   *      播放时仅进播放历史（见 bridge 的 _onTrackChanged），不进任何统计。
-   *
-   * @param {string[]} paths
-   * @returns {Promise<object[]>}
-   */
   async resolveDroppedFiles(paths) {
     const out = [];
     const seen = new Set();
@@ -1694,9 +1362,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return out;
   }
 
-  /** @private 单个文件：先查库，再退化为外部曲目 */
   async resolveDroppedFile(abs, stat) {
-    // ── 1. 库内文件：按路径查（id 也是路径的哈希，双保险）──
     let row = null;
     try {
       row = this._db.prepare('SELECT * FROM tracks WHERE path=?').get(abs)
@@ -1705,13 +1371,11 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
         || null;
     } catch { row = null; }
     if (row) {
-      // 已是库内曲目：与 play_from_list 拿到的负载保持一致（补齐排序键/歌手数组）
       this._decorateTrack(row);
       row.external = false;
       return row;
     }
 
-    // ── 2. 库外文件：解析标签，构造临时曲目 ──
     const meta = await this._parseMetadata(abs);
     const ext = path.extname(abs);
     return this._decorateTrack({
@@ -1739,11 +1403,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     this._db.prepare('UPDATE tracks SET lyrics=? WHERE id=?').run(lyrics, trackId);
   }
 
-  /**
-   * 从音频文件中提取内嵌歌词（USLT/©lyr 等标签或侧车 .lrc 文件）。
-   * @param {string} trackId
-   * @returns {Promise<string|null>}
-   */
   async getEmbeddedLyrics(trackId) {
     const track = this.getTrack(trackId);
     if (!track || !track.path) return null;
@@ -1758,7 +1417,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     }
   }
 
-  // ── Liked tracks ──────────────────────────────────────────────────────────
 
   getLikedTrackIds() {
     const rows = this._db.prepare('SELECT track_id FROM liked_tracks').all();
@@ -1766,8 +1424,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
   }
 
   setLiked(trackId, liked) {
-    // 外部拖入文件（不在 tracks 内）无法收藏：liked_tracks.track_id 有外键
-    // 指向 tracks(id)，强行写入会触发 FK 约束错误。
     if (liked && !this.getTrack(trackId)) return;
     if (liked) {
       this._db.prepare(
@@ -1799,14 +1455,12 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return deduped;
   }
 
-  // ── Play history ──────────────────────────────────────────────────────────
 
   addPlayHistory(trackId) {
     const now = Date.now() / 1000;
     this._db.prepare(
       'INSERT INTO play_history (track_id, played_at) VALUES (?,?)'
     ).run(trackId, now);
-    // 修剪：保留最新 500 条
     this._db.prepare(
       `DELETE FROM play_history WHERE id NOT IN (
         SELECT id FROM play_history ORDER BY played_at DESC LIMIT 500
@@ -1814,15 +1468,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     ).run();
   }
 
-  /**
-   * 记录一条「外部文件」（不在媒体库内，拖入窗口播放）的播放历史。
-   *
-   * 与 addPlayHistory 的核心区别：
-   *   - 写入 external_plays / external_tracks，**不写** play_history；
-   *   - tracks 表没有对应行 → getPlayStats() 等 JOIN tracks 的统计查询
-   *     天然不会统计到它（这就是「只出现在历史、不计入任何统计」的落点）。
-   * @param {object} track - 播放中的外部曲目对象（需含 path）
-   */
   addExternalPlayHistory(track) {
     if (!track || !track.path) return;
     const now = Date.now() / 1000;
@@ -1847,13 +1492,11 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       this._db.prepare(
         'INSERT INTO external_plays (track_id, played_at) VALUES (?,?)'
       ).run(id, now);
-      // 修剪：与 play_history 一致，保留最新 500 条
       this._db.prepare(
         `DELETE FROM external_plays WHERE id NOT IN (
           SELECT id FROM external_plays ORDER BY played_at DESC LIMIT 500
         )`
       ).run();
-      // 顺带清理不再被任何历史引用的外部曲目元数据（例如已被移出历史窗口）
       this._db.prepare(
         'DELETE FROM external_tracks WHERE id NOT IN (SELECT track_id FROM external_plays)'
       ).run();
@@ -1877,9 +1520,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       this._decorateTrack(t);
     }
 
-    // ── 合并外部文件（拖入播放、非库内）的历史 ──
-    // 它们只存在于 external_* 两张表里，因此不会污染 tracks / play_history，
-    // 也就不会进入 getPlayStats()、每日精选、Discover 等任何统计/推荐口径。
     let extRows = [];
     try {
       extRows = this._db.prepare(
@@ -1894,8 +1534,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       extRows = [];
     }
     if (extRows.length > 0) {
-      // 文件后来被纳入媒体库时，同一文件会同时命中两条链路 → 以库内记录为准，
-      // 避免历史里出现重复行。
       const libPaths = new Set(deduped.map((t) => t.path).filter(Boolean));
       for (const e of extRows) {
         if (libPaths.has(e.path)) continue;
@@ -1909,7 +1547,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return deduped.slice(0, lim);
   }
 
-  /** 为曲目补齐前端列表所需的排序键 / 歌手拆分（库内外共用） */
   _decorateTrack(t) {
     t.sort_key = makeSortKey(t.title);
     t.artist_sort_key = makeSortKey(t.artist);
@@ -1921,28 +1558,13 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
   clearPlayHistory() {
     this._db.prepare('DELETE FROM play_history').run();
-    // 外部文件的历史一并清空（它们本来就只被历史引用）
     try {
       this._db.prepare('DELETE FROM external_plays').run();
       this._db.prepare('DELETE FROM external_tracks').run();
-    } catch { /* 旧库升级前的容错 */ }
+    } catch {  }
   }
 
-  // ── Metadata backfill (async, called after init) ────────────────────────
 
-  /**
-   * 单次遍历回填 genre 与 alias_title（合并自原 backfillGenres /
-   * backfillAliasTitles —— 两者并发跑会把同一文件解析两遍）。
-   *
-   * 约定：NULL = 尚未检查过；'' = 已解析确认无该字段（负标记）。
-   * 负标记让本方法在后续启动中退化为一次空 SELECT —— 修复旧版对
-   * 无 genre 曲目每次启动重复 parseFile 全库、长时间占用主进程
-   * 事件循环导致 audio_output IPC 延迟（播放卡顿）的问题。
-   *
-   * 后台节流执行：BACKFILL_PARSE_PARALLEL 路并发解析 + 事务批量写
-   * （SCAN_FLUSH_SIZE 条一批），每 16 首让出事件循环。
-   * @returns {Promise<number>} 实际写库的曲目数（0 = 无需回填）
-   */
   async backfillMetadata() {
     const rows = this._db.prepare(
       "SELECT id, path, genre, alias_title FROM tracks WHERE (genre IS NULL OR alias_title IS NULL) AND source IS NULL"
@@ -1951,7 +1573,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     const parseFile = await _ensureParseFile();
     if (!parseFile) return 0;
 
-    // COALESCE(?, field)：参数传 null 表示保留原值（该字段本就不缺，不覆盖）
     const updateTx = this._db.transaction((updates) => {
       const stmt = this._db.prepare(
         'UPDATE tracks SET genre=COALESCE(?, genre), alias_title=COALESCE(?, alias_title) WHERE id=?'
@@ -1979,14 +1600,12 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
             aliasVal = alias || '';
           }
         } catch {
-          // 文件缺失/损坏/被锁：不写负标记，保留 NULL 下次启动重试（罕见路径）
         }
         if (genreVal !== null || aliasVal !== null) {
           pending.push({ id: row.id, genre: genreVal, alias: aliasVal });
           if (pending.length >= SCAN_FLUSH_SIZE) updateTx(pending.splice(0));
           updated++;
         }
-        // 周期性让出事件循环：回填期间 audio_output IPC 仍能被及时处理
         if ((i & 15) === 15) await new Promise((r) => setImmediate(r));
       }
     };
@@ -1998,25 +1617,20 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return updated;
   }
 
-  // ── Play statistics ──────────────────────────────────────────────────────
 
   getPlayStats() {
     const db = this._db;
 
-    // 总播放次数
     const totalPlays = db.prepare('SELECT COUNT(*) AS c FROM play_history').get().c;
 
-    // 唯一曲目数
     const uniqueTracks = db.prepare('SELECT COUNT(DISTINCT track_id) AS c FROM play_history').get().c;
 
-    // 总播放时长（每次播放的曲目时长之和）
     const totalDurationRow = db.prepare(
       `SELECT COALESCE(SUM(t.duration_ms), 0) AS d
        FROM play_history h JOIN tracks t ON t.id = h.track_id`
     ).get();
     const totalDurationMs = totalDurationRow ? totalDurationRow.d : 0;
 
-    // 最近 7 天每日播放数
     const sevenDaysAgo = (Date.now() / 1000) - (7 * 24 * 3600);
     const dailyRows = db.prepare(
       `SELECT date(h.played_at, 'unixepoch', 'localtime') AS day, COUNT(*) AS c
@@ -2026,7 +1640,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     ).all(sevenDaysAgo);
     const dailyActivity = dailyRows.map(r => ({ day: r.day, count: r.c }));
 
-    // Top 5 艺术家（按播放次数）
     const topArtists = db.prepare(
       `SELECT t.artist AS name, COUNT(*) AS play_count, COUNT(DISTINCT t.id) AS track_count
        FROM play_history h JOIN tracks t ON t.id = h.track_id
@@ -2034,7 +1647,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
        GROUP BY t.artist ORDER BY play_count DESC LIMIT 5`
     ).all();
 
-    // Top 5 专辑（按播放次数）
     const topAlbums = db.prepare(
       `SELECT t.album AS name, t.album_artist AS artist, COUNT(*) AS play_count, COUNT(DISTINCT t.id) AS track_count
        FROM play_history h JOIN tracks t ON t.id = h.track_id
@@ -2042,7 +1654,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
        GROUP BY t.album ORDER BY play_count DESC LIMIT 5`
     ).all();
 
-    // 最近播放时间
     const lastPlayedRow = db.prepare(
       'SELECT MAX(played_at) AS t FROM play_history'
     ).get();
@@ -2059,14 +1670,12 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     };
   }
 
-  // ── Daily Mixes ───────────────────────────────────────────────────────────
 
   getDailyMixes() {
     const db = this._db;
     const mixes = [];
     const { clause, params } = this._dedupExcludeClause();
 
-    // Top 3 艺术家
     const topArtists = db.prepare(
       `SELECT t.artist AS name, COUNT(*) AS play_count
        FROM play_history h JOIN tracks t ON t.id = h.track_id
@@ -2084,7 +1693,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
     }
 
-    // Top 2 流派
     const topGenres = db.prepare(
       `SELECT t.genre AS name, COUNT(*) AS play_count
        FROM play_history h JOIN tracks t ON t.id = h.track_id
@@ -2102,7 +1710,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
     }
 
-    // Top 2 专辑
     const topAlbums = db.prepare(
       `SELECT t.album AS name, t.album_artist AS artist, COUNT(*) AS play_count
        FROM play_history h JOIN tracks t ON t.id = h.track_id
@@ -2120,7 +1727,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
     }
 
-    // 交错排列：artist, genre, album, artist, genre, album, artist
     const byType = { artist: [], genre: [], album: [] };
     for (const m of mixes) byType[m.type].push(m);
     const result = [];
@@ -2134,18 +1740,15 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return result;
   }
 
-  // ── Explore: 尚未播放过的曲目推荐 ──────────────────────────────────────────
 
   getExploreTracks() {
     const db = this._db;
     const { clause, params } = this._dedupExcludeClause();
 
-    // 获取已播放过的 track ID 集合
     const playedIds = new Set(
       db.prepare('SELECT DISTINCT track_id FROM play_history').all().map(r => r.track_id)
     );
 
-    // 获取用户最常听的流派（用于优先推荐同流派新曲目）
     const topGenres = db.prepare(
       `SELECT t.genre AS name, COUNT(*) AS play_count
        FROM play_history h JOIN tracks t ON t.id = h.track_id
@@ -2153,7 +1756,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
        GROUP BY t.genre ORDER BY play_count DESC LIMIT 5`
     ).all().map(r => r.name);
 
-    // 获取用户最常听的艺术家（用于优先推荐同艺术家新曲目）
     const topArtists = db.prepare(
       `SELECT t.artist AS name, COUNT(*) AS play_count
        FROM play_history h JOIN tracks t ON t.id = h.track_id
@@ -2161,7 +1763,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
        GROUP BY t.artist ORDER BY play_count DESC LIMIT 5`
     ).all().map(r => r.name);
 
-    // 从未播放过的曲目，优先从喜爱流派/艺术家中选取
     const allTracks = db.prepare(
       `SELECT * FROM tracks WHERE 1=1${clause} ORDER BY added_at DESC LIMIT 500`
     ).all(...params);
@@ -2169,7 +1770,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     const result = [];
     const seen = new Set();
 
-    // 1. 优先：同流派 + 同艺术家，但未播放过
     for (const t of allTracks) {
       if (playedIds.has(t.id) || seen.has(t.id)) continue;
       if (t.genre && topGenres.includes(t.genre) && t.artist && topArtists.includes(t.artist)) {
@@ -2179,7 +1779,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
     }
 
-    // 2. 同流派，未播放过
     if (result.length < 25) {
       for (const t of allTracks) {
         if (playedIds.has(t.id) || seen.has(t.id)) continue;
@@ -2191,7 +1790,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
     }
 
-    // 3. 同艺术家，未播放过
     if (result.length < 25) {
       for (const t of allTracks) {
         if (playedIds.has(t.id) || seen.has(t.id)) continue;
@@ -2203,7 +1801,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
     }
 
-    // 4. 补齐：随机未播放过的曲目
     if (result.length < 25) {
       for (const t of allTracks) {
         if (playedIds.has(t.id) || seen.has(t.id)) continue;
@@ -2213,7 +1810,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
     }
 
-    // 如果仍然不足（库太小），用随机已播放但不同版本的曲目补
     if (result.length < 10) {
       for (const t of allTracks) {
         if (seen.has(t.id)) continue;
@@ -2234,13 +1830,11 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     };
   }
 
-  // ── Similar Recommendations: 基于流派相似的新推荐歌单 ──────────────────────
 
   getSimilarRecommendations() {
     const db = this._db;
     const { clause, params } = this._dedupExcludeClause();
 
-    // 获取用户听过的所有流派（按播放次数排序）
     const listenedGenres = db.prepare(
       `SELECT t.genre AS name, COUNT(*) AS play_count
        FROM play_history h JOIN tracks t ON t.id = h.track_id
@@ -2250,19 +1844,15 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
     if (listenedGenres.length === 0) return [];
 
-    // 获取用户已播放的 track ID 集合
     const playedIds = new Set(
       db.prepare('SELECT DISTINCT track_id FROM play_history').all().map(r => r.track_id)
     );
 
     const result = [];
 
-    // 为每个已听流派找到"相似流派"——这里简化为：同流派中未听过的曲目 + 相邻流派
-    // 每个流派生成一个推荐歌单
-    const topGenres = listenedGenres.slice(0, 4); // 最多 4 个推荐歌单
+    const topGenres = listenedGenres.slice(0, 4);
 
     for (const g of topGenres) {
-      // 同流派中未播放过的曲目
       const tracks = db.prepare(
         `SELECT * FROM tracks WHERE genre = ?${clause}
          ORDER BY added_at DESC LIMIT 50`
@@ -2271,7 +1861,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       const newTracks = tracks.filter(t => !playedIds.has(t.id));
 
       if (newTracks.length >= 3) {
-        // 取前 25 首
         const selected = newTracks.slice(0, 25);
         for (const t of selected) {
           t.artists = this._splitArtists(t.artist);
@@ -2284,7 +1873,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
           tracks: selected,
         });
       } else if (tracks.length >= 3) {
-        // 不够未播放的，混入已播放的
         const mixed = [...newTracks, ...tracks.filter(t => playedIds.has(t.id))].slice(0, 25);
         for (const t of mixed) {
           t.artists = this._splitArtists(t.artist);
@@ -2302,7 +1890,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return result;
   }
 
-  // ── Playlists ─────────────────────────────────────────────────────────────
 
   getPlaylists() {
     return this._db.prepare(
@@ -2354,8 +1941,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
   addTracksToPlaylist(playlistId, trackIds) {
     if (!trackIds || trackIds.length === 0) return 0;
-    // 过滤掉不在库内的 id（如拖入播放的外部文件）：playlist_tracks.track_id
-    // 外键指向 tracks(id)，写进去会直接抛约束错误。
     const ownStmt = this._db.prepare('SELECT 1 FROM tracks WHERE id=?');
     trackIds = trackIds.filter((tid) => {
       try { return !!ownStmt.get(tid); } catch { return false; }
@@ -2386,7 +1971,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     this._db.prepare(
       'DELETE FROM playlist_tracks WHERE playlist_id=? AND track_id=?'
     ).run(playlistId, trackId);
-    // 重新整理 position
     const rows = this._db.prepare(
       'SELECT track_id FROM playlist_tracks WHERE playlist_id=? ORDER BY position'
     ).all(playlistId);
@@ -2416,7 +2000,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return rows;
   }
 
-  // 返回 { playlistId: [trackId, ...] } 映射，用于前端排除筛选
   getAllPlaylistTrackIds() {
     const rows = this._db.prepare(
       `SELECT playlist_id, track_id FROM playlist_tracks`
@@ -2430,11 +2013,8 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return map;
   }
 
-  // ── Subsonic sources ─────────────────────────────────────────────────────
 
-  // Remote methods to be added
 
-  // Remote Playlists (Subsonic)
 
   importRemotePlaylist(serverId, remoteId, name, remoteChanged, coverArtId, owner) {
     const now = Date.now() / 1000;
@@ -2488,7 +2068,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     this._db.prepare("DELETE FROM playlists WHERE source='subsonic' AND server_id=?").run(sid);
   }
 
-  // 返回某服务器下已有远程歌单的 {id, remote_id} 列表，用于同步 diff
   listRemotePlaylists(serverId) {
     return this._db.prepare(
       "SELECT id, remote_id FROM playlists WHERE source='subsonic' AND server_id=?"
@@ -2501,13 +2080,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     ).get(parseInt(playlistId, 10)) || null;
   }
 
-  /**
-   * 将本地 track ID 列表中属于指定 Subsonic 服务器的曲目映射为 Subsonic 服务器端 ID。
-   * 不属于该服务器的曲目会被跳过（本地曲目或其他服务器的曲目）。
-   * @param {string[]} trackIds - 本地 track ID 列表
-   * @param {number} serverId - Subsonic 服务器 ID
-   * @returns {{subsonicIds: string[], skipped: string[]}}
-   */
   getSubsonicTrackIds(trackIds, serverId) {
     const sid = parseInt(serverId, 10);
     const subsonicIds = [];
@@ -2525,7 +2097,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return { subsonicIds, skipped };
   }
 
-  // Cover colors
   storeCoverColors(trackId, colorsJson) {
     this._db.prepare('INSERT OR REPLACE INTO cover_colors (track_id, colors) VALUES (?,?)').run(trackId, colorsJson);
   }
@@ -2565,20 +2136,17 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     const sid = parseInt(serverId, 10);
     this.removeRemotePlaylistsForServer(sid);
     this._deleteTracksByCondition('server_id=?', sid);
-    // 兜底：删除 server_id 为 NULL 但来源为 subsonic 且路径匹配的遗留曲目
     this._deleteTracksByCondition(
       "server_id IS NULL AND source='subsonic' AND path LIKE ?",
       `subsonic://${sid}/%`
     );
     this._db.prepare('DELETE FROM subsonic_sources WHERE id=?').run(sid);
-    // 清理封面缓存目录
     try {
       const cacheDir = path.join(this._subsonicCoverCacheDir(), String(sid));
       if (fs.existsSync(cacheDir)) {
         fs.rmSync(cacheDir, { recursive: true, force: true });
       }
     } catch {
-      // ignore
     }
   }
 
@@ -2625,7 +2193,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     ).get(parseInt(serverId, 10)) || null;
   }
 
-  // ── Subsonic 曲目索引 ───────────────────────────────────────────────────
 
   deleteSubsonicTracks(serverId) {
     this._deleteTracksByCondition('server_id=?', parseInt(serverId, 10));
@@ -2655,7 +2222,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       const tid = subsonicTrackId(serverIdInt, subId);
       const existed = this._db.prepare('SELECT 1 FROM tracks WHERE id=? LIMIT 1').get(tid) !== undefined;
       if (!existed) {
-        // 新曲目：使用 INSERT OR IGNORE（不触发级联删除）
         insertStmt.run(
           tid, `subsonic://${serverIdInt}/${subId}`, null,
           s.title, s.artist, s.album, s.album_artist,
@@ -2666,8 +2232,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
         );
         inserted++;
       } else {
-        // 已存在曲目：使用 UPDATE，避免 INSERT OR REPLACE 触发级联删除
-        // 保留 liked_tracks / play_history / playlist_tracks 关联数据
         updateStmt.run(
           s.title, s.artist, s.album, s.album_artist,
           s.track_number, s.disc_number, s.year, s.duration_ms, s.size || 0,
@@ -2680,13 +2244,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return inserted;
   }
 
-  /**
-   * 删除指定 Subsonic 服务器中不再存在于服务器端的曲目（增量清理）。
-   * 与 deleteSubsonicTracks（全删重建）不同，此方法仅删除真正消失的曲目，
-   * 保留仍然存在曲目的 liked_tracks / play_history / playlist_tracks 关联数据。
-   * @param {number} serverId - Subsonic 服务器 ID
-   * @param {Set<string>} liveSubIds - 服务器端仍存在的 subsonic_id 集合
-   */
   deleteStaleSubsonicTracks(serverId, liveSubIds) {
     const serverIdInt = parseInt(serverId, 10);
     const rows = this._db.prepare(
@@ -2706,24 +2263,15 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return staleIds.length;
   }
 
-  /**
-   * 删除满足条件的曲目及其所有关联数据（收藏、播放历史、歌单引用）。
-   * 不依赖外键级联，确保数据一致性。
-   * @param {string} where - SQL WHERE 子句（不含 WHERE 关键字）
-   * @param  {...any} params - 绑定参数
-   */
   _deleteTracksByCondition(where, ...params) {
     const tx = this._db.transaction(() => {
-      // 收集待删除的 track ID
       const ids = this._db.prepare(`SELECT id FROM tracks WHERE ${where}`).all(...params).map((r) => r.id);
       if (ids.length === 0) return;
 
       const placeholders = ids.map(() => '?').join(',');
-      // 删除关联数据
       this._db.prepare(`DELETE FROM liked_tracks WHERE track_id IN (${placeholders})`).run(...ids);
       this._db.prepare(`DELETE FROM play_history WHERE track_id IN (${placeholders})`).run(...ids);
       this._db.prepare(`DELETE FROM playlist_tracks WHERE track_id IN (${placeholders})`).run(...ids);
-      // 删除曲目
       this._db.prepare(`DELETE FROM tracks WHERE id IN (${placeholders})`).run(...ids);
     });
     tx();
@@ -2731,10 +2279,8 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
   }
 
   commit() {
-    // better-sqlite3 is auto-commit per statement; no-op for compatibility
   }
 
-  // ── Subsonic 服务器侧资源获取 ───────────────────────────────────────────
 
   getSubsonicServerForTrack(trackId) {
     if (!trackId || !trackId.startsWith('s')) return null;
@@ -2773,11 +2319,9 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     if (!coverId) coverId = subId;
     if (!coverId) return null;
 
-    // 1) 本地缓存命中
     const cached = this.readSubsonicCoverCache(serverId, coverId);
     if (cached) return cached;
 
-    // 2) 缓存未命中：代理获取
     const cfg = this.getSubsonicServer(serverId);
     if (!cfg) return null;
 
@@ -2797,15 +2341,12 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     }
   }
 
-  // ── Subsonic 封面本地缓存 ────────────────────────────────────────────────
 
   _subsonicCoverCacheDir() {
     return path.join(this._settings.dataDir, 'subsonic_covers');
   }
 
   getSubsonicCoverCachePath(serverId, coverId, size) {
-    // size 不同时使用独立的缓存文件，避免不同尺寸互相覆盖；
-    // 不传 size 时保持原有哈希（向后兼容旧缓存）。
     const s = (size && size !== 'max' && size !== 'original') ? (coverId + ':' + size) : coverId;
     const safe = crypto.createHash('sha1').update(s, 'utf-8').digest('hex');
     return path.join(this._subsonicCoverCacheDir(), String(parseInt(serverId, 10)), `${safe}.bin`);
@@ -2823,11 +2364,9 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       fs.mkdirSync(path.dirname(p), { recursive: true });
       fs.writeFileSync(p, data);
     } catch {
-      // ignore
     }
   }
 
-  // ── WebDAV 服务器管理 ─────────────────────────────────────────────────────
 
   addWebDAVServer(name, serverUrl, username, password) {
     const now = Date.now() / 1000;
@@ -2847,7 +2386,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
   removeWebDAVServer(serverId) {
     const sid = parseInt(serverId, 10);
-    // 删除该服务器下所有曲目
     this._deleteTracksByCondition("source='webdav' AND server_id=?", sid);
     this._db.prepare('DELETE FROM webdav_sources WHERE id=?').run(sid);
   }
@@ -2894,11 +2432,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     ).get(parseInt(serverId, 10)) || null;
   }
 
-  // ── WebDAV 曲目索引 ───────────────────────────────────────────────────────
 
-  /**
-   * WebDAV 曲目 ID 格式: w<serverId>_<sha1(relativePath)>
-   */
   upsertWebDAVTrack(serverId, relativePath, href, meta) {
     const serverIdInt = parseInt(serverId, 10);
     const crypto = require('crypto');
@@ -2962,7 +2496,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     ).all(serverIdInt);
     const staleIds = [];
     for (const row of rows) {
-      // 从 path (webdav://<serverId><relativePath>) 提取 relativePath
       const prefix = `webdav://${serverIdInt}`;
       let relPath = row.path;
       if (row.path && row.path.startsWith(prefix)) {
@@ -2980,7 +2513,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return staleIds.length;
   }
 
-  // ── SMB 服务器管理 ─────────────────────────────────────────────────────────
 
   addSMBServer(name, host, shareName, username, password, domain = '') {
     const now = Date.now() / 1000;
@@ -3002,7 +2534,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
   removeSMBServer(serverId) {
     const sid = parseInt(serverId, 10);
-    // 删除该服务器下所有 SMB 曲目
     this._deleteTracksByCondition("source='smb' AND server_id=?", sid);
     this._db.prepare('DELETE FROM smb_sources WHERE id=?').run(sid);
   }
@@ -3051,12 +2582,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     ).get(parseInt(serverId, 10)) || null;
   }
 
-  // ── SMB 曲目管理 ──────────────────────────────────────────────────────────
 
-  /**
-   * 将指定文件夹下的所有曲目标记为 SMB 来源。
-   * 在 SMB 挂载并扫描完成后调用。
-   */
   markTracksAsSmb(folderId, serverId) {
     const serverIdInt = parseInt(serverId, 10);
     this._db.prepare(
@@ -3065,19 +2591,12 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     this._invalidateDedupCache();
   }
 
-  /**
-   * 返回指定文件夹下的所有曲目。
-   */
   getTracksByFolder(folderId) {
     return this._db.prepare('SELECT * FROM tracks WHERE folder_id=?').all(folderId);
   }
 
-  /**
-   * 获取 SMB 服务器配置（供 player 解析路径使用）。
-   */
   getSMBServerForTrack(trackId) {
     if (!trackId || !trackId.startsWith('s')) {
-      // SMB 曲目 ID 以 s 开头（因为使用 trackId() 函数），需要通过 server_id 查找
     }
     return this._db.prepare(
       `SELECT src.* FROM smb_sources src
@@ -3086,12 +2605,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     ).get(trackId) || null;
   }
 
-  // ── 统一远程服务器查询 ──────────────────────────────────────────────────────
 
-  /**
-   * 获取所有远程服务器（Subsonic + WebDAV + SMB），统一格式。
-   * 每条包含 type 字段 ('subsonic' | 'webdav' | 'smb')。
-   */
   getAllRemoteServers() {
     const subsonic = this._db.prepare(
       `SELECT id, name, server_url, username, added_at, last_sync,
@@ -3113,7 +2627,6 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
        FROM smb_sources ORDER BY added_at`
     ).all();
 
-    // SMB server_url 人工拼接
     for (const s of smb) {
       s.server_url = `\\\\${s.host}\\${s.share_name}`;
     }
@@ -3124,24 +2637,19 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
   close() {
     if (this._closed) return;
     this._closed = true;
-    try { this._db.close(); } catch { /* ignore */ }
+    try { this._db.close(); } catch {  }
   }
 }
 
-// ── 同步封面提取辅助函数 ─────────────────────────────────────────────────────
-// 由于 better-sqlite3 是同步的，但 music-metadata 是异步的，
-// 我们需要同步的方式从音频文件中提取封面。
 
 function _extractMp3Cover(buf) {
-  // ID3v2 标签解析
   if (buf.length < 10) return null;
-  if (buf[0] !== 0x49 || buf[1] !== 0x44 || buf[2] !== 0x33) return null; // 'ID3'
+  if (buf[0] !== 0x49 || buf[1] !== 0x44 || buf[2] !== 0x33) return null;
 
   const version = buf[3];
   const flags = buf[5];
   let headerSize = 10;
 
-  // 同步安全整数
   function readSyncSafe(offset) {
     return (
       (buf[offset] & 0x7f) * 0x200000 +
@@ -3174,19 +2682,14 @@ function _extractMp3Cover(buf) {
     if (frameSize <= 0 || frameDataStart + frameSize > buf.length) break;
 
     if (frameId === 'APIC') {
-      // APIC frame: encoding(1) + mime(0-terminated) + pictureType(1) + description + data
       let offset = frameDataStart;
       const encoding = buf[offset++];
-      // MIME type (null-terminated ASCII)
       let mimeEnd = offset;
       while (mimeEnd < frameDataStart + frameSize && buf[mimeEnd] !== 0) mimeEnd++;
       offset = mimeEnd + 1;
-      // Picture type (1 byte)
       if (offset >= frameDataStart + frameSize) break;
-      offset++; // skip picture type
-      // Description (encoding-dependent, null-terminated)
+      offset++;
       if (encoding === 1 || encoding === 2) {
-        // UTF-16: null-terminated with 2 bytes
         while (offset < frameDataStart + frameSize - 1) {
           if (buf[offset] === 0 && buf[offset + 1] === 0) { offset += 2; break; }
           offset += 2;
@@ -3195,7 +2698,6 @@ function _extractMp3Cover(buf) {
         while (offset < frameDataStart + frameSize && buf[offset] !== 0) offset++;
         offset++;
       }
-      // Rest is picture data
       const picData = buf.slice(offset, frameDataStart + frameSize);
       if (picData.length > 0) return picData;
     }
@@ -3205,7 +2707,6 @@ function _extractMp3Cover(buf) {
 }
 
 function _extractFlacCover(buf) {
-  // FLAC: 'fLaC' + metadata blocks
   if (buf.length < 4) return null;
   if (buf[0] !== 0x66 || buf[1] !== 0x4c || buf[2] !== 0x61 || buf[3] !== 0x43) return null;
 
@@ -3217,16 +2718,14 @@ function _extractFlacCover(buf) {
     pos += 4;
 
     if (blockType === 6) {
-      // PICTURE block
       if (pos + blockLength > buf.length) return null;
-      // pictureType(4) + mimeLen(4) + mime + descLen(4) + desc + width(4) + height(4) + colorDepth(4) + colors(4) + dataLen(4) + data
       let offset = pos;
-      offset += 4; // picture type
+      offset += 4;
       const mimeLen = buf.readUInt32BE(offset);
       offset += 4 + mimeLen;
       const descLen = buf.readUInt32BE(offset);
       offset += 4 + descLen;
-      offset += 16; // width, height, colorDepth, colors
+      offset += 16;
       const dataLen = buf.readUInt32BE(offset);
       offset += 4;
       if (offset + dataLen > buf.length) return null;
@@ -3240,7 +2739,6 @@ function _extractFlacCover(buf) {
 }
 
 function _extractMp4Cover(buf) {
-  // MP4/M4A: find 'covr' atom
   function findAtom(data, start, end, targetName) {
     let pos = start;
     while (pos < end - 8) {
@@ -3253,7 +2751,6 @@ function _extractMp4Cover(buf) {
     return -1;
   }
 
-  // 递归搜索 ilst/covr
   function searchCovr(data, start, end, depth) {
     if (depth > 6) return null;
     let pos = start;
@@ -3262,23 +2759,17 @@ function _extractMp4Cover(buf) {
       const name = data.toString('ascii', pos + 4, pos + 8);
       if (size < 8 || pos + size > end) break;
       if (name === 'covr') {
-        // covr atom: size(4) + 'covr'(4) + data
-        // data format: 4 bytes flags (version + flags), then picture data
         const dataStart = pos + 8;
         const dataEnd = pos + size;
-        // Check for nested 'data' atom
         const dataAtomPos = findAtom(data, dataStart, dataEnd, 'data');
         if (dataAtomPos >= 0) {
           const dataSize = data.readUInt32BE(dataAtomPos);
-          // data atom: size(4) + 'data'(4) + flags(4) + reserved(4) + data
           const picStart = dataAtomPos + 16;
           const picEnd = dataAtomPos + dataSize;
           if (picEnd <= data.length) return data.slice(picStart, picEnd);
         }
-        // Fallback: raw data after 'covr'
         return data.slice(dataStart, dataEnd);
       }
-      // Recurse into container atoms
       if (['moov', 'trak', 'mdia', 'minf', 'stbl', 'udta', 'meta', 'ilst'].includes(name)) {
         const innerStart = name === 'meta' ? pos + 12 : pos + 8;
         const innerEnd = pos + size;
@@ -3294,29 +2785,25 @@ function _extractMp4Cover(buf) {
 }
 
 function _extractOggCover(buf) {
-  // OGG/Opus: look for metadata_block_picture in base64
   const str = buf.toString('latin1');
   const marker = 'metadata_block_picture=';
   const idx = str.indexOf(marker);
   if (idx < 0) return null;
 
-  // Extract base64 until newline or null
   let end = idx + marker.length;
   while (end < str.length && str[end] !== '\n' && str[end] !== '\r' && str[end] !== '\0') end++;
   const b64 = str.slice(idx + marker.length, end);
 
   try {
     const decoded = Buffer.from(b64, 'base64');
-    // FLAC Picture structure in OGG
-    // pictureType(4) + mimeLen(4) + mime + descLen(4) + desc + width(4) + height(4) + colorDepth(4) + colors(4) + dataLen(4) + data
     if (decoded.length < 32) return null;
     let offset = 0;
-    offset += 4; // picture type
+    offset += 4;
     const mimeLen = decoded.readUInt32BE(offset);
     offset += 4 + mimeLen;
     const descLen = decoded.readUInt32BE(offset);
     offset += 4 + descLen;
-    offset += 16; // width, height, colorDepth, colors
+    offset += 16;
     const dataLen = decoded.readUInt32BE(offset);
     offset += 4;
     if (offset + dataLen > decoded.length) return null;

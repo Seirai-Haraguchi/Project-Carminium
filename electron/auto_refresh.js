@@ -1,33 +1,21 @@
-/**
- * Carminium — 库自动刷新
- *
- * 本地库：FileWatcher（fs.watch）+ 分层增量扫描
- *   fs 事件去抖聚合 → L1 数量比对 → L2 路径 diff → L2b 精确大小校验 → L3 差异元数据
- *   （扫描本体在 library.js 的 syncFolderIncremental，本模块负责监控与调度）
- * 远程库：RemoteSyncScheduler 定期 re-sync Subsonic 服务器，刷新本地缓存数据库
- */
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 const { SUPPORTED_EXT } = require('./library');
 
-// FileWatcher 事件最长聚合窗口：持续写入（如拷贝整张专辑）时最多攒 15s 就触发一次
 const MAX_BATCH_MS = 15000;
 
 class LibraryWatcher {
-  /**
-   * @param {import('./library').MusicLibrary} library
-   * @param {import('./settings').AppSettings} settings
-   * @param {{onChanged?: (folderPath: string, stats: object) => void}} [callbacks]
-   */
   constructor(library, settings, callbacks = {}) {
     this._lib = library;
     this._settings = settings;
     this._onChanged = callbacks.onChanged || (() => {});
-    this._watchers = new Map();   // folderPath → fs.FSWatcher[]
-    this._pending = new Map();    // folderPath → { timer, maxTimer, changedFiles: Set<string> }
-    this._scanState = new Map();  // folderPath → { running: boolean, queued: object|null }
+    // 扫描走外部注入的函数（工作线程）；未注入时退回主进程内同步扫描
+    this._scanFn = callbacks.scan || ((p, opts) => this._lib.syncFolderIncremental(p, opts));
+    this._watchers = new Map();
+    this._pending = new Map();
+    this._scanState = new Map();
     this._pollTimer = null;
     this._startupTimers = [];
     this._closed = false;
@@ -44,8 +32,6 @@ class LibraryWatcher {
     }
     this.syncFolders();
 
-    // 启动后对所有文件夹做一次分层校验，补上应用关闭期间的变动
-    // （错峰执行，避免启动卡顿）
     let delay = 3000;
     for (const f of this._lib.getFolders()) {
       const t = setTimeout(() => {
@@ -55,7 +41,6 @@ class LibraryWatcher {
       delay += 2000;
     }
 
-    // 轮询兜底：网络驱动器 / 部分场景下 fs.watch 可能丢事件
     const pollMin = parseInt(this._settings.get('library_watch_poll_minutes', 10), 10) || 0;
     if (pollMin > 0) {
       this._pollTimer = setInterval(() => {
@@ -82,10 +67,6 @@ class LibraryWatcher {
     this._pending.clear();
   }
 
-  /**
-   * 根据 DB 中的文件夹列表增量重建 watcher（add/remove_folder 后调用）。
-   * 新增文件夹开始监控，移除的文件夹停止监控，未变化的保持不动。
-   */
   syncFolders() {
     if (!this._enabled || this._closed) return;
     const wanted = new Set(this._lib.getFolders().map((f) => f.path));
@@ -109,14 +90,13 @@ class LibraryWatcher {
       });
       watchers.push(w);
     } catch (e) {
-      // recursive 在当前平台不可用：退化为逐目录监控
       console.warn(`[auto-refresh] recursive watch 不可用，退化为逐目录监控: ${folderPath}:`, e.message);
       for (const dir of this._collectDirs(folderPath)) {
         try {
           const w = fs.watch(dir, onEvent);
-          w.on('error', () => { /* 单目录 watcher 错误不致命 */ });
+          w.on('error', () => {  });
           watchers.push(w);
-        } catch { /* ignore */ }
+        } catch {  }
       }
     }
     if (watchers.length > 0) {
@@ -146,7 +126,7 @@ class LibraryWatcher {
   _unwatch(folderPath) {
     const ws = this._watchers.get(folderPath);
     if (ws) {
-      for (const w of ws) { try { w.close(); } catch { /* ignore */ } }
+      for (const w of ws) { try { w.close(); } catch {  } }
       this._watchers.delete(folderPath);
     }
     const p = this._pending.get(folderPath);
@@ -180,7 +160,6 @@ class LibraryWatcher {
     if (p.maxTimer) clearTimeout(p.maxTimer);
     this._pending.delete(folderPath);
 
-    // 筛出受支持音频文件的绝对路径，用于 L2b 精确大小校验（检测同路径内容变动）
     const sizeCheckPaths = [];
     for (const rel of p.changedFiles) {
       if (SUPPORTED_EXT.has(path.extname(rel).toLowerCase())) {
@@ -192,7 +171,6 @@ class LibraryWatcher {
 
   async _checkFolder(folderPath, { reason, sizeCheckPaths = null } = {}) {
     if (this._closed) return;
-    // 同一文件夹的扫描串行化：运行中则排队最新一次请求
     const state = this._scanState.get(folderPath);
     if (state && state.running) {
       state.queued = { reason, sizeCheckPaths };
@@ -200,7 +178,7 @@ class LibraryWatcher {
     }
     this._scanState.set(folderPath, { running: true, queued: null });
     try {
-      const stats = await this._lib.syncFolderIncremental(folderPath, { sizeCheckPaths });
+      const stats = await this._scanFn(folderPath, { sizeCheckPaths });
       if (stats && stats.changed) {
         console.log(
           `[auto-refresh] (${reason}) ${folderPath}: ` +
@@ -221,11 +199,6 @@ class LibraryWatcher {
 }
 
 class RemoteSyncScheduler {
-  /**
-   * @param {import('./library').MusicLibrary} library
-   * @param {import('./settings').AppSettings} settings
-   * @param {(serverId: number) => any} syncFn - 触发单次同步（实现需自带防重入）
-   */
   constructor(library, settings, syncFn) {
     this._lib = library;
     this._settings = settings;
@@ -254,7 +227,6 @@ class RemoteSyncScheduler {
       return;
     }
 
-    // 启动补偿：last_sync 已超过一个间隔的服务器先补一次同步
     this._startupTimer = setTimeout(() => {
       if (this._closed) return;
       const cutoff = Date.now() / 1000 - intervalMin * 60;
@@ -282,9 +254,8 @@ class RemoteSyncScheduler {
     try {
       const result = this._syncFn(serverId);
       let msg = null;
-      try { msg = (typeof result === 'string') ? JSON.parse(result) : result; } catch { /* ignore */ }
+      try { msg = (typeof result === 'string') ? JSON.parse(result) : result; } catch {  }
       if (msg && msg.ok === false) {
-        // 通常是"该服务器正在同步中"（手动同步正在进行），跳过即可
         console.log(`[auto-refresh] 远程库 #${serverId} (${reason}) 跳过: ${msg.error}`);
       } else {
         console.log(`[auto-refresh] 远程库 #${serverId} (${reason}) re-sync 已开始`);

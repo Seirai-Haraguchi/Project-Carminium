@@ -1,12 +1,3 @@
-/**
- * Carminium — 浮动窗口精简 i18n（自动生成，请勿手改）
- *
- * ⚠️ 由 scripts/gen_floating_i18n.js 生成。新增键后重跑：
- *      node scripts/gen_floating_i18n.js
- *
- * 只包含浮动窗用到的键（35 个 × 5 语言），
- * 用于替换 209KB 的完整 i18n.js。API 与 App.i18n 兼容。
- */
 (function () {
   'use strict';
 
@@ -205,7 +196,6 @@
     }
   };
 
-  /** 翻译键 → 当前语言文本；缺失时回退 zh-CN，再回退到键本身 */
   function t(key, params) {
     var dict = STRINGS[_currentLang] || STRINGS[DEFAULT_LANG];
     var text = dict[key];
@@ -229,7 +219,7 @@
     if (changed) {
       applyToDOM();
       for (var i = 0; i < _listeners.length; i++) {
-        try { _listeners[i](lang); } catch (e) { /* ignore */ }
+        try { _listeners[i](lang); } catch (e) {  }
       }
     }
   }

@@ -1,9 +1,3 @@
-/**
- * Carminium — Subsonic / OpenSubsonic API 客户端
- *
- * 实现 Subsonic API 1.16 与 OpenSubsonic 扩展的子集。
- * 认证方式：salt + token-md5
- */
 'use strict';
 
 const crypto = require('crypto');
@@ -15,7 +9,6 @@ const os = require('os');
 
 const CLIENT_NAME = 'Carminium';
 
-// Subsonic API error code → 含义
 const ERROR_CODES = {
   0: 'generic error',
   10: 'missing required parameter',
@@ -36,7 +29,6 @@ class SubsonicError extends Error {
   }
 }
 
-// ── HTTP 请求辅助 ────────────────────────────────────────────────────────────
 
 function _decompressBody(body, encoding) {
   if (!encoding) return body;
@@ -95,7 +87,6 @@ async function _httpRequest(urlStr, timeout, maxRedirects = 5) {
       req.end();
     });
     const { body, statusCode, headers } = result;
-    // Follow redirects (301, 302, 303, 307, 308)
     if ([301, 302, 303, 307, 308].includes(statusCode) && headers.location) {
       let newUrl = headers.location;
       if (newUrl.startsWith('/')) {
@@ -152,7 +143,6 @@ async function _httpRequestBinary(urlStr, timeout, maxRedirects = 5) {
       req.end();
     });
     const { body, statusCode, headers } = result;
-    // Follow redirects (301, 302, 303, 307, 308)
     if ([301, 302, 303, 307, 308].includes(statusCode) && headers.location) {
       let newUrl = headers.location;
       if (newUrl.startsWith('/')) {
@@ -169,16 +159,8 @@ async function _httpRequestBinary(urlStr, timeout, maxRedirects = 5) {
   throw new Error('too many redirects');
 }
 
-// ── SubsonicClient ───────────────────────────────────────────────────────────
 
 class SubsonicClient {
-  /**
-   * @param {string} serverUrl
-   * @param {string} username
-   * @param {string} password
-   * @param {string} protocolMode - "subsonic" | "opensubsonic"
-   * @param {number} timeout - seconds
-   */
   constructor(serverUrl, username, password, protocolMode = 'subsonic', timeout = 20.0) {
     let base = serverUrl.replace(/\/+$/, '');
     if (!base.startsWith('http://') && !base.startsWith('https://')) {
@@ -206,7 +188,6 @@ class SubsonicClient {
       f: 'json',
     };
     if (this._usePlainPassword) {
-      // 降级：使用明文密码（某些旧服务器不支持 token 认证）
       params.p = this._password;
     } else {
       const salt = Array.from(crypto.randomBytes(6), (b) =>
@@ -247,7 +228,6 @@ class SubsonicClient {
 
   async _request(endpoint, params = null) {
     let url = this._buildUrl(endpoint, params);
-    // 如果之前已降级到 HTTP，直接使用 HTTP
     if (this._downgradedToHttp && url.startsWith('https://')) {
       url = 'http://' + url.slice(8);
     }
@@ -257,11 +237,9 @@ class SubsonicClient {
       try {
         const { body, statusCode, headers } = await _httpRequest(url, this._timeout);
         if (statusCode >= 400) {
-          // 尝试解析响应体中的 Subsonic 错误信息
           let errBody = '';
           try { errBody = body.toString('utf-8').slice(0, 500); } catch {}
           console.error('[subsonic] HTTP', statusCode, 'for', endpoint, '- body:', errBody);
-          // 403/401 可能是认证方式不兼容，尝试降级到明文密码
           if ((statusCode === 403 || statusCode === 401) && !this._usePlainPassword) {
             this._usePlainPassword = true;
             console.warn('[subsonic] Auth failed (' + statusCode + '), retrying with plain password');
@@ -272,7 +250,6 @@ class SubsonicClient {
             attempt = -1;
             continue;
           }
-          // 尝试解析 JSON 错误
           try {
             const parsed = JSON.parse(body.toString('utf-8'));
             const response = parsed['subsonic-response'] || parsed;
@@ -295,7 +272,6 @@ class SubsonicClient {
           data = _decompressBody(data, contentEncoding);
         }
 
-        // 去除 UTF-8 BOM
         if (data[0] === 0xef && data[1] === 0xbb && data[2] === 0xbf) {
           data = data.slice(3);
         }
@@ -322,7 +298,6 @@ class SubsonicClient {
       } catch (e) {
         if (e instanceof SubsonicError) throw e;
         lastError = e;
-        // 连接失败时（包括 TLS 揦手失败、连接被拒绝等），自动降级 HTTPS → HTTP
         const isConnError = /TLS|socket|ECONNRESET|ECONNREFUSED|EPROTO|disconnected|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/i.test(e.message || '');
         if (url.startsWith('https://') && isConnError && !this._downgradedToHttp) {
           this._downgradedToHttp = true;
@@ -341,7 +316,6 @@ class SubsonicClient {
     throw new SubsonicError(null, `网络错误: ${lastError?.message || '未知错误'}`);
   }
 
-  // ── 公开 API ────────────────────────────────────────────────────────────
 
   async ping() {
     return this._request('ping');
@@ -445,7 +419,6 @@ class SubsonicClient {
     try {
       resp = await this._request('getPlaylist', { id: playlistId });
     } catch (e) {
-      // 空响应时，尝试不带 f=json 参数（某些服务器对此端点有 bug）
       if (/空响应/.test(e.message || '')) {
         console.warn('[subsonic] getPlaylist returned empty, retrying without f=json');
         const url = this._buildUrl('getPlaylist', { id: playlistId });
@@ -453,7 +426,6 @@ class SubsonicClient {
         if (this._downgradedToHttp && httpUrl.startsWith('https://')) {
           httpUrl = 'http://' + httpUrl.slice(8);
         }
-        // 去掉 f=json 参数，让服务器返回默认格式
         httpUrl = httpUrl.replace(/&f=[^&]*/, '');
         const { body, statusCode, headers } = await _httpRequest(httpUrl, this._timeout);
         if (!body || body.length === 0) {
@@ -465,12 +437,10 @@ class SubsonicClient {
           data = _decompressBody(data, contentEncoding);
         }
         const text = data.toString('utf-8').trim();
-        // 尝试 JSON 解析
         try {
           const parsed = JSON.parse(text);
           resp = parsed['subsonic-response'] || parsed;
         } catch {
-          // 如果是 XML，用正则提取基本字段
           console.warn('[subsonic] getPlaylist returned XML, parsing manually');
           const nameMatch = text.match(/<playlist[^>]*name="([^"]*)"/);
           const entries = text.match(/<entry[^>]*>/g) || [];
@@ -517,12 +487,6 @@ class SubsonicClient {
     };
   }
 
-  /**
-   * 获取用户信息（包含 email，用于 Gravatar 头像）。
-   * Subsonic API: getUser
-   * @param {string} username - 用户名（不传则查当前用户）
-   * @returns {Promise<{username, email, adminRole, ...}>}
-   */
   async getUser(username) {
     const params = {};
     if (username) params.username = username;
@@ -559,31 +523,12 @@ class SubsonicClient {
     return this._request('unstar', params);
   }
 
-  /**
-   * 创建远程歌单。
-   * Subsonic API: createPlaylist
-   * @param {string} name - 歌单名
-   * @param {string[]} [songIds] - 初始曲目 Subsonic ID 列表
-   * @returns {Promise<object>}
-   */
   async createPlaylist(name, songIds = []) {
     const params = { name };
     if (songIds.length > 0) params.songId = songIds;
     return this._request('createPlaylist', params);
   }
 
-  /**
-   * 更新远程歌单（添加/移除曲目、改名等）。
-   * Subsonic API: updatePlaylist
-   * @param {string} playlistId - 远程歌单 ID
-   * @param {object} opts
-   * @param {string} [opts.name] - 新名称
-   * @param {string} [opts.comment] - 备注
-   * @param {boolean} [opts.public] - 是否公开
-   * @param {string[]} [opts.songIdsToAdd] - 要添加的 Subsonic 曲目 ID
-   * @param {number[]} [opts.songIndexesToRemove] - 要移除的曲目索引
-   * @returns {Promise<object>}
-   */
   async updatePlaylist(playlistId, opts = {}) {
     const params = { playlistId };
     if (opts.name) params.name = opts.name;
@@ -634,7 +579,6 @@ class SubsonicClient {
     return null;
   }
 
-  // ── 歌词 ────────────────────────────────────────────────────────────────
 
   async getLyricsBySongId(songId) {
     if (!songId) return null;
@@ -647,7 +591,6 @@ class SubsonicClient {
     }
     const lyricsList = resp.lyricsList || {};
 
-    // 1) 同步 structured lyrics
     let structured = lyricsList.structuredLyrics || [];
     if (!Array.isArray(structured)) structured = [structured];
     for (const entry of structured) {
@@ -667,14 +610,12 @@ class SubsonicClient {
       if (lrcLines.length > 0) return lrcLines.join('\n');
     }
 
-    // 2) plain lyrics
     let plain = lyricsList.plainLyrics || [];
     if (!Array.isArray(plain)) plain = [plain];
     for (const entry of plain) {
       if (entry.value) return entry.value;
     }
 
-    // 3) 老式字段兼容
     const lyrics = resp.lyrics || {};
     if (typeof lyrics === 'object') {
       const value = lyrics.value || lyrics.Content;
@@ -700,7 +641,6 @@ class SubsonicClient {
     return null;
   }
 
-  // ── 解析辅助 ────────────────────────────────────────────────────────────
 
   _parseAlbum(a) {
     return {
@@ -737,7 +677,6 @@ class SubsonicClient {
   }
 }
 
-// ── 代理请求（供 CoverServer 调用）────────────────────────────────────────────
 
 async function proxyRequest(serverUrl, username, password, endpoint, params = null, protocolMode = 'subsonic', timeout = 30.0) {
   const client = new SubsonicClient(serverUrl, username, password, protocolMode, timeout);
@@ -779,11 +718,7 @@ async function proxyRequest(serverUrl, username, password, endpoint, params = nu
   throw new SubsonicError(null, '网络错误: 未知错误');
 }
 
-// ── 同步辅助 ──────────────────────────────────────────────────────────────────
 
-/**
- * 并发执行任务，限制并发数。
- */
 async function _mapLimit(items, limit, fn) {
   const results = new Array(items.length);
   let idx = 0;
@@ -798,9 +733,6 @@ async function _mapLimit(items, limit, fn) {
   return results;
 }
 
-/**
- * 拉取 Subsonic 服务器全量曲目并增量写入 library.tracks 表。
- */
 async function syncServerToLibrary(client, library, serverId, options = {}) {
   const {
     prefetchCovers = false,
@@ -832,7 +764,6 @@ async function syncServerToLibrary(client, library, serverId, options = {}) {
         ...extra,
       });
     } catch {
-      // ignore
     }
   }
 
@@ -843,19 +774,11 @@ async function syncServerToLibrary(client, library, serverId, options = {}) {
     try {
       libraryChangedCb();
     } catch {
-      // ignore
     }
   }
 
-  // 1) 不再全删重建！
-  // 旧实现调用 library.deleteSubsonicTracks(serverId) 会级联删除
-  // liked_tracks / play_history / playlist_tracks，导致每次同步后
-  // 「喜欢的音乐」「播放历史」「Your Mix」全部清零。
-  // 现在改为增量 upsert + 同步后清理已消失的曲目（deleteStaleSubsonicTracks）。
-  // 收集服务器端仍存在的 subsonic_id，用于后续增量清理。
   const liveSubIds = new Set();
 
-  // 2) 拉取艺术家列表
   const artists = await client.getArtists();
   if (!artists || artists.length === 0) {
     stats.error = '服务器返回空艺术家列表（库可能为空或权限不足）';
@@ -864,7 +787,6 @@ async function syncServerToLibrary(client, library, serverId, options = {}) {
 
   const concurrency = maxWorkers > 0 ? maxWorkers : os.cpus().length;
 
-  // 阶段1: 并发获取所有艺术家的专辑列表
   const allAlbums = [];
   await _mapLimit(artists, concurrency, async (artist) => {
     try {
@@ -883,7 +805,6 @@ async function syncServerToLibrary(client, library, serverId, options = {}) {
     return stats;
   }
 
-  // 阶段2: 并发获取所有专辑的详细信息（含曲目）
   const albumDetails = [];
   let albumsDone = 0;
   await _mapLimit(allAlbums, concurrency, async (album) => {
@@ -905,19 +826,16 @@ async function syncServerToLibrary(client, library, serverId, options = {}) {
     }
   });
 
-  // 阶段3: 串行写入数据库
   for (const albumDetail of albumDetails) {
     const songs = albumDetail.tracks || [];
     const albumCoverId = albumDetail.cover_art_id;
 
-    // 回填专辑 cover_art_id
     if (albumCoverId) {
       for (const song of songs) {
         if (!song.cover_art_id) song.cover_art_id = albumCoverId;
       }
     }
 
-    // 收集服务器端仍存在的 subsonic_id（用于后续增量清理）
     for (const song of songs) {
       if (song.id) liveSubIds.add(song.id);
     }
@@ -945,11 +863,8 @@ async function syncServerToLibrary(client, library, serverId, options = {}) {
     maybeLibraryChanged(true);
   }
 
-  // 最后强制发一次
   maybeLibraryChanged(true);
 
-  // 2b) 增量清理：删除服务器端已不存在但本地仍残留的曲目
-  // （仅删除真正消失的曲目，保留仍存在曲目的收藏/历史/歌单关联）
   try {
     const removed = library.deleteStaleSubsonicTracks(serverId, liveSubIds);
     if (removed > 0) {
@@ -959,7 +874,6 @@ async function syncServerToLibrary(client, library, serverId, options = {}) {
     stats.warnings.push(`增量清理失败: ${e}`);
   }
 
-  // 3) 预缓存封面
   if (prefetchCovers) {
     try {
       stats.covers = await prefetchCoversFn(client, library, serverId, stats.pending_covers, concurrency);

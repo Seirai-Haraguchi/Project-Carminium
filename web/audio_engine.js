@@ -1,43 +1,6 @@
-/**
- * AudioEngine — Web Audio API 音频引擎
- *
- * 使用 Web Audio API 进行音频解码、混音和过渡效果处理。
- * 最终混合输出通过 OutputCaptureWorklet 捕获，经 IPC 发送到 miniaudio DLL → WASAPI。
- *
- * 架构：
- *   [AudioBuffer] → Source → Gain ──┐
- *                                    ├──→ OutputCaptureWorklet → IPC → DLL → WASAPI
- *   [FFmpeg PCM] → StreamingWorklet → Gain ─┘
- *
- * 支持双源过渡（crossfade / gapless）：
- *   - Buffer ↔ Buffer：两个 AudioBufferSourceNode + GainNode 自动化
- *   - Buffer → Streaming：延迟 crossfade，等 next FFmpeg PCM 就绪后启动
- *   - Streaming → Streaming：两个 StreamingPCMWorkletNode + GainNode 自动化
- *
- * 功能：
- *   - 本地文件解码（decodeAudioData）
- *   - FFmpeg 流式 PCM 注入（StreamingPCMProcessor）
- *   - 等功率交叉淡化（setValueCurveAtTime）
- *   - 无缝播放（gapless switch）
- *   - 音量控制（GainNode）
- *   - 精确位置跟踪（AudioContext.currentTime + consumedFrames + DLL 延迟补偿）
- *   - AudioBuffer LRU 缓存
- */
 (function () {
   'use strict';
 
-  // ── 等功率曲线预计算 ──────────────────────────────────────────────────────
-
-  /**
-   * 预计算等功率交叉淡化曲线。
-   *
-   * 曲线为「相对曲线」（0→1 等功率），实际写入 GainNode 前需乘以源侧
-   * 有效音量 amplitude，否则缓冲区幅度 1.0 会让过渡结束的瞬间跳到满音量，
-   * 与音量设置不符（过渡期听起来比设置音量小，结束后突然变响）。
-   *
-   * @param {number} length - 帧数
-   * @param {number} [amplitude=1] - 源侧有效音量（线性 0-1），用于缩放曲线幅度
-   */
   function computeEqualPowerCurves(length, amplitude) {
     const amp = (typeof amplitude === 'number' && isFinite(amplitude) && amplitude >= 0)
       ? Math.min(1, amplitude)
@@ -52,67 +15,43 @@
     return { fadeOut, fadeIn, amplitude: amp };
   }
 
-  // ── Airy transition wash targets ──────────────────────────────────────────
-  // The outgoing deck gradually sinks into a soft, band-limited, compressed
-  // texture ("wash") and holds there while it fades out; the incoming deck
-  // starts inside the same wash and slowly recovers the full frequency
-  // range, dynamics and clarity as the track settles in.
-  // Frequencies in Hz, threshold in dB, ratio is N:1, makeup is linear gain.
-  // makeup 用于补偿「带限 + 压缩」造成的响度损失，使过渡期间听感响度与
-  // 音量设置保持一致（这是「过渡期音量偏低」的直接成因）。
-  //
-  // 实测（1/3 倍频程粉噪积分，见 _verify_wash.js）：
-  //   HP190 + LP1050 带限单独造成 -7.73 dB；-30dB@4.5:1 压缩再压 ~2~3 dB。
-  //   旧值 1.3 (+2.28 dB) 净亏约 -5.4 dB → 过渡期明显比设置音量轻。
-  //
-  // 取值权衡：makeup 作用在压缩器之后，取满（~4.9）会让峰值顶到末级限幅器
-  // (threshold -1dB, 20:1) 而削波。这里取带限补偿为主、压缩部分补偿的值，
-  // 让过渡期响度贴近设置音量，同时保留 wash 的"软"质感与限幅余量。
   var WASH_NEUTRAL = { lowpass: 19500, highpass: 22, threshold: 0, ratio: 1.0, makeup: 1.0 };
   var WASH_OUT_DEEP = { lowpass: 1050, highpass: 190, threshold: -30, ratio: 4.5, makeup: 3.4 };
   var WASH_IN_START = { lowpass: 1500, highpass: 150, threshold: -24, ratio: 3.0, makeup: 3.1 };
 
-  // ── AudioEngine ────────────────────────────────────────────────────────────
-
   class AudioEngine {
     constructor() {
-      /** @type {AudioContext} */
+
       this._ctx = null;
-      /** @type {Promise|null} init() 的 Promise，用于并发等待 */
+
       this._initPromise = null;
-      /** @type {AudioWorkletNode} 输出捕获节点（终端） */
+
       this._outputNode = null;
-      /**
-       * @type {boolean} 是否让 AudioContext 使用「空输出接收器」(null sink)。
-       * WASAPI 独占模式下 DLL 独占硬件设备，Chromium 必须完全不占用设备
-       * （详见 setNullSink()）。构造后由 setNullSink() 设定，init() 时生效。
-       */
+
       this._nullSink = false;
-      /** @type {AnalyserNode|null} 频谱分析节点（旁路，不影响音频流） */
+
       this._analyser = null;
-      /** @type {Uint8Array|null} 频谱数据缓冲 */
+
       this._freqData = null;
 
-      // ── 音频效果链（EQ / 低音补偿 / 压限器） ──
-      /** @type {GainNode|null} 效果输入节点（所有源连接到此） */
       this._effectsInput = null;
-      /** @type {BiquadFilterNode[]} 16 段均衡器滤波器 */
+
       this._eqBands = null;
-      /** @type {number[]} EQ 各段增益缓存（-12 到 +12 dB） */
+
       this._eqBandGains = null;
-      /** @type {object|null} 缓存的设置（init 完成后应用） */
+
       this._settingsCache = null;
-      /** @type {boolean} EQ 是否启用 */
+
       this._eqEnabled = false;
-      /** @type {BiquadFilterNode|null} 动态低音补偿（低架滤波器） */
+
       this._bassBoost = null;
-      /** @type {boolean} 低音补偿是否启用 */
+
       this._bassEnabled = false;
-      /** @type {AudioWorkletNode|null} 虚拟低音增强 (VBE) 节点 */
+
       this._vbeNode = null;
-      /** @type {boolean} VBE 是否启用 */
+
       this._vbeEnabled = false;
-      /** @type {object} VBE 参数缓存 */
+
       this._vbeParams = {
         cutoffFrequency: 90,
         harmGain: 0.35,
@@ -125,163 +64,148 @@
         transDrive: 2.0,
         resonFreq: 2200,
       };
-      /** @type {DynamicsCompressorNode|null} 压限器 */
+
       this._compressor = null;
-      /** @type {boolean} 压限器是否启用 */
+
       this._compressorEnabled = false;
-      /** @type {BiquadFilterNode[]} 人声优化滤波器组 */
+
       this._vocalFilters = null;
-      /** @type {boolean} 人声优化是否启用 */
+
       this._vocalEnabled = false;
-      /** @type {BiquadFilterNode[]} 吉他友好滤波器组 */
+
       this._guitarFilters = null;
-      /** @type {boolean} 吉他友好是否启用 */
+
       this._guitarEnabled = false;
 
-      // ── 听觉系统保护 ──
-      /** @type {boolean} 听觉保护是否启用 */
+      this._normGain = null;
+
+      this._normEnabled = false;
+
+      this._normTargetLufs = -14;
+
+      this._trackLoudness = null;
+
+      this._normGainDb = 0;
+
       this._hearingProtectionEnabled = false;
-      /** @type {BiquadFilterNode|null} 听力损伤频段削减（4kHz 以上高频 highshelf 衰减） */
+
       this._hearingProtectionFilter = null;
-      /** @type {GainNode|null} 安全音量限制节点（限制最大输出增益） */
+
       this._safetyGainNode = null;
-      /** 安全音量上限（线性增益）。即使音量拉满(1.0)，输出也不会超过此值。
-       *  约 -8dB ≈ 0.398，保证大音量下不损伤听力 */
+
       this._SAFETY_MAX_GAIN = 0.398;
 
-      // ── 当前曲目：Buffer 模式 ──
-      /** @type {AudioBufferSourceNode|null} */
       this._currentSource = null;
-      /** @type {GainNode|null} */
+
       this._currentGain = null;
-      /** @type {AudioBuffer|null} */
+
       this._currentBuffer = null;
       this._currentFilePath = '';
       this._currentDurationMs = 0;
       this._seekOffsetMs = 0;
 
-      // ── 当前曲目：Streaming 模式 ──
-      /** @type {AudioWorkletNode|null} 当前曲目的 StreamingPCMWorklet */
       this._currentStreamingNode = null;
-      /** @type {GainNode|null} 当前曲目的流式 GainNode */
+
       this._currentStreamingGain = null;
-      /** @type {number} 当前流式曲目已消费帧数（worklet 上报） */
+
       this._streamingConsumedFrames = 0;
-      /** @type {boolean} 当前流式曲目是否已标记结束 */
+
       this._currentStreamingEnded = false;
-      /** @type {ArrayBuffer[]} FFmpeg PCM 缓冲（streaming node 创建前的数据暂存） */
+
       this._pendingStreamingPcm = [];
-      /** @type {boolean} baseline 未送信フラグ(clear 後に初回 PCM 到着時に baseline を送信し、FFmpeg 再起動中の静音フレームを位置から除外) */
+
       this._streamingBaselinePending = false;
 
-      // ── 下一曲：Buffer 模式 ──
       this._nextSource = null;
       this._nextGain = null;
       this._nextBuffer = null;
       this._nextFilePath = '';
       this._nextDurationMs = 0;
 
-      // ── 下一曲：Streaming 模式 ──
-      /** @type {AudioWorkletNode|null} 下一曲的 StreamingPCMWorklet */
       this._nextStreamingNode = null;
-      /** @type {GainNode|null} 下一曲的流式 GainNode */
+
       this._nextStreamingGain = null;
-      /** @type {number} 下一曲流式已消费帧数 */
+
       this._nextStreamingConsumedFrames = 0;
-      /** @type {boolean} 下一曲流式是否已标记结束 */
+
       this._nextStreamingEnded = false;
-      /** @type {ArrayBuffer[]} 下一曲 FFmpeg PCM 缓冲（node 创建前暂存） */
+
       this._pendingNextStreamingPcm = [];
-      /** @type {boolean} 下一曲 worklet 是否已收到 PCM（用于 _isNextReady 判断，区分"node 已创建但空"和"node 已有数据"） */
+
       this._nextStreamingPrimed = false;
 
-      // ── 下一曲模式标志 ──
-      /** @type {boolean} 下一曲是否为流式模式（FFmpeg） */
       this._nextIsStreaming = false;
 
-      // ── 播放状态 ──
       this._generation = 0;
       this._isPlaying = false;
       this._isPaused = false;
-      /** @type {number} AudioContext.currentTime 对应的起播时刻 */
+
       this._sourceStartCtxTime = 0;
 
-      // ── 交叉淡化 / 无缝 ──
       this._crossfadeEnabled = false;
       this._radicalTransitions = false;
       this._crossfadeDurationMs = 5000;
       this._gaplessEnabled = false;
       this._crossfadeTimer = null;
-      /** @type {boolean} crossfade 进行中标志（抑制 onStreamEnded） */
+
       this._crossfadeActive = false;
-      /** @type {object|null} 当前 deck 的 wash 链（highpass → lowpass → compressor → makeup） */
+
       this._currentWash = null;
-      /** @type {object|null} 下一曲 deck 的 wash 链（过渡结束后提升为 current 并缓慢恢复） */
+
       this._nextWash = null;
-      /** @type {boolean} 等待 next streaming PCM 到达后启动延迟 crossfade */
+
       this._pendingBufferToStreamingCrossfade = false;
-      /** @type {boolean} 到达过渡触发点但下一曲未就绪，等待就绪后补触发 */
+
       this._crossfadePending = false;
-      /** @type {number} pending 开始的时间戳（ms），用于超时保护 */
+
       this._crossfadePendingSince = 0;
-      /** @type {number} crossfade 期间的调速比率（0 = 无调速，>0 = 实际比率） */
+
       this._tempoAdjustActive = 0;
-      /** @type {number} 用户调节的播放速率（变速变调），1.0 = 原速。仅 Buffer 模式生效 */
+
       this._userRate = 1.0;
 
-      // ── 过渡实时重排（音量变更时按进度重建曲线）──
-      /** @type {GainNode|null} 当前过渡的 outgoing deck gain（fadeOut 曲线持有者） */
       this._crossfadeOutNode = null;
-      /** @type {GainNode|null} 当前过渡的 incoming deck gain（fadeIn 曲线持有者） */
+
       this._crossfadeInNode = null;
-      /** @type {number} 当前过渡的起始 AudioContext 时间（秒） */
+
       this._crossfadeStartCtxTime = -1;
-      /** @type {number} 当前过渡的时长（秒） */
+
       this._crossfadeDurationSec = 0;
 
-      // ── 预调度无缝切换 ──
-      /** @type {AudioBufferSourceNode|null} 预调度的 gapless 下一曲源 */
       this._gaplessScheduledSource = null;
-      /** @type {GainNode|null} 预调度的 gapless gain */
+
       this._gaplessScheduledGain = null;
-      /** @type {number} 预调度源的启动时间（AudioContext.currentTime） */
+
       this._gaplessScheduledEndTime = 0;
 
-      // ── 智能过渡方案 ──
-      /** @type {object|null} TransitionPlanner 生成的过渡方案 */
       this._transitionPlan = null;
-      /** @type {{fadeOut:Float32Array, fadeIn:Float32Array}|null} 预计算的等功率曲线缓存（setTransitionPlan 时算好，startCrossfade 直接取用，避免主线程顿卡） */
+
       this._cachedCrossfadeCurves = null;
-      /** @type {{sources: AudioBufferSourceNode[], nodes: AudioNode[], cleanupTimer: number}|null} */
+
       this._expansionEffect = null;
 
-      // ── 音量 ──
       this._volume = 1.0;
 
-      // ── DLL 延迟补偿 ──
       this._dllBufferLatencyMs = 0;
 
-      // ── 缓存 ──
+      this._xfadeAnchor = null;
+
+      this._tlInit();
+
       this._cache = new window.AudioBufferCache();
 
-      // ── 文件加载（IPC 请求/响应） ──
-      /** @type {Map<string, {promise: Promise, resolve: Function, reject: Function, timer: number}>} */
       this._pendingLoads = new Map();
 
-      // ── 回调（由 app.js 注入） ──
-      this.onOutput = null;           // (ArrayBuffer) → void
-      this.onEnded = null;            // () => void
-      this.onPositionTick = null;     // (positionMs) → void
-      this.onCrossfadeStart = null;   // () => void
-      this.onCrossfadeComplete = null;// (positionMs) → void
-      this.onStreamEnded = null;      // () => void  — FFmpeg 流结束
-      this.onGaplessSwitch = null;    // () => void  — 无缝切换通知
+      this.onOutput = null;
+      this.onEnded = null;
+      this.onPositionTick = null;
+      this.onCrossfadeStart = null;
+      this.onCrossfadeComplete = null;
+      this.onStreamEnded = null;
+      this.onGaplessSwitch = null;
 
-      // ── 定时器 ──
       this._positionTimer = null;
     }
-
-    // ── 初始化 ──────────────────────────────────────────────────────────────
 
     async _ensureInit() {
       if (this._initPromise) {
@@ -298,9 +222,7 @@
         sampleRate: 44100,
         latencyHint: 'playback',
       };
-      // 独占模式：让 Chromium 用一个定时驱动的「空接收器」渲染音频图，
-      // 完全不打开任何硬件输出设备 —— 设备交给 WASAPI DLL 独占。
-      // 详见 setNullSink() 的说明。
+
       if (this._nullSink) ctxOpts.sinkId = { type: 'none' };
       this._ctx = new AudioContext(ctxOpts);
       this._initPromise = (async () => {
@@ -317,9 +239,8 @@
           outputChannelCount: [2],
         });
 
-        // ── 创建音频效果链 ──
         this._effectsInput = this._ctx.createGain();
-        // EQ: 16 段均衡器（1/3 倍频程）
+
         this._eqBands = [];
         this._eqBandGains = new Array(16).fill(0);
         var eqFreqs = [25, 40, 63, 100, 160, 250, 400, 630, 1000, 1600, 2500, 4000, 6300, 10000, 16000, 20000];
@@ -330,79 +251,79 @@
           else filter.type = 'peaking';
           filter.frequency.value = eqFreqs[i];
           filter.Q.value = 1.0;
-          filter.gain.value = 0; // neutral
+          filter.gain.value = 0;
           this._eqBands.push(filter);
         }
-        // 虚拟低音增强 (VBE)：AudioWorklet 节点 — 心理声学低音增强
+
         this._vbeNode = new AudioWorkletNode(this._ctx, 'vbe-processor', {
           numberOfInputs: 1,
           numberOfOutputs: 1,
           inputChannelCount: [2],
           outputChannelCount: [2],
         });
-        // 动态低音补偿：低架滤波器 @ 80Hz，+6dB 增益
+
         this._bassBoost = this._ctx.createBiquadFilter();
         this._bassBoost.type = 'lowshelf';
         this._bassBoost.frequency.value = 80;
-        this._bassBoost.gain.value = 0; // disabled by default
-        // 人声优化：三段滤波器（减间浊 → 提升人声存在感 → 增加空气感）
+        this._bassBoost.gain.value = 0;
+
         this._vocalFilters = [];
         var vocalParams = [
-          { type: 'peaking', freq: 300, Q: 1.0, gain: -3 },   // 减间浊
-          { type: 'peaking', freq: 3000, Q: 1.2, gain: 3 },  // 人声存在感
-          { type: 'highshelf', freq: 8000, Q: 0.7, gain: 2 }, // 空气感
+          { type: 'peaking', freq: 300, Q: 1.0, gain: -3 },
+          { type: 'peaking', freq: 3000, Q: 1.2, gain: 3 },
+          { type: 'highshelf', freq: 8000, Q: 0.7, gain: 2 },
         ];
         for (var i = 0; i < vocalParams.length; i++) {
           var vf = this._ctx.createBiquadFilter();
           vf.type = vocalParams[i].type;
           vf.frequency.value = vocalParams[i].freq;
           vf.Q.value = vocalParams[i].Q;
-          vf.gain.value = 0; // disabled
+          vf.gain.value = 0;
           this._vocalFilters.push(vf);
         }
-        // 吉他友好：三段滤波器（提升拨片冲击 → 增强尖锐咬合感 → 高频延展）
+
         this._guitarFilters = [];
         var guitarParams = [
-          { type: 'peaking', freq: 1500, Q: 1.2, gain: 3 },  // 拨片冲击
-          { type: 'peaking', freq: 4000, Q: 1.0, gain: 4 },   // 咬合感/尖锐
-          { type: 'highshelf', freq: 6000, Q: 0.7, gain: 3 }, // 高频延展
+          { type: 'peaking', freq: 1500, Q: 1.2, gain: 3 },
+          { type: 'peaking', freq: 4000, Q: 1.0, gain: 4 },
+          { type: 'highshelf', freq: 6000, Q: 0.7, gain: 3 },
         ];
         for (var i = 0; i < guitarParams.length; i++) {
           var gf = this._ctx.createBiquadFilter();
           gf.type = guitarParams[i].type;
           gf.frequency.value = guitarParams[i].freq;
           gf.Q.value = guitarParams[i].Q;
-          gf.gain.value = 0; // disabled
+          gf.gain.value = 0;
           this._guitarFilters.push(gf);
         }
-        // 压限器（用户可控）
+
         this._compressor = this._ctx.createDynamicsCompressor();
-        this._compressor.threshold.value = 0; // disabled
-        this._compressor.ratio.value = 1;    // 1:1 = no compression
+        this._compressor.threshold.value = 0;
+        this._compressor.ratio.value = 1;
         this._compressor.attack.value = 0.003;
         this._compressor.release.value = 0.25;
-        // 末级限幅器（始终启用，防止数字削波）
+
         this._limiter = this._ctx.createDynamicsCompressor();
-        this._limiter.threshold.value = -1;   // -1dB 阈值
-        this._limiter.ratio.value = 20;        // 20:1 硬限制
-        this._limiter.attack.value = 0.001;   // 1ms 快速响应
-        this._limiter.release.value = 0.05;   // 50ms 快速释放
-        this._limiter.knee.value = 0;         // 硬拐点
-        // ── 听觉系统保护滤波链 ──
-        // 1. 高频削减滤波器：衰减 4kHz 以上频段（这些频率在大音量下最易损伤听力）
-        //    使用 highshelf 滤波器，转折频率 ~3.5kHz，衰减 -6dB
+        this._limiter.threshold.value = -1;
+        this._limiter.ratio.value = 20;
+        this._limiter.attack.value = 0.001;
+        this._limiter.release.value = 0.05;
+        this._limiter.knee.value = 0;
+
         this._hearingProtectionFilter = this._ctx.createBiquadFilter();
         this._hearingProtectionFilter.type = 'highshelf';
         this._hearingProtectionFilter.frequency.value = 3500;
         this._hearingProtectionFilter.Q.value = 0.7;
-        this._hearingProtectionFilter.gain.value = 0; // disabled by default
-        // 2. 安全音量限制 GainNode：限制最大输出增益
-        this._safetyGainNode = this._ctx.createGain();
-        this._safetyGainNode.gain.value = 1.0; // disabled (1.0 = no limiting)
+        this._hearingProtectionFilter.gain.value = 0;
 
-        // 连接效果链: effectsInput → EQ[0-15] → VBE → bassBoost → vocal → guitar →
-        //   compressor → limiter → [hearingProtectionFilter → safetyGainNode] → outputNode
-        var prev = this._effectsInput;
+        this._safetyGainNode = this._ctx.createGain();
+        this._safetyGainNode.gain.value = 1.0;
+
+        this._normGain = this._ctx.createGain();
+        this._normGain.gain.value = this._normalizationLinear();
+        this._effectsInput.connect(this._normGain);
+
+        var prev = this._normGain;
         for (var i = 0; i < this._eqBands.length; i++) {
           prev.connect(this._eqBands[i]);
           prev = this._eqBands[i];
@@ -421,26 +342,19 @@
         }
         prev.connect(this._compressor);
         this._compressor.connect(this._limiter);
-        // 听觉保护链插入在 limiter 之后、outputNode 之前
+
         this._limiter.connect(this._hearingProtectionFilter);
         this._hearingProtectionFilter.connect(this._safetyGainNode);
         this._safetyGainNode.connect(this._outputNode);
 
-        // 必须连接到 destination，否则 Web Audio 渲染引擎不会处理整个音频图，
-        // OutputCaptureWorklet.process() 不会被调用，DLL 收不到任何 PCM 数据。
-        // worklet 内部输出静音，实际音频由 DLL → WASAPI 负责。
         this._outputNode.connect(this._ctx.destination);
 
-        // ── 频谱分析旁路 ──
-        // 从 limiter 旁路连接到 AnalyserNode，用于全窗口视图的背景鼓点流动效果。
-        // AnalyserNode 是 dead-end 节点，必须连接到 destination 才会被浏览器处理。
-        // 通过零增益 GainNode 连接，确保不产生声音输出。
         this._analyser = this._ctx.createAnalyser();
-        this._analyser.fftSize = 512;        // 256 bins，覆盖低频鼓点
-        this._analyser.smoothingTimeConstant = 0.2;  // 降低平滑：0.6 削峰+加速衰减导致流光两秒内归零
+        this._analyser.fftSize = 512;
+        this._analyser.smoothingTimeConstant = 0.2;
         this._freqData = new Uint8Array(this._analyser.frequencyBinCount);
         this._limiter.connect(this._analyser);
-        // 零增益连接到 destination，保持 AnalyserNode 活跃
+
         var analyserSink = this._ctx.createGain();
         analyserSink.gain.value = 0;
         this._analyser.connect(analyserSink);
@@ -450,7 +364,6 @@
           if (this.onOutput) this.onOutput(e.data);
         };
 
-        // 如果设置已缓存（init 前由设置页或 app.js 预存），立即应用
         if (this._settingsCache) {
           this.applyAudioSettings(this._settingsCache);
         }
@@ -462,81 +375,32 @@
       return this._initPromise;
     }
 
-    /**
-     * 指定 AudioContext 是否使用「空输出接收器」(null sink)。
-     *
-     * 为什么需要：WASAPI 独占模式会独占硬件端点，此时 Chromium **不能**再打开
-     * 同一个设备。若让 Chromium 去开，它会报
-     * "The AudioContext encountered an error from the audio device or the WebAudio
-     *  renderer."，然后永久停在 suspended，OutputCaptureWorklet 再也拿不到渲染
-     * 时钟 → PCM 断流（进度条照走，但完全没有声音）。
-     *
-     * 实测（Electron 24 / Chromium 112）：`new AudioContext({ sinkId: {type:'none'} })`
-     * 可用，context 状态为 running、currentTime 实时推进、process() 正常回调。
-     * 注意必须传对象 `{type:'none'}`；传字符串 `'none'` 会被当成「无效设备 id」并
-     * 回退到默认设备 → 触发上面那条 device error。
-     *
-     * 结论：独占模式下让 Chromium 走 null sink，音频图照常渲染（PCM 照常被捕获后
-     * 交给 DLL 播放），而设备彻底让给 DLL，切换/启动两条路径都稳定。
-     *
-     * @param {boolean} enabled
-     */
     setNullSink(enabled) {
       this._nullSink = !!enabled;
     }
 
-    /**
-     * 释放 AudioContext 与整条音频图（不重建）。
-     *
-     * 用途：切换到 WASAPI 独占模式 / 切换输出设备**之前**让 Chromium 交出硬件设备。
-     * 共享模式下的 AudioContext 真的打开了硬件端点，所以切到独占前必须先关掉它，
-     * 否则 DLL 打不开独占流（或打开后与 Chromium 互相作废对方）。
-     *
-     * 注意：真正的「切到独占后没声音」问题**不是**靠这个顺序解决的，而是靠
-     * setNullSink(true) —— 让新建的 AudioContext 根本不占用设备。仅靠「先关后开」
-     * 在真实应用里仍然会失败（新建的 context 依旧报 device error）。
-     *
-     * 返回的 Promise 在旧 context 关闭后 resolve，调用方（主进程）据此保证
-     * 「Chromium 让出设备」先于「DLL 独占设备」。
-     */
     releaseContext() {
       const old = this._ctx;
       const oldOutput = this._outputNode;
 
-      // 1) 同步拆掉旧图：释放源、断开旧 worklet 的回调，防止旧 context 继续回吐 PCM
       this.stop();
       if (oldOutput && oldOutput.port) oldOutput.port.onmessage = null;
       this._detachGraph();
 
-      // 2) 关闭旧 context（有超时兜底：设备状态异常时 close() 可能长时间不 resolve，
-      //    不能让主进程的切换流程被它卡住）
       if (!old) return Promise.resolve();
       let p;
       try { p = old.close(); } catch (e) { return Promise.resolve(); }
       if (!p || !p.then) return Promise.resolve();
       return Promise.race([
-        p.catch(function () { /* ignore */ }),
+        p.catch(function () {  }),
         new Promise(function (r) { setTimeout(r, 2000); }),
       ]);
     }
 
-    /**
-     * 重建 AudioContext 与整条音频图（输出模式/设备切换后调用）。
-     *
-     * 前提：必须先由 releaseContext() 释放旧 context，且 DLL 已按新模式打开设备。
-     * 新建的 context 会按 setNullSink() 的设定决定是否走 null sink —— 独占模式下
-     * 必须走 null sink，见 setNullSink() 的说明。
-     *
-     * @returns {Promise<{sampleRate:number, channels:number}>} 同 init()
-     */
     recreateContext() {
       return this.releaseContext().then(() => this.init());
     }
 
-    /**
-     * 清空所有由 init() 创建的节点引用，使其走完整建图路径。
-     * 调用前必须先 stop()。
-     */
     _detachGraph() {
       this._ctx = null;
       this._initPromise = null;
@@ -544,6 +408,7 @@
       this._analyser = null;
       this._freqData = null;
       this._effectsInput = null;
+      this._normGain = null;
       this._eqBands = null;
       this._bassBoost = null;
       this._vbeNode = null;
@@ -555,12 +420,6 @@
       this._eqBandGains = new Array(16).fill(0);
     }
 
-    // ── Streaming Node 管理 ──────────────────────────────────────────────────
-
-    /**
-     * 确保当前曲目的 StreamingPCMWorklet 已创建。
-     * 仅在 FFmpeg 回退路径使用。
-     */
     _ensureCurrentStreamingNode() {
       if (this._currentStreamingNode) return;
 
@@ -571,30 +430,20 @@
       this._currentStreamingGain.connect(this._effectsInput || this._outputNode);
     }
 
-    /**
-     * 确保下一曲的 StreamingPCMWorklet 已创建。
-     * 用于过渡期间的双源流式播放。
-     * @param {object} [opts] - { paused: boolean } 是否以预缓冲模式创建（暂停消费，仅累积 PCM）
-     */
     _ensureNextStreamingNode(opts) {
       if (this._nextStreamingNode) return;
       opts = opts || {};
 
       this._nextStreamingNode = this._createStreamingWorkletNode('next');
       this._nextStreamingGain = this._ctx.createGain();
-      this._nextStreamingGain.gain.value = 0; // 初始静音，由 crossfade 自动化控制
+      this._nextStreamingGain.gain.value = 0;
       this._nextStreamingNode.connect(this._nextStreamingGain);
       this._nextStreamingGain.connect(this._effectsInput || this._outputNode);
 
-      // 预缓冲模式：暂停消费，让 PCM 在 ring buffer 累积
-      // crossfade 启动时 _resumeNextStreamingWorklet() 解除暂停
       if (opts.paused) {
         try { this._nextStreamingNode.port.postMessage({ type: 'pause' }); } catch (_) {}
       }
 
-      // 刷入缓冲的 PCM 数据
-      // 关键：在创建 node 之前发送 baseline，使 worklet 记录当前 consumedFrames 为基线
-      // 这样 position 报告从 0 开始，不包含 node 创建前的静音帧
       if (this._pendingNextStreamingPcm.length > 0) {
         this._nextStreamingNode.port.postMessage({ type: 'baseline' });
         for (var i = 0; i < this._pendingNextStreamingPcm.length; i++) {
@@ -608,21 +457,15 @@
       }
     }
 
-    /**
-     * 解除 next streaming worklet 的暂停状态，开始正常消费。
-     * 在 crossfade 启动时调用，确保 worklet 已有预缓冲数据可消费。
-     */
     _resumeNextStreamingWorklet() {
       if (this._nextStreamingNode) {
         try { this._nextStreamingNode.port.postMessage({ type: 'resume' }); } catch (_) {}
+
+        try { this._nextStreamingNode.port.postMessage({ type: 'baseline' }); } catch (_) {}
+        this._nextStreamingConsumedFrames = 0;
       }
     }
 
-    /**
-     * 创建 StreamingPCMWorklet 节点并绑定消息处理。
-     * @param {'current'|'next'} role - 节点角色
-     * @returns {AudioWorkletNode}
-     */
     _createStreamingWorkletNode(role) {
       var node = new AudioWorkletNode(this._ctx, 'streaming-pcm-processor', {
         numberOfInputs: 0,
@@ -636,10 +479,9 @@
         if (role === 'current') {
           if (data.type === 'ended') {
             self._currentStreamingEnded = true;
-            // 过渡已将本节点提升为 next→current：旧节点残留的 ended 直接忽略，
-            // 否则会触发主进程重复推进队列，破坏循环/列表循环（跳曲）。
+
             if (node !== self._currentStreamingNode) return;
-            // crossfade 期间不触发 onStreamEnded（由 _finishTransition 处理）
+
             if (!self._crossfadeActive && self.onStreamEnded) {
               self.onStreamEnded();
             }
@@ -647,7 +489,7 @@
           if (data.type === 'position') {
             self._streamingConsumedFrames = data.consumedFrames;
           }
-          // 背压：worklet buffer 水位过高/过低时控制 FFmpeg stdout 暂停/恢复
+
           if (data.type === 'flow_pause' || data.type === 'flow_resume') {
             if (window.__electronAPI) {
               window.__electronAPI.invoke('ffmpeg_flow_control', {
@@ -655,14 +497,14 @@
               });
             }
           }
-        } else { // 'next'
+        } else {
           if (data.type === 'ended') {
             self._nextStreamingEnded = true;
           }
           if (data.type === 'position') {
             self._nextStreamingConsumedFrames = data.consumedFrames;
           }
-          // 背压：next worklet 的 buffer 水位控制
+
           if (data.type === 'flow_pause' || data.type === 'flow_resume') {
             if (window.__electronAPI) {
               window.__electronAPI.invoke('ffmpeg_flow_control', {
@@ -676,15 +518,10 @@
       return node;
     }
 
-    /**
-     * 停止并断开 streaming 节点。
-     */
     _disposeStreamingNode(node, gain) {
       if (node) {
         try { node.port.postMessage({ type: 'clear' }); } catch (_) {}
-        // Drop the main-thread message closure and close the channel after
-        // the node is disconnected. This prevents disposed per-track
-        // worklets from retaining the AudioEngine through port handlers.
+
         try { node.port.onmessage = null; } catch (_) {}
         try { node.port.close(); } catch (_) {}
         try { node.disconnect(); } catch (_) {}
@@ -694,17 +531,6 @@
       }
     }
 
-    // ── 播放 ────────────────────────────────────────────────────────────────
-
-    /**
-     * 处理 'play' audio_control 动作。
-     * HTTP URL → 等待 playStreaming()；本地文件 → decodeAudioData → playBuffer。
-     *
-     * @param {string} filePath
-     * @param {number} durationMs
-     * @param {number} seekOffsetMs - 开始位置(ms), buffer 模式直接传给 source.start
-     * @param {boolean} [startPaused] - true 时加载但不播放(暂停状态), 用于模式切替中の暂停トラック
-     */
     async playCurrent(filePath, durationMs, seekOffsetMs, startPaused) {
       await this._ensureInit();
       const savedPcm = this._pendingStreamingPcm;
@@ -716,40 +542,36 @@
       this._currentDurationMs = durationMs;
       this._seekOffsetMs = seekOffsetMs || 0;
 
-      // HTTP URL 不走浏览器解码路径
       if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
         return;
       }
 
-      // 尝试缓存
       const cached = this._cache.get(filePath);
       if (cached) {
         this._currentBuffer = cached;
-        this._isPlaying = true;            // ロード完了 = 再生準備完了
-        this._isPaused = !!startPaused;    // 一時停止フラグ
+        this._isPlaying = true;
+        this._isPaused = !!startPaused;
         this._createAndStartSource(cached, seekOffsetMs || 0, gen, true);
         if (startPaused) {
-          // コンテキストをサスペンド → ソースは開始済みだが出力されない
-          // resume() で _isPaused=false になり再生再開
+
           if (this._ctx) this._ctx.suspend();
         } else {
           this._startPositionTimer();
           this._resumeContext();
         }
-        // 新曲开始后，如果下一曲 buffer 已预加载，调度 gapless
+
         this._scheduleGaplessSwitch();
         return;
       }
 
-      // 异步加载并解码
       try {
         const audioBuffer = await this._loadAndDecode(filePath);
         if (this._generation !== gen) return;
 
         this._currentBuffer = audioBuffer;
         this._cache.set(filePath, audioBuffer);
-        this._isPlaying = true;            // ロード完了
-        this._isPaused = !!startPaused;    // 一時停止フラグ
+        this._isPlaying = true;
+        this._isPaused = !!startPaused;
         this._createAndStartSource(audioBuffer, seekOffsetMs || 0, gen, true);
         if (startPaused) {
           if (this._ctx) this._ctx.suspend();
@@ -757,7 +579,7 @@
           this._startPositionTimer();
           this._resumeContext();
         }
-        // 新曲开始后，如果下一曲 buffer 已预加载，调度 gapless
+
         this._scheduleGaplessSwitch();
       } catch (e) {
         if (this._generation !== gen) return;
@@ -767,24 +589,11 @@
       }
     }
 
-    /**
-     * 通过 FFmpeg 流式 PCM 播放。
-     * 用于浏览器无法解码的格式（WMA、APE 等）和 HTTP 流媒体。
-     *
-     * @param {number} durationMs
-     * @param {number} seekOffsetMs - 开始位置(ms)
-     * @param {boolean} [startPaused] - true 时ストリーミングノードを準備するが再生しない(暂停状態)
-     */
     async playStreaming(durationMs, seekOffsetMs, startPaused) {
       await this._ensureInit();
       const savedPcm = this._pendingStreamingPcm;
       this.stop();
-      // seekOffsetMs > 0 の場合、保留中の PCM は別位置(古い)のものなので破棄
-      // 例: モード切替時に playFile() が位置 0 で FFmpeg を起動し、
-      // その後 renderer.seek(savedPosition) で再起動するまでの間に
-      // 産出された位置 0 の PCM が _pendingStreamingPcm に蓄積されている。
-      // これをそのまま worklet に流すと、UI 進捗(seekOffsetMs + consumedFrames)
-      // が実際の再生位置(0 + consumedFrames)より先に進んでしまう。
+
       if (seekOffsetMs > 0) {
         this._pendingStreamingPcm = [];
       } else {
@@ -794,16 +603,15 @@
 
       this._currentDurationMs = durationMs;
       this._seekOffsetMs = seekOffsetMs || 0;
+      this._posHighWater = this._seekOffsetMs;
 
       this._ensureCurrentStreamingNode();
       this._currentStreamingNode.port.postMessage({ type: 'clear' });
       this._streamingConsumedFrames = 0;
       this._currentStreamingEnded = false;
 
-      // 刷入缓冲的 PCM 数据
       if (this._pendingStreamingPcm.length > 0) {
-        // 先发 baseline，捕获 clear 后到 PCM 到达前的静音帧
-        // 这样 worklet 上报的位置会从真实音频开始，不包含静音帧
+
         this._currentStreamingNode.port.postMessage({ type: 'baseline' });
         this._streamingBaselinePending = false;
         for (var i = 0; i < this._pendingStreamingPcm.length; i++) {
@@ -814,27 +622,21 @@
         }
         this._pendingStreamingPcm = [];
       } else {
-        // 保留中の PCM がない場合(シーク後等)、初回 PCM 到着時に
-        // baseline を送信するようフラグを立てる
-        // これにより FFmpeg 再起動中の静音フレームが位置に反映されない
+
         this._streamingBaselinePending = true;
       }
 
-      this._isPlaying = true;            // ストリーミング準備完了
-      this._isPaused = !!startPaused;    // 一時停止フラグ
+      this._isPlaying = true;
+      this._isPaused = !!startPaused;
       this._sourceStartCtxTime = this._ctx.currentTime;
       if (startPaused) {
-        // コンテキストをサスペンド → worklet の process() が停止し
-        // _streamingConsumedFrames が進まない = 位置が正しく固定される
-        // resume() で再生再開
+
         if (this._ctx) this._ctx.suspend();
       } else {
         this._resumeContext();
         this._startPositionTimer();
       }
     }
-
-    // ── 内部：创建并启动 AudioBufferSourceNode ──
 
     _createAndStartSource(buffer, offsetMs, generation, isMain) {
       const source = new AudioBufferSourceNode(this._ctx, { buffer: buffer });
@@ -847,7 +649,6 @@
       const offsetSec = (offsetMs || 0) / 1000;
       source.start(0, offsetSec);
 
-      // 用户调节的播放速率（变速变调）
       if (this._userRate !== 1.0) {
         source.playbackRate.value = this._userRate;
       }
@@ -856,15 +657,18 @@
         this._currentSource = source;
         this._currentGain = gain;
         this._sourceStartCtxTime = this._ctx.currentTime;
+
+        this._tlSeed(this._sourceStartCtxTime, offsetMs || 0, this._userRate);
+        this._xfadeAnchor = null;
       }
 
       source.onended = () => {
         if (this._generation !== generation) return;
         if (isMain) {
           if (this._currentSource !== source) return;
-          // 交叉淡化进行中：过渡会接管推进，忽略旧源的自然结束，避免重复推进队列
+
           if (this._crossfadeActive) return;
-          // 预调度 gapless：下一曲源已在播放，直接提升
+
           if (this._gaplessScheduledSource) {
             this._promoteGaplessScheduled();
           } else {
@@ -877,62 +681,50 @@
       return { source, gain };
     }
 
-    /**
-     * 设置用户调节的播放速率（变速变调）。
-     * 立即应用到当前播放的 Buffer source；切歌时通过 _createAndStartSource 继承。
-     * Streaming 模式（AudioWorkletNode）不支持 playbackRate，仅记录状态。
-     * @param {number} rate 0.5 ~ 2.0，1.0 = 原速
-     */
     setUserRate(rate) {
       rate = Math.max(0.5, Math.min(2.0, parseFloat(rate) || 1.0));
       if (this._ctx && this._currentSource && this._currentSource.playbackRate) {
-        // 变速前用旧 rate 快照当前真实位置，重新校准基准，避免积分误差
-        var oldRate = this._currentSource.playbackRate.value;
-        var elapsedSec = this._ctx.currentTime - this._sourceStartCtxTime;
-        this._seekOffsetMs += elapsedSec * 1000 * oldRate;
-        this._sourceStartCtxTime = this._ctx.currentTime;
+        var now = this._ctx.currentTime;
+
+        this._tlPushConst(now, rate);
+        this._sourceStartCtxTime = now;
+        if (this._currentBuffer) this._seekOffsetMs = this._tlPositionNow();
+
         var pr = this._currentSource.playbackRate;
-        pr.cancelScheduledValues(this._ctx.currentTime);
-        pr.setValueAtTime(rate, this._ctx.currentTime);
-        // 立即上报校准后的位置，让 UI 同步而非等下一个 250ms tick
+        pr.cancelScheduledValues(now);
+        pr.setValueAtTime(rate, now);
+
         if (this.onPositionTick) this.onPositionTick(this.getCurrentPositionMs());
       }
       this._userRate = rate;
     }
 
-    /** @returns {number} 当前用户播放速率 */
     get userRate() { return this._userRate; }
-
-    // ── 停止 / 暂停 / 恢复 ──────────────────────────────────────────────────
 
     stop() {
       this._stopCrossfadeTimer();
       this._stopPositionTimer();
       this._stopExpansionEffect();
-      // Airy wash：deck 全部停止，直接释放（无需旁路回连）
+
       this._disposeWash(this._currentWash, null);
       this._currentWash = null;
       this._disposeWash(this._nextWash, null);
       this._nextWash = null;
 
-      // Buffer 源
       this._safeStopSource(this._currentSource);
       this._safeStopSource(this._nextSource);
       this._safeDisconnect(this._currentGain);
       this._safeDisconnect(this._nextGain);
 
-      // Streaming 源
       this._disposeStreamingNode(this._currentStreamingNode, this._currentStreamingGain);
       this._disposeStreamingNode(this._nextStreamingNode, this._nextStreamingGain);
 
-      // VBE DSP 状态重置
       if (this._vbeNode) this._vbeNode.port.postMessage({ type: 'reset' });
 
       this._pendingStreamingPcm = [];
       this._pendingNextStreamingPcm = [];
       this._nextStreamingPrimed = false;
 
-      // 重置当前曲状态
       this._currentSource = null;
       this._currentGain = null;
       this._currentBuffer = null;
@@ -945,10 +737,6 @@
       this._currentStreamingNode = null;
       this._currentStreamingGain = null;
 
-      // 重置 next 源节点（停止正在播放的 crossfade 源）
-      // 但保留 _nextBuffer / _nextFilePath / _nextDurationMs / _nextIsStreaming
-      // 这些是预加载数据，不应被 stop() 清除。
-      // next 状态的清除由 clearNextState() 显式执行（主进程通过 audio_control: clear_next 调用）。
       this._nextSource = null;
       this._nextGain = null;
       this._nextStreamingNode = null;
@@ -958,7 +746,6 @@
       this._pendingNextStreamingPcm = [];
       this._nextStreamingPrimed = false;
 
-      // Crossfade 状态重置
       this._crossfadeActive = false;
       this._pendingBufferToStreamingCrossfade = false;
       this._crossfadePending = false;
@@ -966,20 +753,15 @@
       this._tempoAdjustActive = 0;
       this._clearCrossfadeTracking();
       this._cancelGaplessSchedule();
-      // _transitionPlan 由 setTransitionPlan() / clearNextState() 管理
-      // _nextIsStreaming 是 next 曲目的模式标志，由 setNextInfo() 设置
+      this._xfadeAnchor = null;
 
       this._isPlaying = false;
       this._isPaused = false;
 
-      // Keep the warm cache useful, but release older decoded buffers promptly
-      // after playback stops instead of waiting for the periodic memory pass.
+      this._tlInit();
+
       this._cache.shrinkTo(16 * 1024 * 1024);
 
-      // The output worklet and analyser are connected to the destination for
-      // the lifetime of the engine.  Suspend the context after detaching all
-      // sources so the render thread does not keep processing silence between
-      // tracks.  _resumeContext() resumes it on the next play/seek operation.
       if (this._ctx && this._ctx.state === 'running') {
         this._ctx.suspend();
       }
@@ -1001,22 +783,16 @@
       }
     }
 
-    /**
-     * 跳转到指定位置。
-     * 取消进行中的 crossfade，重新创建当前源。
-     */
     async seek(positionMs) {
       await this._ensureInit();
       this._stopExpansionEffect();
-      // Airy wash：过渡被中止。streaming deck 会保留复用 → 旁路回连；
-      // buffer deck 会被重建 → 直接释放；next deck 一律释放。
+
       var liveDeck = (!this._currentBuffer && this._currentStreamingGain) ? this._currentStreamingGain : null;
       this._disposeWash(this._currentWash, liveDeck);
       this._currentWash = null;
       this._disposeWash(this._nextWash, null);
       this._nextWash = null;
 
-      // 取消进行中的 crossfade
       this._stopCrossfadeTimer();
       this._crossfadeActive = false;
       this._pendingBufferToStreamingCrossfade = false;
@@ -1025,10 +801,8 @@
       this._tempoAdjustActive = 0;
       this._clearCrossfadeTracking();
       this._cancelGaplessSchedule();
+      this._xfadeAnchor = null;
 
-      // 停止 crossfade 用的 next 源节点（如果正在播放）
-      // 但不清除 _nextBuffer / _nextFilePath / _nextDurationMs / _nextIsStreaming
-      // seek 是在当前曲内跳转，不影响下一曲的预加载数据。
       this._safeStopSource(this._nextSource);
       this._safeDisconnect(this._nextGain);
       this._nextSource = null;
@@ -1041,24 +815,21 @@
       this._pendingNextStreamingPcm = [];
       this._nextStreamingPrimed = false;
 
-      // ── Streaming 模式 ──
       if (!this._currentBuffer && this._currentStreamingNode) {
         this._currentStreamingNode.port.postMessage({ type: 'clear' });
-        // VBE DSP 状态重置（防止 seek 后的瞬态伪影）
+
         if (this._vbeNode) this._vbeNode.port.postMessage({ type: 'reset' });
         this._seekOffsetMs = positionMs;
+        this._posHighWater = positionMs;
         this._streamingConsumedFrames = 0;
         this._sourceStartCtxTime = this._ctx.currentTime;
         this._currentStreamingEnded = false;
-        // FFmpeg 再起動中に消費される静音フレームを位置から除外するため、
-        // 初回 PCM 到着時に baseline を送信するようフラグを立てる
+
         this._streamingBaselinePending = true;
         this._stopPositionTimer();
         return;
       }
 
-      // ── Buffer 模式 ──
-      // _currentBuffer 为 null 时（如 Streaming 曲目未正确初始化），不可 seek
       if (!this._currentBuffer) {
         return;
       }
@@ -1070,7 +841,6 @@
       this._currentSource = null;
       this._currentGain = null;
 
-      // VBE DSP 状态重置（防止 seek 后的瞬态伪影）
       if (this._vbeNode) this._vbeNode.port.postMessage({ type: 'reset' });
 
       this._seekOffsetMs = positionMs;
@@ -1082,16 +852,9 @@
         this._startPositionTimer();
       }
 
-      // seek 后重新调度 gapless（下一曲 buffer 可能已预加载）
       this._scheduleGaplessSwitch();
     }
 
-    // ── 音量 ────────────────────────────────────────────────────────────────
-
-    /**
-     * 当前应施加到源侧增益的实际音量（线性 0-1）。
-     * 听觉保护启用时，音量被限制在安全范围内。
-     */
     _effectiveVolume() {
       if (this._hearingProtectionEnabled) {
         return Math.min(this._volume, this._SAFETY_MAX_GAIN);
@@ -1102,17 +865,7 @@
     setVolume(level) {
       this._volume = Math.max(0, Math.min(1, level));
       var effectiveVol = this._effectiveVolume();
-      // 音量作用于所有源侧 deck 增益（bus 增益），过渡期间也不例外。
-      //
-      // 背景（本次修复的核心）：交叉淡化期间 next deck 的 gain 由等功率曲线
-      // 绝对驱动，而曲线原先恒定以 1.0 收尾。于是过渡结束的瞬间音量从
-      // 「设置音量」跳到「满音量」——用户反馈的「过渡时音量低、过渡后变满音量」。
-      // 现在曲线按 _effectiveVolume() 缩放（见 computeEqualPowerCurves），
-      // 过渡终点严格落在设置音量上。
-      //
-      // 过渡进行中若用户改音量：已 setValueCurveAtTime 的曲线无法局部改写，
-      // 这里用「保持相对进度、重排剩余曲线」的方式在 t0 处重新调度，做到
-      // 拖动滑块时过渡响度实时跟随，且不会跳变。
+
       if (this._crossfadeActive) {
         this._rescaleActiveCrossfade(effectiveVol);
         this._cachedCrossfadeCurves = null;
@@ -1130,26 +883,78 @@
       if (this._nextStreamingGain) {
         this._nextStreamingGain.gain.value = effectiveVol;
       }
-      // gapless 预调度源的 gain 不会走 crossfade 曲线，直接跟随音量
+
       if (this._gaplessScheduledGain) {
         this._gaplessScheduledGain.gain.value = effectiveVol;
       }
-      // 音量变化后，过渡曲线缓存作废（幅度需要按新音量重建）
+
       this._cachedCrossfadeCurves = null;
     }
 
-    /**
-     * 过渡进行中用户改变音量：按当前进度重排剩余曲线。
-     *
-     * setValueCurveAtTime 一旦调度便无法局部修改，只能在该参数上重新调度。
-     * 做法：取已知的过渡起止时间（_crossfadeStartCtxTime / _crossfadeDurationSec），
-     * 重建一条「从当前相对进度续接、剩余段按新音量收尾」的曲线，
-     * 以 cancelScheduledValues 清掉旧的，再重排。
-     *
-     * 这样拖动滑块时过渡响度实时跟随，且过渡终点严格等于新音量，不产生跳变。
-     *
-     * @param {number} amplitude - 新的源侧有效音量（线性 0-1）
-     */
+    setNormalizationEnabled(enabled) {
+      this._normEnabled = !!enabled;
+      this._applyNormalizationGain(0.25);
+    }
+
+    setNormalizationTarget(lufs) {
+      var v = Number(lufs);
+      if (!isFinite(v) || v > -5 || v < -30) return;
+      this._normTargetLufs = v;
+      this._applyNormalizationGain(0.25);
+    }
+
+    setTrackLoudness(loudness) {
+      if (loudness && isFinite(loudness.integratedLufs)) {
+        this._trackLoudness = {
+          i: Number(loudness.integratedLufs),
+          peak: (typeof loudness.peakDb === 'number' && isFinite(loudness.peakDb))
+            ? Number(loudness.peakDb)
+            : null,
+        };
+      } else {
+        this._trackLoudness = null;
+      }
+
+      this._applyNormalizationGain(0.45);
+    }
+
+    _normalizationLinear() {
+      if (!this._normEnabled) return 1.0;
+      var t = this._trackLoudness;
+      if (!t || !isFinite(t.i)) return 1.0;
+
+      var gainDb = this._normTargetLufs - t.i;
+      if (t.peak !== null && isFinite(t.peak)) {
+        gainDb = Math.min(gainDb, -1 - t.peak);
+      }
+
+      if (gainDb > 12) gainDb = 12;
+      if (gainDb < -24) gainDb = -24;
+      return Math.pow(10, gainDb / 20);
+    }
+
+    _applyNormalizationGain(rampSec) {
+      var linear = this._normalizationLinear();
+      this._normGainDb = linear > 0 ? 20 * Math.log(linear) / Math.LN10 : -Infinity;
+      if (!this._normGain || !this._ctx) return linear;
+
+      var g = this._normGain.gain;
+      var now = this._ctx.currentTime;
+      var ramp = (typeof rampSec === 'number' && rampSec > 0) ? rampSec : 0;
+      try {
+        if (typeof g.cancelAndHoldAtTime === 'function') g.cancelAndHoldAtTime(now);
+        else g.cancelScheduledValues(now);
+      } catch (e) {  }
+
+      if (ramp <= 0) {
+        g.value = linear;
+      } else {
+
+        g.setTargetAtTime(linear, now, ramp / 3);
+      }
+      return linear;
+    }
+
     _rescaleActiveCrossfade(amplitude) {
       if (!this._ctx) return;
       var t0 = this._crossfadeStartCtxTime;
@@ -1161,10 +966,6 @@
       var progress = duration > 0 ? elapsed / duration : 1;
       var tail = Math.max(0.01, duration - elapsed);
 
-      // 关键：曲线必须从「当前进度」处续接，而不是从头重放。
-      // setValueCurveAtTime 会把参数从 arr[0] 驱动到 arr[末尾]，若直接传入
-      // 剩余段的完整曲线，fadeIn 会从 0 重新爬升（响度骤降）、fadeOut 会从满值
-      // 重新下坠（响度骤升）。因此这里截取曲线中 [progress, 1] 的子段作为剩余段。
       var full = computeEqualPowerCurves(
         Math.max(2, Math.round(duration * this._ctx.sampleRate)), amplitude
       );
@@ -1183,7 +984,7 @@
           inNode.gain.setValueCurveAtTime(inTail, now, tail);
         }
       } catch (e) {
-        // 重排失败（时间参数非法等）时退化为直接设值，至少保证音量正确
+
         try {
           if (outNode) outNode.gain.value = amplitude;
           if (inNode) inNode.gain.value = amplitude;
@@ -1191,16 +992,6 @@
       }
     }
 
-    /**
-     * 截取曲线在 [fromProgress, 1] 区间的子段（含两端点）。
-     *
-     * 用于过渡中途重排：让新曲线从当前相对进度处无缝续接，而不是从 0 重放。
-     * 返回至少 2 个样本，保证 setValueCurveAtTime 参数合法。
-     *
-     * @param {Float32Array} curve - 完整曲线
-     * @param {number} fromProgress - 起始相对进度（0-1）
-     * @returns {Float32Array} 子段曲线
-     */
     _subCurve(curve, fromProgress) {
       var n = curve.length;
       if (n < 2) return new Float32Array([curve[0] || 0, curve[0] || 0]);
@@ -1211,30 +1002,17 @@
       return out;
     }
 
-    // ── 次曲信息 ────────────────────────────────────────────────────────────
-
-    /**
-     * 准备下一曲信息。
-     * Buffer 格式：尝试预加载解码为 AudioBuffer（除非 forceStreaming）。
-     * Streaming 格式（HTTP URL 或 forceStreaming）：标记 _nextIsStreaming，等待 FFmpeg PCM。
-     * @param {string} filePath
-     * @param {number} durationMs
-     * @param {boolean} [forceStreaming=false] - 强制使用流式路径（当前曲目为 streaming 时）
-     */
     async setNextInfo(filePath, durationMs, forceStreaming) {
       this._nextFilePath = filePath;
       this._nextDurationMs = durationMs;
 
-      // 判断下一曲是否为流式模式
       this._nextIsStreaming = forceStreaming ||
         filePath.startsWith('http://') || filePath.startsWith('https://');
 
       if (this._nextIsStreaming) {
-        // Streaming 格式不预加载解码，等待 FFmpeg PCM 通过 pushNextPcm 到达
+
         console.log('[AudioEngine] setNextInfo: streaming mode, skip buffer load:', filePath);
-        // 提前创建 next streaming worklet（paused 预缓冲模式）
-        // FFmpeg PCM 到达后直接进入 worklet ring buffer 累积，不消费，
-        // crossfade 启动时 resume → 有充足 buffer → 无 initial underrun stutter
+
         if (this._ctx) {
           try {
             this._ensureNextStreamingNode({ paused: true });
@@ -1245,19 +1023,17 @@
         return;
       }
 
-      // Buffer 格式：尝试缓存
       const cached = this._cache.get(filePath);
       if (cached) {
         this._nextBuffer = cached;
         console.log('[AudioEngine] Next buffer from cache:', filePath);
-        // 预调度 gapless
+
         this._scheduleGaplessSwitch();
-        // 如果 crossfade 已到达触发点但下一曲未就绪，现在补触发
+
         this._checkCrossfadeTrigger();
         return;
       }
 
-      // 异步加载（含一次重试）
       var lastErr = null;
       for (var attempt = 0; attempt < 2; attempt++) {
         try {
@@ -1267,13 +1043,13 @@
             return;
           }
           this._nextBuffer = buf;
-          // 缓存解码结果，避免后续重复加载
+
           this._cache.set(filePath, buf);
           console.log('[AudioEngine] Next buffer loaded (attempt ' + (attempt + 1) + '):', filePath,
             'duration=' + (buf ? buf.duration.toFixed(1) + 's' : 'null'));
-          // 预调度 gapless
+
           this._scheduleGaplessSwitch();
-          // 补触发：如果 crossfade pending，现在下一曲就绪了
+
           this._checkCrossfadeTrigger();
           return;
         } catch (e) {
@@ -1281,9 +1057,9 @@
           console.error('[AudioEngine] Next buffer load failed (attempt ' + (attempt + 1) + '):',
             filePath, e.message || e);
           if (attempt === 0) {
-            // 等待 2 秒后重试
+
             await new Promise(function (r) { setTimeout(r, 2000); });
-            // 重试前再次检查 nextFilePath 是否已变更
+
             if (this._nextFilePath !== filePath) {
               console.log('[AudioEngine] Next file changed during retry wait, aborting:', filePath);
               return;
@@ -1292,23 +1068,14 @@
         }
       }
 
-      // 两次加载均失败
       console.error('[AudioEngine] Next buffer load gave up after retries:', filePath,
         lastErr ? lastErr.message : 'unknown error');
-      // 补触发检查：_isNextReady 会返回 false，pending 超时逻辑会处理
+
       this._checkCrossfadeTrigger();
     }
 
-    // ── 交叉淡化 ────────────────────────────────────────────────────────────
-
-    /**
-     * 开始交叉淡化。
-     * 根据当前/下一曲的模式分发到对应的实现。
-     */
     startCrossfade() {
-      // The planner may generate a transition-local expansion effect.  It is
-      // scheduled before the crossfade nodes so both share the same musical
-      // start instant; unsupported streaming sources simply skip it.
+
       this._startExpansionEffect();
       var currentIsBuffer = !!this._currentBuffer;
       var nextIsBuffer = !!this._nextBuffer;
@@ -1317,8 +1084,7 @@
       if (currentIsBuffer && nextIsBuffer && !nextIsStreaming) {
         this._startBufferCrossfade();
       } else if (currentIsBuffer && nextIsStreaming) {
-        // Buffer → Streaming：worklet 已提前创建并预缓冲（primed）→ 直接启动
-        // 否则延迟等首块 PCM 到达后再启动（_pendingBufferToStreamingCrossfade）
+
         if (this._nextStreamingPrimed) {
           this._startBufferToStreamingCrossfade();
         } else {
@@ -1329,7 +1095,7 @@
       } else if (!currentIsBuffer && nextIsStreaming) {
         this._startStreamingCrossfade();
       } else if (!currentIsBuffer && nextIsBuffer && !nextIsStreaming) {
-        // Streaming → Buffer crossfade
+
         this._startStreamingToBufferCrossfade();
       } else {
         console.warn('[AudioEngine] startCrossfade: unsupported mode combination',
@@ -1338,11 +1104,6 @@
       }
     }
 
-    /**
-     * Streaming → Buffer crossfade。
-     * 当前曲是流式（FFmpeg），下一曲是 buffer（浏览器解码）。
-     * 停止当前流式源，用 buffer 源的 fade-in 替代。
-     */
     _startStreamingToBufferCrossfade() {
       if (!this._nextBuffer) {
         console.warn('[AudioEngine] _startStreamingToBufferCrossfade: no next buffer');
@@ -1356,9 +1117,8 @@
 
       this._crossfadeActive = true;
 
-      // 当前 streaming gain fade out
       const now = this._ctx.currentTime;
-      // Airy wash：outgoing deck 逐渐沉入滤波+压限的氛围织体
+
       this._engageOutgoingWash(this._currentStreamingGain, now, cfSec);
       var curves = this._getCrossfadeCurves(cfFrames);
       var fadeOut = curves.fadeOut;
@@ -1367,17 +1127,15 @@
         this._currentStreamingGain.gain.setValueCurveAtTime(fadeOut, now, cfSec);
       }
 
-      // 下一曲 buffer 源 fade in
       var nextSrc = new AudioBufferSourceNode(this._ctx, { buffer: this._nextBuffer });
       var nextGain = this._ctx.createGain();
       nextGain.gain.value = 0;
       nextSrc.connect(nextGain);
-      // incoming deck 从水洗状态中浮现，过渡结束后缓慢恢复全频段与动态
+
       if (!this._routeIncomingWash(nextGain, now, cfSec)) {
         nextGain.connect(this._effectsInput || this._outputNode);
       }
 
-      // 智能过渡：从分析得出的起始偏移开始播放下一曲
       var nextOffsetSec = 0;
       if (this._transitionPlan && this._transitionPlan.nextStartOffsetMs > 0) {
         nextOffsetSec = Math.min(
@@ -1386,8 +1144,6 @@
         );
       }
 
-      // 智能调速（单侧全量）：outgoing 是 streaming（worklet 不支持变速、
-      // 无法弯折），incoming 以全量比率贴齐当前曲，过渡完成后渐回原速。
       var tempoAdjust = this._getTempoAdjust();
       if (tempoAdjust !== 1.0) {
         nextSrc.playbackRate.value = this._userRate * tempoAdjust;
@@ -1402,6 +1158,13 @@
       nextSrc.start(0, nextOffsetSec);
       nextGain.gain.setValueCurveAtTime(fadeIn, now, cfSec);
 
+      this._xfadeAnchor = {
+        ctxTime: now,
+        baseMs: Math.round(nextOffsetSec * 1000),
+        rate: (tempoAdjust !== 1.0) ? this._userRate * tempoAdjust : this._userRate,
+        streaming: false,
+      };
+
       this._nextSource = nextSrc;
       this._nextGain = nextGain;
       this._trackCrossfade(this._currentStreamingGain, nextGain, now, cfSec);
@@ -1414,10 +1177,6 @@
       }, cfMs + 50);
     }
 
-    /**
-     * Buffer → Buffer crossfade。
-     * 两个 AudioBufferSourceNode + 等功率 GainNode 自动化。
-     */
     _startBufferCrossfade() {
       if (!this._currentSource || !this._currentGain || !this._nextBuffer) {
         console.warn('[AudioEngine] _startBufferCrossfade: missing source or buffer');
@@ -1432,7 +1191,7 @@
       this._crossfadeActive = true;
 
       const now = this._ctx.currentTime;
-      // Airy wash：outgoing deck 逐渐沉入滤波+压限的氛围织体
+
       this._engageOutgoingWash(this._currentGain, now, cfSec);
 
       var curves = this._getCrossfadeCurves(cfFrames);
@@ -1443,12 +1202,11 @@
       const nextGain = this._ctx.createGain();
       nextGain.gain.value = 0;
       nextSrc.connect(nextGain);
-      // incoming deck 从水洗状态中浮现，过渡结束后缓慢恢复全频段与动态
+
       if (!this._routeIncomingWash(nextGain, now, cfSec)) {
         nextGain.connect(this._effectsInput || this._outputNode);
       }
 
-      // 智能过渡：从分析得出的起始偏移开始播放下一曲
       var nextOffsetSec = 0;
       if (this._transitionPlan && this._transitionPlan.nextStartOffsetMs > 0) {
         nextOffsetSec = Math.min(
@@ -1457,23 +1215,22 @@
         );
       }
 
-      // 智能调速（双侧汇合）：两曲各承担一半修正（对数空间），在几何平均
-      // BPM 处对齐。outgoing 在交叉淡化前 85% 内从 userRate 缓慢弯折到
-      // userRate/half，incoming 以 userRate*half 进入；过渡完成后 incoming
-      // 再从 half 渐回原速（_finishTransition 的 ramp-back），形成
-      // 128→119→112 的连续变速旅程，无任何突变。
       var rawAdjust = this._transitionPlan ? this._transitionPlan.bpmTempoAdjust : 0;
+      var incomingRate = this._userRate;
       if (typeof rawAdjust === 'number' && isFinite(rawAdjust) && rawAdjust > 0 && rawAdjust !== 1.0) {
-        // full ∈ [0.80,1.25] → half ∈ [0.894,1.118]，单侧幅度始终 ≤12%
+
         var clamped = Math.max(0.80, Math.min(1.25, rawAdjust));
         var half = Math.sqrt(clamped);
         nextSrc.playbackRate.value = this._userRate * half;
         this._tempoAdjustActive = half;
+        incomingRate = this._userRate * half;
         if (this._currentSource && this._currentSource.playbackRate) {
           var pr = this._currentSource.playbackRate;
           pr.cancelScheduledValues(now);
           pr.setValueAtTime(this._userRate, now);
           pr.linearRampToValueAtTime(this._userRate / half, now + cfSec * 0.85);
+
+          this._tlPushRamp(now, this._userRate, this._userRate / half, cfSec * 0.85);
         }
         console.log('[AudioEngine] Tempo converge (crossfade): cur ×' + (1 / half).toFixed(4) +
           ' ↔ next ×' + half.toFixed(4) +
@@ -1484,6 +1241,13 @@
       }
 
       nextSrc.start(0, nextOffsetSec);
+
+      this._xfadeAnchor = {
+        ctxTime: now,
+        baseMs: Math.round(nextOffsetSec * 1000),
+        rate: incomingRate,
+        streaming: false,
+      };
 
       this._nextSource = nextSrc;
       this._nextGain = nextGain;
@@ -1500,17 +1264,12 @@
       }, cfMs + 50);
     }
 
-    /**
-     * Streaming → Streaming crossfade。
-     * 两个 StreamingPCMWorkletNode + 等功率 GainNode 自动化。
-     */
     _startStreamingCrossfade() {
       if (!this._currentStreamingNode) {
         console.warn('[AudioEngine] _startStreamingCrossfade: no current streaming node');
         return;
       }
 
-      // 确保 next streaming node 已创建
       this._ensureNextStreamingNode();
       if (!this._nextStreamingNode) {
         console.warn('[AudioEngine] _startStreamingCrossfade: cannot create next streaming node');
@@ -1524,25 +1283,24 @@
 
       this._crossfadeActive = true;
 
-      // 解除 next worklet 暂停（如果由 setNextInfo 提前创建并 paused 预缓冲）
       this._resumeNextStreamingWorklet();
 
       var curves = this._getCrossfadeCurves(cfFrames);
       var fadeOut = curves.fadeOut;
       var fadeIn = curves.fadeIn;
 
-      // 当前曲目 gain fade out
       const now = this._ctx.currentTime;
-      // Airy wash：outgoing deck 逐渐沉入滤波+压限的氛围织体；
-      // incoming streaming deck（已预连接效果链）改接入水洗链
+
       this._engageOutgoingWash(this._currentStreamingGain, now, cfSec);
       this._routeIncomingWash(this._nextStreamingGain, now, cfSec);
       if (this._currentStreamingGain) {
         this._currentStreamingGain.gain.setValueCurveAtTime(fadeOut, now, cfSec);
       }
-      // 下一曲 gain fade in（从 0 开始）
+
       this._nextStreamingGain.gain.setValueCurveAtTime(fadeIn, now, cfSec);
       this._trackCrossfade(this._currentStreamingGain, this._nextStreamingGain, now, cfSec);
+
+      this._xfadeAnchor = { ctxTime: now, baseMs: 0, rate: 1, streaming: true };
 
       console.log('[AudioEngine] Streaming crossfade start:', cfMs, 'ms');
       if (this.onCrossfadeStart) this.onCrossfadeStart();
@@ -1552,15 +1310,9 @@
       }, cfMs + 50);
     }
 
-    /**
-     * 从延迟 crossfade 状态启动实际的 streaming crossfade。
-     * 当 pushNextPcm 收到第一块数据且 _pendingBufferToStreamingCrossfade 为 true 时调用。
-     * 也由 startCrossfade 在 nextStreamingPrimed 时直接调用。
-     */
     _startBufferToStreamingCrossfade() {
       this._pendingBufferToStreamingCrossfade = false;
 
-      // 确保 next streaming node 存在（可能已由 setNextInfo 提前创建并 paused 预缓冲）
       this._ensureNextStreamingNode();
 
       const cfMs = this._getEffectiveCrossfadeMs();
@@ -1573,7 +1325,6 @@
 
       this._crossfadeActive = true;
 
-      // 解除 next worklet 暂停，开始消费预缓冲的 PCM
       this._resumeNextStreamingWorklet();
 
       var curves = this._getCrossfadeCurves(cfFrames);
@@ -1582,25 +1333,20 @@
 
       const now = this._ctx.currentTime;
 
-      // Airy wash：outgoing deck 逐渐沉入滤波+压限的氛围织体；
-      // incoming streaming deck（已预连接效果链）改接入水洗链
       this._engageOutgoingWash(this._currentGain, now, cfSec);
       this._routeIncomingWash(this._nextStreamingGain, now, cfSec);
 
-      // 当前 buffer source fade out（不是硬切！）
-      // 保留 _currentSource / _currentGain / _currentBuffer 不变，
-      // 让 _finishTransition 在 crossfade 结束后统一清理。
-      // 这样当前曲在 crossfade 期间继续播放并淡出，掩盖 next streaming 起点的小量欠载。
       if (this._currentGain) {
         this._currentGain.gain.setValueCurveAtTime(fadeOut, now, cfSec);
       }
 
-      // next streaming gain fade in（从 0 开始）
       if (this._nextStreamingGain) {
         this._nextStreamingGain.gain.value = 0;
         this._nextStreamingGain.gain.setValueCurveAtTime(fadeIn, now, cfSec);
       }
       this._trackCrossfade(this._currentGain, this._nextStreamingGain, now, cfSec);
+
+      this._xfadeAnchor = { ctxTime: now, baseMs: 0, rate: 1, streaming: true };
 
       console.log('[AudioEngine] Buffer→Streaming crossfade start:', cfMs, 'ms');
       if (this.onCrossfadeStart) this.onCrossfadeStart();
@@ -1610,14 +1356,6 @@
       }, cfMs + 50);
     }
 
-    // ── Airy transition wash ────────────────────────────────────────────────
-
-    /**
-     * 创建单条 deck 的 wash 链：input → highpass → lowpass → compressor →
-     * makeup(=output)。初始为全中性（透明直通），自动化介入前不影响声音。
-     * @param {'out'|'in'} role - deck 角色（outgoing 压得更狠、incoming 更柔和）
-     * @param {GainNode|null} deckGain - 该链服务的 deck 增益节点
-     */
     _createWashChain(role, deckGain) {
       var input = this._ctx.createGain();
       var highpass = this._ctx.createBiquadFilter();
@@ -1630,8 +1368,7 @@
       lowpass.frequency.value = WASH_NEUTRAL.lowpass;
       var comp = this._ctx.createDynamicsCompressor();
       comp.knee.value = role === 'out' ? 14 : 10;
-      // outgoing：快 attack 抹平瞬态，慢 release 得到平滑的"水洗"延音；
-      // incoming：稍慢 attack，避免进入时的呼吸感过于突兀。
+
       comp.attack.value = role === 'out' ? 0.004 : 0.008;
       comp.release.value = role === 'out' ? 0.35 : 0.28;
       comp.threshold.value = WASH_NEUTRAL.threshold;
@@ -1655,15 +1392,9 @@
       };
     }
 
-    /**
-     * 给 outgoing deck 挂上 wash：把 deckGain 改接到 wash 链，并在交叉淡化
-     * 前 ~70% 时间内逐渐下沉到目标织体（低通收窄 + 高通抬升 + 压限加深 +
-     * 少量 makeup 补偿），之后保持在最深状态随淡出消失。
-     * @returns {object|null} 挂上的 wash（失败时为 null）
-     */
     _engageOutgoingWash(deckGain, t0, cfSec) {
       if (!this._ctx || !deckGain) return null;
-      // 极短曲目：上一轮 wash 可能尚未恢复完毕，先旁路掉避免叠加压缩器延迟
+
       this._disposeWash(this._currentWash, deckGain);
       var wash = this._createWashChain('out', deckGain);
       try {
@@ -1689,19 +1420,12 @@
       return wash;
     }
 
-    /**
-     * 把 incoming deck 接入 wash：起始即处于水洗状态（与 outgoing 的织体
-     * 同源、稍明亮），交叉淡化期间保持，结束后在 settle 窗口内缓缓恢复
-     * 全频段、动态与清晰度，恢复完毕自动旁路并释放节点。
-     * @param {GainNode} deckGain - incoming deck 的增益节点（已连接/未连接均可）
-     * @returns {object|null} 挂上的 wash（失败时为 null，调用方直连效果链）
-     */
     _routeIncomingWash(deckGain, t0, cfSec) {
       if (!this._ctx || !deckGain) return null;
       this._disposeWash(this._nextWash, null);
       var wash = this._createWashChain('in', deckGain);
       try {
-        // streaming next gain 可能已直连效果链（setNextInfo 预创建），先断开再入链
+
         deckGain.disconnect();
         deckGain.connect(wash.input);
         wash.output.connect(this._effectsInput || this._outputNode);
@@ -1709,14 +1433,13 @@
         this._disposeWash(wash, null);
         return null;
       }
-      // 起始：处于水洗状态（比 outgoing 的最深点略开一些，形成纵深感）
+
       wash.lowpass.frequency.setValueAtTime(WASH_IN_START.lowpass, t0);
       wash.highpass.frequency.setValueAtTime(WASH_IN_START.highpass, t0);
       wash.comp.threshold.setValueAtTime(WASH_IN_START.threshold, t0);
       wash.comp.ratio.setValueAtTime(WASH_IN_START.ratio, t0);
       wash.makeup.gain.setValueAtTime(WASH_IN_START.makeup, t0);
-      // 恢复：交叉淡化结束（deck 已提升为 current）后开始，随曲目"落定"
-      // 逐渐找回全部频段与动态。使用绝对时间调度，与主线程定时器无竞态。
+
       var settleSec = Math.max(2.2, Math.min(5.0, cfSec * 0.75));
       var t1 = t0 + cfSec;
       wash.lowpass.frequency.setValueAtTime(WASH_IN_START.lowpass, t1);
@@ -1729,7 +1452,7 @@
       wash.comp.ratio.linearRampToValueAtTime(WASH_NEUTRAL.ratio, t1 + settleSec);
       wash.makeup.gain.setValueAtTime(WASH_IN_START.makeup, t1);
       wash.makeup.gain.linearRampToValueAtTime(WASH_NEUTRAL.makeup, t1 + settleSec);
-      // 恢复完毕后旁路并释放链路（避免压缩器前视延迟在信号路径中累积）
+
       var self = this;
       wash.restoreTimer = setTimeout(function () {
         wash.restoreTimer = null;
@@ -1743,10 +1466,6 @@
       return wash;
     }
 
-    /**
-     * 释放一条 wash 链。若对应 deck 仍在发声（如 seek / 过渡被中止），
-     * 传入 liveDeckGain 将其直连回效果链，播放不中断。
-     */
     _disposeWash(wash, liveDeckGain) {
       if (!wash) return;
       if (wash.restoreTimer) {
@@ -1761,9 +1480,6 @@
       for (var i = 0; i < nodes.length; i++) this._safeDisconnect(nodes[i]);
     }
 
-    /**
-     * 过渡完成处理。统一处理所有模式的 crossfade 完成。
-     */
     _finishTransition() {
       this._stopExpansionEffect();
       this._crossfadeActive = false;
@@ -1771,11 +1487,9 @@
       this._pendingBufferToStreamingCrossfade = false;
       this._crossfadePending = false;
       this._crossfadePendingSince = 0;
-      // 过渡结束：清除曲线重排追踪（gain 已在此后统一写回 _effectiveVolume）
+
       this._clearCrossfadeTracking();
 
-      // Airy wash：outgoing deck 即将销毁，其 wash 链一并释放；
-      // incoming deck 的 wash 提升为 current，恢复自动化在音频线程继续。
       this._disposeWash(this._currentWash, null);
       this._currentWash = this._nextWash;
       this._nextWash = null;
@@ -1783,32 +1497,30 @@
       var hadNextStreaming = !!this._nextStreamingNode;
       var hadNextBuffer = !!this._nextSource || !!this._nextBuffer;
 
-      // ── 清理当前曲目旧源 ──
       this._safeStopSource(this._currentSource);
       this._safeDisconnect(this._currentGain);
       this._currentSource = null;
       this._currentGain = null;
       this._currentBuffer = null;
 
-      // 清理旧的 current streaming node（如果有）
       if (this._currentStreamingNode) {
         this._disposeStreamingNode(this._currentStreamingNode, this._currentStreamingGain);
         this._currentStreamingNode = null;
         this._currentStreamingGain = null;
       }
 
-      // ── 提升 next → current ──
       if (hadNextStreaming) {
         this._promoteNextStreamingToCurrent();
       } else if (hadNextBuffer) {
-        // Buffer → Buffer
+
         this._currentSource = this._nextSource;
         this._currentGain = this._nextGain;
         this._currentBuffer = this._nextBuffer;
-        this._sourceStartCtxTime = this._ctx.currentTime;
-        // 关键：nextGain 在 crossfade 期间由 fadeIn 曲线绝对驱动，曲线终点为
-        // 缩放后的音量值；这里显式取消自动化并写回当前有效音量，避免调度残留
-        // 或过渡后调音量导致的偏移（用户反馈的「过渡后变满音量」）。
+
+        this._sourceStartCtxTime = (this._xfadeAnchor && this._xfadeAnchor.ctxTime != null)
+          ? this._xfadeAnchor.ctxTime
+          : this._ctx.currentTime;
+
         if (this._currentGain) {
           try {
             this._currentGain.gain.cancelScheduledValues(this._ctx.currentTime);
@@ -1817,35 +1529,40 @@
         }
       }
 
-      // ── 位置补偿 ──
-      // 智能过渡：根据方案计算正确的 seekOffset
-      // Buffer 模式：next source 从 nextStartOffsetMs 开始，播放了 cfMs → seekOffset = nextOffset + cfMs
-      // Streaming 模式：consumedFrames 已包含 crossfade 期间的播放时间 → seekOffset = nextOffset
       var cfMs = this._getEffectiveCrossfadeMs();
       var nextOffset = (this._transitionPlan && this._transitionPlan.nextStartOffsetMs > 0)
         ? this._transitionPlan.nextStartOffsetMs : 0;
       var tempoAdj = this._tempoAdjustActive;
+      var anchor = this._xfadeAnchor;
+      this._xfadeAnchor = null;
 
       if (hadNextStreaming) {
-        // Streaming：consumedFrames 从 next 继承，已包含 crossfade 时间
-        this._seekOffsetMs = nextOffset;
+
+        this._seekOffsetMs = anchor ? anchor.baseMs : nextOffset;
+        this._tlSeed(this._ctx.currentTime, this._seekOffsetMs, 1);
       } else if (hadNextBuffer) {
-        // Buffer：source 在 nextOffset 处启动，播放了 cfMs
-        // Account for both the user's rate and the temporary BPM correction;
-        // otherwise a user-selected rate would make the promoted position
-        // drift at every transition.
-        var effectiveRate = this._userRate *
-          (tempoAdj > 0 ? tempoAdj : 1.0);
-        this._seekOffsetMs = nextOffset + Math.round(cfMs * effectiveRate);
+
+        var anchorT, anchorBase, anchorRate;
+        if (anchor) {
+          anchorT = anchor.ctxTime;
+          anchorBase = anchor.baseMs;
+          anchorRate = anchor.rate > 0 ? anchor.rate : this._userRate;
+        } else {
+
+          anchorRate = this._userRate;
+          anchorBase = nextOffset + Math.round(cfMs * anchorRate);
+          anchorT = this._ctx.currentTime;
+        }
+        this._seekOffsetMs = anchorBase;
+        this._tlSeed(anchorT, anchorBase, anchorRate);
       } else {
-        // 回退
+
         this._seekOffsetMs = cfMs;
       }
 
       this._currentDurationMs = this._nextDurationMs;
       this._currentFilePath = this._nextFilePath;
 
-      // ── 清除 next 状态 ──
       this._nextSource = null;
       this._nextGain = null;
       this._nextBuffer = null;
@@ -1859,19 +1576,13 @@
       this._pendingNextStreamingPcm = [];
       this._nextStreamingPrimed = false;
 
-      // Snapshot transition tuning before clearing the plan.  The ramp-back
-      // below still needs the adaptive ramp duration after promotion.
       var transitionPlan = this._transitionPlan;
       var tempoRampMs = transitionPlan && transitionPlan.tempoRampMs > 0
         ? transitionPlan.tempoRampMs : 3000;
 
-      // 清除过渡方案（下一曲需要新方案）
       this._transitionPlan = null;
       this._cachedCrossfadeCurves = null;
 
-      // ── 调速渐回原速 ──
-      // crossfade 期间下一曲以 tempoAdj 速率播放，现在已提升为当前曲。
-      // 用线性渐变在 3 秒内缓慢回到 1.0，避免突变感。
       if (tempoAdj > 0 && tempoAdj !== 1.0 && this._currentSource && this._currentSource.playbackRate) {
         var rampSec = Math.max(1.8, Math.min(4.0, tempoRampMs / 1000));
         var pr = this._currentSource.playbackRate;
@@ -1879,18 +1590,18 @@
         pr.cancelScheduledValues(rampStart);
         pr.setValueAtTime(this._userRate * tempoAdj, rampStart);
         pr.linearRampToValueAtTime(this._userRate, rampStart + rampSec);
+        if (hadNextBuffer) {
+          this._tlPushRamp(rampStart, this._userRate * tempoAdj, this._userRate, rampSec);
+        }
         console.log('[AudioEngine] Tempo ramp-back:', tempoAdj.toFixed(4), '→ user rate over', rampSec, 's');
       }
       this._tempoAdjustActive = 0;
 
-      console.log('[AudioEngine] Crossfade complete, seekOffset:', this._seekOffsetMs);
+      console.log('[AudioEngine] Crossfade complete, seekOffset:', this._seekOffsetMs,
+        'pos:', Math.round(this.getCurrentPositionMs()));
       if (this.onCrossfadeComplete) this.onCrossfadeComplete(this.getCurrentPositionMs());
     }
 
-    /**
-     * 将 next streaming node 提升为 current。
-     * 断开旧连接，重新绑定引用。
-     */
     _promoteNextStreamingToCurrent() {
       this._currentStreamingNode = this._nextStreamingNode;
       this._currentStreamingGain = this._nextStreamingGain;
@@ -1898,27 +1609,22 @@
       this._currentStreamingEnded = this._nextStreamingEnded;
       this._sourceStartCtxTime = this._ctx.currentTime;
 
-      // 确保 worklet 已解除暂停（gapless 路径可能未单独 resume）
       if (this._currentStreamingNode) {
         try { this._currentStreamingNode.port.postMessage({ type: 'resume' }); } catch (_) {}
       }
 
-      // 设置 gain 为当前有效音量（crossfade 自动化已结束）
-      // 注意：必须用 _effectiveVolume()（含听觉保护上限），且不能直接用
-      // _volume —— 否则过渡刚结束的瞬间会跳过听觉保护跳回满音量。
       if (this._currentStreamingGain) {
         this._currentStreamingGain.gain.cancelScheduledValues(this._ctx.currentTime);
         this._currentStreamingGain.gain.value = this._effectiveVolume();
       }
 
-      // 重新绑定 onmessage 为 'current' 角色
       var self = this;
       var node = this._currentStreamingNode;
       this._currentStreamingNode.port.onmessage = function (e) {
         var data = e.data;
         if (data.type === 'ended') {
           self._currentStreamingEnded = true;
-          // 本节点已被后续过渡提升/替换时，残留的 ended 直接忽略，避免主进程重复推进。
+
           if (node !== self._currentStreamingNode) return;
           if (!self._crossfadeActive && self.onStreamEnded) {
             self.onStreamEnded();
@@ -1927,7 +1633,7 @@
         if (data.type === 'position') {
           self._streamingConsumedFrames = data.consumedFrames;
         }
-        // 背压：promote 后 channel 为 'main'
+
         if (data.type === 'flow_pause' || data.type === 'flow_resume') {
           if (window.__electronAPI) {
             window.__electronAPI.invoke('ffmpeg_flow_control', {
@@ -1941,27 +1647,21 @@
         this._streamingConsumedFrames);
     }
 
-    // ── 无缝播放 ────────────────────────────────────────────────────────────
-
-    /**
-     * 预调度 gapless 切换（Buffer → Buffer）。
-     * 计算当前源的精确结束时间，在该时刻启动下一曲源。
-     * 当当前源 onended 触发时，下一曲已经在播放 = 零间隙。
-     */
     _scheduleGaplessSwitch() {
       if (!this._gaplessEnabled) return;
-      if (this._crossfadeEnabled) return; // crossfade 优先
+      if (this._crossfadeEnabled) return;
       if (!this._currentBuffer || !this._nextBuffer) return;
-      if (this._nextIsStreaming) return;  // 仅 Buffer → Buffer
-      if (this._gaplessScheduledSource) return; // 已调度
+      if (this._nextIsStreaming) return;
+      if (this._gaplessScheduledSource) return;
       if (!this._isPlaying || this._isPaused) return;
 
-      var offsetSec = (this._seekOffsetMs || 0) / 1000;
-      var remainingSec = this._currentBuffer.duration - offsetSec;
-      if (remainingSec <= 0.1) return; // 太短不调度
+      var posMs = this._tlPositionNow();
+      var gRate = (this._userRate > 0) ? this._userRate : 1;
+      var remainingSec = (this._currentBuffer.duration * 1000 - posMs) / (1000 * gRate);
+      if (remainingSec <= 0.1) return;
 
-      var endTime = this._sourceStartCtxTime + remainingSec;
-      if (endTime <= this._ctx.currentTime + 0.05) return; // 已过或即将结束
+      var endTime = this._ctx.currentTime + remainingSec;
+      if (endTime <= this._ctx.currentTime + 0.05) return;
 
       var nextSrc = new AudioBufferSourceNode(this._ctx, { buffer: this._nextBuffer });
       var nextGain = this._ctx.createGain();
@@ -1979,9 +1679,6 @@
         Math.round((endTime - this._ctx.currentTime) * 1000) + 'ms');
     }
 
-    /**
-     * 取消预调度的 gapless 源。
-     */
     _cancelGaplessSchedule() {
       if (this._gaplessScheduledSource) {
         try { this._gaplessScheduledSource.onended = null; } catch (_) {}
@@ -1996,16 +1693,9 @@
       this._gaplessScheduledEndTime = 0;
     }
 
-    /**
-     * 预调度 gapless 源提升为当前源。
-     * 在当前源 onended 时调用，此时下一曲已经在播放。
-     */
     _promoteGaplessScheduled() {
       if (!this._gaplessScheduledSource) return;
 
-      // 清理旧 current 源
-      // 注意：不调用 source.stop()，因为源已自然结束，stop() 可能产生 click
-      // 只需断开连接，让 GC 回收
       if (this._currentSource) {
         try { this._currentSource.onended = null; } catch (_) {}
         try { this._currentSource.disconnect(); } catch (_) {}
@@ -2014,28 +1704,25 @@
         try { this._currentGain.disconnect(); } catch (_) {}
       }
 
-      // 提升预调度源 → current
       this._currentSource = this._gaplessScheduledSource;
       this._currentGain = this._gaplessScheduledGain;
       this._currentBuffer = this._nextBuffer;
       this._sourceStartCtxTime = this._gaplessScheduledEndTime;
       this._seekOffsetMs = 0;
 
-      // 更新元数据
+      this._tlSeed(this._gaplessScheduledEndTime, 0, this._userRate);
+
       this._currentFilePath = this._nextFilePath;
       this._currentDurationMs = this._nextDurationMs;
 
-      // 保存引用用于 onended
       var source = this._currentSource;
       var gen = this._generation;
       var self = this;
 
-      // 清除预调度状态
       this._gaplessScheduledSource = null;
       this._gaplessScheduledGain = null;
       this._gaplessScheduledEndTime = 0;
 
-      // 清除 next 状态
       this._nextSource = null;
       this._nextGain = null;
       this._nextBuffer = null;
@@ -2043,7 +1730,6 @@
       this._nextDurationMs = 0;
       this._nextIsStreaming = false;
 
-      // 为提升后的源设置 onended（支持连续 gapless）
       source.onended = function () {
         if (self._generation !== gen) return;
         if (self._currentSource !== source) return;
@@ -2057,22 +1743,12 @@
 
       console.log('[AudioEngine] Gapless switch (pre-scheduled buffer)');
 
-      // 延迟通知主进程：避免 IPC → UI 更新 → 预加载等重活
-      // 同步阻塞 onended 回调，导致 AudioWorklet 消息积压瞬断
-      // 关键：使用 setTimeout(0) 而非 Promise.resolve().then()，
-      // 因为微任务会在宏任务（AudioWorklet 消息）之前执行，
-      // 而 setTimeout(0) 会先让事件循环处理待处理的 AudioWorklet 消息，
-      // 确保 OutputCaptureWorklet 的 PCM 数据能及时转发到 DLL。
       var cb = this.onGaplessSwitch;
       if (cb) {
         setTimeout(function () { cb(); }, 0);
       }
     }
 
-    /**
-     * 无缝切换到下一曲。
-     * 根据模式分发到对应实现。
-     */
     switchToNext() {
       var nextIsBuffer = !!this._nextBuffer && !this._nextIsStreaming;
       var nextIsStreaming = this._nextIsStreaming || this._nextStreamingNode != null;
@@ -2085,9 +1761,6 @@
       return false;
     }
 
-    /**
-     * Buffer → Buffer gapless 切换。
-     */
     _switchToNextBuffer() {
       if (!this._nextBuffer) return false;
 
@@ -2102,7 +1775,6 @@
 
       this._createAndStartSource(this._currentBuffer, 0, gen, true);
 
-      // 清除 next
       this._nextSource = null;
       this._nextGain = null;
       this._nextBuffer = null;
@@ -2115,33 +1787,24 @@
       return true;
     }
 
-    /**
-     * Streaming → Streaming gapless 切换。
-     * 将 next streaming node 提升为 current。
-     */
     _switchToNextStreaming() {
       if (!this._nextStreamingNode) {
-        // next streaming node 尚未创建（FFmpeg 还没产出 PCM）
-        // 无法无缝切换，返回 false 让 player.js 走 nextTrack()
+
         console.warn('[AudioEngine] Gapless switch (streaming): next node not ready');
         return false;
       }
 
-      // 清理旧的 current streaming node
       this._disposeStreamingNode(this._currentStreamingNode, this._currentStreamingGain);
       this._currentStreamingNode = null;
       this._currentStreamingGain = null;
       this._currentBuffer = null;
 
-      // 提升 next → current
       this._promoteNextStreamingToCurrent();
 
-      // 更新元数据
       this._currentFilePath = this._nextFilePath;
       this._currentDurationMs = this._nextDurationMs;
       this._seekOffsetMs = 0;
 
-      // 清除 next
       this._nextFilePath = '';
       this._nextDurationMs = 0;
       this._nextIsStreaming = false;
@@ -2157,64 +1820,143 @@
       return true;
     }
 
-    // ── 位置跟踪 ────────────────────────────────────────────────────────────
-
-    /**
-     * 获取当前播放位置（ms）。
-     * - Buffer 模式：基于 AudioContext.currentTime + DLL 延迟补偿。
-     * - Streaming 模式：基于 StreamingPCMWorklet 消费帧数 + DLL 延迟补偿。
+    /* ================= 播放时间轴（进度的唯一真相源） =================
+     * 位置 = 锚点位置 + ∫播放速率 dt（对 AudioContext 渲染时钟积分）。
+     *
+     * 🔴 两条铁律（违反就会让"前端进度慢于实际播放"，且是整首歌永久的偏移）：
+     * 1. 锚点时刻必须是**排定的音频时钟时刻**，绝不能用 setTimeout 的触发时刻。
+     *    定时器只会晚不会早——交叉淡变期间渲染线程正忙于 wash 链/动画/歌词，
+     *    晚 50~500ms 是常态；拿触发时刻当锚点＝整首歌进度永久往后推那么多。
+     * 2. playbackRate 变化必须**积分**。过渡的 tempo 收敛/回正是斜坡，
+     *    用"已过时间 × 当前速率"会在减速阶段算出"进度倒退 + 永久落后"。
      */
+    _tlInit() {
+      this._tlCursor = 0;
+      this._tlPos = 0;
+      this._posHighWater = 0;
+      this._tlSegs = [{ t0: 0, t1: Infinity, r0: 1, r1: 1 }];
+    }
+
+    _tlSeed(ctxTime, posMs, rate) {
+      rate = (rate > 0 && isFinite(rate)) ? rate : 1;
+      this._tlCursor = ctxTime;
+      this._tlPos = posMs;
+      this._posHighWater = posMs;
+      this._tlSegs = [{ t0: ctxTime, t1: Infinity, r0: rate, r1: rate }];
+    }
+
+    _tlRateIn(seg, t) {
+      if (!(seg.t1 > seg.t0)) return seg.r1;
+      var f = (t - seg.t0) / (seg.t1 - seg.t0);
+      if (f < 0) f = 0; else if (f > 1) f = 1;
+      return seg.r0 + (seg.r1 - seg.r0) * f;
+    }
+
+    _tlFlush(now) {
+      if (now <= this._tlCursor) return;
+      var t = this._tlCursor;
+      var guard = 0;
+      while (t < now - 1e-6 && guard++ < 64) {
+        var seg = this._tlSegs[0];
+        if (!seg) {
+          seg = { t0: t, t1: Infinity, r0: 1, r1: 1 };
+          this._tlSegs.push(seg);
+        }
+        var t1 = Math.min(now, seg.t1);
+        var rA = this._tlRateIn(seg, t);
+        var rB = this._tlRateIn(seg, t1);
+
+        this._tlPos += (t1 - t) * (rA + rB) * 500;
+        t = t1;
+        if (t1 >= seg.t1) this._tlSegs.shift();
+        else break;
+      }
+      this._tlCursor = now;
+    }
+
+    _tlPushConst(ctxTime, rate) {
+      this._tlFlush(ctxTime);
+      this._tlSegs.length = 0;
+      var r = (rate > 0 && isFinite(rate)) ? rate : 1;
+      this._tlSegs.push({ t0: ctxTime, t1: Infinity, r0: r, r1: r });
+    }
+
+    _tlPushRamp(ctxTime, fromRate, toRate, durSec) {
+      if (!(durSec > 0.01)) {
+        this._tlPushConst(ctxTime, toRate);
+        return;
+      }
+      this._tlFlush(ctxTime);
+      var last = this._tlSegs[this._tlSegs.length - 1];
+      if (last && last.t1 > ctxTime) last.t1 = ctxTime;
+      var end = ctxTime + durSec;
+      this._tlSegs.push({ t0: ctxTime, t1: end, r0: fromRate, r1: toRate });
+      this._tlSegs.push({ t0: end, t1: Infinity, r0: toRate, r1: toRate });
+    }
+
+    _tlPositionNow() {
+      this._tlFlush(this._ctx ? this._ctx.currentTime : 0);
+      return this._tlPos;
+    }
+
+    _currentLatencyMs() {
+      var total = this._dllBufferLatencyMs + 100;
+      if (this._ctx && this._ctx.outputLatency) {
+        total += Math.round(this._ctx.outputLatency * 1000);
+      } else if (this._ctx && this._ctx.baseLatency) {
+        total += Math.round(this._ctx.baseLatency * 1000);
+      }
+      return total;
+    }
+
     getCurrentPositionMs() {
       if (!this._isPlaying) return this._seekOffsetMs;
 
-      // 总延迟补偿 = DLL 缓冲延迟 + OutputCaptureWorklet 累积延迟 + Web Audio 输出延迟
-      var totalLatency = this._dllBufferLatencyMs;
+      var latency = this._currentLatencyMs();
+      var pos = -1;
 
-      // OutputCaptureWorklet 累积延迟：4410 frames / 44100Hz ≈ 100ms
-      // （worklet 累积 100ms 后才通过 IPC 发送，这 100ms 的音频还没到达 DLL）
-      totalLatency += 100;
-
-      // Web Audio 输出延迟（如果 API 支持）
-      if (this._ctx && this._ctx.outputLatency) {
-        totalLatency += Math.round(this._ctx.outputLatency * 1000);
-      } else if (this._ctx && this._ctx.baseLatency) {
-        totalLatency += Math.round(this._ctx.baseLatency * 1000);
-      }
-
-      // Streaming 模式
       if (!this._currentBuffer && this._currentStreamingNode) {
         var elapsedMs = (this._streamingConsumedFrames / this._ctx.sampleRate) * 1000;
-        var posMs = this._seekOffsetMs + elapsedMs;
-        return Math.max(0, posMs - totalLatency);
+        pos = this._seekOffsetMs + elapsedMs - latency;
+      } else if (this._ctx) {
+        pos = this._tlPositionNow() - latency;
+      } else {
+        return this._seekOffsetMs;
       }
 
-      // Buffer 模式
-      if (this._ctx) {
-        var elapsedSec = this._ctx.currentTime - this._sourceStartCtxTime;
-        var rate = (this._currentSource && this._currentSource.playbackRate)
-          ? this._currentSource.playbackRate.value : 1.0;
-        var posMs2 = this._seekOffsetMs + elapsedSec * 1000 * rate;
-        return Math.max(0, posMs2 - totalLatency);
-      }
+      if (!(pos >= 0)) pos = 0;
 
-      return this._seekOffsetMs;
+      if (pos > this._posHighWater || pos < this._posHighWater - 400) {
+        this._posHighWater = pos;
+      }
+      return this._posHighWater;
+    }
+
+    getPlaybackSnapshot() {
+      return {
+        positionMs: Math.round(this.getCurrentPositionMs()),
+        durationMs: this._currentDurationMs || 0,
+        rate: this._userRate,
+        playing: this._isPlaying,
+        paused: this._isPaused,
+        crossfading: this._crossfadeActive,
+        sourceKind: this._currentBuffer ? 'buffer'
+          : (this._currentStreamingNode ? 'streaming' : 'none'),
+        latencyMs: Math.round(this._currentLatencyMs()),
+        streamingConsumedFrames: this._streamingConsumedFrames,
+        anchoredAt: this._tlCursor,
+      };
     }
 
     setDllBufferLatency(ms) {
       this._dllBufferLatencyMs = ms || 0;
     }
 
-    // ── 配置 ────────────────────────────────────────────────────────────────
-
     setCrossfadeEnabled(enabled) { this._crossfadeEnabled = !!enabled; }
     setRadicalTransitionsEnabled(enabled) { this._radicalTransitions = !!enabled; }
     setCrossfadeDuration(ms) { this._crossfadeDurationMs = ms; this._cachedCrossfadeCurves = null; }
     setGaplessEnabled(enabled) { this._gaplessEnabled = !!enabled; }
 
-    /**
-     * 设置 EQ 启用状态。
-     * 禁用时所有 EQ 段归零（平坦）。
-     */
     setEqEnabled(enabled) {
       this._eqEnabled = !!enabled;
       if (!this._eqBands) return;
@@ -2224,11 +1966,6 @@
       this._updateEffectsGain();
     }
 
-    /**
-     * 设置 EQ 单段增益。
-     * @param {number} index - 段索引 (0-9)
-     * @param {number} gainDb - 增益 (-12 到 +12 dB)
-     */
     setEqBand(index, gainDb) {
       if (!this._eqBands || index < 0 || index >= this._eqBands.length) return;
       this._eqBandGains[index] = gainDb;
@@ -2238,30 +1975,25 @@
       this._updateEffectsGain();
     }
 
-    /**
-     * 批量应用所有音频效果设置（EQ / 低音 / 压限器）。
-     * init() 完成后同步调用，避免 IPC 异步延迟导致效果不生效。
-     */
     applyAudioSettings(settings) {
       this._settingsCache = settings;
-      if (!this._eqBands) return; // init 未完成，缓存等待 init 后应用
+      if (!this._eqBands) return;
 
-      // EQ 频段值
       var bands = settings.eq_bands;
       if (Array.isArray(bands)) {
         for (var i = 0; i < bands.length && i < this._eqBandGains.length; i++) {
           this._eqBandGains[i] = bands[i] || 0;
         }
       }
-      // EQ 开关
+
       this._eqEnabled = !!settings.eq_enabled;
       for (var i = 0; i < this._eqBands.length; i++) {
         this._eqBands[i].gain.value = this._eqEnabled ? (this._eqBandGains[i] || 0) : 0;
       }
-      // 动态低音补偿
+
       this._bassEnabled = !!settings.dynamic_bass;
       if (this._bassBoost) this._bassBoost.gain.value = this._bassEnabled ? 6 : 0;
-      // 压限器
+
       this._compressorEnabled = !!settings.compressor_enabled;
       if (this._compressor) {
         if (this._compressorEnabled) {
@@ -2272,13 +2004,13 @@
           this._compressor.ratio.value = 1;
         }
       }
-      // 人声优化
+
       this._vocalEnabled = !!settings.vocal_enhance;
       this._applyVocalFilters();
-      // 吉他友好
+
       this._guitarEnabled = !!settings.guitar_friendly;
       this._applyGuitarFilters();
-      // 虚拟低音增强 (VBE)
+
       this._vbeEnabled = !!settings.vbe_enabled;
       if (settings.vbe_cutoff !== undefined)
         this._vbeParams.cutoffFrequency = settings.vbe_cutoff;
@@ -2301,21 +2033,26 @@
       if (settings.vbe_reson_freq !== undefined)
         this._vbeParams.resonFreq = settings.vbe_reson_freq;
       this._sendVbeParams();
-      // 听觉系统保护
+
+      this._normEnabled = !!settings.volume_normalization;
+      if (settings.volume_normalization_target !== undefined) {
+        var lufs = Number(settings.volume_normalization_target);
+        if (isFinite(lufs) && lufs <= -5 && lufs >= -30) this._normTargetLufs = lufs;
+      }
+      this._applyNormalizationGain(0);
+
       this._hearingProtectionEnabled = !!settings.hearing_protection;
       this._applyHearingProtection();
-      // 增益补偿
+
       this._updateEffectsGain();
       console.log('[AudioEngine] Audio effects applied: eq=' + this._eqEnabled +
         ', bass=' + this._bassEnabled + ', comp=' + this._compressorEnabled +
         ', vocal=' + this._vocalEnabled + ', guitar=' + this._guitarEnabled +
         ', vbe=' + this._vbeEnabled +
+        ', norm=' + this._normEnabled + '(' + this._normGainDb.toFixed(1) + 'dB)' +
         ', hearingProtection=' + this._hearingProtectionEnabled);
     }
 
-    /**
-     * 发送 VBE 参数到 AudioWorklet 处理器。
-     */
     _sendVbeParams() {
       if (!this._vbeNode) return;
       this._vbeNode.port.postMessage({
@@ -2324,10 +2061,6 @@
       });
     }
 
-    /**
-     * 设置虚拟低音增强 (VBE) 启用状态。
-     * 启用时通过 NLD 谐波生成在小型扬声器上创造低音感知。
-     */
     setVirtualBass(enabled) {
       this._vbeEnabled = !!enabled;
       if (this._vbeNode) {
@@ -2336,11 +2069,6 @@
       this._updateEffectsGain();
     }
 
-    /**
-     * 设置 VBE 单个参数。
-     * @param {string} name  参数名
-     * @param {number} value 参数值
-     */
     setVbeParam(name, value) {
       if (!this._vbeParams.hasOwnProperty(name)) return;
       this._vbeParams[name] = value;
@@ -2350,10 +2078,6 @@
       this._updateEffectsGain();
     }
 
-    /**
-     * 设置动态低音补偿启用状态。
-     * 启用时低架滤波器增益 +6dB @ 80Hz。
-     */
     setDynamicBass(enabled) {
       this._bassEnabled = !!enabled;
       if (!this._bassBoost) return;
@@ -2361,10 +2085,6 @@
       this._updateEffectsGain();
     }
 
-    /**
-     * 设置人声优化启用状态。
-     * 启用时：减间浊 @300Hz，提升存在感 @3kHz，增加空气感 @8kHz。
-     */
     setVocalEnhance(enabled) {
       this._vocalEnabled = !!enabled;
       this._applyVocalFilters();
@@ -2373,16 +2093,12 @@
 
     _applyVocalFilters() {
       if (!this._vocalFilters) return;
-      var gains = [-3, 3, 2]; // 对应 vocalParams
+      var gains = [-3, 3, 2];
       for (var i = 0; i < this._vocalFilters.length; i++) {
         this._vocalFilters[i].gain.value = this._vocalEnabled ? gains[i] : 0;
       }
     }
 
-    /**
-     * 设置吉他友好启用状态。
-     * 启用时：拨片冲击 @1.5kHz，咬合尖锐 @4kHz，高频延展 @6kHz。
-     */
     setGuitarFriendly(enabled) {
       this._guitarEnabled = !!enabled;
       this._applyGuitarFilters();
@@ -2391,21 +2107,17 @@
 
     _applyGuitarFilters() {
       if (!this._guitarFilters) return;
-      var gains = [3, 4, 3]; // 对应 guitarParams
+      var gains = [3, 4, 3];
       for (var i = 0; i < this._guitarFilters.length; i++) {
         this._guitarFilters[i].gain.value = this._guitarEnabled ? gains[i] : 0;
       }
     }
 
-    /**
-     * 设置压限器启用状态。
-     * 启用时：threshold -3dB, ratio 20:1（硬限制）。
-     */
     setCompressorEnabled(enabled) {
       this._compressorEnabled = !!enabled;
       if (!this._compressor) return;
       if (enabled) {
-        // 动态压缩：控制动态范围，阈值 -10dB，比率 4:1
+
         this._compressor.threshold.value = -10;
         this._compressor.ratio.value = 4;
       } else {
@@ -2414,85 +2126,61 @@
       }
     }
 
-    /**
-     * 设置听觉系统保护启用状态。
-     * 启用时：
-     *   1. 高频削减滤波器衰减 3.5kHz 以上频段 -6dB（这些频率在大音量下最易损伤毛细胞）
-     *   2. 安全音量限制：即使音量拉满(1.0)，实际输出被限制在 -8dB 线性增益以内
-     *   3. 末级限幅器仍始终启用，防止任何残余削波
-     * 三重保护确保用户即使在最大音量下也不会损伤听力。
-     */
     setHearingProtection(enabled) {
       this._hearingProtectionEnabled = !!enabled;
       this._applyHearingProtection();
-      // 重新应用当前音量（可能在限制生效/失效后需要更新实际增益）
+
       this.setVolume(this._volume);
       this._updateEffectsGain();
     }
 
-    /**
-     * 应用听觉保护滤波与安全音量限制。
-     */
     _applyHearingProtection() {
       if (this._hearingProtectionFilter) {
-        // -6dB 高频削减：衰减大音量下最易损伤听力的频段
+
         this._hearingProtectionFilter.gain.value = this._hearingProtectionEnabled ? -6 : 0;
       }
-      // 安全增益限制：启用时限制最大输出，禁用时恢复 1.0
-      // 实际音量限制在 setVolume() 中根据 _hearingProtectionEnabled 应用
+
       if (this._safetyGainNode) {
-        this._safetyGainNode.gain.value = 1.0; // 作为最终硬限制器，始终 1.0；
-        // 音量级别的限制在 source gain 侧执行（setVolume）
+        this._safetyGainNode.gain.value = 1.0;
+
       }
     }
 
-    /**
-     * 自动增益补偿：当 EQ 或低音补偿提升某些频段时，
-     * 等量降低总增益，防止信号过载导致爆音。
-     * 补偿量 = EQ 最大正增益 + 低音补偿增益
-     */
     _updateEffectsGain() {
       if (!this._effectsInput) return;
       var maxBoost = 0;
-      // EQ 正增益补偿
+
       if (this._eqEnabled && this._eqBandGains) {
         for (var i = 0; i < this._eqBandGains.length; i++) {
           if (this._eqBandGains[i] > maxBoost) maxBoost = this._eqBandGains[i];
         }
       }
-      // 低音补偿增益
+
       if (this._bassEnabled) {
-        maxBoost += 6; // bass boost +6dB
+        maxBoost += 6;
       }
-      // 人声优化正增益
+
       if (this._vocalEnabled) {
-        maxBoost += 3; // 人声存在感 +3dB
+        maxBoost += 3;
       }
-      // 吉他友好正增益
+
       if (this._guitarEnabled) {
-        maxBoost += 4; // 咬合感 +4dB
+        maxBoost += 4;
       }
-      // VBE 谐波增益补偿（harmGain 的 dB 值）
+
       if (this._vbeEnabled) {
         var harmDb = 20 * Math.log10(this._vbeParams.harmGain || 0.35);
-        maxBoost += Math.max(0, harmDb + 14); // 归一化到 ~0dB 基准
+        maxBoost += Math.max(0, harmDb + 14);
       }
-      // dB 转线性增益：gain = 10^(-maxBoost/20)
+
       var gainLin = Math.pow(10, -maxBoost / 20);
-      // 最低不低于 0.1（-20dB），避免过度衰减
+
       this._effectsInput.gain.value = Math.max(gainLin, 0.1);
     }
 
-    /**
-     * 设置智能过渡方案。
-     * TransitionPlanner 生成的方案包含 transitionStartMs、crossfadeDurationMs、nextStartOffsetMs。
-     * 设为 null 时回退到固定时长交叉淡化。
-     */
     setTransitionPlan(plan) {
       this._transitionPlan = plan || null;
-      // ── 预计算等功率曲线 ──
-      // 避免 startCrossfade() 时同步分配大数组（如 12s@44100Hz ≈ 2×2.1MB）阻塞主线程导致顿卡。
-      // 在方案设定时提前算好缓存，crossfade 触发时直接取用。
+
       var cfMs = this._getEffectiveCrossfadeMs();
       if (cfMs > 0 && this._ctx) {
         var cfFrames = Math.round((cfMs / 1000) * this._ctx.sampleRate);
@@ -2510,13 +2198,6 @@
       }
     }
 
-    /**
-     * Schedule a beat-locked DJ pull-up gesture on the outgoing buffer:
-     * accelerating pitched-up repeats (抽拉) that build into the transition,
-     * optionally finished with a reversed-fragment spinback (倒带甩盘).
-     * The dry/current and incoming tracks keep their existing routing and
-     * crossfade curves; this is a parallel, temporary bus only.
-     */
     _startExpansionEffect() {
       this._stopExpansionEffect();
       var plan = this._transitionPlan;
@@ -2588,19 +2269,19 @@
         var gain = this._ctx.createGain();
         var pan = this._ctx.createStereoPanner();
         var progress = count <= 1 ? 1 : i / (count - 1);
-        // 抽拉：playbackRate 逐次上行 → 节奏越拉越紧、音调越拽越高
+
         var rate = 1 + progress * rateRise;
         lastRate = rate;
         source.playbackRate.value = rate;
-        // 片段时长按速率换算成墙钟时间，保证重复仍然落在节奏网格上
+
         var hitSec = fragmentSec / rate;
-        // 能量递增：往复越拉越响，把张力推向下一曲的 drop
+
         var envelope = fx.intensity * (0.55 + 0.45 * progress);
         gain.gain.setValueAtTime(0, when);
         gain.gain.linearRampToValueAtTime(envelope, when + Math.min(0.02, hitSec * 0.15));
         gain.gain.linearRampToValueAtTime(envelope * 0.85, when + hitSec * 0.6);
         gain.gain.linearRampToValueAtTime(0, when + hitSec);
-        // 往复：左右交替甩出，模拟唱片被来回拽
+
         pan.pan.value = (i % 2 === 0 ? -1 : 1) * Math.min(0.7, fx.width || 0.2);
         source.connect(gain);
         gain.connect(pan);
@@ -2610,8 +2291,6 @@
         nodes.push(gain, pan);
       }
 
-      // 倒带甩盘（spinback）：手势收尾——反向片段 + 快速升速，
-      // 模拟 DJ 把唱片拽回卷带的"咻"，紧接着下一曲落入。
       if (fx.spinback && sources.length) {
         var spinDur = Math.max(0.15, fragmentSec * 0.7);
         var spinWhen = now + count * spacingSec;
@@ -2650,10 +2329,6 @@
         'spinback=' + !!fx.spinback, 'duration=' + fx.durationMs + 'ms');
     }
 
-    /**
-     * 构建片段的反向拷贝（倒带甩盘用）。AudioBufferSourceNode 不支持负速率，
-     * 反转样本数据实现倒放。
-     */
     _makeReversedFragment(buffer, offsetSec, lengthSec, sampleRate) {
       var length = Math.max(1, Math.min(buffer.length, Math.round(lengthSec * sampleRate)));
       var start = Math.max(0, Math.min(buffer.length - length, Math.round(offsetSec * sampleRate)));
@@ -2693,9 +2368,6 @@
       this._expansionEffect = null;
     }
 
-    /**
-     * 获取当前有效的交叉淡化时长（优先使用 transitionPlan）。
-     */
     _getEffectiveCrossfadeMs() {
       if (this._transitionPlan && this._transitionPlan.crossfadeDurationMs > 0) {
         return this._transitionPlan.crossfadeDurationMs;
@@ -2703,16 +2375,6 @@
       return this._crossfadeDurationMs;
     }
 
-    /**
-     * 获取等功率曲线（优先使用预计算缓存，避免 startCrossfade 时同步分配大数组导致主线程顿卡）。
-     *
-     * 曲线幅度按「源侧有效音量」缩放：GainNode 在交叉淡化期间由曲线绝对驱动，
-     * 若曲线终点为 1.0，则过渡结束的瞬间音量会跳到满音量，与用户设置不符。
-     * 缓存键包含帧数与幅度，任一变化即重建。
-     *
-     * @param {number} cfFrames - 需要的帧数
-     * @returns {{fadeOut:Float32Array, fadeIn:Float32Array, amplitude:number}}
-     */
     _getCrossfadeCurves(cfFrames) {
       var amp = this._effectiveVolume();
       var cached = this._cachedCrossfadeCurves;
@@ -2720,20 +2382,11 @@
           Math.abs((cached.amplitude === undefined ? 1 : cached.amplitude) - amp) < 1e-6) {
         return cached;
       }
-      // 缓存未命中（duration / 音量变更等），同步计算并更新缓存
+
       this._cachedCrossfadeCurves = computeEqualPowerCurves(cfFrames, amp);
       return this._cachedCrossfadeCurves;
     }
 
-    /**
-     * 记录当前过渡的曲线持有节点与时间基准，供音量变更时实时重排
-     * （见 _rescaleActiveCrossfade）。
-     *
-     * @param {GainNode|null} outNode - outgoing deck gain（fadeOut 曲线）
-     * @param {GainNode|null} inNode - incoming deck gain（fadeIn 曲线）
-     * @param {number} t0 - 过渡起始 AudioContext 时间（秒）
-     * @param {number} cfSec - 过渡时长（秒）
-     */
     _trackCrossfade(outNode, inNode, t0, cfSec) {
       this._crossfadeOutNode = outNode || null;
       this._crossfadeInNode = inNode || null;
@@ -2741,9 +2394,6 @@
       this._crossfadeDurationSec = (typeof cfSec === 'number' && isFinite(cfSec) && cfSec > 0) ? cfSec : 0;
     }
 
-    /**
-     * 清理过渡追踪状态（过渡结束时调用）。
-     */
     _clearCrossfadeTracking() {
       this._crossfadeOutNode = null;
       this._crossfadeInNode = null;
@@ -2751,18 +2401,11 @@
       this._crossfadeDurationSec = 0;
     }
 
-    /**
-     * 获取 BPM 匹配的速率调整比率。
-     * 如果两曲 BPM 在可调范围内（15% 以内），返回 curBpm/nextBpm
-     * 作为 incoming track 的播放速率修正。
-     * 下一曲以此速率播放，拍子与当前曲对齐。
-     * @returns {number} playbackRate（1.0 = 不调整）
-     */
     _getTempoAdjust() {
       if (!this._transitionPlan) return 1.0;
       var adjust = this._transitionPlan.bpmTempoAdjust;
       if (typeof adjust !== 'number' || !isFinite(adjust) || adjust <= 0) return 1.0;
-      // 限制在 0.85-1.15 范围内（±15%）
+
       if (adjust < 0.85) adjust = 0.85;
       if (adjust > 1.15) adjust = 1.15;
       return adjust;
@@ -2770,15 +2413,14 @@
 
     clearNextState() {
       this._stopExpansionEffect();
-      // Airy wash：next deck 的 wash 随 deck 一并释放；若 crossfade 进行中
-      // 被清除，current deck 仍存活 → 旁路回连效果链。
+
       this._disposeWash(this._nextWash, null);
       this._nextWash = null;
       if (this._crossfadeActive) {
         this._disposeWash(this._currentWash, this._currentGain || this._currentStreamingGain);
         this._currentWash = null;
       }
-      // Buffer next
+
       this._safeStopSource(this._nextSource);
       this._safeDisconnect(this._nextGain);
       this._nextSource = null;
@@ -2788,7 +2430,6 @@
       this._nextDurationMs = 0;
       this._nextIsStreaming = false;
 
-      // Streaming next
       this._disposeStreamingNode(this._nextStreamingNode, this._nextStreamingGain);
       this._nextStreamingNode = null;
       this._nextStreamingGain = null;
@@ -2797,7 +2438,6 @@
       this._pendingNextStreamingPcm = [];
       this._nextStreamingPrimed = false;
 
-      // Crossfade state
       this._stopCrossfadeTimer();
       this._crossfadeActive = false;
       this._pendingBufferToStreamingCrossfade = false;
@@ -2805,19 +2445,12 @@
       this._crossfadePendingSince = 0;
       this._tempoAdjustActive = 0;
       this._cancelGaplessSchedule();
-      this._transitionPlan = null; // 清除过渡方案（下一曲信息已变更）
+      this._transitionPlan = null;
       this._cachedCrossfadeCurves = null;
     }
 
-    // ── FFmpeg PCM 注入 ─────────────────────────────────────────────────────
-
-    /**
-     * 推送当前曲目 FFmpeg PCM 到 StreamingPCMWorklet。
-     */
     pushStreamingPcm(float32Array) {
-      // 零拷贝：IPC 反序列化产生的 buffer 为精确大小且本消息独占，
-      // 直接作为 transferable 转给 worklet（转移后原视图失效，无其他持有者）。
-      // 仅当视图未完整覆盖底层 buffer 时回退为拷贝（防御性路径，正常不会走到）。
+
       var ab;
       if (float32Array.byteOffset === 0 && float32Array.buffer &&
           float32Array.buffer.byteLength === float32Array.byteLength) {
@@ -2828,25 +2461,23 @@
       }
 
       if (!this._currentStreamingNode) {
-        // 内存保护：限制待处理 PCM 缓冲区大小，防止 FFmpeg 产出快于 worklet 创建时无限增长
+
         if (this._pendingStreamingPcm.length < 200) {
           this._pendingStreamingPcm.push(ab);
         } else {
-          // 超限：丢弃最旧的数据，保留最新的
+
           this._pendingStreamingPcm.shift();
           this._pendingStreamingPcm.push(ab);
         }
         return;
       }
-      // clear 後の初回 PCM 到着時に baseline を送信
-      // (FFmpeg 再起動中に消費された静音フレームを位置から除外)
+
       if (this._streamingBaselinePending) {
         this._currentStreamingNode.port.postMessage({ type: 'baseline' });
         this._streamingBaselinePending = false;
       }
       this._currentStreamingNode.port.postMessage({ type: 'pcm', samples: ab }, [ab]);
 
-      // seek 后位置定时器被停止，收到 PCM 说明 FFmpeg 已产出新数据，重启
       if (!this._positionTimer && this._isPlaying && !this._isPaused) {
         this._startPositionTimer();
       }
@@ -2857,22 +2488,12 @@
       this._currentStreamingNode.port.postMessage({ type: 'end' });
     }
 
-    // ── FFmpeg PCM IPC 路由（app.js 调用） ────────────────────────────────────
-
-    /**
-     * 主通道 FFmpeg PCM → 当前曲目 streaming worklet。
-     */
     pushMainPcm(float32Array) {
       this.pushStreamingPcm(float32Array);
     }
 
-    /**
-     * 次通道 FFmpeg PCM → 下一曲 streaming worklet。
-     * 如果 next streaming node 尚未创建，缓冲 PCM 数据。
-     * 如果延迟 crossfade 待触发且这是第一块数据，启动 crossfade。
-     */
     pushNextPcm(float32Array) {
-      // 零拷贝 transferable（同 pushStreamingPcm）
+
       var ab;
       if (float32Array.byteOffset === 0 && float32Array.buffer &&
           float32Array.buffer.byteLength === float32Array.byteLength) {
@@ -2883,8 +2504,7 @@
       }
 
       if (!this._nextStreamingNode) {
-        // Node 尚未创建，缓冲数据
-        // 内存保护：限制待处理 PCM 缓冲区大小
+
         if (this._pendingNextStreamingPcm.length < 200) {
           this._pendingNextStreamingPcm.push(ab);
         } else {
@@ -2892,13 +2512,11 @@
           this._pendingNextStreamingPcm.push(ab);
         }
       } else {
-        // Worklet 已创建（可能 paused 预缓冲中），直送 PCM 到 ring buffer
+
         this._nextStreamingNode.port.postMessage({ type: 'pcm', samples: ab }, [ab]);
         this._nextStreamingPrimed = true;
       }
 
-      // 触发检查（无论 worklet 是否已创建）
-      // 如果正在等待 next streaming PCM 来启动延迟 crossfade
       if (this._pendingBufferToStreamingCrossfade) {
         var self = this;
         Promise.resolve().then(function () {
@@ -2907,23 +2525,16 @@
           }
         });
       }
-      // 补触发：如果 crossfade pending（到达触发点但下一曲未就绪），现在 PCM 到了
+
       if (this._crossfadePending) {
         this._checkCrossfadeTrigger();
       }
     }
 
-    /**
-     * 主通道 FFmpeg 流结束。
-     */
     setMainFfmpegFinished(finished) {
       if (finished) this.setStreamingFinished();
     }
 
-    /**
-     * 次通道 FFmpeg 流结束。
-     * 标记 next streaming 为结束状态。
-     */
     setNextFfmpegFinished(finished) {
       if (finished) {
         this._nextStreamingEnded = true;
@@ -2933,8 +2544,6 @@
       }
     }
 
-    // ── 缓存 ────────────────────────────────────────────────────────────────
-
     getCachedBuffer(filePath) {
       return this._cache.get(filePath);
     }
@@ -2943,12 +2552,8 @@
       this._cache.set(filePath, buffer);
     }
 
-    // ── 文件加载（IPC） ─────────────────────────────────────────────────────
-
     _loadFile(filePath) {
-      // If already loading this file, share the existing promise.
-      // This allows multiple consumers (e.g. AudioEngine + TrackAnalyzer)
-      // to decode the same file concurrently without one superseding the other.
+
       const existing = this._pendingLoads.get(filePath);
       if (existing) {
         return existing.promise;
@@ -2988,9 +2593,7 @@
 
     async _loadAndDecode(filePath) {
       const arrayBuffer = await this._loadFile(filePath);
-      // Copy the ArrayBuffer before decoding: when multiple consumers share
-      // the same _loadFile promise, decodeAudioData may detach the buffer in
-      // some implementations. The copy ensures each consumer gets its own.
+
       const audioBuffer = await this._ctx.decodeAudioData(arrayBuffer.slice(0));
       return audioBuffer;
     }
@@ -3011,20 +2614,12 @@
       pending.reject(new Error(error));
     }
 
-    // ── 内部工具 ────────────────────────────────────────────────────────────
-
     _resumeContext() {
       if (this._ctx && this._ctx.state === 'suspended') {
         this._ctx.resume();
       }
     }
 
-    /**
-     * 位置定时器：250ms 轮询。
-     * 负责：
-     *   1. 上报位置（onPositionTick）
-     *   2. 检查过渡触发条件（crossfade / gapless）
-     */
     _startPositionTimer() {
       this._stopPositionTimer();
       var self = this;
@@ -3033,7 +2628,6 @@
           self.onPositionTick(self.getCurrentPositionMs());
         }
 
-        // ── 过渡触发检查 ──
         if (self._isPaused) return;
         if (self._crossfadeActive) return;
         if (self._pendingBufferToStreamingCrossfade) return;
@@ -3045,14 +2639,10 @@
         var remainingMs = durMs - posMs;
         if (remainingMs <= 0) return;
 
-        // ── Crossfade 触发（含 pending 机制）──
         if (self._crossfadeEnabled) {
           self._checkCrossfadeTrigger();
         }
 
-      // ── Gapless 触发 ──
-      // 预调度的 gapless 通过 onended 自动触发，不需要轮询。
-      // 这里仅作为 fallback：streaming 模式或预调度未成功时。
       if (self._gaplessEnabled && remainingMs <= 250 && !self._gaplessScheduledSource) {
           var isBufferMode = !!self._currentBuffer;
           var isStreamingMode = !isBufferMode && !!self._currentStreamingNode;
@@ -3063,48 +2653,33 @@
             self.switchToNext();
           }
         }
-      }, 250);
+      }, 100);
     }
 
-    /**
-     * 检查下一曲是否就绪（可进行 crossfade / gapless）。
-     * 覆盖所有模式组合：Buffer→Buffer、Buffer→Streaming、Streaming→Streaming、Streaming→Buffer。
-     */
     _isNextReady(isBufferMode, isStreamingMode) {
       if (isBufferMode && this._nextBuffer && !this._nextIsStreaming) {
-        return true; // Buffer → Buffer
+        return true;
       }
       if (isBufferMode && this._nextIsStreaming) {
-        // Buffer → Streaming：worklet 已预缓冲（primed）或 pending PCM 有数据
+
         return this._nextStreamingPrimed || this._pendingNextStreamingPcm.length > 0;
       }
       if (isStreamingMode && this._nextIsStreaming) {
-        // Streaming → Streaming
+
         return this._nextStreamingPrimed || this._pendingNextStreamingPcm.length > 0;
       }
       if (isStreamingMode && this._nextBuffer && !this._nextIsStreaming) {
-        // Streaming → Buffer：buffer 已加载即可
+
         return true;
       }
       return false;
     }
 
-    /**
-     * 检查是否应该触发 crossfade。
-     * 如果到达触发点但下一曲未就绪，设置 _crossfadePending 标志，
-     * 等下一曲就绪后（setNextInfo / pushNextPcm）补触发。
-     */
     _checkCrossfadeTrigger() {
       if (!this._crossfadeEnabled) return;
       if (this._crossfadeActive) return;
       if (this._pendingBufferToStreamingCrossfade) return;
       if (this._isPaused) return;
-
-      // Subsonic 流媒体（HTTP URL）现在参与 crossfade：
-      // - Streaming → Streaming crossfade 已完整实现（_startStreamingCrossfade）
-      // - FFmpeg 可直接处理 HTTP URL 预加载（_spawnNextFfmpeg）
-      // - 频谱分析不可用时，TransitionPlanner 回退到固定时长方案
-      // 触发时仍通过 _isNextReady() 检查下一曲是否就绪，未就绪时进入 pending 等待。
 
       var durMs = this._currentDurationMs;
       if (durMs <= 0) return;
@@ -3113,7 +2688,6 @@
       var remainingMs = durMs - posMs;
       if (remainingMs <= 0) return;
 
-      // 计算触发阈值
       var plan = this._transitionPlan;
       var triggerMs;
       if (plan && plan.transitionStartMs >= 0) {
@@ -3123,10 +2697,9 @@
       }
 
       if (triggerMs <= 0 || remainingMs > triggerMs + 250) {
-        return; // 未到触发点
+        return;
       }
 
-      // 到达触发点，检查下一曲是否就绪
       var isBufferMode = !!this._currentBuffer;
       var isStreamingMode = !isBufferMode && !!this._currentStreamingNode;
       var nextReady = this._isNextReady(isBufferMode, isStreamingMode);
@@ -3140,11 +2713,11 @@
           (plan ? ', plan=' + plan.source : ', fallback'));
         this.startCrossfade();
       } else {
-        // 下一曲未就绪，标记 pending，等就绪后补触发
+
         if (!this._crossfadePending) {
           this._crossfadePending = true;
           this._crossfadePendingSince = Date.now();
-          // 诊断信息：显示下一曲缺少什么
+
           var diag = 'nextBuffer=' + (!!this._nextBuffer) +
             ', nextIsStreaming=' + this._nextIsStreaming +
             ', nextStreamingNode=' + (!!this._nextStreamingNode) +
@@ -3153,7 +2726,7 @@
           console.log('[AudioEngine] Crossfade PENDING: next not ready, remaining=' +
             Math.round(remainingMs) + 'ms (will trigger when next becomes ready) [' + diag + ']');
         } else if (this._crossfadePendingSince > 0) {
-          // 超时保护：pending 超过 20 秒仍未就绪，放弃 crossfade
+
           var pendingElapsed = Date.now() - this._crossfadePendingSince;
           if (pendingElapsed > 20000) {
             console.warn('[AudioEngine] Crossfade PENDING TIMEOUT: gave up after ' +
@@ -3161,7 +2734,7 @@
               'ms — falling back to normal track end');
             this._crossfadePending = false;
             this._crossfadePendingSince = 0;
-            // 清除过渡方案，让歌曲自然结束并触发 onEnded → nextTrack()
+
             this._transitionPlan = null;
             this._cachedCrossfadeCurves = null;
           }
@@ -3195,24 +2768,13 @@
       try { node.disconnect(); } catch (_) {}
     }
 
-    /**
-     * 获取鼓点/频谱分析数据。
-     * 从 AnalyserNode 旁路读取频谱，提取低频（鼓点）、中频、高频能量。
-     * 用于全窗口视图背景的极光式流动效果。
-     *
-     * @returns {{bass:number, mid:number, treble:number, level:number}|null}
-     *   各频段能量 0-1，null 表示分析器未就绪
-     */
     getBeatData() {
       if (!this._analyser || !this._freqData) return null;
       this._analyser.getByteFrequencyData(this._freqData);
 
       var data = this._freqData;
-      var n = data.length;  // 256 bins (fftSize=512)
-      // 采样率 44100，每 bin ≈ 86Hz
-      // bass: bin 0-8 (≈0-700Hz，含 kick 和 bass)
-      // mid:  bin 9-46 (≈700Hz-4kHz，人声/吉他主频)
-      // treble: bin 47-128 (≈4kHz-11kHz，高频细节)
+      var n = data.length;
+
       var bassSum = 0, midSum = 0, trebleSum = 0;
       var bassCount = 9, midCount = 38, trebleCount = 82;
 
@@ -3220,7 +2782,6 @@
       for (var i = bassCount; i < bassCount + midCount && i < n; i++) midSum += data[i];
       for (var i = bassCount + midCount; i < bassCount + midCount + trebleCount && i < n; i++) trebleSum += data[i];
 
-      // 归一化到 0-1，加增益补偿（getByteFrequencyData 返回值通常偏小）
       var bass = Math.min(1, (bassSum / (255 * bassCount)) * 2.5);
       var mid = Math.min(1, (midSum / (255 * midCount)) * 2.5);
       var treble = Math.min(1, (trebleSum / (255 * trebleCount)) * 3.0);

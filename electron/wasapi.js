@@ -1,18 +1,3 @@
-/**
- * Carminium — ネイティブオーディオレンダラー (Zig + miniaudio)
- *
- * native/carminium_audio.zig が生成したネイティブライブラリ
- * （Windows: .dll / Linux: .so / macOS: .dylib）を koffi 経由で呼び出す。
- * ネイティブ側は miniaudio（Windows: WASAPI / Linux: PulseAudio または ALSA / macOS: CoreAudio）で直接出力。
- *
- * アーキテクチャ:
- *   FFmpeg (デコード) → IPC → Renderer (Web Audio API 合成)
- *                                         ↓
- *   Renderer (合成済み PCM) → IPC → ca_push_pcm() → native.so/.dll/.dylib → オーディオデバイス
- *
- * このモジュールは FFmpeg のデコードと miniaudio への PCM 出力のみを担当する。
- * Gapless/AutoMix/音量の合成はすべてレンダラー側の Web Audio API で行われる。
- */
 'use strict';
 
 const koffi = require('koffi');
@@ -25,7 +10,6 @@ const { DecoderPool } = require('./decoder_pool');
 const SHARE_SHARED = 0;
 const SHARE_EXCLUSIVE = 1;
 
-// プラットフォーム別ファイル名・サブディレクトリ
 const IS_WIN = process.platform === 'win32';
 const IS_MAC = process.platform === 'darwin';
 const PLATFORM_SUBDIR = IS_WIN ? 'win32' : (process.platform === 'linux' ? 'linux' : (IS_MAC ? 'darwin' : process.platform));
@@ -33,12 +17,9 @@ const LIB_NAME = IS_WIN ? 'carminium_audio.dll' : (IS_MAC ? 'carminium_audio.dyl
 const FFMPEG_NAME = IS_WIN ? 'ffmpeg.exe' : 'ffmpeg';
 const FFPROBE_NAME = IS_WIN ? 'ffprobe.exe' : 'ffprobe';
 
-// asar パッケージ内のパスを実際のファイルシステム上のパス（app.asar.unpacked）に変換する。
-// koffi.load() や child_process.spawn() は Electron のパッチ済み fs を経由しないため、
-// asar 内のパスをそのまま渡すと実ファイルが見つからず失敗する。
 function _resolveRealPath(p) {
   if (!p) return p;
-  // 文字列として ".asar" を含む場合、app.asar.unpacked へ置換
+
   if (p.includes('.asar')) {
     return p.replace(/\.asar([\\/])/, '.asar.unpacked$1');
   }
@@ -47,39 +28,31 @@ function _resolveRealPath(p) {
 
 let _lib = null;
 let _f = {};
-// Set to true when ca_init returns a hard failure (e.g. MA_NO_DEVICE on
-// Linux with no sound card). When true, enumerateDevices() returns empty
-// and the NativeRenderer enters dummy mode so the rest of the app
-// (UI, queue management, position tracking) keeps working without audio.
 let _nativeInitFailed = false;
 
 function _loadDll() {
   if (_lib) return true;
 
   const candidates = [
-    // 最優先：プラットフォーム別サブディレクトリ（Win/Linux 両方のバイナリを共存可能に）
+
     path.join(__dirname, 'bin', PLATFORM_SUBDIR, LIB_NAME),
-    // 互換：electron/bin 直下（従来構成）
+
     path.join(__dirname, 'bin', LIB_NAME),
-    // 開発環境：native/zig-out 配下
+
     path.join(__dirname, '..', 'native', 'zig-out', 'bin', LIB_NAME),
   ];
-  // Linux: デベロッパー環境でビルドした zig-out/lib からも探す
+
   if (!IS_WIN) {
     candidates.push(path.join(__dirname, '..', 'native', 'zig-out', 'lib', LIB_NAME));
   }
-  // Linux packages may place native assets in resources/ rather than beside
-  // electron/ inside the asar. Keep this location as a final packaged-app
-  // fallback so AppImage/deb layouts remain loadable.
+
   if (process.resourcesPath) {
     candidates.push(path.join(process.resourcesPath, LIB_NAME));
     candidates.push(path.join(process.resourcesPath, 'electron', 'bin', PLATFORM_SUBDIR, LIB_NAME));
   }
   let libPath = null;
   for (const c of candidates) {
-    // electron-builder unpacks native assets next to app.asar. Resolve the
-    // real path before checking existence; app.asar/electron/... itself is
-    // only a virtual path and therefore does not exist on disk.
+
     const realPath = _resolveRealPath(c);
     if (fs.existsSync(realPath)) { libPath = realPath; break; }
   }
@@ -148,8 +121,8 @@ function _findFFmpeg() {
       { stdio: 'ignore', timeout: 5000 });
     _ffmpegPath = 'ffmpeg';
     return _ffmpegPath;
-  } catch { /* not in PATH */ }
-  // プラットフォーム別追加探索パス
+  } catch {  }
+
   const locations = IS_WIN
     ? [
         'C:\\ffmpeg\\bin\\ffmpeg.exe',
@@ -188,13 +161,13 @@ function _findFFprobe() {
       { stdio: 'ignore', timeout: 5000 });
     _ffprobePath = 'ffprobe';
     return _ffprobePath;
-  } catch { /* not in PATH */ }
+  } catch {  }
   const ff = _findFFmpeg();
   if (ff && ff !== 'ffmpeg') {
     const probePath = path.join(path.dirname(ff), FFPROBE_NAME);
     if (fs.existsSync(probePath)) { _ffprobePath = probePath; return _ffprobePath; }
   }
-  // Linux 追加 PATH
+
   if (!IS_WIN) {
     const linuxLocations = [
       '/usr/bin/ffprobe',
@@ -227,48 +200,31 @@ class NativeRenderer extends EventEmitter {
 
     this._currentFilePath = null;
 
-    // 统一解码池管理所有 FFmpeg 子进程（最多 2 槽位：main + next）
     this._decoder = null;
     this._ffmpegDataStarted = false;
 
     this._seekOffsetMs = 0;
-    // 暂停时记录的位置（恢复播放时从该处重新解码）
+
     this._resumePositionMs = null;
 
-    // 次曲メタデータ
     this._nextDurationMs = 0;
     this._nextFilePath = null;
-    // gapless 预加载完毕后标记（promoteNextToCurrent 使用）
+
     this._nextReady = false;
 
-    // Web Audio API 模式标志：当为 true 时，浏览器可解码的格式不启动 FFmpeg
     this._webAudioEnabled = false;
-    // 当前曲目是否使用浏览器解码（无 FFmpeg 进程）
+
     this._webAudioBrowserDecode = false;
 
-    // レンダラーに PCM を送るためのコールバック
-    // Bridge が設定する
-    this.sendPcmToRenderer = null;    // (channel: 'main'|'next', float32Array) => void
-    this.sendFfmpegState = null;      // (channel: 'main'|'next', finished: bool) => void
+    this.sendPcmToRenderer = null;
+    this.sendFfmpegState = null;
 
     this._drainTimer = null;
 
-    // ── Pre-roll（起動前バッファリング）──
-    // WASAPI デバイスを開始する前に DLL リングバッファへ一定量の PCM を蓄える。
-    // 蓄積後は push 速度 = 消費速度で水位が PREROLL_MS 付近に保たれるため、
-    // 切歌瞬間のレンダラー主スレッドブロック（UI 更新・decodeAudioData・GC）
-    // による PCM 転送遅延をバッファが吸収し、欠載による音切れを防ぐ。
-    // 位置表示は getBufferLatencyMs → AudioEngine 側の遅延補正で自動補正される。
-    this.PREROLL_MS = 800;          // 目標水位（ミリ秒）
-    this.PREROLL_TIMEOUT_MS = 3000; // 水位が貯まらなくても強制開始する上限
+    this.PREROLL_MS = 800;
+    this.PREROLL_TIMEOUT_MS = 3000;
     this._prerollTimer = null;
 
-    // ── Dummy mode ──
-    // When the native audio device cannot be opened (e.g. Linux with no
-    // sound card / PulseAudio not running), the renderer enters dummy mode.
-    // All native calls become no-ops, but the rest of the app (AudioEngine,
-    // FFmpeg decoding, position tracking, UI) continues to function.
-    // The user sees a notification explaining that no audio device was found.
     this._dummyMode = false;
   }
 
@@ -291,11 +247,6 @@ class NativeRenderer extends EventEmitter {
     }
   }
 
-  /**
-   * Reset the native init failure flag, allowing a retry on the next init()
-   * call. Used when the user manually switches output devices — they may
-   * have connected an audio device since the last failure.
-   */
   static resetNativeInitFailed() {
     if (_nativeInitFailed) {
       _nativeInitFailed = false;
@@ -307,8 +258,6 @@ class NativeRenderer extends EventEmitter {
     if (!_loadDll()) throw new Error('carminium_audio native library not loaded: ' + LIB_NAME);
     if (this._initialized) await this.close();
 
-    // Already failed once — enter dummy mode immediately without retrying
-    // (prevents repeated ALSA/PulseAudio error spam on every play attempt).
     if (_nativeInitFailed) {
       this._enterDummyMode(opts);
       return {
@@ -319,8 +268,6 @@ class NativeRenderer extends EventEmitter {
       };
     }
 
-    // Linux/macOS: PulseAudio/ALSA/CoreAudio don't support WASAPI exclusive mode.
-    // Force shared mode on non-Windows; ignore the shareMode option.
     const shareMode = (IS_WIN && opts.shareMode === SHARE_EXCLUSIVE) ? SHARE_EXCLUSIVE : SHARE_SHARED;
     const deviceIndex = opts.deviceIndex != null ? opts.deviceIndex : -1;
     const sampleRate = opts.sampleRate || 0;
@@ -328,14 +275,12 @@ class NativeRenderer extends EventEmitter {
 
     const result = _f.ca_init(shareMode, deviceIndex, sampleRate, channels);
     if (result !== 0) {
-      // 独占模式失败 → 自动回退到共享模式
+
       if (shareMode === SHARE_EXCLUSIVE) {
         console.warn('[wasapi] Exclusive mode init failed (ca_init=' + result + '), falling back to shared');
         const retry = _f.ca_init(SHARE_SHARED, deviceIndex, sampleRate, channels);
         if (retry !== 0) {
-          // Hard failure: no audio device available. Enter dummy mode
-          // so the app remains usable (UI, queue, position tracking)
-          // without audio output.
+
           console.error('[wasapi] ca_init failed (miniaudio error ' + retry +
             ') — entering dummy mode (no audio device available)');
           _nativeInitFailed = true;
@@ -348,7 +293,7 @@ class NativeRenderer extends EventEmitter {
           };
         }
       } else {
-        // Hard failure: no audio device available. Enter dummy mode.
+
         console.error('[wasapi] ca_init failed (miniaudio error ' + result +
           ') — entering dummy mode (no audio device available)');
         _nativeInitFailed = true;
@@ -369,14 +314,12 @@ class NativeRenderer extends EventEmitter {
     this._initialized    = true;
     this._seekOffsetMs   = 0;
 
-    // 音量は DLL 側では 1.0 固定（Web Audio API 側で制御）
     _f.ca_set_volume(1.0);
 
     const modeStr = this._shareMode === SHARE_EXCLUSIVE ? 'exclusive' : 'shared';
     console.log(`[wasapi] Initialized ${modeStr} mode: ` +
                 `${this._sampleRate}Hz, ${this._channels}ch, f32`);
 
-    // 配置统一解码池
     const ff = _findFFmpeg();
     if (ff) {
       if (!this._decoder) this._decoder = new DecoderPool(ff);
@@ -391,14 +334,6 @@ class NativeRenderer extends EventEmitter {
     };
   }
 
-  // ── Dummy mode ──────────────────────────────────────────────────────────
-
-  /**
-   * Enter dummy mode: the native audio device could not be opened, but the
-   * app remains usable. FFmpeg decoding, AudioEngine processing, position
-   * tracking and UI all continue to work — only actual audio output is
-   * silent. All _f.* native calls are skipped when _dummyMode is true.
-   */
   _enterDummyMode(opts = {}) {
     this._dummyMode = true;
     this._initialized = true;
@@ -406,17 +341,12 @@ class NativeRenderer extends EventEmitter {
     this._paused = false;
     this._volume = 1.0;
     this._shareMode = SHARE_SHARED;
-    // Use requested sample rate or fall back to 44100, which is what
-    // player.js always requests. AudioEngine will use this to create its
-    // AudioContext.
+
     this._sampleRate = opts.sampleRate || 44100;
     this._channels = opts.channels || 2;
     this._bytesPerFrame = (this._channels * 32) / 8;
     this._seekOffsetMs = 0;
 
-    // Set up FFmpeg decoder so FFmpeg-based decoding still works
-    // (AudioEngine receives PCM, processes it, sends it back — we just
-    // silently drop it in pushProcessedPcm).
     const ff = _findFFmpeg();
     if (ff) {
       if (!this._decoder) this._decoder = new DecoderPool(ff);
@@ -426,8 +356,6 @@ class NativeRenderer extends EventEmitter {
     console.warn('[wasapi] Dummy mode active: sampleRate=' + this._sampleRate +
       ', channels=' + this._channels + ' — audio output disabled');
   }
-
-  // ── FFmpeg デコード ──────────────────────────────────────────────────────
 
   async playFile(filePath) {
     if (!this._initialized) throw new Error('Renderer not initialized');
@@ -451,14 +379,14 @@ class NativeRenderer extends EventEmitter {
     const _this = this;
     this._ffmpegDataStarted = false;
     this._decoder.start('main', filePath, 0,
-      /* onPcmData */ (fa) => {
+       (fa) => {
         if (!_this._ffmpegDataStarted) _this._ffmpegDataStarted = true;
         if (_this.sendPcmToRenderer) _this.sendPcmToRenderer('main', fa);
       },
-      /* onFinished */ () => {
+       () => {
         if (_this.sendFfmpegState) _this.sendFfmpegState('main', true);
       },
-      /* onError */ () => {
+       () => {
         if (_this.sendFfmpegState) _this.sendFfmpegState('main', true);
       }
     );
@@ -480,8 +408,7 @@ class NativeRenderer extends EventEmitter {
   }
 
   _spawnFFmpeg(filePath, seekSec) {
-    // 已废弃：FFmpeg 子进程管理已收敛到 DecoderPool。
-    // 使用 this._decoder.start('main', ...) 替代。
+
   }
 
   async _probeDuration(filePath) {
@@ -499,25 +426,21 @@ class NativeRenderer extends EventEmitter {
         const seconds = parseFloat(stdout.trim());
         resolve(isNaN(seconds) ? 0 : Math.round(seconds * 1000));
       });
-      // 进程级超时保底
+
       setTimeout(() => { try { child.kill(); } catch {} }, 10500);
     });
   }
 
-  // ── PCM 受信 → レンダラーに転送 ──────────────────────────────────────────
-
   _onPcmData(chunk, channel) {
-    // DecoderPool 已将 PCM 字节对齐并转为 Float32Array，直接转发即可。
+
     if (chunk instanceof Float32Array && this.sendPcmToRenderer) {
       this.sendPcmToRenderer(channel, chunk);
     }
   }
 
-  // ── レンダラーから合成済み PCM を受信 → DLL にプッシュ ───────────────
-
   pushProcessedPcm(float32ArrayOrBuffer) {
     if (!this._initialized) return -1;
-    // Dummy mode: silently drop PCM (no audio device available)
+
     if (this._dummyMode) return 0;
 
     let buf;
@@ -545,13 +468,9 @@ class NativeRenderer extends EventEmitter {
     return result;
   }
 
-  // ── ドレインタイマー（DLL バッファの補充チェック）───────────────────────
-
   _startDrainTimer() {
     if (this._drainTimer) return;
-    // ドレインタイマーは不要。レンダラー側の ScriptProcessorNode が
-    // 自動的にクロック駆動でデータを送ってくる。
-    // ただし、DLL バッファが枯渇しそうな場合はログを出す程度。
+
   }
 
   _stopDrainTimer() {
@@ -561,11 +480,6 @@ class NativeRenderer extends EventEmitter {
     }
   }
 
-  // ── FFmpeg stdout 背压控制 ─────────────────────────────────────────────
-  // 当渲染进程 StreamingPCMProcessor 的 ring buffer 水位过高时，
-  // 暂停 FFmpeg stdout 的 data 事件，阻止 PCM 继续产出。
-  // FFmpeg 管道缓冲区满后会自然阻塞，不丢弃任何数据。
-
   pauseStdout(channel) {
     if (this._decoder) this._decoder.pauseStdout(channel);
   }
@@ -574,18 +488,10 @@ class NativeRenderer extends EventEmitter {
     if (this._decoder) this._decoder.resumeStdout(channel);
   }
 
-  // ── 再生制御 ──────────────────────────────────────────────────────────────
-
-  /**
-   * Pre-roll 対応の再生開始。
-   * 水位が目標に達していれば即座に ca_start、
-   * 足りなければポーリングで水位を待ってから開始する。
-   * タイムアウト時は無音デッドロック防止のため強制開始。
-   */
   _startWithPreroll() {
     this._cancelPreroll();
     if (!this._initialized) return;
-    // Dummy mode: no native device to start, just emit state
+
     if (this._dummyMode) return;
 
     const targetBytes = Math.max(1, Math.round(
@@ -600,7 +506,7 @@ class NativeRenderer extends EventEmitter {
     };
 
     let buffered = 0;
-    try { buffered = _f.ca_get_buffered_bytes(); } catch { /* ignore */ }
+    try { buffered = _f.ca_get_buffered_bytes(); } catch {  }
     if (buffered >= targetBytes) {
       tryStart();
       return;
@@ -611,7 +517,7 @@ class NativeRenderer extends EventEmitter {
     this._prerollTimer = setInterval(() => {
       if (!this._initialized) { this._cancelPreroll(); return; }
       let level = 0;
-      try { level = _f.ca_get_buffered_bytes(); } catch { /* ignore */ }
+      try { level = _f.ca_get_buffered_bytes(); } catch {  }
       if (level >= targetBytes || Date.now() - startT > this.PREROLL_TIMEOUT_MS) {
         const waitedMs = Date.now() - startT;
         this._cancelPreroll();
@@ -633,11 +539,6 @@ class NativeRenderer extends EventEmitter {
     }
   }
 
-  /**
-   * 从指定位置（毫秒）重建 main 槽位解码进程。
-   * 暂停/后台释放进程后，恢复播放时调用。
-   * 已有活跃进程（如 seek 刚启动）则不重建。
-   */
   _startFromPosition(positionMs) {
     this._resumePositionMs = null;
     if (!this._currentFilePath || this._webAudioBrowserDecode || !this._decoder) return;
@@ -658,10 +559,9 @@ class NativeRenderer extends EventEmitter {
 
   async play() {
     if (!this._initialized) throw new Error('Not initialized');
-    // 暂停时进程已释放，从记录的位置重新解码恢复
+
     this._startFromPosition(this._resumePositionMs);
-    // 先に状態を playing にして UI を即応させる。
-    // DLL 側の実際の出力開始は pre-roll 完了後（位置は遅延補正で正しく表示される）。
+
     this._playing = true;
     this._paused = false;
     this.emit('state_changed', 'playing');
@@ -672,9 +572,9 @@ class NativeRenderer extends EventEmitter {
     if (!this._playing) return;
     this._cancelPreroll();
     if (!this._dummyMode) _f.ca_stop();
-    // 记录暂停位置，供 play() 恢复时从该处重新解码
+
     this._resumePositionMs = this._currentPositionMs();
-    // 终止 FFmpeg 子进程 → 释放其占用的内存
+
     if (this._decoder) {
       this._decoder.stopSlot('main');
       this._decoder.stopSlot('next');
@@ -684,10 +584,6 @@ class NativeRenderer extends EventEmitter {
     this.emit('state_changed', 'paused');
   }
 
-  /**
-   * 释放空闲解码进程（窗口失焦/后台时调用，真正释放内存）。
-   * 播放中不释放（会断音）；未播放时进程通常已在 pause() 释放，此处兜底。
-   */
   suspendDecoders() {
     if (this._playing) return;
     if (this._decoder && (this._decoder.isSlotActive('main') || this._decoder.isSlotActive('next'))) {
@@ -697,12 +593,8 @@ class NativeRenderer extends EventEmitter {
     }
   }
 
-  /**
-   * 窗口聚焦时调用。解码进程的重建由 play() 驱动（仅在恢复播放时创建），
-   * 聚焦本身不重建进程，避免暂停态下无谓占用内存。
-   */
   resumeDecoders() {
-    /* no-op：进程重建由 play() 负责 */
+
   }
 
   async stop() {
@@ -754,28 +646,15 @@ class NativeRenderer extends EventEmitter {
   }
 
   async setVolume(level) {
-    // 音量は Web Audio API 側で制御。DLL は常に 1.0。
+
     this._volume = Math.max(0, Math.min(1, level));
   }
 
-  // ── Web Audio API モード ──────────────────────────────────────────────────
-
-  /**
-   * Web Audio API 模式を有効/無効にする。
-   * 有効時、ブラウザでデコード可能な形式のファイルは FFmpeg を起動しない。
-   */
   setWebAudioEnabled(enabled) {
     this._webAudioEnabled = !!enabled;
     console.log('[wasapi] Web Audio mode:', enabled ? 'enabled' : 'disabled');
   }
 
-  /**
-   * ブラウザデコード用にファイルを設定（FFmpeg を起動しない）。
-   * Web Audio API 側で decodeAudioData を使用してデコードする。
-   *
-   * @param {string} filePath - 音频文件路径
-   * @returns {Promise<{durationMs: number}>}
-   */
   async setupForBrowserDecode(filePath) {
     if (!this._initialized) throw new Error('Renderer not initialized');
     if (!filePath) throw new Error('No file path');
@@ -797,8 +676,6 @@ class NativeRenderer extends EventEmitter {
     console.log('[wasapi] setupForBrowserDecode:', filePath, 'duration=', this._durationMs);
     return { durationMs: this._durationMs };
   }
-
-  // ── 次曲プリロード ──────────────────────────────────────────────────────
 
   async preloadNext(filePath, seekMsOrOpts = 0) {
     if (!this._initialized) throw new Error('Renderer not initialized');
@@ -824,14 +701,14 @@ class NativeRenderer extends EventEmitter {
 
     const _this = this;
     this._decoder.start('next', filePath, 0,
-      /* onPcmData */ (fa) => {
+       (fa) => {
         if (_this.sendPcmToRenderer) _this.sendPcmToRenderer('next', fa);
       },
-      /* onFinished */ () => {
+       () => {
         _this._nextReady = true;
         if (_this.sendFfmpegState) _this.sendFfmpegState('next', true);
       },
-      /* onError */ () => {
+       () => {
         _this._nextReady = true;
         if (_this.sendFfmpegState) _this.sendFfmpegState('next', true);
       }
@@ -853,26 +730,12 @@ class NativeRenderer extends EventEmitter {
     return { durationMs: this._nextDurationMs };
   }
 
-  /**
-   * Crossfade/Gapless 完成后，将 next track 提升为 current track。
-   *
-   * AudioEngine 的 _finishMix() 已把 nextRing 的剩余数据复制到 mainRing，
-   * 但 wasapi.js 侧的 next ffmpeg 进程仍在运行。如果不提升，后续 PCM 数据
-   * 仍会进入 'next' channel（被 AudioEngine 忽略），导致 mainRing 枯竭后静音死锁。
-   *
-   * 提升后：
-   * - next ffmpeg 进程变为 main ffmpeg 进程
-   * - 后续 PCM 数据通过 'main' channel 发送
-   * - close 事件通过 'main' channel 通知
-   * - 元数据（filePath, durationMs）更新为新曲目
-   */
   promoteNextToCurrent() {
     if (!this._nextFilePath && !this._nextReady) {
       console.warn('[wasapi] promoteNextToCurrent: no next track to promote');
       return;
     }
 
-    // 更新元数据
     this._currentFilePath = this._nextFilePath;
     this._durationMs = this._nextDurationMs;
     this._seekOffsetMs = 0;
@@ -883,13 +746,13 @@ class NativeRenderer extends EventEmitter {
     if (this._decoder) {
       const _this = this;
       const promoted = this._decoder.promoteNextToMain(
-        /* onPcmData */ (fa) => {
+         (fa) => {
           if (_this.sendPcmToRenderer) _this.sendPcmToRenderer('main', fa);
         },
-        /* onFinished */ () => {
+         () => {
           if (_this.sendFfmpegState) _this.sendFfmpegState('main', true);
         },
-        /* onError */ () => {
+         () => {
           if (_this.sendFfmpegState) _this.sendFfmpegState('main', true);
         }
       );
@@ -903,18 +766,17 @@ class NativeRenderer extends EventEmitter {
   }
 
   _spawnNextFfmpeg(filePath, seekSec = 0) {
-    // 已废弃：使用 this._decoder.start('next', ...) 替代。
+
   }
 
   _killNextFfmpeg() {
-    // 已废弃：使用 this._decoder.stopSlot('next') 替代。
+
   }
 
   _killFFmpeg() {
-    // 已废弃：使用 this._decoder.stopSlot('main') 替代。
+
   }
 
-  /** 次曲プリロードをキャンセルする（キュー変更時に使用） */
   cancelPreloadNext() {
     if (this._decoder) this._decoder.stopSlot('next');
     this._nextFilePath = null;
@@ -922,11 +784,6 @@ class NativeRenderer extends EventEmitter {
     this._nextReady = false;
   }
 
-  /**
-   * 获取 DLL 环形缓冲区的延迟（毫秒）。
-   * 已推送到 DLL 但尚未被 WASAPI 消费的音频时长。
-   * 用于渲染进程修正位置追踪（歌词/进度条同步）。
-   */
   getBufferLatencyMs() {
     if (!this._initialized) return 0;
     if (this._dummyMode) return 0;
@@ -959,10 +816,8 @@ class NativeRenderer extends EventEmitter {
     return !!this._nextFilePath;
   }
 
-  // ── 状態アクセサ ──────────────────────────────────────────────────────────
-
   async getPosition() {
-    // 位置追跡はレンダラー側の AudioEngine で行う
+
     return this._seekOffsetMs;
   }
 
@@ -990,18 +845,16 @@ class NativeRenderer extends EventEmitter {
     return this._dummyMode;
   }
 
-  // ── 互換性プロパティ（player.js からの参照用） ─────────────────────────
-
-  set setGaplessEnabled(_) { /* Web Audio API 側で管理 */ }
+  set setGaplessEnabled(_) {  }
   get gaplessEnabled() { return false; }
-  set setCrossfadeEnabled(_) { /* Web Audio API 側で管理 */ }
+  set setCrossfadeEnabled(_) {  }
   get crossfadeEnabled() { return false; }
-  setCrossfadeDuration() { /* Web Audio API 側で管理 */ }
+  setCrossfadeDuration() {  }
   get crossfadeDurationMs() { return 4000; }
 
-  setTempo() { /* SoundTouch は別途対応 */ }
-  setPitch() { /* SoundTouch は別途対応 */ }
-  setRate() { /* SoundTouch は別途対応 */ }
+  setTempo() {  }
+  setPitch() {  }
+  setRate() {  }
   get tempo() { return 1.0; }
   get pitch() { return 1.0; }
   get rate() { return 1.0; }
@@ -1017,17 +870,23 @@ class NativeRenderer extends EventEmitter {
 
     if (this._initialized) {
       if (!this._dummyMode) {
-        try { _f.ca_close(); } catch { /* ignore */ }
+        try { _f.ca_close(); } catch {  }
       }
       this._initialized = false;
     }
     this._playing = false;
     this._paused = false;
     this._seekOffsetMs = 0;
-    // Reset dummy mode so that a subsequent init() can attempt the real
-    // native backend again (used after resetNativeInitFailed()).
+
     this._dummyMode = false;
   }
 }
 
-module.exports = { NativeRenderer, WasapiRenderer: NativeRenderer, SHARE_SHARED, SHARE_EXCLUSIVE };
+module.exports = {
+  NativeRenderer,
+  WasapiRenderer: NativeRenderer,
+  SHARE_SHARED,
+  SHARE_EXCLUSIVE,
+  findFFmpeg: _findFFmpeg,
+  findFFprobe: _findFFprobe,
+};

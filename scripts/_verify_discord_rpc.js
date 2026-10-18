@@ -1,24 +1,9 @@
-/**
- * Carminium — Discord RPC 冒烟自测（scripts/_verify_discord_rpc.js）
- *
- * 不连接真实 Discord：stub 掉 electron(ipcMain) 与 net.createConnection，
- * 用假 socket 驱动 DiscordRpcController 的完整生命周期，验证：
- *   1. 帧编解码（8 字节头 + JSON）与分片到达的健壮性
- *   2. 握手 / READY / ERROR / PING→PONG 协议行为
- *   3. activity 构建：details/state/timestamps、暂停前缀、模板占位符、
- *      长度截断、换行压缩、未知占位符移除
- *   4. 设置热切换（开关 / client_id / show_paused / brief_format）
- *   5. getStatus 状态机与 ipc handler 注册
- *
- * 运行：node scripts/_verify_discord_rpc.js
- */
 'use strict';
 
 const assert = require('assert');
 const EventEmitter = require('events');
 const Module = require('module');
 
-// ── stub electron（discord_rpc.js 在构造函数里注册 ipcMain.handle）──────────
 const ipcHandlers = {};
 const fakeElectron = {
   ipcMain: {
@@ -31,7 +16,6 @@ require.cache[electronPath].filename = electronPath;
 require.cache[electronPath].loaded = true;
 require.cache[electronPath].exports = fakeElectron;
 
-// ── stub net.createConnection ────────────────────────────────────────────────
 const net = require('net');
 const createdSockets = [];
 net.createConnection = function (pipePath) {
@@ -52,7 +36,6 @@ function makeFakeSocket() {
   return sock;
 }
 
-// ── 协议帧工具（与被测模块同一格式）────────────────────────────────────────────
 const OP_HANDSHAKE = 0;
 const OP_FRAME = 1;
 const OP_CLOSE = 2;
@@ -93,7 +76,6 @@ function parseFrames(bufs) {
 
 const tick = (ms) => new Promise((r) => setTimeout(r, ms || 30));
 
-// ── 假 player / settings ─────────────────────────────────────────────────────
 class FakePlayer extends EventEmitter {
   constructor() {
     super();
@@ -123,7 +105,6 @@ function makeSettings(overrides) {
 
 const { DiscordRpcController } = require('../electron/discord_rpc.js');
 
-// ── 测试桩 ─────────────────────────────────────────────────────────────────
 let passed = 0;
 let failed = 0;
 function check(name, fn) {
@@ -142,17 +123,14 @@ async function main() {
   const settings = makeSettings();
   const ctrl = new DiscordRpcController(player, settings);
 
-  // 0. ipc handler 注册
   check('discord_rpc_status ipc handler 已注册', () => {
     assert.strictEqual(typeof ipcHandlers['discord_rpc_status'], 'function');
     assert.deepStrictEqual(ipcHandlers['discord_rpc_status'](), { state: 'disconnected', username: '' });
   });
   check('初始状态 disabled', () => {
-    // 构造时 enabled=true 但未 start()，_connecting 仍为 false → disconnected
     assert.strictEqual(ctrl.getStatus().state, 'disconnected');
   });
 
-  // 1. start() → 连接第一个候选管道 → 握手帧
   ctrl.start();
   await tick();
   check('start() 后创建了管道连接尝试', () => {
@@ -172,7 +150,6 @@ async function main() {
     assert.deepStrictEqual(frames[0].json, { v: 1, client_id: '111111111111111111' });
   });
 
-  // 2. 分片到达：把 READY 帧拆成 3 段喂入
   const readyFrame = encodeFrame(OP_FRAME, {
     evt: 'READY',
     data: { user: { username: 'tester', global_name: 'Tester' } },
@@ -185,13 +162,12 @@ async function main() {
     assert.strictEqual(ctrl.getStatus().username, 'Tester');
   });
 
-  // 3. 播放中 → SET_ACTIVITY（details=曲名, state=模板, timestamps）
   player._track = { title: 'Midnight City', artist: 'M83', album: 'Hurry Up, We\'re Dreaming', album_artist: 'M83' };
   player._state = 'playing';
-  player._pos = 30000;   // 30s
-  player._dur =240000;   // 240s
+  player._pos = 30000;
+  player._dur =240000;
   player.emit('state_changed');
-  await tick(120); // 等 _scheduleUpdate 的 50ms 合并 tick
+  await tick(120);
 
   check('播放中推送 SET_ACTIVITY', () => {
     const { frames } = parseFrames(sock.writes);
@@ -208,7 +184,6 @@ async function main() {
     assert.strictEqual(setFrames[0].json.args.pid, process.pid, 'args.pid 应为 process.pid');
   });
 
-  // 4. PING → PONG 回声
   const pongBefore = sock.writes.length;
   sock.emit('data', encodeRaw(OP_PING, Buffer.from('hello-ping')));
   check('PING 被回以 PONG（原样载荷）', () => {
@@ -217,7 +192,6 @@ async function main() {
     assert.strictEqual(frames[0].opcode, OP_PONG);
   });
 
-  // 5. 暂停 → ⏸ 前缀、无 timestamps
   player._state = 'paused';
   player.emit('state_changed');
   await tick(120);
@@ -229,7 +203,6 @@ async function main() {
     assert.strictEqual(act.timestamps, undefined, '暂停不应带进度');
   });
 
-  // 6. 关闭「暂停时显示」→ CLEAR_ACTIVITY
   ctrl.onSettingsChanged(JSON.stringify({ discord_rpc_show_paused: false }));
   check('关闭暂停显示后清除 activity', () => {
     const { frames } = parseFrames(sock.writes);
@@ -238,7 +211,6 @@ async function main() {
     assert.strictEqual(clearFrames[clearFrames.length - 1].json.args.pid, process.pid);
   });
 
-  // 7. 自定义模板 + 未知占位符移除 + 换行压缩 + 截断
   ctrl.onSettingsChanged(JSON.stringify({
     discord_rpc_show_paused: true,
     discord_rpc_brief_format: '{title} · {artist} · {album_artist} · {foo}',
@@ -254,7 +226,6 @@ async function main() {
     assert.ok(!/\{|\}/.test(act.state), '不应残留花括号');
   });
 
-  // 换行压缩 + 超长截断
   const longTitle = 'A'.repeat(200);
   player._track = { title: longTitle, artist: 'Line\n\nBreak  Artist', album: 'x' };
   player.emit('track_changed');
@@ -268,7 +239,6 @@ async function main() {
   });
   ctrl.onSettingsChanged(JSON.stringify({ discord_rpc_brief_format: '{artist}' }));
 
-  // 8. stopped → CLEAR_ACTIVITY
   player._state = 'stopped';
   player.emit('state_changed');
   await tick(120);
@@ -278,8 +248,6 @@ async function main() {
     assert.ok(clearFrames.length >= 1);
   });
 
-  // 9. 全新连接在握手阶段收到 ERROR（最常见：client_id 无效）
-  //    → 断开、销毁 socket、进入 disconnected（已握手连接的 ERROR 按设计忽略）
   ctrl.onSettingsChanged(JSON.stringify({ discord_rpc: false }));
   await tick();
   ctrl.onSettingsChanged(JSON.stringify({ discord_rpc: true }));
@@ -292,13 +260,11 @@ async function main() {
     assert.strictEqual(sockErr.destroyed, true, 'socket 应被销毁');
   });
 
-  // 10. 关闭总开关 → disabled
   ctrl.onSettingsChanged(JSON.stringify({ discord_rpc: false }));
   check('关闭总开关 → disabled', () => {
     assert.strictEqual(ctrl.getStatus().state, 'disabled');
   });
 
-  // 11. 重新开启（带 client_id）→ 立即重连
   const before = createdSockets.length;
   ctrl.onSettingsChanged(JSON.stringify({ discord_rpc: true }));
   await tick();
@@ -307,7 +273,6 @@ async function main() {
     assert.strictEqual(ctrl.getStatus().state, 'connecting');
   });
 
-  // 12. stop()：清 activity + OP_CLOSE + 不再重连
   const sock2 = createdSockets[createdSockets.length - 1];
   sock2.emit('connect');
   sock2.emit('data', encodeFrame(OP_FRAME, { evt: 'READY', data: { user: { username: 'u2' } } }));

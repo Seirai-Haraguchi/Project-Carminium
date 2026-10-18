@@ -1,19 +1,3 @@
-/**
- * Carminium — 国际化（i18n）
- *
- * 支持语言：简体中文 / 繁體中文 / 日本語 / English / Русский
- *
- * 用法：
- *   App.i18n.t('nav.music')           → 返回当前语言对应的文本
- *   App.i18n.t('toast.tracksAdded', { count: 3, name: 'My List' })
- *   App.i18n.init('en')               → 切换语言并刷新 DOM
- *   App.i18n.applyToDOM()             → 扫描 [data-i18n] 并写入文本
- *
- * HTML 中可直接标记：
- *   <span data-i18n="nav.music">音乐</span>
- *   <input data-i18n-placeholder="common.search" placeholder="搜索…">
- *   <button data-i18n-title="common.back" title="返回">…</button>
- */
 (function () {
   'use strict';
 
@@ -24,10 +8,9 @@
   var _currentLang = DEFAULT_LANG;
   var _listeners = [];
 
-  // ── 翻译字典 ────────────────────────────────────────────────────────────
   var STRINGS = {
     'zh-CN': {
-      // 通用
+
       'common.back': '返回',
       'common.cancel': '取消',
       'common.confirm': '确认',
@@ -78,7 +61,6 @@
       'albums.count': '{count} 张专辑',
       'albums.filteredCount': '{shown}/{total} 张专辑',
 
-      // 导航
       'nav.yourMix': '探新',
       'nav.music': '音乐',
       'nav.albums': '专辑',
@@ -89,19 +71,16 @@
       'nav.playlists': '歌单',
       'nav.settings': '设置',
 
-      // 标题栏
       'title.minimize': '最小化',
       'title.maximize': '最大化/还原',
       'title.close': '关闭',
 
-      // 启动
       'splash.connecting': '正在连接…',
 
-      // 探新 页面
       'yourMix.title': '探新',
       'yourMix.featured': '今日精选',
       'yourMix.featuredDesc': '根据你的收听习惯每日挑选',
-      // 问候语（探新页标题）：按时段变化，{name} 为用户名
+
       'yourMix.greetMorning': '早上好',
       'yourMix.greetForenoon': '上午好',
       'yourMix.greetNoon': '中午好',
@@ -152,7 +131,6 @@
 'yourMix.recommendBadge': '推荐',
 'yourMix.emptyRecommend': '播放一些音乐后即可生成推荐歌单',
 
-// 页面标题
       'page.music.title': '所有音乐',
       'page.albums.title': '专辑',
       'page.artists.title': '艺术家',
@@ -162,20 +140,17 @@
       'page.settings.title': '设置',
       'page.about.title': '关于',
 
-      // 排序
       'sort.az': 'A-Z',
       'sort.za': 'Z-A',
       'sort.artist': '歌手',
       'sort.album': '专辑',
       'sort.year': '发行年份',
 
-      // 操作按钮
       'btn.playAll': '全部播放',
       'btn.clear': '清空',
       'btn.addLocalFolder': '添加本地文件夹',
       'btn.addStreaming': '添加流媒体库',
 
-      // 空状态
       'empty.noFolders': '未添加本地文件夹',
       'empty.noPlaylists': '未选择歌单',
       'empty.selectPlaylist': '从左侧「歌单」按钮中选择一个歌单',
@@ -185,7 +160,6 @@
       'empty.scanning': '扫描中',
       'empty.noTracks': '暂无曲目',
 
-      // 文件夹页
       'folders.subtitle': '添加本地音乐文件夹以构建您的媒体库。',
       'folders.trackCount': '{count} 首曲目',
       'folders.folderCount': '{count} 个本地文件夹',
@@ -201,12 +175,10 @@
       'folders.syncingProgress': '同步中… 已索引 {tracks} 首 / {albums} 张专辑',
       'folders.noTracksSynced': '未获取到曲目，请检查服务器配置或内容。',
 
-      // 历史
       'history.clearTitle': '清空播放历史',
       'history.clearBody': '将清除全部播放历史记录，此操作不可撤销。是否继续？',
       'history.clearConfirm': '清空',
 
-      // 正在播放面板
       'np.seekBack5': '前移 5 秒',
       'np.seekFwd5': '后移 5 秒',
       'np.seekBack30': '前移 30 秒',
@@ -226,6 +198,10 @@
       'np.content.lyrics': '单歌词',
       'np.progress': '播放进度',
       'np.transition': '过渡',
+      'np.quality.standard': '标准',
+      'np.quality.lossless': '无损',
+      'np.quality.hires': '高解析度无损',
+      'np.quality.atmos': 'Dolby Atmos',
       'np.prev': '上一首',
       'np.next': '下一首',
       'np.playPause': '播放/暂停',
@@ -269,11 +245,9 @@
       'np.loadingEmbeddedLyrics': '正在加载内嵌歌词…',
       'np.noEmbeddedLyrics': '未找到内嵌歌词',
 
-      // 浮动窗口
       'floating.dock': '还原到侧边栏',
       'floating.albumCover': '专辑封面',
 
-      // 音频模式对话框
       'audio.switchExclusiveTitle': '切换到 WASAPI 独占模式',
       'audio.switchExclusiveBody': '独占模式将直接占用输出设备，绕过 Windows 音频引擎以获得更低延迟与位完美输出。期间以下功能将不可用：播放中切换输出设备、音频处理 API 选择、系统音量合成器单独控制、其他应用同时发声。是否继续？',
       'audio.switchExclusiveConfirm': '切换',
@@ -284,7 +258,6 @@
       'audio.fallbackBody': '独占模式暂不可用（可能输出设备被占用），已自动回退共享模式。',
 'audio.noDeviceToast': '未找到音频输出设备，播放将继续但没有声音。请检查音频设备连接。',
 
-      // 右键菜单
       'cm.play': '立即播放',
       'cm.playSelected': '播放选中曲目',
       'cm.playNext': '下一首播放',
@@ -326,7 +299,6 @@
       'cm.infoFieldSize': '大小：{value}',
       'cm.infoFieldPath': '路径：{value}',
 
-      // 歌单
       'playlist.newTitle': '新建歌单',
       'playlist.createdAdded': '已创建歌单「{name}」并添加 {count} 首曲目',
       "playlist.tracksAdded": "{count} 首曲目已添加到「{name}」",
@@ -350,7 +322,6 @@
 "subsonic.noServerAdded": "请先在「媒体库」中添加流媒体服务器",
 "playlist.syncedTrackCount": "已同步「{name}」，共 {count} 首曲目",
 
-      // 搜索占位符
       'music.searchPlaceholder': '搜索本地歌曲、艺术家或专辑…',
       'liked.searchPlaceholder': '搜索喜爱的曲目…',
       'history.searchPlaceholder': '搜索历史曲目…',
@@ -359,7 +330,6 @@
       'albums.searchPlaceholder': '搜索专辑或艺术家…',
       'playlist.searchPlaceholder': '搜索歌单曲目…',
 
-      // 排序标签
       'music.sortArtist': '歌手',
       'music.sortAlbum': '专辑',
       'music.sortYear': '发行年份',
@@ -373,16 +343,19 @@
 'music.searchFilterItems': '搜索排除项…',
 'music.tracks': '首',
 'music.filterSummary': '…共 {count} 个筛选项',
+'music.noFilterResults': '没有符合当前筛选条件的曲目',
+
+      'azIndex.title': '按字母浏览',
+      'azIndex.noItems': '该字母下暂无内容',
 'artists.sortAlbums': '专辑数',
       'artists.sortTracks': '曲目数',
 
-      // 文件夹操作
       'folders.sync': '同步',
       'folders.edit': '编辑',
       'folders.editServer': '编辑服务器',
       'folders.editServerTitle': '编辑流媒体服务器',
       'folders.remove': '移除',
-      // 添加/编辑服务器对话框
+
       'folders.addServerTitle': '添加流媒体服务器',
       'folders.serverName': '服务器名称',
       'folders.serverUrl': '服务器地址',
@@ -412,7 +385,6 @@
       'folders.removeServerBody': '确定要移除服务器「{name}」吗？已同步的曲目索引与缓存的封面也会被删除。',
       'folders.removeConfirm': '确定要移除文件夹「{path}」吗？',
 
-      // WebDAV / SMB / NAS
       'folders.addWebDAV': '添加 WebDAV',
       'folders.addSMB': '添加 NAS / SMB',
       'folders.addWebDAVTitle': '添加 WebDAV 服务器',
@@ -432,11 +404,9 @@
       'folders.webdavHint': '支持通过 HTTP / HTTPS 访问的 WebDAV 音乐库',
       'folders.smbHint': '挂载局域网 NAS / SMB 共享文件夹',
 
-      // 详情页返回
       'artists.backToList': '返回艺术家列表',
       'albums.backToList': '返回专辑列表',
 
-      // 歌单详情页
       'playlist.remote': '远程歌单',
       'playlist.local': '歌单',
       'playlist.play': '播放',
@@ -457,7 +427,6 @@
       'subsonic.connectFailed': '连接失败：{error}\n\n服务器配置已保留，您可以稍后修复后再同步。',
       'subsonic.connectFailedSaved': '连接失败：{error}\n\n配置已保存，您可以稍后修复后再同步。',
 
-      // 设置页 — 分类标题
       'settings.section.general': '常规设置',
       'settings.section.appearance': '外观设置',
       'settings.section.playback': '播放设置',
@@ -468,8 +437,6 @@
       'settings.section.other': '其他设置',
       'settings.section.about': '关于和更新',
 
-      // 设置页 — 分组标题
-      // ⚠️ global / playback / audio / automation 也被新手引导页（onboarding.js）复用，勿删。
       'settings.group.global': '全局',
       'settings.group.playback': '播放',
       'settings.group.audio': '音频',
@@ -490,14 +457,12 @@
       'settings.group.externalApps': '外部应用',
       'settings.group.setup': '初始设置',
 
-      // 设置页 — 主题
       'settings.theme.label': '深色模式',
       'settings.theme.sub': '跟随系统或强制指定应用主题',
       'settings.theme.system': '跟随系统',
       'settings.theme.light': '浅色模式',
       'settings.theme.dark': '深色模式',
 
-      // 设置页 — 配色方案
       'settings.colorScheme.label': '莫奈配色方案',
       'settings.colorScheme.sub': '从封面提取主色时的调色板生成策略',
       'settings.colorScheme.tonal_spot': '调性点染',
@@ -510,29 +475,24 @@
       'settings.colorScheme.rainbow': '虹彩纷呈',
       'settings.colorScheme.fruit_salad': '果色缤纷',
 
-      // 莫奈取色来源
       'settings.monetSource.label': '莫奈取色来源',
       'settings.monetSource.sub': '动态主题色彩的提取来源',
       'settings.monetSource.album_cover': '歌曲专辑封面',
       'settings.monetSource.system_wallpaper': '系统壁纸',
 
-      // 设置页 — 语言
       'settings.language.label': '语言',
       'settings.language.sub': '应用界面显示语言',
 
-      // 设置页 — 手柄
       'settings.group.gamepad': '手柄',
       'settings.gamepadLayout.label': '确认按钮',
       'settings.gamepadLayout.sub': '选择确认和取消的按钮分配（仅 DualShock/DualSense）',
       'settings.gamepadLayout.eastern': '○ 确认 / ✖ 取消',
       'settings.gamepadLayout.western': '✖ 确认 / ○ 取消',
 
-      // 设置页 — 新手引导
       'settings.onboarding.label': '重新运行新手引导',
       'settings.onboarding.sub': '重新查看欢迎引导流程，调整语言、媒体库和个性化设置',
       'settings.onboarding.action': '开始引导',
 
-      // 设置页 — 字体
       'settings.uiFont.label': '界面字体',
       'settings.uiFont.sub': '自定义应用界面字体族，逗号分隔的 fallback 顺序，留空使用默认',
       'settings.lyricsFont.label': '标准歌词字体',
@@ -542,11 +502,12 @@
       'settings.lyricsJpDistinct.label': '日文歌词独立字体',
       'settings.lyricsJpDistinct.sub': '检测到日文歌词时切换到独立字体（关闭则始终使用标准字体）',
 
-      // 设置页 — 播放
       'settings.circularCover.label': '圆形专辑图',
       'settings.circularCover.sub': '播放界面中的专辑图以圆形显示',
 'settings.waveProgress.label': '波浪进度条',
 'settings.waveProgress.sub': '在媒体播放器上显示一个扭曲的、恼人的、无用的、看起来像精子的和令人分心的进度条',
+'settings.showQuality.label': '显示音质标识',
+'settings.showQuality.sub': '在正在播放页进度条下方的两个时间之间显示本曲音质（标准 / 无损 / 高解析度无损 / Dolby Atmos）',
 'settings.videoBackground.label': '视频背景',
 'settings.videoBackground.sub': '当库中有与歌曲同名的视频文件时，以视频作为正在播放页面的背景（需在全窗口视图中生效）',
 'settings.npDefaultView.label': '默认恢复视图',
@@ -554,7 +515,6 @@
       'settings.npDefaultView.side': '侧边视图',
       'settings.npDefaultView.fullscreen': '全窗口视图',
 
-      // 设置页 — 正在播放功能区自定义
       'settings.npSecondary.label': '正在播放功能区',
       'settings.npSecondary.sub': '自定义正在播放界面下方的功能按钮，最多 5 个',
       'settings.npSecondary.edit': '编辑',
@@ -576,7 +536,6 @@
       'settings.npSecondary.floating': '浮窗',
       'settings.npSecondary.fullscreen': '全屏',
 
-      // 设置页 — 歌词
       'settings.lyricsBlur.label': '歌词渐进模糊',
       'settings.lyricsBlur.sub': '离当前播放行越远的歌词越模糊，当前行完全清晰',
       'settings.lyricsCenter.label': '歌词居中排版',
@@ -586,7 +545,6 @@
       'settings.lyricsCreditFilters.label': '歌词制作信息筛选词',
       'settings.lyricsCreditFilters.sub': '逗号分隔的关键词，匹配到的歌词开头制作信息（作词/作曲等）将合并移至歌词末尾显示为「制作：」',
 
-      // 设置页 — 音频
       'settings.wasapiExclusive.label': 'WASAPI 独占模式',
       'settings.wasapiExclusive.sub': '绕过 Windows 音频引擎直接占用设备播放，更低延迟、位完美输出。即时切换，无需重启',
       'settings.wasapiNotice.title': '独占模式下不可用的功能',
@@ -605,6 +563,13 @@
       'settings.dynamicBass.sub': '启用低频增强，提升 80Hz 以下频段 +6dB',
       'settings.compressor.label': '压限器',
 'settings.compressor.sub': '启用动态压缩，防止音频过载失真',
+      'settings.volumeNormalization.label': '音量均衡',
+      'settings.volumeNormalization.sub': '实测每首曲目的响度（EBU R128）并自动对齐，避免切歌时忽大忽小；首次播放会后台分析，结果会缓存',
+      'settings.volumeNormalizationTarget.label': '目标响度',
+      'settings.volumeNormalizationTarget.sub': '所有曲目对齐到的整体响度，数值越小越轻',
+      'settings.volumeNormalizationTarget.broadcast': '广播',
+      'settings.volumeNormalizationTarget.mobile': '移动端',
+      'settings.volumeNormalizationTarget.streaming': '流媒体',
 'settings.hearingProtection.label': '听觉系统保护',
 'settings.hearingProtection.sub': '削减损伤听力的高频段并限制最大输出音量，即使音量拉满也不损伤听力',
       'settings.vocalEnhance.label': '人声优化',
@@ -614,7 +579,6 @@
       'settings.vbe.label': '小型扬声器优化',
       'settings.vbe.sub': '心理声学低频增强 + 鼓点瞬态整形：为小型扬声器生成低频谐波与攻击共振，模拟现代手机外放听感',
 
-      // 设置页 — 音乐库
       'settings.artistSeparators.label': '歌手分隔符',
       'settings.artistSeparators.sub': '每个字符均为一个分隔符；同时自动识别 feat. / ft. / vs. / with',
       'settings.tagEditorPath.label': '音乐标签编辑应用',
@@ -622,7 +586,6 @@
       'settings.tagEditorPath.placeholder': 'C:\\Program Files\\Mp3tag\\Mp3tag.exe',
       'settings.tagEditorPath.pick': '浏览',
 
-      // 设置页 — 自动化
       'settings.shuffle.label': '默认随机播放',
       'settings.shuffle.sub': '启动应用时默认开启随机模式',
       'settings.resumePlayback.label': '记忆播放状态',
@@ -634,13 +597,11 @@
       'settings.gapless.label': '无间隙播放',
       'settings.gapless.sub': '在上一首末尾预加载下一曲，自然结束时立即切换，避免切换间的加载停顿。与 AutoTransmit 互斥',
 
-      // 设置页 — 控制中心
       'settings.smtcLyrics.label': '控制中心歌词',
       'settings.smtcLyrics.sub': '在 Windows 媒体控制中心（SMTC）的歌名位置显示当前歌词行，歌手位置显示「歌名 - 歌手」',
       'settings.thumbar.label': '任务栏缩略图控制按钮',
       'settings.thumbar.sub': '在任务栏缩略图预览下方显示「上一首 / 播放·暂停 / 下一首 / 喜欢」按钮（仅 Windows）',
 
-      // 设置页 — Discord Rich Presence
       'settings.discordRpc.label': '启用 Discord Rich Presence',
       'settings.discordRpc.sub': '在 Discord 个人资料中显示当前播放的歌曲、歌手与播放进度（需要 Discord 客户端在运行）',
       'settings.discordRpc.getId.label': '获取 Application ID',
@@ -661,7 +622,6 @@
       'settings.discordRpc.briefFormat.sub': '自定义 Discord 状态第二行的内容，可用占位符：{title} 歌曲名、{artist} 歌手、{album} 专辑、{album_artist} 专辑艺术家',
       'settings.discordRpc.briefFormat.placeholder': '{artist}',
 
-      // 设置页 — 快捷键
       'shortcut.play_pause': '播放 / 暂停',
       'shortcut.play_pause.sub': '切换当前播放状态',
       'shortcut.next_track': '下一首',
@@ -679,17 +639,14 @@
       'shortcut.notSet': '未设置',
       'shortcut.pressKeys': '按快捷键…',
 
-      // 设置页 — 关于
       'settings.about.label': '关于本应用',
       'settings.about.sub': '查看版本信息与开源许可',
 
-      // 设置页 — 重启
       'settings.restartTitle': '音频处理 API',
       'settings.restartBody': '切换音频处理 API 需要重启应用才能生效，是否立即重启？',
       'settings.restartConfirm': '重启应用',
 'settings.restartCancel': '稍后',
 
-// 设置页 — 内存优化
 'settings.group.memoryOpt': '内存优化',
 'settings.group.memoryInfo': '内存信息',
 'settings.memoryOpt.label': '内存优化等级',
@@ -700,7 +657,6 @@
 'settings.memoryOpt.restartTitle': '内存优化等级',
 'settings.memoryOpt.restartBody': '切换内存优化等级需要重启应用才能生效，是否立即重启？',
 
-// 关于页
       'about.versionInfo': '版本信息',
       'about.actions': '操作',
       'about.viewRelease': '查看 Release',
@@ -743,12 +699,10 @@
       'settings.debug.lockBtn': '锁定',
       'settings.debug.lockedMsg': '调试模式已锁定，正在重载…',
 
-      // 错误
       'error.initFailed': '初始化失败：{message}',
       'error.backendFailed': '无法连接后端服务',
       'error.pageNotFound': '页面未找到或未实现',
 
-      // 手柄控制器
       'gamepad.confirm': '确认',
       'gamepad.back': '返回',
       'gamepad.playPause': '播放/暂停',
@@ -759,7 +713,6 @@
       'gamepad.contextMenu': '菜单',
       'gamepad.cursor': '光标',
 
-      // 新手引导
       'onboarding.brand.tag': '初始设置',
       'onboarding.skip': '跳过',
       'onboarding.back': '上一步',
@@ -825,7 +778,6 @@
       'drop.unsupported': '無法播放該檔案',
       'common.save': '儲存',
 
-// 頁面別名（data-i18n 用）
       'music.title': '所有音樂',
       'music.playAll': '全部播放',
       'music.trackCount': '{count} 首曲目',
@@ -878,7 +830,7 @@
       'yourMix.title': '探新',
       'yourMix.featured': '今日精選',
       'yourMix.featuredDesc': '根據你的收聽習慣每日挑選',
-      // 問候語（探新頁標題）：按時段變化，{name} 為使用者名稱
+
       'yourMix.greetMorning': '早安',
       'yourMix.greetForenoon': '上午好',
       'yourMix.greetNoon': '午安',
@@ -996,6 +948,10 @@
       'np.content.lyrics': '單歌詞',
       'np.progress': '播放進度',
       'np.transition': '過渡',
+      'np.quality.standard': '標準',
+      'np.quality.lossless': '無損',
+      'np.quality.hires': '高解析度無損',
+      'np.quality.atmos': 'Dolby Atmos',
       'np.prev': '上一首',
       'np.next': '下一首',
       'np.playPause': '播放/暫停',
@@ -1039,7 +995,6 @@
       'np.loadingEmbeddedLyrics': '正在載入內嵌歌詞…',
       'np.noEmbeddedLyrics': '未找到內嵌歌詞',
 
-      // 浮動視窗
       'floating.dock': '還原到側邊欄',
       'floating.albumCover': '專輯封面',
 
@@ -1099,7 +1054,6 @@
       'playlist.tracksAdded': '{count} 首曲目已新增到「{name}」',
       'playlist.tracksSkipped': '{count} 首曲目不屬於該伺服器，已跳過',
 
-      // 搜尋占位符
       'music.searchPlaceholder': '搜尋本地歌曲、藝術家或專輯…',
       'liked.searchPlaceholder': '搜尋喜愛的曲目…',
       'history.searchPlaceholder': '搜尋歷史曲目…',
@@ -1108,7 +1062,6 @@
       'albums.searchPlaceholder': '搜尋專輯或藝術家…',
       'playlist.searchPlaceholder': '搜尋歌單曲目…',
 
-      // 排序標籤
       'music.sortArtist': '歌手',
       'music.sortAlbum': '專輯',
       'music.sortYear': '發行年份',
@@ -1122,16 +1075,19 @@
 'music.searchFilterItems': '搜尋排除項…',
 'music.tracks': '首',
 'music.filterSummary': '…共 {count} 個篩選項',
+'music.noFilterResults': '沒有符合目前篩選條件的曲目',
+
+      'azIndex.title': '按字母瀏覽',
+      'azIndex.noItems': '該字母下暫無內容',
 'artists.sortAlbums': '專輯數',
       'artists.sortTracks': '曲目數',
 
-      // 資料夾操作
       'folders.sync': '同步',
       'folders.edit': '編輯',
       'folders.editServer': '編輯伺服器',
       'folders.editServerTitle': '編輯流媒體伺服器',
       'folders.remove': '移除',
-      // 添加/編輯伺服器對話框
+
       'folders.addServerTitle': '新增流媒體伺服器',
       'folders.serverName': '伺服器名稱',
       'folders.serverUrl': '伺服器位址',
@@ -1161,7 +1117,6 @@
       'folders.removeServerBody': '確定要移除伺服器「{name}」嗎？已同步的曲目索引與快取的封面也會被刪除。',
       'folders.removeConfirm': '確定要移除資料夾「{path}」嗎？',
 
-      // WebDAV / SMB / NAS
       'folders.addWebDAV': '新增 WebDAV',
       'folders.addSMB': '新增 NAS / SMB',
       'folders.addWebDAVTitle': '新增 WebDAV 伺服器',
@@ -1181,11 +1136,9 @@
       'folders.webdavHint': '支援透過 HTTP / HTTPS 存取的 WebDAV 音樂庫',
       'folders.smbHint': '掛載區域網路 NAS / SMB 共享資料夾',
 
-      // 詳情頁返回
       'artists.backToList': '返回藝術家列表',
       'albums.backToList': '返回專輯列表',
 
-      // 歌單詳情頁
       'playlist.remote': '遠端歌單',
       'playlist.local': '歌單',
       'playlist.play': '播放',
@@ -1254,13 +1207,11 @@
       'settings.group.externalApps': '外部應用程式',
       'settings.group.setup': '初始設定',
 
-      // 設定頁 — 手柄偏好
       'settings.gamepadLayout.label': '確認按鈕',
       'settings.gamepadLayout.sub': '選擇確認和取消的按鈕分配（僅 PlayStation 手柄）',
       'settings.gamepadLayout.eastern': '○ 確認 / ✖ 取消',
       'settings.gamepadLayout.western': '✖ 確認 / ○ 取消',
 
-      // 設定頁 — 新手引導
       'settings.onboarding.label': '重新執行新手引導',
       'settings.onboarding.sub': '重新檢視歡迎引導流程，調整語言、媒體庫和個人化設定',
       'settings.onboarding.action': '開始引導',
@@ -1304,6 +1255,8 @@
       'settings.circularCover.sub': '播放介面中的專輯圖以圓形顯示',
 'settings.waveProgress.label': '波浪進度條',
 'settings.waveProgress.sub': '開啟時進度條以波浪形態流動，關閉則為平面進度條',
+'settings.showQuality.label': '顯示音質標籤',
+'settings.showQuality.sub': '在正在播放頁進度條下方的兩個時間之間顯示本曲音質（標準 / 無損 / 高解析度無損 / Dolby Atmos）',
 'settings.videoBackground.label': '影片背景',
 'settings.videoBackground.sub': '當庫中有與歌曲同名的影片檔案時，以影片作為正在播放頁面的背景（需在全窗口視圖中生效）',
       'settings.npDefaultView.label': '默認恢復視圖',
@@ -1311,7 +1264,6 @@
       'settings.npDefaultView.side': '側邊視圖',
       'settings.npDefaultView.fullscreen': '全窗口視圖',
 
-      // 設置頁 — 正在播放功能區自訂
       'settings.npSecondary.label': '正在播放功能區',
       'settings.npSecondary.sub': '自訂正在播放介面下方的功能按鈕，最多 5 個',
       'settings.npSecondary.edit': '編輯',
@@ -1360,6 +1312,13 @@
       'settings.dynamicBass.sub': '啟用低頻增強，提升 80Hz 以下頻段 +6dB',
       'settings.compressor.label': '壓限器',
 'settings.compressor.sub': '啟用動態壓縮，防止音訊過載失真',
+      'settings.volumeNormalization.label': '音量均衡',
+      'settings.volumeNormalization.sub': '實測每首曲目的響度（EBU R128）並自動對齊，避免換歌時忽大忽小；首次播放會背景分析，結果會快取',
+      'settings.volumeNormalizationTarget.label': '目標響度',
+      'settings.volumeNormalizationTarget.sub': '所有曲目對齊到的整體響度，數值越小越輕',
+      'settings.volumeNormalizationTarget.broadcast': '廣播',
+      'settings.volumeNormalizationTarget.mobile': '行動裝置',
+      'settings.volumeNormalizationTarget.streaming': '串流媒體',
 'settings.hearingProtection.label': '聽覺系統保護',
 'settings.hearingProtection.sub': '削減損傷聽力的高頻段並限制最大輸出音量，即使音量拉滿也不損傷聽力',
       'settings.vocalEnhance.label': '人聲最佳化',
@@ -1392,7 +1351,6 @@
       'settings.thumbar.label': '工作列縮圖控制按鈕',
       'settings.thumbar.sub': '在工作列縮圖預覽下方顯示「上一首 / 播放·暫停 / 下一首 / 喜歡」按鈕（僅 Windows）',
 
-      // 設置頁 — Discord Rich Presence
       'settings.discordRpc.label': '啟用 Discord Rich Presence',
       'settings.discordRpc.sub': '在 Discord 個人資料中顯示目前播放的歌曲、歌手與播放進度（需要 Discord 用戶端正在執行）',
       'settings.discordRpc.getId.label': '取得 Application ID',
@@ -1438,7 +1396,6 @@
       'settings.restartConfirm': '重啟應用',
 'settings.restartCancel': '稍後',
 
-// 設定頁 — 記憶體最佳化
 'settings.group.memoryOpt': '記憶體最佳化',
 'settings.group.memoryInfo': '記憶體資訊',
 'settings.memoryOpt.label': '記憶體最佳化等級',
@@ -1495,7 +1452,6 @@
       'error.backendFailed': '無法連線後端服務',
       'error.pageNotFound': '頁面未找到或未實現',
 
-      // 手柄控制器
       'gamepad.confirm': '確認',
       'gamepad.back': '返回',
       'gamepad.playPause': '播放/暫停',
@@ -1506,7 +1462,6 @@
       'gamepad.contextMenu': '選單',
       'gamepad.cursor': '游標',
 
-      // 新手引導
       'onboarding.brand.tag': '初始設定',
       'onboarding.skip': '略過',
       'onboarding.back': '上一步',
@@ -1572,7 +1527,6 @@
       'drop.unsupported': 'このファイルは再生できません',
       'common.save': '保存',
 
-// ページエイリアス（data-i18n 用）
       'music.title': 'すべての音楽',
       'music.playAll': 'すべて再生',
       'music.trackCount': '{count} 曲',
@@ -1625,7 +1579,7 @@
       'yourMix.title': 'おすすめ',
       'yourMix.featured': '今日のおすすめ',
       'yourMix.featuredDesc': '視聴習慣から毎日遴選',
-      // 挨拶（おすすめページのタイトル）：時間帯で変化、{name} はユーザー名
+
       'yourMix.greetMorning': 'おはようございます',
       'yourMix.greetForenoon': 'おはようございます',
       'yourMix.greetNoon': 'こんにちは',
@@ -1743,6 +1697,10 @@
       'np.content.lyrics': '歌詞のみ',
       'np.progress': '再生進捗',
       'np.transition': 'トランジション',
+      'np.quality.standard': '標準',
+      'np.quality.lossless': 'ロスレス',
+      'np.quality.hires': 'ハイレゾロスレス',
+      'np.quality.atmos': 'Dolby Atmos',
       'np.prev': '前の曲',
       'np.next': '次の曲',
       'np.playPause': '再生/一時停止',
@@ -1786,7 +1744,6 @@
       'np.loadingEmbeddedLyrics': '埋め込み歌詞を読み込み中…',
       'np.noEmbeddedLyrics': '埋め込み歌詞が見つかりません',
 
-      // フローティングウィンドウ
       'floating.dock': 'サイドバーに戻す',
       'floating.albumCover': 'アルバムカバー',
 
@@ -1846,7 +1803,6 @@
       'playlist.tracksAdded': '{count} 曲を「{name}」に追加しました',
       'playlist.tracksSkipped': '{count} 曲はこのサーバーに属していません、スキップしました',
 
-      // 検索プレースホルダー
       'music.searchPlaceholder': 'ローカル曲、アーティスト、アルバムを検索…',
       'liked.searchPlaceholder': 'お気に入りの曲を検索…',
       'history.searchPlaceholder': '再生履歴を検索…',
@@ -1855,7 +1811,6 @@
       'albums.searchPlaceholder': 'アルバムまたはアーティストを検索…',
       'playlist.searchPlaceholder': 'プレイリストの曲を検索…',
 
-      // ソートラベル
       'music.sortArtist': 'アーティスト',
       'music.sortAlbum': 'アルバム',
       'music.sortYear': '発売年',
@@ -1869,16 +1824,19 @@
 'music.searchFilterItems': '除外項目を検索…',
 'music.tracks': '曲',
 'music.filterSummary': '…全{count}件のフィルター項目',
+'music.noFilterResults': '現在のフィルター条件に一致する曲目がありません',
+
+      'azIndex.title': 'アルファベット順に移動',
+      'azIndex.noItems': 'この文字の項目はありません',
 'artists.sortAlbums': 'アルバム数',
       'artists.sortTracks': '曲数',
 
-      // フォルダ操作
       'folders.sync': '同期',
       'folders.edit': '編集',
       'folders.editServer': 'サーバーを編集',
       'folders.editServerTitle': 'サーバーを編集',
       'folders.remove': '削除',
-      // サーバー追加/編集ダイアログ
+
       'folders.addServerTitle': 'サーバーを追加',
       'folders.serverName': 'サーバー名',
       'folders.serverUrl': 'サーバーURL',
@@ -1908,7 +1866,6 @@
       'folders.removeServerBody': 'サーバー「{name}」を削除しますか？同期済みの曲目インデックスとキャッシュされたカバーも削除されます。',
       'folders.removeConfirm': 'フォルダ「{path}」を削除しますか？',
 
-      // WebDAV / SMB / NAS
       'folders.addWebDAV': 'WebDAV 追加',
       'folders.addSMB': 'NAS / SMB 追加',
       'folders.addWebDAVTitle': 'WebDAV サーバーを追加',
@@ -1928,11 +1885,9 @@
       'folders.webdavHint': 'HTTP / HTTPS でアクセス可能な WebDAV 音楽ライブラリ',
       'folders.smbHint': 'LAN 内の NAS / SMB 共有フォルダをマウント',
 
-      // 詳細ページに戻る
       'artists.backToList': 'アーティストリストに戻る',
       'albums.backToList': 'アルバムリストに戻る',
 
-      // プレイリスト詳細ページ
       'playlist.remote': 'リモートプレイリスト',
       'playlist.local': 'プレイリスト',
       'playlist.play': '再生',
@@ -2006,7 +1961,6 @@
       'settings.gamepadLayout.eastern': '○ 確認 / ✖ キャンセル',
       'settings.gamepadLayout.western': '✖ 確認 / ○ キャンセル',
 
-      // 設定ページ — オンボーディング
       'settings.onboarding.label': 'オンボーディングを再実行',
       'settings.onboarding.sub': 'ウェルカムガイドをもう一度表示し、言語・ライブラリ・カスタマイズ設定を調整します',
       'settings.onboarding.action': '開始する',
@@ -2050,6 +2004,8 @@
       'settings.circularCover.sub': '再生画面のアルバムアートを円形で表示',
 'settings.waveProgress.label': 'ウェーブプログレスバー',
 'settings.waveProgress.sub': 'オン時はプログレスバーがウェーブ状に流れ、オフ時はフラットなプログレスバー',
+'settings.showQuality.label': '音質ラベルを表示',
+'settings.showQuality.sub': '再生中の曲の音質をプログレスバー下の時間表示の間に表示します（標準 / ロスレス / ハイレゾロスレス / Dolby Atmos）',
 'settings.videoBackground.label': '動画背景',
 'settings.videoBackground.sub': 'ライブラリに楽曲と同名の動画ファイルがある場合、動画を再生画面の背景として使用します（全画面表示で有効）',
       'settings.npDefaultView.label': 'デフォルト復元ビュー',
@@ -2057,7 +2013,6 @@
       'settings.npDefaultView.side': 'サイドビュー',
       'settings.npDefaultView.fullscreen': '全画面表示',
 
-      // 設定ページ — 再生中ファンクションバー
       'settings.npSecondary.label': '再生中ファンクションバー',
       'settings.npSecondary.sub': '再生画面下部のファンクションボタンをカスタマイズ（最大 5 個）',
       'settings.npSecondary.edit': '編集',
@@ -2106,6 +2061,13 @@
       'settings.dynamicBass.sub': '低頻域強化を有効化、80Hz 以下を +6dB ブースト',
       'settings.compressor.label': 'コンプレッサー',
 'settings.compressor.sub': 'ダイナミック圧縮を有効化、オーディオの過負荷歪みを防止',
+      'settings.volumeNormalization.label': '音量ノーマライズ',
+      'settings.volumeNormalization.sub': '各曲のラウドネス（EBU R128）を実測して自動で揃え、曲送りの音量差を抑えます。初回再生時にバックグラウンドで解析し、結果はキャッシュされます',
+      'settings.volumeNormalizationTarget.label': '目標ラウドネス',
+      'settings.volumeNormalizationTarget.sub': 'すべての曲を揃える基準ラウドネス。値が小さいほど小さくなります',
+      'settings.volumeNormalizationTarget.broadcast': '放送',
+      'settings.volumeNormalizationTarget.mobile': 'モバイル',
+      'settings.volumeNormalizationTarget.streaming': 'ストリーミング',
 'settings.hearingProtection.label': '聴覚システム保護',
 'settings.hearingProtection.sub': '聴力を損なう高域をカットし最大出力音量を制限、最大音量でも聴力を損ないません',
       'settings.vocalEnhance.label': 'ボーカル最適化',
@@ -2138,7 +2100,6 @@
       'settings.thumbar.label': 'タスクバーのサムネイル操作ボタン',
       'settings.thumbar.sub': 'タスクバーのプレビュー下に「前の曲 / 再生·一時停止 / 次の曲 / お気に入り」ボタンを表示（Windows のみ）',
 
-      // 設定ページ — Discord Rich Presence
       'settings.discordRpc.label': 'Discord Rich Presence を有効にする',
       'settings.discordRpc.sub': 'Discord のプロフィールに再生中の曲名・アーティスト・再生進度を表示する（Discord クライアントが起動中である必要あり）',
       'settings.discordRpc.getId.label': 'Application ID を取得',
@@ -2184,7 +2145,6 @@
       'settings.restartConfirm': 'アプリを再起動',
 'settings.restartCancel': '後で',
 
-// 設定ページ — メモリ最適化
 'settings.group.memoryOpt': 'メモリ最適化',
 'settings.group.memoryInfo': 'メモリ情報',
 'settings.memoryOpt.label': 'メモリ最適化レベル',
@@ -2241,7 +2201,6 @@
       'error.backendFailed': 'バックエンドサービスに接続できません',
       'error.pageNotFound': 'ページが見つかりません',
 
-      // ゲームパッド
       'gamepad.confirm': '確認',
       'gamepad.back': '戻る',
       'gamepad.playPause': '再生/一時停止',
@@ -2252,7 +2211,6 @@
       'gamepad.contextMenu': 'メニュー',
       'gamepad.cursor': 'カーソル',
 
-      // 初回セットアップ
       'onboarding.brand.tag': '初期セットアップ',
       'onboarding.skip': 'スキップ',
       'onboarding.back': '戻る',
@@ -2318,7 +2276,6 @@
       'drop.unsupported': 'This file cannot be played',
       'common.save': 'Save',
 
-// Page aliases (for data-i18n)
       'music.title': 'All Music',
       'music.playAll': 'Play All',
       'music.trackCount': '{count} tracks',
@@ -2371,7 +2328,7 @@
       'yourMix.title': 'Discover',
       'yourMix.featured': 'Featured Today',
       'yourMix.featuredDesc': 'Picked daily from your listening habits',
-      // Greeting (Discover page title): varies by time of day, {name} = user name
+
       'yourMix.greetMorning': 'Good morning',
       'yourMix.greetForenoon': 'Good morning',
       'yourMix.greetNoon': 'Good afternoon',
@@ -2489,6 +2446,10 @@
       'np.content.lyrics': 'Lyrics only',
       'np.progress': 'Playback progress',
       'np.transition': 'Transition',
+      'np.quality.standard': 'Standard',
+      'np.quality.lossless': 'Lossless',
+      'np.quality.hires': 'Hi-Res Lossless',
+      'np.quality.atmos': 'Dolby Atmos',
       'np.prev': 'Previous',
       'np.next': 'Next',
       'np.playPause': 'Play/Pause',
@@ -2532,7 +2493,6 @@
       'np.loadingEmbeddedLyrics': 'Loading embedded lyrics…',
       'np.noEmbeddedLyrics': 'No embedded lyrics found',
 
-      // Floating window
       'floating.dock': 'Restore to sidebar',
       'floating.albumCover': 'Album cover',
 
@@ -2592,7 +2552,6 @@
       'playlist.tracksAdded': '{count} tracks added to "{name}"',
       'playlist.tracksSkipped': '{count} tracks do not belong to this server, skipped',
 
-      // Search placeholders
       'music.searchPlaceholder': 'Search songs, artists, or albums…',
       'liked.searchPlaceholder': 'Search liked tracks…',
       'history.searchPlaceholder': 'Search history tracks…',
@@ -2601,7 +2560,6 @@
       'albums.searchPlaceholder': 'Search albums or artists…',
       'playlist.searchPlaceholder': 'Search playlist tracks…',
 
-      // Sort labels
       'music.sortArtist': 'Artist',
       'music.sortAlbum': 'Album',
       'music.sortYear': 'Year',
@@ -2615,16 +2573,19 @@
 'music.searchFilterItems': 'Search filter items…',
 'music.tracks': 'tracks',
 'music.filterSummary': '... {count} filter items in total',
+'music.noFilterResults': 'No tracks match the current filters',
+
+      'azIndex.title': 'Browse by letter',
+      'azIndex.noItems': 'No items under this letter',
 'artists.sortAlbums': 'Albums',
       'artists.sortTracks': 'Tracks',
 
-      // Folder actions
       'folders.sync': 'Sync',
       'folders.edit': 'Edit',
       'folders.editServer': 'Edit Server',
       'folders.editServerTitle': 'Edit Subsonic Server',
       'folders.remove': 'Remove',
-      // Add / Edit Server dialogs
+
       'folders.addServerTitle': 'Add Subsonic Server',
       'folders.serverName': 'Server Name',
       'folders.serverUrl': 'Server URL',
@@ -2654,7 +2615,6 @@
       'folders.removeServerBody': 'Remove server "{name}"? Synced track index and cached covers will also be deleted.',
       'folders.removeConfirm': 'Remove folder "{path}"?',
 
-      // WebDAV / SMB / NAS
       'folders.addWebDAV': 'Add WebDAV',
       'folders.addSMB': 'Add NAS / SMB',
       'folders.addWebDAVTitle': 'Add WebDAV Server',
@@ -2674,11 +2634,9 @@
       'folders.webdavHint': 'WebDAV music library accessible via HTTP / HTTPS',
       'folders.smbHint': 'Mount LAN NAS / SMB shared folder',
 
-      // Detail page back
       'artists.backToList': 'Back to artists',
       'albums.backToList': 'Back to albums',
 
-      // Playlist detail page
       'playlist.remote': 'Remote Playlist',
       'playlist.local': 'Playlist',
       'playlist.play': 'Play',
@@ -2752,7 +2710,6 @@
       'settings.gamepadLayout.eastern': '○ Confirm / ✖ Cancel',
       'settings.gamepadLayout.western': '✖ Confirm / ○ Cancel',
 
-      // Settings — Onboarding
       'settings.onboarding.label': 'Re-run Onboarding',
       'settings.onboarding.sub': 'Show the welcome guide again to adjust language, media library, and personalization settings',
       'settings.onboarding.action': 'Start Guide',
@@ -2796,6 +2753,8 @@
       'settings.circularCover.sub': 'Display album art as a circle in the playback view',
 'settings.waveProgress.label': 'Wave Progress Bar',
 'settings.waveProgress.sub': 'When enabled, the progress bar flows as a wave. When disabled, it is a flat bar',
+'settings.showQuality.label': 'Show audio quality',
+'settings.showQuality.sub': 'Shows the current track\'s quality between the two time labels below the progress bar (Standard / Lossless / Hi-Res Lossless / Dolby Atmos)',
 'settings.videoBackground.label': 'Video Background',
 'settings.videoBackground.sub': 'When a video file with the same name as the song exists in the library, it is used as the now playing background (effective in full view)',
       'settings.npDefaultView.label': 'Default Restore View',
@@ -2803,7 +2762,6 @@
       'settings.npDefaultView.side': 'Side View',
       'settings.npDefaultView.fullscreen': 'Full Window View',
 
-      // Settings — Now Playing action bar
       'settings.npSecondary.label': 'Now Playing Action Bar',
       'settings.npSecondary.sub': 'Customize the action buttons below the Now Playing view, up to 5',
       'settings.npSecondary.edit': 'Edit',
@@ -2851,7 +2809,14 @@
       'settings.dynamicBass.label': 'Secondary Bass Boost',
       'settings.dynamicBass.sub': 'Enable low-frequency enhancement, boosting below 80Hz by +6dB',
       'settings.compressor.label': 'Compressor',
-'settings.compressor.sub': 'Enable dynamic compression to prevent audio overload distortion',
+      'settings.compressor.sub': 'Enable dynamic compression to prevent audio overload distortion',
+      'settings.volumeNormalization.label': 'Volume Normalization',
+      'settings.volumeNormalization.sub': 'Measures each track\'s loudness (EBU R128) and aligns them automatically, so volume no longer jumps between songs. First play analyzes in the background; results are cached',
+      'settings.volumeNormalizationTarget.label': 'Target Loudness',
+      'settings.volumeNormalizationTarget.sub': 'Integrated loudness every track is aligned to — lower is quieter',
+      'settings.volumeNormalizationTarget.broadcast': 'Broadcast',
+      'settings.volumeNormalizationTarget.mobile': 'Mobile',
+      'settings.volumeNormalizationTarget.streaming': 'Streaming',
 'settings.hearingProtection.label': 'Hearing Protection',
 'settings.hearingProtection.sub': 'Cuts hearing-damaging frequencies and limits maximum output volume — safe even at full volume',
       'settings.vocalEnhance.label': 'Vocal Enhancer',
@@ -2884,7 +2849,6 @@
       'settings.thumbar.label': 'Taskbar thumbnail controls',
       'settings.thumbar.sub': 'Show Previous / Play·Pause / Next / Like buttons under the taskbar thumbnail preview (Windows only)',
 
-      // Settings — Discord Rich Presence
       'settings.discordRpc.label': 'Enable Discord Rich Presence',
       'settings.discordRpc.sub': 'Show the current track, artist and playback progress in your Discord profile (requires the Discord client to be running)',
       'settings.discordRpc.getId.label': 'Get Application ID',
@@ -2930,7 +2894,6 @@
       'settings.restartConfirm': 'Restart App',
 'settings.restartCancel': 'Later',
 
-// Settings — Memory Optimization
 'settings.group.memoryOpt': 'Memory Optimization',
 'settings.group.memoryInfo': 'Memory Info',
 'settings.memoryOpt.label': 'Optimization Level',
@@ -2987,7 +2950,6 @@
       'error.backendFailed': 'Cannot connect to backend service',
       'error.pageNotFound': 'Page not found',
 
-      // Gamepad
       'gamepad.confirm': 'Confirm',
       'gamepad.back': 'Back',
       'gamepad.playPause': 'Play/Pause',
@@ -2998,7 +2960,6 @@
       'gamepad.contextMenu': 'Menu',
       'gamepad.cursor': 'Cursor',
 
-      // Onboarding
       'onboarding.brand.tag': 'Setup',
       'onboarding.skip': 'Skip',
       'onboarding.back': 'Back',
@@ -3064,7 +3025,6 @@
       'drop.unsupported': 'Не удаётся воспроизвести этот файл',
       'common.save': 'Сохранить',
 
-// Псевдонимы страниц (для data-i18n)
       'music.title': 'Вся музыка',
       'music.playAll': 'Играть все',
       'music.trackCount': '{count} треков',
@@ -3117,7 +3077,7 @@
       'yourMix.title': 'Новинки',
       'yourMix.featured': 'Рекомендуем сегодня',
       'yourMix.featuredDesc': 'Подборка дня по вашим прослушиваниям',
-      // Приветствие (заголовок страницы «Новинки»): зависит от времени суток, {name} — имя
+
       'yourMix.greetMorning': 'Доброе утро',
       'yourMix.greetForenoon': 'Доброе утро',
       'yourMix.greetNoon': 'Добрый день',
@@ -3235,6 +3195,10 @@
       'np.content.lyrics': 'Только текст песни',
       'np.progress': 'Прогресс воспроизведения',
       'np.transition': 'Переход',
+      'np.quality.standard': 'Стандарт',
+      'np.quality.lossless': 'Без потерь',
+      'np.quality.hires': 'Hi-Res без потерь',
+      'np.quality.atmos': 'Dolby Atmos',
       'np.prev': 'Предыдущий',
       'np.next': 'Следующий',
       'np.playPause': 'Воспроизведение/Пауза',
@@ -3278,7 +3242,6 @@
       'np.loadingEmbeddedLyrics': 'Загрузка встроенного текста…',
       'np.noEmbeddedLyrics': 'Встроенный текст не найден',
 
-      // Плавающее окно
       'floating.dock': 'Вернуть на боковую панель',
       'floating.albumCover': 'Обложка альбома',
 
@@ -3338,7 +3301,6 @@
       'playlist.tracksAdded': '{count} треков добавлено в «{name}»',
       'playlist.tracksSkipped': '{count} треков не принадлежат этому серверу, пропущено',
 
-      // Поисковые подсказки
       'music.searchPlaceholder': 'Поиск песен, исполнителей или альбомов…',
       'liked.searchPlaceholder': 'Поиск избранных треков…',
       'history.searchPlaceholder': 'Поиск по истории…',
@@ -3347,7 +3309,6 @@
       'albums.searchPlaceholder': 'Поиск альбомов или исполнителей…',
       'playlist.searchPlaceholder': 'Поиск треков в плейлисте…',
 
-      // Метки сортировки
       'music.sortArtist': 'Исполнитель',
       'music.sortAlbum': 'Альбом',
       'music.sortYear': 'Год',
@@ -3361,16 +3322,19 @@
 'music.searchFilterItems': 'Поиск элементов…',
 'music.tracks': 'треков',
 'music.filterSummary': '…всего {count} фильтров',
+'music.noFilterResults': 'Нет треков, соответствующих текущим фильтрам',
+
+      'azIndex.title': 'Навигация по буквам',
+      'azIndex.noItems': 'Под этой буквой нет элементов',
       'artists.sortAlbums': 'Альбомы',
       'artists.sortTracks': 'Треки',
 
-      // Действия с папками
       'folders.sync': 'Синхр.',
       'folders.edit': 'Изменить',
       'folders.editServer': 'Изменить сервер',
       'folders.editServerTitle': 'Редактировать Subsonic сервер',
       'folders.remove': 'Удалить',
-      // Диалоги добавления/редактирования сервера
+
       'folders.addServerTitle': 'Добавить Subsonic сервер',
       'folders.serverName': 'Имя сервера',
       'folders.serverUrl': 'URL сервера',
@@ -3400,7 +3364,6 @@
       'folders.removeServerBody': 'Удалить сервер «{name}»? Индекс синхронизированных треков и кэшированные обложки также будут удалены.',
       'folders.removeConfirm': 'Удалить папку «{path}»?',
 
-      // WebDAV / SMB / NAS
       'folders.addWebDAV': 'Добавить WebDAV',
       'folders.addSMB': 'Добавить NAS / SMB',
       'folders.addWebDAVTitle': 'Добавить сервер WebDAV',
@@ -3420,11 +3383,9 @@
       'folders.webdavHint': 'Музыкальная библиотека WebDAV, доступная через HTTP / HTTPS',
       'folders.smbHint': 'Подключить общий ресурс NAS / SMB в локальной сети',
 
-      // Возврат на страницу списка
       'artists.backToList': 'Вернуться к исполнителям',
       'albums.backToList': 'Вернуться к альбомам',
 
-      // Страница плейлиста
       'playlist.remote': 'Удалл. плейлист',
       'playlist.local': 'Плейлист',
       'playlist.play': 'Воспр.',
@@ -3498,7 +3459,6 @@
       'settings.gamepadLayout.eastern': '○ Подтвердить / ✖ Отмена',
       'settings.gamepadLayout.western': '✖ Подтвердить / ○ Отмена',
 
-      // Настройки — Приветствие
       'settings.onboarding.label': 'Перезапустить приветствие',
       'settings.onboarding.sub': 'Повторно показать приветственный гид для настройки языка, медиатеки и персонализации',
       'settings.onboarding.action': 'Запустить',
@@ -3542,6 +3502,8 @@
       'settings.circularCover.sub': 'Отображать обложку альбома в виде круга в режиме воспроизведения',
 'settings.waveProgress.label': 'Волновой прогресс-бар',
 'settings.waveProgress.sub': 'При включении прогресс-бар течёт волной, при выключении — плоский',
+'settings.showQuality.label': 'Показывать качество звука',
+'settings.showQuality.sub': 'Показывает качество текущего трека между двумя метками времени под полосой прогресса (Стандарт / Без потерь / Hi-Res без потерь / Dolby Atmos)',
 'settings.videoBackground.label': 'Видео-фон',
 'settings.videoBackground.sub': 'Если в библиотеке есть видеофайл с тем же именем, что у песни, он используется как фон страницы воспроизведения (в полноэкранном режиме)',
       'settings.npDefaultView.label': 'Вид восстановления по умолчанию',
@@ -3549,7 +3511,6 @@
       'settings.npDefaultView.side': 'Боковая панель',
       'settings.npDefaultView.fullscreen': 'Полноэкранный режим',
 
-      // Настройки — панель действий «Сейчас играет»
       'settings.npSecondary.label': 'Панель действий «Сейчас играет»',
       'settings.npSecondary.sub': 'Настройте кнопки действий под экраном воспроизведения, до 5',
       'settings.npSecondary.edit': 'Изменить',
@@ -3597,7 +3558,14 @@
       'settings.dynamicBass.label': 'Дополнительное усиление басов',
       'settings.dynamicBass.sub': 'Усилить низкие частоты, +6 дБ ниже 80 Гц',
       'settings.compressor.label': 'Компрессор',
-'settings.compressor.sub': 'Включить динамическую компрессию для предотвращения перегрузки',
+      'settings.compressor.sub': 'Включить динамическую компрессию для предотвращения перегрузки',
+      'settings.volumeNormalization.label': 'Нормализация громкости',
+      'settings.volumeNormalization.sub': 'Измеряет громкость каждого трека (EBU R128) и выравнивает её, чтобы громкость не скакала между песнями. При первом воспроизведении анализ идёт в фоне, результаты кэшируются',
+      'settings.volumeNormalizationTarget.label': 'Целевая громкость',
+      'settings.volumeNormalizationTarget.sub': 'Интегральная громкость, к которой выравниваются треки. Меньше — тише',
+      'settings.volumeNormalizationTarget.broadcast': 'Вещание',
+      'settings.volumeNormalizationTarget.mobile': 'Мобильные',
+      'settings.volumeNormalizationTarget.streaming': 'Стриминг',
 'settings.hearingProtection.label': 'Защита слуха',
 'settings.hearingProtection.sub': 'Снижает частоты, повреждающие слух, и ограничивает максимальную громкость — безопасно даже на полной громкости',
       'settings.vocalEnhance.label': 'Оптимизация вокала',
@@ -3630,7 +3598,6 @@
       'settings.thumbar.label': 'Кнопки на эскизе панели задач',
       'settings.thumbar.sub': 'Показывать кнопки «Предыдущий / Воспроизведение·Пауза / Следующий / Нравится» под эскизом на панели задач (только Windows)',
 
-      // Настройки — Discord Rich Presence
       'settings.discordRpc.label': 'Включить Discord Rich Presence',
       'settings.discordRpc.sub': 'Показывать текущий трек, исполнителя и прогресс воспроизведения в профиле Discord (требуется запущенный клиент Discord)',
       'settings.discordRpc.getId.label': 'Получить Application ID',
@@ -3676,7 +3643,6 @@
       'settings.restartConfirm': 'Перезапустить',
 'settings.restartCancel': 'Позже',
 
-// Настройки — Оптимизация памяти
 'settings.group.memoryOpt': 'Оптимизация памяти',
 'settings.group.memoryInfo': 'Информация о памяти',
 'settings.memoryOpt.label': 'Уровень оптимизации',
@@ -3733,7 +3699,6 @@
       'error.backendFailed': 'Не удалось подключиться к backend сервису',
       'error.pageNotFound': 'Страница не найдена',
 
-      // Геймпад
       'gamepad.confirm': 'Подтвердить',
       'gamepad.back': 'Назад',
       'gamepad.playPause': 'Воспр./Пауза',
@@ -3744,7 +3709,6 @@
       'gamepad.contextMenu': 'Меню',
       'gamepad.cursor': 'Курсор',
 
-      // Первоначальная настройка
       'onboarding.brand.tag': 'Настройка',
       'onboarding.skip': 'Пропустить',
       'onboarding.back': 'Назад',
@@ -3792,13 +3756,6 @@
     },
 };
 
-// ── 核心方法 ───────────────────────────────────────────────────────────
-
-  /**
-   * 翻译键 → 当前语言文本。
-   * 支持 {placeholder} 插值，如 t('toast.added', { count: 3, name: 'Mix' })。
-   * 如果键在当前语言中不存在，回退到 zh-CN，再回退到键本身。
-   */
   function t(key, params) {
     var dict = STRINGS[_currentLang] || STRINGS[DEFAULT_LANG];
     var text = dict[key];
@@ -3818,29 +3775,20 @@
     return text;
   }
 
-  /**
-   * 初始化/切换语言。
-   * @param {string} lang  语言代码（'zh-CN' | 'zh-TW' | 'ja' | 'en' | 'ru'）
-   */
   function init(lang) {
     if (SUPPORTED.indexOf(lang) === -1) lang = DEFAULT_LANG;
     var changed = _currentLang !== lang;
     _currentLang = lang;
     document.documentElement.setAttribute('lang', lang);
-    // 仅在语言实际变更时才扫描 DOM 并通知监听器，
-    // 避免同语言重复调用 init 时覆写 JS 动态管理的文本（如歌名）。
+
     if (changed) {
       applyToDOM();
       _listeners.forEach(function (fn) {
-        try { fn(lang); } catch (e) { /* ignore */ }
+        try { fn(lang); } catch (e) {  }
       });
     }
   }
 
-  /**
-   * 注册语言变更监听器。返回取消注册函数。
-   * @param {Function} fn  回调，接收 (lang) 参数
-   */
   function onChange(fn) {
     _listeners.push(fn);
     return function () {
@@ -3849,22 +3797,10 @@
     };
   }
 
-  /**
-   * 获取当前语言代码。
-   */
   function getLang() {
     return _currentLang;
   }
 
-  /**
-   * 扫描 DOM 中所有 [data-i18n] 元素并写入翻译文本。
-   *   data-i18n="key"              → textContent
-   *   data-i18n-placeholder="key"  → placeholder
-   *   data-i18n-title="key"        → title
-   *   data-i18n-aria-label="key"   → aria-label
-   *
-   * 切换语言后调用此方法即可刷新静态 HTML 中的文本。
-   */
   function applyToDOM(root) {
     var scope = root || document;
 
@@ -3894,7 +3830,6 @@
     });
   }
 
-  // ── 导出 ──────────────────────────────────────────────────────────────
   App.i18n = {
     t: t,
     init: init,

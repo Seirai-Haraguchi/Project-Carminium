@@ -1,18 +1,3 @@
-/**
- * 为浮动窗口生成精简的 i18n 字典。
- *
- * 背景：web/i18n.js 包含 5 种语言 × 全部文案（~209KB 源码）。浮动窗只需要
- * 三十来个键，却要为整个文件付出解析 + 常驻 V8 堆的代价。
- *
- * 本脚本从 web/i18n.js 里把浮动窗用到的键抽出来，生成 web/floating_i18n.js：
- *   · 只含需要的键（体积 ~6KB）
- *   · 暴露与 App.i18n 兼容的 t / init / getLang / applyToDOM / onChange
- *
- * ⚠️ 在 web/floating.html 里新增 data-i18n 键、或页面脚本里新增 t('...') 之后，
- *    必须重跑本脚本，否则新键会退化成显示键名本身。
- *
- * 用法：node scripts/gen_floating_i18n.js
- */
 'use strict';
 
 const fs = require('fs');
@@ -22,20 +7,15 @@ const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'web', 'i18n.js');
 const OUT = path.join(ROOT, 'web', 'floating_i18n.js');
 
-/** 浮动窗用到的键（改这里 + 重跑） */
 const KEYS = [
-  // 通用
   'common.nowPlaying', 'common.notPlaying', 'common.unknownTrack',
   'common.unknownArtist', 'common.cancel', 'common.confirm', 'common.close',
-  // 正在播放面板
   'np.tab.info', 'np.tab.queue', 'np.tab.lyrics', 'np.noLyrics', 'np.progress',
   'np.prev', 'np.next', 'np.playPause', 'np.shuffle', 'np.repeat', 'np.like',
   'np.audioMode', 'np.mute', 'np.volume', 'np.exclusiveMode', 'np.sharedMode',
   'np.removeFromQueue', 'np.dragToReorder',
-  // 浮动窗窗口按钮
   'floating.dock', 'floating.albumCover',
   'title.minimize', 'title.close',
-  // 独占模式切换确认
   'audio.switchExclusiveTitle', 'audio.switchExclusiveBody', 'audio.switchExclusiveConfirm',
   'audio.switchSharedTitle', 'audio.switchSharedBody', 'audio.switchSharedConfirm',
 ];
@@ -46,12 +26,10 @@ function readStrings() {
   const start = src.indexOf(startMark);
   if (start < 0) throw new Error('未在 i18n.js 中找到 STRINGS 定义');
 
-  // STRINGS 的收尾是列 0 的 `};` —— 内层对象收尾都带缩进，故首次匹配即正确
   const endRel = src.indexOf('\n};\n', start);
   if (endRel < 0) throw new Error('未找到 STRINGS 的结束位置');
 
   const literal = src.slice(start + 'var STRINGS = '.length, endRel + 3);
-  // eslint-disable-next-line no-eval
   return eval('(' + literal.slice(0, -1) + ')');
 }
 
@@ -59,7 +37,6 @@ function readSupported() {
   const src = fs.readFileSync(SRC, 'utf8');
   const m = src.match(/var SUPPORTED = (\[[^\]]*\]);/);
   if (!m) throw new Error('未找到 SUPPORTED 定义');
-  // eslint-disable-next-line no-eval
   return eval(m[1]);
 }
 

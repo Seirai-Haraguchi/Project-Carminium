@@ -1,6 +1,3 @@
-/**
- * Carminium — 右键悬浮菜单
- */
 (function () {
   'use strict';
 
@@ -10,21 +7,17 @@
 
   let overlayEl;
   let menuContainer;
-  let submenuEl;       // 「添加到歌单」子菜单
-  let submenuGeneration = 0; // 防止过期的异步回调
+  let submenuEl;
+  let submenuGeneration = 0;
 
-  // ── 子菜单保活：安全三角（safe triangle）延迟隐藏 ──────────────────────
-  // 鼠标离开触发项/子菜单后不立即隐藏，而是记录出发点（anchor），
-  // 只要指针朝子菜单近侧边缘构成的三角区内移动就持续宽限（有硬上限）。
-  // 这解决了"慢慢移向子菜单时中途消失、鼠标跟不上"的问题。
-  const SUBMENU_HIDE_DELAY = 380;   // 常规隐藏延迟 ms
-  const SUBMENU_GRACE = 320;        // 朝子菜单移动时的每次宽限 ms
-  const SUBMENU_HARD_CAP = 1800;    // 宽限总硬上限 ms
-  let submenuTickTimer = null;      // 周期检查定时器
-  let submenuAnchor = null;         // 出发点 {x, y}
-  let submenuArmTime = 0;           // 武装隐藏的时刻
-  let submenuDeadline = 0;          // 隐藏截止时刻
-  const lastMouse = { x: 0, y: 0 }; // 全局追踪最近一次指针位置
+  const SUBMENU_HIDE_DELAY = 380;
+  const SUBMENU_GRACE = 320;
+  const SUBMENU_HARD_CAP = 1800;
+  let submenuTickTimer = null;
+  let submenuAnchor = null;
+  let submenuArmTime = 0;
+  let submenuDeadline = 0;
+  const lastMouse = { x: 0, y: 0 };
 
   document.addEventListener('mousemove', function (e) {
     lastMouse.x = e.clientX;
@@ -42,26 +35,22 @@
     return !(hasNeg && hasPos);
   }
 
-  /** 指针是否在"出发点 → 子菜单近侧两角"的安全三角内（即正朝子菜单移动） */
   function _pointerTowardSubmenu() {
     if (!submenuAnchor || !submenuEl || submenuEl.style.display === 'none') return false;
     var r = submenuEl.getBoundingClientRect();
     var menuR = menuContainer.getBoundingClientRect();
     if (r.width === 0 || menuR.width === 0) return false;
-    // 子菜单中心在主菜单右侧 → 近侧是子菜单左边缘；反之右边缘
     var submenuRight = (r.left + r.right) / 2 >= (menuR.left + menuR.right) / 2;
     var edgeX = submenuRight ? r.left : r.right;
     return _pointInTriangle(lastMouse, submenuAnchor,
       { x: edgeX, y: r.top }, { x: edgeX, y: r.bottom });
   }
 
-  /** 取消挂起的隐藏（鼠标进入触发项或子菜单时调用） */
   function _cancelSubmenuHide() {
     if (submenuTickTimer) { clearTimeout(submenuTickTimer); submenuTickTimer = null; }
     submenuAnchor = null;
   }
 
-  /** 武装延迟隐藏：离开触发项/子菜单、或 hover 到兄弟项时调用 */
   function _armSubmenuHide() {
     if (submenuTickTimer) { clearTimeout(submenuTickTimer); submenuTickTimer = null; }
     submenuAnchor = { x: lastMouse.x, y: lastMouse.y };
@@ -75,7 +64,6 @@
     var now = performance.now();
     if (now >= submenuDeadline) { _hideSubmenu(); return; }
     if (_pointerTowardSubmenu()) {
-      // 指针正朝子菜单移动：宽限，但不超过硬上限
       submenuDeadline = Math.min(submenuDeadline + SUBMENU_GRACE, submenuArmTime + SUBMENU_HARD_CAP);
     }
     submenuTickTimer = setTimeout(_submenuHideTick, 110);
@@ -90,7 +78,6 @@
     menuContainer.className = 'context-menu-container';
     overlayEl.appendChild(menuContainer);
 
-    // 子菜单容器（添加到歌单）
     submenuEl = document.createElement('div');
     submenuEl.className = 'context-submenu';
     submenuEl.style.display = 'none';
@@ -98,19 +85,15 @@
 
     document.body.appendChild(overlayEl);
 
-    // 点击空白处关闭
     overlayEl.addEventListener('mousedown', function(e) {
       if (e.target === overlayEl) {
         hide();
       }
     });
 
-    // 拦截全局右键菜单
     document.addEventListener('contextmenu', function(e) {
-      // 右键坐标即最新指针位置（右键前可能未触发 mousemove）
       lastMouse.x = e.clientX;
       lastMouse.y = e.clientY;
-      // 检测正在播放页面的专辑封面图
       var coverEl = e.target.closest('#np-cover, #np-cover-img');
       if (coverEl) {
         var track = App.state && App.state.currentTrack;
@@ -120,7 +103,6 @@
           return;
         }
       }
-      // 优先检测专辑卡片
       const albumCard = e.target.closest('.album-card');
       if (albumCard && albumCard._albumData) {
         e.preventDefault();
@@ -130,19 +112,16 @@
       const trackRow = e.target.closest('.track-row');
       if (trackRow && trackRow._trackData) {
         e.preventDefault();
-        // 如果右键的曲目不在当前选中集中，清除选中并仅选中此曲目
         if (!App.selection || !App.selection.isSelected(trackRow._trackData.id)) {
           if (App.selection) App.selection.selectOnly(trackRow._trackData, trackRow);
         }
         show(e.clientX, e.clientY, trackRow._trackData);
       } else {
-        // 如果不是针对歌曲，阻止默认的 qwebengine 菜单
         e.preventDefault();
         hide();
       }
     });
 
-    // 子菜单 hover 保持：鼠标移入子菜单时取消隐藏
     submenuEl.addEventListener('mouseenter', function () {
       _cancelSubmenuHide();
     });
@@ -163,18 +142,13 @@
 
   function _hideSubmenu() {
     _cancelSubmenuHide();
-    submenuGeneration++; // 使任何待处理的异步显示无效
+    submenuGeneration++;
     if (submenuEl) {
       submenuEl.style.display = 'none';
       submenuEl.innerHTML = '';
     }
   }
 
-  /**
-   * 构建「打开歌手」子菜单（多歌手时）
-   * @param {Array} artists  歌手名数组
-   * @param {Element} [itemEl]  触发的菜单项元素（用于行对齐定位）
-   */
   function _showArtistSubmenu(artists, itemEl) {
     _hideSubmenu();
     var gen = ++submenuGeneration;
@@ -182,13 +156,11 @@
 
     var frag = document.createDocumentFragment();
 
-    // 标题行：「从创作者中选择一个：」
     var header = document.createElement('div');
     header.className = 'context-submenu-header';
     header.textContent = App.i18n.t('cm.chooseArtist');
     frag.appendChild(header);
 
-    // 歌手列表
     artists.forEach(function (name) {
       var item = document.createElement('div');
       item.className = 'context-submenu-item';
@@ -209,7 +181,6 @@
     submenuEl.style.display = 'block';
     _cancelSubmenuHide();
 
-    // 定位：主菜单右侧，顶部与触发行对齐（路径最短，鼠标最容易到达）
     var rect = menuContainer.getBoundingClientRect();
     var subRect = submenuEl.getBoundingClientRect();
     var posX = rect.right + 4;
@@ -226,22 +197,15 @@
     submenuEl.style.top = posY + 'px';
   }
 
-  /**
-   * 构建「添加到歌单」子菜单
-   * @param {Array} tracks  要添加的曲目数组
-   * @param {Element} [itemEl]  触发的菜单项元素（用于行对齐定位）
-   */
   function _showPlaylistSubmenu(tracks, itemEl) {
     _hideSubmenu();
     var gen = ++submenuGeneration;
 
-    // 异步获取歌单列表
     App.utils.call('get_playlists').then(function (res) {
-      if (gen !== submenuGeneration) return; // 过期回调
+      if (gen !== submenuGeneration) return;
       var playlists = JSON.parse(res);
       var frag = document.createDocumentFragment();
 
-      // 歌单列表
       if (playlists.length === 0) {
         var empty = document.createElement('div');
         empty.className = 'context-submenu-empty';
@@ -271,7 +235,7 @@
                     App.utils.toast(App.i18n.t('playlist.tracksSkipped', { count: r.skipped }));
                   }
                 }
-              } catch (e) { /* ignore */ }
+              } catch (e) {  }
             });
             hide();
           });
@@ -279,7 +243,6 @@
         });
       }
 
-      // 分隔线 + 新建歌单
       var divider = document.createElement('div');
       divider.className = 'context-submenu-divider';
       frag.appendChild(divider);
@@ -298,15 +261,12 @@
       submenuEl.innerHTML = '';
       submenuEl.appendChild(frag);
       submenuEl.style.display = 'block';
-      // 异步渲染完成后若仍在宽限期内（鼠标在路上），保持存活
       if (submenuTickTimer) _cancelSubmenuHide();
 
-      // 定位：主菜单右侧，顶部与触发行对齐（路径最短，鼠标最容易到达）
       var rect = menuContainer.getBoundingClientRect();
       var subRect = submenuEl.getBoundingClientRect();
       var posX = rect.right + 4;
       var posY = (itemEl ? itemEl.getBoundingClientRect().top : rect.top) - 6;
-      // 如果右侧空间不足，放到主菜单左侧
       if (posX + subRect.width > window.innerWidth - 8) {
         posX = rect.left - subRect.width - 4;
       }
@@ -320,9 +280,6 @@
     });
   }
 
-  /**
-   * 新建歌单并将曲目添加进去
-   */
   function _promptCreatePlaylistAndAdd(tracks) {
     var overlay = document.createElement('div');
     overlay.className = 'cmd-dialog-overlay';
@@ -395,7 +352,6 @@
     menuContainer.innerHTML = '';
     _hideSubmenu();
 
-    // 获取所有选中曲目（如果右键的曲目在选中集中）
     var selectedTracks = [];
     if (App.selection && App.selection.isSelected(track.id)) {
       selectedTracks = App.selection.getSelectedTracks();
@@ -405,7 +361,6 @@
     }
     var isMulti = selectedTracks.length > 1;
 
-    // 1. 顶部卡片 (歌曲信息)
     const header = document.createElement('div');
     header.className = 'context-menu-header';
 
@@ -455,19 +410,15 @@
       hide();
     });
 
-    // 2. 底部功能列表
     const list = document.createElement('div');
     list.className = 'context-menu-list';
 
-    // 多歌手信息（仅单曲时有意义）
     var trackArtists = (!isMulti && track.artists) ? track.artists : null;
     if (!trackArtists && !isMulti && track.artist) {
       trackArtists = [track.artist];
     }
     var hasMultipleArtists = trackArtists && trackArtists.length > 1;
 
-    // 拖入窗口播放的库外文件（track.external）：没有 tracks 行，
-    // 加歌单会撞外键约束，打开专辑/歌手也查不到 → 只保留播放类操作。
     var hasExternal = selectedTracks.some(function (t) { return !!(t && t.external); });
 
     const items = [
@@ -479,14 +430,12 @@
       items.push({ id: 'add_to_playlist', icon: 'playlist_add', text: App.i18n.t('cm.addToPlaylist'), hasSubmenu: true });
     }
 
-    // 单曲时显示「打开专辑」和「打开歌手」
     if (!isMulti && !hasExternal) {
       if (track.album) {
         items.push({ id: 'open_album', icon: 'album', text: App.i18n.t('cm.openAlbum', { name: track.album }) });
       }
       if (trackArtists && trackArtists.length > 0) {
         if (hasMultipleArtists) {
-          // 多歌手：显示二级菜单
           items.push({ id: 'open_artist', icon: 'person', text: App.i18n.t('cm.openArtist', { name: trackArtists.join(' / ') }), hasSubmenu: true, submenuType: 'artist' });
         } else {
           items.push({ id: 'open_artist', icon: 'person', text: App.i18n.t('cm.openArtist', { name: trackArtists[0] }) });
@@ -499,7 +448,6 @@
       { id: 'explorer', icon: 'folder_open', text: App.i18n.t('cm.showInExplorer') },
     );
 
-    // 仅在已设置外部标签编辑应用时显示该项
     if (App.state && App.state.tagEditorPath) {
       items.push({ id: 'tag_editor', icon: 'edit_note', text: App.i18n.t('cm.editTags') });
     }
@@ -521,11 +469,9 @@
         ${arrowHtml}
       `;
 
-      // 子菜单 hover 处理
       if (item.hasSubmenu) {
         el.addEventListener('mouseenter', function () {
           _cancelSubmenuHide();
-          // 等待下一帧再显示，确保菜单已渲染
           requestAnimationFrame(function () {
             if (item.submenuType === 'artist') {
               _showArtistSubmenu(trackArtists, el);
@@ -535,19 +481,16 @@
           });
         });
         el.addEventListener('mouseleave', function () {
-          // 延迟隐藏子菜单：若指针朝子菜单移动（安全三角内）会持续宽限
           _armSubmenuHide();
         });
       } else {
-        // 非 submenu 项 hover 时武装延迟隐藏（立即杀掉会让朝子菜单的
-        // 斜向路径被途经项打断；延迟后停在别项上仍会正常关闭）
         el.addEventListener('mouseenter', function () {
           _armSubmenuHide();
         });
       }
 
       el.addEventListener('click', () => {
-        if (item.hasSubmenu) return; // 子菜单项不触发 click
+        if (item.hasSubmenu) return;
         hide();
         if (item.id === 'play') {
           App.backend.play_from_list(JSON.stringify(selectedTracks), 0);
@@ -564,7 +507,6 @@
             App.navigate('albums', { album: track.album, album_artist: track.album_artist || track.artist || '' });
           }
         } else if (item.id === 'open_artist') {
-          // 单歌手直接导航（多歌手走 submenu）
           if (App.navigate && trackArtists && trackArtists.length === 1) {
             App.navigate('artists', { artist: trackArtists[0] });
           }
@@ -585,7 +527,7 @@
               if (r && r.error) {
                 App.utils.toast(App.i18n.t('cm.tagEditorFailed'));
               }
-            } catch (e) { /* ignore */ }
+            } catch (e) {  }
           });
         } else if (item.id === 'info') {
           if (isMulti) {
@@ -622,7 +564,6 @@
       });
     });
 
-    // 调整位置以防超出屏幕边界
     const rect = menuContainer.getBoundingClientRect();
     let posX = x;
     let posY = y;
@@ -633,11 +574,6 @@
     menuContainer.style.top = posY + 'px';
   }
 
-  /**
-   * 从前端缓存中获取专辑的曲目列表
-   * @param {Object} album  专辑对象
-   * @returns {Array} 曲目数组（已排序）
-   */
   function _getAlbumTracks(album) {
     var allTracks = (App.state && App.state.allTracks) ? App.state.allTracks : [];
     return allTracks.filter(function (t) {
@@ -651,20 +587,12 @@
     });
   }
 
-  /**
-   * 显示专辑右键菜单
-   * @param {number} x
-   * @param {number} y
-   * @param {Object} album  专辑对象
-   */
   function showAlbum(x, y, album) {
     menuContainer.innerHTML = '';
     _hideSubmenu();
 
-    // 获取专辑曲目
     var tracks = _getAlbumTracks(album);
 
-    // 1. 顶部卡片（专辑信息）
     var header = document.createElement('div');
     header.className = 'context-menu-header';
 
@@ -686,7 +614,6 @@
         '<div class="context-menu-artist">' + App.utils.esc(albumArtist) + '</div>' +
       '</div>';
 
-    // 2. 底部功能列表
     var list = document.createElement('div');
     list.className = 'context-menu-list';
 
@@ -711,7 +638,6 @@
         '<span class="context-menu-text">' + App.utils.esc(item.text) + '</span>' +
         arrowHtml;
 
-      // 子菜单 hover 处理
       if (item.hasSubmenu) {
         el.addEventListener('mouseenter', function () {
           _cancelSubmenuHide();
@@ -754,7 +680,6 @@
       });
     });
 
-    // 调整位置以防超出屏幕边界
     var rect = menuContainer.getBoundingClientRect();
     var posX = x;
     var posY = y;
@@ -767,12 +692,6 @@
     menuContainer.style.top = posY + 'px';
   }
 
-  /**
-   * 显示专辑封面右键菜单
-   * @param {number} x
-   * @param {number} y
-   * @param {Object} track  当前播放曲目
-   */
   function showCover(x, y, track) {
     menuContainer.innerHTML = '';
     _hideSubmenu();
@@ -820,7 +739,6 @@
       });
     });
 
-    // 调整位置
     var rect = menuContainer.getBoundingClientRect();
     var posX = x;
     var posY = y;
@@ -833,10 +751,6 @@
     menuContainer.style.top = posY + 'px';
   }
 
-  /**
-   * 将封面图片复制到剪贴板
-   * @param {string} url  封面图 URL
-   */
   function _copyCoverToClipboard(url) {
     fetch(url)
       .then(function (res) { return res.blob(); })
@@ -846,7 +760,6 @@
           return;
         }
         var mime = blob.type || 'image/png';
-        // 确保类型是 clipboard 支持的格式
         if (mime !== 'image/png' && mime !== 'image/jpeg' && mime !== 'image/webp') {
           mime = 'image/png';
         }

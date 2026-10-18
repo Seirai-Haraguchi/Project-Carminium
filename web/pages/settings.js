@@ -1,20 +1,3 @@
-/**
- * Carminium — 设置（普通页面，左右分栏）
- *
- * 设置以普通页面形式呈现，填满页面容器：
- * 左侧导航列出所有分类，右侧内容区显示当前分类的设置项。
- * 由 App.navigate('settings') 触发，与其他页面一致。
- * 分类（顺序即导航顺序；每类下的 groups 即右栏的小标题，缺的请补上）：
- *   1. 常规设置     — 语言 / 音乐库
- *   2. 外观设置     — 主题与配色 / 正在播放界面 / 字体
- *   3. 播放设置     — 播放行为 / 音频输出 / 音效
- *   4. 歌词设置     — 字体 / 排版与显示 / 制作信息
- *   5. 快捷键配置   — 快捷键 / 手柄
- *   6. 服务和自动化 — 系统集成 / 外部应用
- *   7. 内存和存储   — 内存优化 / 内存信息
- *   8. 其他设置     — 初始设置（新手引导）
- *   9. 关于和更新   — 在右栏内嵌渲染关于页内容（isPage，无分组）
- */
 (function () {
   'use strict';
 
@@ -24,17 +7,12 @@
 
   let _lastSettings = null;
 
-  // ── 分类定义 ─────────────────────────────────────────────────────────────
-  // 每个分类对应一个设置入口；rows 是该分类下的设置项。
-  // type: 'select' | 'toggle' | 'text' | 'device_select'
-  // bind: settings.json 里的字段名
-  // 使用函数以便在渲染时实时解析 i18n 翻译
   function _t(key) { return window.App && App.i18n ? App.i18n.t(key) : key; }
 
   function _buildSections() {
     var sections = [
     {
-      // 1. 常规设置 — 语言、歌手分隔符
+
       id: 'general',
       titleKey: 'settings.section.general',
       icon: 'settings',
@@ -74,7 +52,7 @@
       ],
     },
     {
-      // 2. 外观设置 — 深色模式、莫奈取色、正在播放界面视觉、界面字体
+
       id: 'appearance',
       titleKey: 'settings.section.appearance',
       icon: 'palette',
@@ -144,6 +122,17 @@
             },
             {
               type: 'toggle',
+              bind: 'show_quality',
+              label: _t('settings.showQuality.label'),
+              sub: _t('settings.showQuality.sub'),
+              onChange: function (checked) {
+                if (App.nowPlaying && App.nowPlaying.setQualityEnabled) {
+                  App.nowPlaying.setQualityEnabled(checked);
+                }
+              },
+            },
+            {
+              type: 'toggle',
               bind: 'video_background',
               label: _t('settings.videoBackground.label'),
               sub: _t('settings.videoBackground.sub'),
@@ -160,7 +149,7 @@
               ],
             },
             {
-              // 正在播放界面下方功能区：自定义按钮组合（最多 5 个）
+
               type: 'np_secondary',
               bind: 'np_secondary_actions',
               label: _t('settings.npSecondary.label'),
@@ -184,7 +173,7 @@
       ],
     },
     {
-      // 3. 播放设置 — 播放行为 + 全部音效
+
       id: 'playback',
       titleKey: 'settings.section.playback',
       icon: 'headphones',
@@ -251,7 +240,7 @@
           ],
         },
         {
-          // 独占模式 / 输出设备
+
           titleKey: 'settings.group.audioOutput',
           rows: [
             {
@@ -325,6 +314,32 @@
             },
             {
               type: 'toggle',
+              bind: 'volume_normalization',
+              label: _t('settings.volumeNormalization.label'),
+              sub: _t('settings.volumeNormalization.sub'),
+              onChange: function (checked) {
+                var ae = window.__audioEngine;
+                if (ae) ae.setNormalizationEnabled(checked);
+              },
+            },
+            {
+              type: 'select',
+              bind: 'volume_normalization_target',
+              label: _t('settings.volumeNormalizationTarget.label'),
+              sub: _t('settings.volumeNormalizationTarget.sub'),
+              options: [
+                { value: '-23', label: '-23 LUFS · ' + _t('settings.volumeNormalizationTarget.broadcast') },
+                { value: '-18', label: '-18 LUFS · ReplayGain' },
+                { value: '-16', label: '-16 LUFS · ' + _t('settings.volumeNormalizationTarget.mobile') },
+                { value: '-14', label: '-14 LUFS · ' + _t('settings.volumeNormalizationTarget.streaming') },
+              ],
+              onApply: function (val) {
+                var ae = window.__audioEngine;
+                if (ae) ae.setNormalizationTarget(val);
+              },
+            },
+            {
+              type: 'toggle',
               bind: 'hearing_protection',
               label: _t('settings.hearingProtection.label'),
               sub: _t('settings.hearingProtection.sub'),
@@ -368,7 +383,7 @@
       ],
     },
     {
-      // 4. 歌词设置 — 字体、排版与制作信息筛选
+
       id: 'lyrics',
       titleKey: 'settings.section.lyrics',
       icon: 'lyrics',
@@ -447,7 +462,7 @@
       ],
     },
     {
-      // 5. 快捷键配置 — 全局快捷键、手柄
+
       id: 'shortcuts',
       titleKey: 'settings.section.shortcuts',
       icon: 'sports_esports',
@@ -487,7 +502,7 @@
       ],
     },
     {
-      // 6. 服务和自动化 — 系统媒体集成、Discord Rich Presence、外部标签编辑应用
+
       id: 'services',
       titleKey: 'settings.section.services',
       icon: 'cloud',
@@ -538,7 +553,7 @@
               placeholder: _t('settings.discordRpc.clientId.placeholder'),
             },
             {
-              // 连接状态行：主进程经 bridge 'discord_status' 事件实时推送
+
               type: 'discord_status',
               bind: 'discord_rpc_status',
               label: _t('settings.discordRpc.status.label'),
@@ -574,7 +589,7 @@
       ],
     },
     {
-      // 7. 内存和存储 — 内存优化等级、内存信息面板
+
       id: 'system',
       titleKey: 'settings.section.system',
       icon: 'memory',
@@ -613,7 +628,7 @@
       ],
     },
     {
-      // 8. 其他设置 — 重新运行新手引导
+
       id: 'other',
       titleKey: 'settings.section.other',
       icon: 'tune',
@@ -638,7 +653,7 @@
       ],
     },
     {
-      // 9. 关于和更新 — 在右栏内嵌渲染关于页内容
+
       id: 'about',
       titleKey: 'settings.section.about',
       icon: 'info',
@@ -646,7 +661,6 @@
     },
   ];
 
-    // 调试选项卡（仅当 sessionStorage 中有标记时显示）
     if (_isDebugMode()) {
       sections.push(_buildDebugSection());
     }
@@ -654,7 +668,6 @@
     return sections;
   }
 
-  // ── 调试选项卡 ─────────────────────────────────────────────────────────
   function _isDebugMode() {
     try { return sessionStorage.getItem('carminium_debug') === '1'; } catch (e) { return false; }
   }
@@ -820,13 +833,10 @@
     };
   }
 
-  // ── 普通页面渲染 ─────────────────────────────────────────────────────────
-  // 设置以普通页面呈现：左侧导航 + 右侧内容，填满页面容器。
-  // 由 App.navigate('settings') 触发，与其他页面一致。
   var _activeSectionId = 'appearance';
 
   page.render = function (container) {
-    // 清理上一次渲染的资源
+
     if (_memoryRefreshTimer) {
       clearInterval(_memoryRefreshTimer);
       _memoryRefreshTimer = null;
@@ -835,7 +845,6 @@
 
     _renderPageContent();
 
-    // 加载最新设置后重新绑定当前分类
     App.utils.call('get_settings').then(function (res) {
       if (!page.container || !page.container.querySelector('#settings-nav')) return;
       _lastSettings = JSON.parse(res);
@@ -843,7 +852,6 @@
     });
   };
 
-  // 构建/重建页面内容（渲染时与语言切换时复用）
   function _renderPageContent() {
     if (!page.container) return;
     page.container.innerHTML = '' +
@@ -857,7 +865,6 @@
         '<div class="settings-content" id="settings-content"></div>' +
       '</div>';
 
-    // 对动态插入的 DOM 应用 i18n
     if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(page.container);
 
     _bindNav();
@@ -865,8 +872,7 @@
   }
 
   function _renderNavItems() {
-    // 左侧导航 = M3E segmented list（.md-seglist）：项间 2dp 缝，
-    // 首项顶角/末项底角放大到 large(16)，选中项四角落 large(16) 并填 secondary-container。
+
     return '<div class="md-seglist settings-nav-list" role="tablist">' +
       _buildSections().map(function (section) {
         return '' +
@@ -900,18 +906,15 @@
 
     _activeSectionId = id;
 
-    // 导航高亮
     page.container.querySelectorAll('.settings-nav-item').forEach(function (item) {
       var active = item.dataset.section === id;
       item.classList.toggle('active', active);
       item.setAttribute('aria-selected', active ? 'true' : 'false');
     });
 
-    // 右侧内容区
     var contentEl = page.container.querySelector('#settings-content');
     if (!contentEl) return;
 
-    // 「关于」：在右栏内嵌渲染关于页内容（不跳转独立页面）
     if (section.isPage) {
       contentEl.innerHTML = '';
       if (App.pages.about && App.pages.about.renderInto) {
@@ -936,7 +939,6 @@
       : _renderRows(section.rows || []);
   }
 
-  // 绑定当前分类的所有行（设置未加载时仅渲染占位，加载后由 get_settings 回调再次调用）
   function _bindActiveSection() {
     var section = _findSection(_activeSectionId);
     if (!section || section.isPage) return;
@@ -948,7 +950,6 @@
     }
   }
 
-  // ── 内存信息面板 ─────────────────────────────────────────────────────────
   var _memoryRefreshTimer = null;
 
   function _bindMemoryInfo() {
@@ -956,24 +957,21 @@
     var cleanupBtn = page.container.querySelector('#memory-cleanup-btn');
     if (!statsEl) return;
 
-    // 立即加载一次
     _refreshMemoryStats(statsEl);
 
-    // 定时刷新（每 5 秒）；分栏布局下切换分类会移除元素，需每次重新查询
     if (_memoryRefreshTimer) clearInterval(_memoryRefreshTimer);
     _memoryRefreshTimer = setInterval(function () {
       var el = page.container && page.container.querySelector('#memory-stats-display');
       if (el) _refreshMemoryStats(el);
     }, 5000);
 
-    // 清理按钮
     if (cleanupBtn) {
       cleanupBtn.addEventListener('click', function () {
         cleanupBtn.disabled = true;
         if (window.MemoryManager) {
           window.MemoryManager.emergencyCleanup();
         }
-        // 请求主进程也执行清理
+
         if (window.__electronAPI && window.__electronAPI.invoke) {
           window.__electronAPI.invoke('memory:request_cleanup').catch(function () {});
           window.__electronAPI.invoke('memory:request_gc').catch(function () {});
@@ -989,10 +987,8 @@
   function _refreshMemoryStats(statsEl) {
     if (!statsEl) return;
 
-    // 渲染进程内存
     var rendererStats = window.MemoryManager ? window.MemoryManager.getStats() : null;
 
-    // 主进程内存
     if (window.__electronAPI && window.__electronAPI.invoke) {
       window.__electronAPI.invoke('memory:get_stats').then(function (res) {
         try {
@@ -1020,7 +1016,6 @@
   function _formatMemoryStats(main, renderer) {
     var html = '<div class="settings-memory-grid">';
 
-    // 主进程
     if (main && main.main) {
       var m = main.main;
       html += '<div class="settings-memory-item">' +
@@ -1037,7 +1032,6 @@
         '</div>';
     }
 
-    // 渲染进程
     if (renderer) {
       if (renderer.jsHeapUsed !== undefined) {
         html += '<div class="settings-memory-item">' +
@@ -1079,16 +1073,8 @@
     return html;
   }
 
-  // ── 渲染辅助 ─────────────────────────────────────────────────────────────
-  // 右侧每一段 = 分组标题（可选）+ 若干 .md-seglist。
-  // 「普通行」连续成段；eq / memory_info / np_secondary 是整宽控制块，切段另起（保持原位置）。
-  // notice 例外：它是条件性提示（默认 display:none），留在段内 ——
-  //   若把它当切段点，隐藏时会把一段撕成两个 1px 段并留下假缝。
-  //   display:none 的 flex 子项不参与 gap，隐藏时该段自然合拢。
-  // 无 groups 的分类（单组分类）直接铺行，复用同一套切段逻辑。
   var STANDALONE_ROW_TYPES = { eq: 1, memory_info: 1, np_secondary: 1 };
 
-  // 把一组行渲染成若干 .md-seglist 段（整宽控制块各自独立成段）。
   function _renderRows(rows) {
     var html = '';
     var run = [];
@@ -1116,11 +1102,8 @@
       _renderRows(group.rows);
   }
 
-  // ── M3E list item 渲染辅助 ────────────────────────────────────────────────
-  // bind（或快捷键行的 action）→ Material Symbols 图标名，作为列表项 leading icon。
-  // 未列出的项不渲染图标槽。新增图标后必须重跑 scripts/subset_fonts.py。
   var ROW_ICONS = {
-    // 常规 / 外观
+
     language: 'language',
     artist_separators: 'call_split',
     theme: 'contrast',
@@ -1129,15 +1112,19 @@
     ui_font: 'text_fields',
     circular_cover: 'album',
     wave_progress: 'graphic_eq',
+    show_quality: 'equalizer',
     video_background: 'movie',
     np_default_view: 'view_agenda',
-    // 播放（音效）
+
     wasapi_exclusive: 'speaker',
     audio_output_device: 'headphones',
     eq_enabled: 'graphic_eq',
     eq_bands: 'equalizer',
     dynamic_bass: 'piano',
     compressor_enabled: 'compress',
+
+    volume_normalization: 'graphic_eq',
+    volume_normalization_target: 'equalizer',
     hearing_protection: 'hearing',
     vocal_enhance: 'mic',
     guitar_friendly: 'music_note',
@@ -1147,7 +1134,7 @@
     automix: 'auto_awesome',
     radical_transitions: 'bolt',
     gapless: 'link',
-    // 歌词
+
     lyrics_font: 'lyrics',
     lyrics_jp_font: 'translate',
     lyrics_jp_use_distinct: 'translate',
@@ -1155,11 +1142,11 @@
     lyrics_center: 'format_align_center',
     lyrics_font_size: 'format_size',
     lyrics_credit_filters: 'filter_alt',
-    // 快捷键 / 服务
+
     smtc_lyrics: 'subtitles',
     gamepad_button_layout: 'sports_esports',
     tag_editor_path: 'edit_note',
-    // 快捷键行（按 action 取图标）
+
     play_pause: 'play_pause',
     next_track: 'skip_next',
     prev_track: 'skip_previous',
@@ -1167,7 +1154,7 @@
     volume_down: 'volume_down',
     toggle_like: 'favorite',
     toggle_mute: 'volume_off',
-    // 内存与调试
+
     memory_optimization: 'memory',
     _debug_show_platform: 'memory',
     _debug_toggle_traffic: 'api',
@@ -1185,19 +1172,16 @@
     if (row.type === 'shortcut' && row.action) return ROW_ICONS[row.action] || '';
     return ROW_ICONS[row.bind] || '';
   }
-  // 右栏设置行不渲染前导图标（2026-10-03）：左端图标 + 右端控件
-  // 把一行挤成"两端顶满"，文案左侧没有留白，读起来压迫。
-  // 图标语义已由分组标题承载；需要强调的项用 label 加粗即可。
-  // 如需恢复：把下面 return '' 换成渲染 _rowIcon(row) 的 span。
+
   function _rowIconHtml(row) {
     return '';
   }
-  // 主文案 + 支持文案；无支持文案时不渲染，以区分 one-line 56dp / two-line 72dp
+
   function _rowHeadingHtml(row) {
     return '<p class="settings-row-label">' + row.label + '</p>' +
       (row.sub ? '<p class="settings-row-sub">' + row.sub + '</p>' : '');
   }
-  // 主文案槽；text / file_picker 行的输入控件与文案同槽纵向排列
+
   function _rowBodyHtml(row, innerHtml) {
     var inner = innerHtml || '';
     if (row.type === 'text' || row.type === 'file_picker') {
@@ -1367,8 +1351,7 @@
       `;
     }
     if (row.type === 'discord_status') {
-      // Discord RPC 连接状态：文案（.settings-row-sub 槽）与状态点由
-      // _renderDiscordStatus 依据主进程推送的 discord_status 事件实时刷新。
+
       return `
         <div class="settings-row" data-bind="${row.bind}">
           ${_rowIconHtml(row)}
@@ -1397,7 +1380,7 @@
       `;
     }
     if (row.type === 'np_secondary') {
-      // 独立整宽卡片：展示当前已选功能 + 编辑入口
+
       return `
         <div class="settings-row-full settings-np-secondary" data-bind="${row.bind}">
           <div class="settings-np-secondary-head">
@@ -1418,7 +1401,6 @@
     return '';
   }
 
-  // ── 事件绑定 ─────────────────────────────────────────────────────────────
   function _bindSectionRows(section, settings) {
     const allRows = section.groups
       ? section.groups.reduce(function (acc, g) { return acc.concat(g.rows); }, [])
@@ -1435,8 +1417,7 @@
           el._settingsChangeHandler = function () {
             const checked = this.checked;
             if (row.hotToggle === 'wasapi_exclusive') {
-              // 独占模式：弹 dialog 确认后再热切换（后端负责保存设置、发送 settings_changed）。
-              // 取消时回滚开关到原状态；回退到共享时同步开关为关。
+
               var prevChecked = !checked;
               App.utils.confirmExclusiveSwitch(checked).then(function (ok) {
                 if (!ok) {
@@ -1445,13 +1426,13 @@
                 }
                 App.utils.call('set_wasapi_exclusive', checked).then(function (actual) {
                   var actualOn = (actual === 'wasapi_exclusive');
-                  // 同步独占模式标志到 App.state
+
                   if (window.App && App.state) {
                     App.state.isExclusive = actualOn;
                   }
                   if (el.checked !== actualOn) el.checked = actualOn;
                   if (row.onChange) row.onChange(actualOn);
-                  // 同步正在播放页文字按钮
+
                   if (window.App && App.pages && App.pages.now_playing) {
                     App.pages.now_playing.updateAudioMode(actualOn);
                   }
@@ -1468,7 +1449,7 @@
         const el = document.querySelector(`input[type="text"][data-bind="${row.bind}"]`);
         if (!el) return;
         el.value = settings[row.bind] || '';
-        // 避免重复绑定
+
         el.removeEventListener('change', el._settingsChangeHandler);
         el._settingsChangeHandler = function () {
           const val = this.value;
@@ -1500,18 +1481,10 @@
       }
     });
 
-    // WASAPI 独占模式：初始绑定后刷新依赖项的禁用/可见状态
     if (typeof settings.wasapi_exclusive !== 'undefined') {
       _applyWasapiExclusive(!!settings.wasapi_exclusive);
     }
   }
-
-  // ── Discord Rich Presence ────────────────────────────────────────────────
-  // 连接状态由主进程 DiscordRpcController 维护，两条通路到 UI：
-  //   1. push：bridge 'discord_status' 事件（连接/断开/握手结果时）
-  //   2. pull：进入设置页时 ipc 'discord_rpc_status' 查一次当前状态
-  // 订阅在本 IIFE 加载时注册一次（settings.js 只被 index.html 引入一次），
-  // DOM 不在场时静默跳过，避免每次进设置页重复订阅。
 
   function _renderDiscordStatus(status) {
     if (!page.container) return;
@@ -1523,7 +1496,7 @@
     if (state === 'connected') {
       var name = (status && status.username) || '';
       text = _t('settings.discordRpc.status.connected').replace('{name}', name);
-      // 用户名缺失（畸形 READY）时去掉尾部冒号，避免「已连接：」光秃结尾
+
       if (!name) text = text.replace(/[：:]\s*$/, '');
     } else if (state === 'connecting') {
       text = _t('settings.discordRpc.status.connecting');
@@ -1539,11 +1512,9 @@
   function _bindDiscordStatusRow() {
     App.utils.call('discord_rpc_status').then(function (res) {
       _renderDiscordStatus(res);
-    }).catch(function () { /* ignore */ });
+    }).catch(function () {  });
   }
 
-  // 开启 RPC 但未填写 Application ID 时给出即时反馈
-  // （主进程在同样条件下不会连接，状态行会显示「未连接」）。
   function _onDiscordRpcToggle(checked) {
     if (!checked) return;
     var clientId = (_lastSettings && _lastSettings.discord_rpc_client_id) || '';
@@ -1558,9 +1529,6 @@
     });
   }
 
-  // ── 正在播放功能区（.np-secondary-controls）自定义 ──────────────────────
-  // 候选功能注册表镜像（与 web/pages/now_playing.js 的 NP_SECONDARY_ACTIONS 保持一致）。
-  // 仅暴露展示所需字段：id / icon / 标题键。执行逻辑留在 now_playing.js。
   var NP_SECONDARY_MAX = 5;
   var NP_SECONDARY_DEFAULT = ['shuffle', 'repeat', 'like', 'audio_mode'];
   var NP_SECONDARY_CANDIDATES = [
@@ -1592,7 +1560,7 @@
     });
     return out;
   }
-  // 当前生效配置（空 → 默认）
+
   function _npCurrentList() {
     var raw = (_lastSettings && _lastSettings.np_secondary_actions) || [];
     var norm = _npNormalize(raw);
@@ -1609,7 +1577,6 @@
     '</span>';
   }
 
-  // 刷新当前卡片内的 chip 展示与计数
   function _npRefreshCard() {
     var chipsEl = page.container && page.container.querySelector('#np-secondary-chips');
     var countEl = page.container && page.container.querySelector('#np-secondary-count');
@@ -1632,17 +1599,14 @@
     }
   }
 
-  // ── 功能选择面板（对话框式）────────────────────────────────────────────
-  // 12 项候选勾选，最多 5 项；超出上限时其余项禁用并提示。
   var _npEditorEl = null;
   function _closeNpEditor() {
     if (!_npEditorEl) return;
     var el = _npEditorEl;
     _npEditorEl = null;
     el.classList.remove('open');
-    el.classList.add('closing');       // 供选择器区分"正在淡出的旧实例"
-    // 立即从命中测试中移除（避免淡出期间被 querySelector 命中），
-    // DOM 真正移除延后到过渡结束，保留视觉淡出。
+    el.classList.add('closing');
+
     el.style.pointerEvents = 'none';
     document.removeEventListener('keydown', el._keyHandler);
     setTimeout(function () {
@@ -1681,8 +1645,6 @@
     var gridEl = overlay.querySelector('#np-actions-editor-grid');
     var countEl = overlay.querySelector('#np-actions-editor-count');
 
-    // 每个候选 = M3E list item：leading 图标槽 + 主文案槽 + trailing 勾选槽。
-    // 两列网格布局（每格即一个 list item），底色/圆角/状态层由 .md-seglist > * 接管。
     function renderGrid() {
       gridEl.innerHTML = NP_SECONDARY_CANDIDATES.map(function (c) {
         var on = selected.indexOf(c.id) !== -1;
@@ -1711,8 +1673,7 @@
       if (idx !== -1) {
         selected.splice(idx, 1);
       } else {
-        // 达上限：提示且不改动选择（禁用项 pointer-events:none 挡真实点击，
-        // 这里的判断覆盖键盘/程序化触发）
+
         if (selected.length >= NP_SECONDARY_MAX) {
           App.utils.toast(_t('settings.npSecondary.limit'));
           return;
@@ -1722,7 +1683,6 @@
       renderGrid();
     });
 
-    // 恢复默认：仅改草稿，仍需点「保存」才落盘（与取消语义一致）
     overlay.querySelector('#np-actions-editor-reset').addEventListener('click', function () {
       selected = NP_SECONDARY_DEFAULT.slice();
       renderGrid();
@@ -1730,7 +1690,7 @@
 
     overlay.querySelector('#np-actions-editor-save').addEventListener('click', function () {
       App.utils.call('save_settings', JSON.stringify({ np_secondary_actions: selected }));
-      // 同步本地缓存并刷新卡片（settings_changed 也会再刷一次，做双保险）
+
       if (_lastSettings) _lastSettings.np_secondary_actions = selected.slice();
       _npRefreshCard();
       if (App.nowPlaying && App.nowPlaying.renderSecondaryActions) {
@@ -1747,15 +1707,10 @@
     renderGrid();
   }
 
-  // ── WASAPI 独占模式：切换依赖项状态 ────────────────────────────────────
-  // 启用独占模式后，音频处理 API 选择与输出设备选择不再生效，需禁用；
-  // 同时显示/隐藏「不可用功能」提示框。
-  // 注意：AutoMix 在共享模式下由前端 Web Audio API 实现，不禁用。
   page.applyWasapiExclusive = function (checked) {
     _applyWasapiExclusive(checked);
   };
 
-  // 暴露分类切换，供 about.js 彩蛋跳转使用
   page.activateSection = function (id) {
     if (page.container) {
       _renderPageContent();
@@ -1770,13 +1725,12 @@
     var notice = document.querySelector('.settings-notice[data-show-when="wasapi_exclusive"]');
     if (notice) notice.style.display = checked ? '' : 'none';
 
-    // 独占模式下禁用音频 API 选择和输出设备选择（AutoMix 始终可用）
     var disabledBinds = ['audio_output_device'];
     disabledBinds.forEach(function (b) {
       var row = document.querySelector('.settings-row[data-bind="' + b + '"]');
       if (!row) return;
       row.classList.toggle('settings-row-disabled', checked);
-      // 禁用下拉触发器
+
       var trigger = row.querySelector('.md-dropdown-trigger');
       if (trigger) {
         if (checked) {
@@ -1790,7 +1744,6 @@
     });
   }
 
-  // ── 重启提示（用于需重启生效的设置）────────────────────────
   function _promptRestart(title, body) {
     App.utils.confirmDialog({
       title: title,
@@ -1816,7 +1769,6 @@
     const currentCombo = shortcuts[row.action] || '';
     _displayShortcut(keysSpan, currentCombo);
 
-    // 避免重复绑定
     btn.removeEventListener('click', btn._shortcutClickHandler);
     btn._shortcutClickHandler = function () {
       if (btn.classList.contains('settings-shortcut-recording')) return;
@@ -1846,8 +1798,6 @@
         return;
       }
 
-      // 纯修饰键按下时不结束录制，只更新预览（等用户按下非修饰键组成完整组合键）
-      // 媒体键例外：它们是独立快捷键，无需修饰键
       const MOD_KEY_NAMES = ['Control', 'Alt', 'Shift', 'Meta'];
       if (MOD_KEY_NAMES.includes(e.key)) {
         const preview = App.shortcuts.formatKeyCombo(e);
@@ -1894,7 +1844,6 @@
     });
   }
 
-  // ── 文件选择器行绑定（用于标签编辑器等可执行文件路径）──────────────────────
   function _bindFilePickerRow(row, currentValue) {
     const rowEl = document.querySelector(`.settings-row-file-picker[data-bind="${row.bind}"]`);
     if (!rowEl) return;
@@ -1904,7 +1853,6 @@
 
     input.value = currentValue || '';
 
-    // 文本框直接编辑（失焦或回车时保存）
     input.removeEventListener('change', input._pickerChangeHandler);
     input._pickerChangeHandler = function () {
       const val = this.value.trim();
@@ -1914,7 +1862,6 @@
     };
     input.addEventListener('change', input._pickerChangeHandler);
 
-    // 浏览按钮：弹出文件选择对话框
     btn.removeEventListener('click', btn._pickerClickHandler);
     btn._pickerClickHandler = function () {
       App.utils.call('pick_tag_editor_path').then(function (picked) {
@@ -1928,7 +1875,6 @@
     btn.addEventListener('click', btn._pickerClickHandler);
   }
 
-  // ── 设备下拉菜单绑定 ─────────────────────────────────────────────────────
   function _bindDeviceSelectRow(row, currentValue) {
     const dropdown = document.querySelector(`.md-dropdown[data-bind="${row.bind}"]`);
     if (!dropdown) return;
@@ -1942,9 +1888,6 @@
       dropdown.dataset.value = value;
     }
 
-    // MD3 Exposed dropdown menu（Select）：菜单宽度**等于**字段宽度、顶边紧贴字段底边。
-    // ⚠️ 旧版用 Math.max(rect.width, 260) 强行加宽 —— MD3 要求两者等宽（见 m3.material.io Menus），
-    //    且字段已按 MD3 放大到 56dp/min-width 220，不再需要那条下限兜底。
     function positionMenu() {
       var rect = trigger.getBoundingClientRect();
       var rightOffset = window.innerWidth - rect.right;
@@ -1971,7 +1914,6 @@
       trigger.setAttribute('aria-expanded', 'true');
     }
 
-    // 避免重复绑定：移除上一次的 click handler
     if (trigger._deviceSelectClickHandler) {
       trigger.removeEventListener('click', trigger._deviceSelectClickHandler);
     }
@@ -1985,7 +1927,6 @@
     };
     trigger.addEventListener('click', trigger._deviceSelectClickHandler);
 
-    // 音频设备由原生 DLL (Zig + miniaudio) 枚举，统一走 get_audio_devices / set_output_device
     function _populateQtDevices() {
       App.utils.call('get_audio_devices').then(function (res) {
         var data = JSON.parse(res);
@@ -2050,15 +1991,10 @@
     });
   }
 
-  // ── 点击外部关闭所有设备下拉菜单 ─────────────────────────────────────────
   document.addEventListener('click', function () {
     _closeAllDropdowns();
   });
 
-  // ── 窗口大小或布局变化时重新定位或关闭下拉菜单 ───────────────────────────
-  // 定位口径与 _bindSelectRow / _bindDeviceSelectRow 的 positionMenu() 一致：
-  // MD3 要求菜单宽度 = 字段宽度、顶边紧贴字段底边（改一处必须三处同改，否则 resize 后
-  // 菜单会跳回旧几何 —— 曾漏掉这里，导致「为何分离了」）。
   window.addEventListener('resize', function () {
     document.querySelectorAll('.md-dropdown-menu.open').forEach(function (menu) {
       const dropdown = menu.parentElement;
@@ -2066,7 +2002,7 @@
       if (!trigger) return;
       const rect = trigger.getBoundingClientRect();
       const rightOffset = window.innerWidth - rect.right;
-      // 触发器已不可见或移出视口则关闭
+
       if (rect.top < 0 || rect.bottom > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth) {
         menu.classList.remove('open');
         trigger.setAttribute('aria-expanded', 'false');
@@ -2078,7 +2014,6 @@
     });
   });
 
-  // 监听 body class 变化（如右侧正在播放栏展开/收起），关闭所有下拉菜单
   if (typeof MutationObserver !== 'undefined') {
     const bodyObserver = new MutationObserver(function () {
       _closeAllDropdowns();
@@ -2094,7 +2029,6 @@
     });
   }
 
-  // ── 主题切换 ─────────────────────────────────────────────────────────────
   function _applyTheme(val) {
     if (val === 'system') {
       const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -2107,7 +2041,6 @@
     }
   }
 
-  // ── 阻尼滑块行绑定 ──────────────────────────────────────────────
   function _bindSliderRow(row, currentValue) {
     const slider = document.querySelector(`input[type="range"][data-bind="${row.bind}"]`);
     const valueLabel = document.querySelector(`.settings-slider-value[data-bind="${row.bind}"]`);
@@ -2118,7 +2051,6 @@
     slider.value = val;
     _updateSliderUI(slider, valueLabel, val, row);
 
-    // 避免重复绑定
     slider.removeEventListener('input', slider._sliderInputHandler);
     slider.removeEventListener('change', slider._sliderChangeHandler);
 
@@ -2144,7 +2076,7 @@
       var bandVal = Array.isArray(bands) && bandIdx < bands.length ? bands[bandIdx] : 0;
       slider.value = bandVal;
       _updateEqSliderUI(slider, bandVal);
-      // 将初始频段值应用到 AudioEngine
+
       var ae0 = window.__audioEngine;
       if (ae0) ae0.setEqBand(bandIdx, bandVal);
 
@@ -2154,12 +2086,12 @@
       slider._eqInputHandler = function () {
         var v = parseInt(this.value, 10);
         _updateEqSliderUI(this, v);
-        // 实时调用 AudioEngine（每次拖动时查找，避免初始化时机问题）
+
         var ae = window.__audioEngine;
         if (ae) ae.setEqBand(bandIdx, v);
       };
       slider._eqChangeHandler = function () {
-        // 保存所有频段值
+
         var allSliders = document.querySelectorAll('.settings-eq-slider');
         var newBands = [];
         allSliders.forEach(function (s) {
@@ -2177,7 +2109,7 @@
     var max = parseFloat(slider.max) || 12;
     var pct = ((val - min) / (max - min)) * 100;
     slider.style.setProperty('--slider-val', pct + '%');
-    // 数值回显：拖动时实时显示当前 dB，避免只能靠手感盲调
+
     var band = slider.closest ? slider.closest('.settings-eq-band') : null;
     var valueEl = band ? band.querySelector('.settings-eq-band-value') : null;
     if (valueEl) {
@@ -2195,54 +2127,47 @@
     slider.style.setProperty('--slider-val', pct + '%');
   }
 
-  // ── 歌词渐进模糊 ────────────────────────────────────────────────────
   function _applyProgressiveBlur(enabled) {
     var wrap = document.getElementById('np-lyrics-wrap');
     if (wrap) {
       wrap.classList.toggle('progressive-blur', !!enabled);
     }
-    // 通知 nowPlaying 重新计算模糊
+
     if (window.App && App.nowPlaying && App.nowPlaying.refreshProgressiveBlur) {
       App.nowPlaying.refreshProgressiveBlur(enabled);
     }
   }
 
-  // ── 歌词居中排版 ────────────────────────────────────────────────────
   function _applyLyricsCenter(enabled) {
     if (window.App && App.nowPlaying && App.nowPlaying.refreshLyricsCenter) {
       App.nowPlaying.refreshLyricsCenter(enabled);
     }
   }
 
-  // ── 歌词字体大小 ────────────────────────────────────────────────────
   function _applyLyricsFontSize(val) {
     if (window.App && App.nowPlaying && App.nowPlaying.refreshLyricsFontSize) {
       App.nowPlaying.refreshLyricsFontSize(val);
     }
   }
 
-  // ── 圆形专辑图 ────────────────────────────────────────────────────
   function _applyCircularCover(enabled) {
     if (window.App && App.nowPlaying && App.nowPlaying.refreshCircularCover) {
       App.nowPlaying.refreshCircularCover(enabled);
     }
   }
 
-  // ── 视频背景 ─────────────────────────────────────────────────────
   function _applyVideoBackground(enabled) {
     if (window.App && App.nowPlaying && App.nowPlaying.refreshVideoBackground) {
       App.nowPlaying.refreshVideoBackground(enabled);
     }
   }
 
-  // ── 波浪进度条 ─────────────────────────────────────────────────────
   function _applyWaveProgress(enabled) {
     if (window.App && App.nowPlaying && App.nowPlaying.refreshWaveProgress) {
       App.nowPlaying.refreshWaveProgress(enabled);
     }
   }
 
-  // ── 界面字体 ─────────────────────────────────────────────────────
   function _applyUiFont(val) {
     var root = document.documentElement;
     if (val && val.trim()) {
@@ -2252,7 +2177,6 @@
     }
   }
 
-  // ── 歌词自定义字体（立即应用）─────────────────────────────────────
   function _applyLyricsFont(val) {
     if (window.App && App.nowPlaying && App.nowPlaying.refreshLyricsFont) {
       App.nowPlaying.refreshLyricsFont(val, undefined);
@@ -2277,7 +2201,6 @@
     }
   }
 
-  // ── 界面语言 ─────────────────────────────────────────────────────
   function _applyLanguage(val) {
     if (window.App && App.i18n) {
       App.i18n.init(val || 'zh-CN');
@@ -2286,21 +2209,19 @@
     }
   }
 
-  // ── 配色方案 ────────────────────────────────────────────────────
   function _applyColorScheme(val) {
     if (!window.App) return;
     App.state.colorScheme = val || 'tonal_spot';
-    // 使用当前主色重新应用主题
+
     if (App.state.currentDominantRgb) {
       App.utils.applyDynamicTheme(App.state.currentDominantRgb, App.state.colorScheme);
     }
   }
 
-  // ── 莫奈取色来源 ────────────────────────────────────────────────
   function _applyMonetSource(val) {
     if (!window.App) return;
     App.state.monetSource = val || 'album_cover';
-    // 切换后立即刷新主题（settings_changed 也会触发，但这里提供即时反馈）
+
     if (val === 'system_wallpaper') {
       _refreshMonetFromSystem();
     } else if (App.state.currentDominantRgb) {
@@ -2331,7 +2252,6 @@
     App.utils.applyDynamicTheme(fallback, App.state.colorScheme);
   }
 
-  // ── Material 下拉选择行绑定（select 类型）──────────────────────────
   function _bindSelectRow(row, currentValue) {
     var dropdown = document.querySelector('.md-dropdown[data-bind="' + row.bind + '"]');
     if (!dropdown) return;
@@ -2339,7 +2259,6 @@
     var valueEl = dropdown.querySelector('.md-dropdown-value');
     var menu = dropdown.querySelector('.md-dropdown-menu');
 
-    // 查找当前值对应的 label
     function findLabel(val) {
       var match = row.options.find(function (o) { return o.value === val; });
       return match ? match.label : (row.options[0] ? row.options[0].label : '—');
@@ -2353,7 +2272,6 @@
     valueEl.textContent = findLabel(currentVal);
     _refreshSelectedItem(menu, currentVal);
 
-    // 见 _bindDeviceSelectRow 里的同名注释：MD3 要求菜单宽度 = 字段宽度、顶边紧贴字段底边。
     function positionMenu() {
       var rect = trigger.getBoundingClientRect();
       var rightOffset = window.innerWidth - rect.right;
@@ -2387,7 +2305,6 @@
     };
     trigger.addEventListener('click', trigger._selectClickHandler);
 
-    // 绑定菜单项点击
     menu.querySelectorAll('.md-dropdown-item').forEach(function (item) {
       item.removeEventListener('click', item._selectItemClickHandler);
       item._selectItemClickHandler = function (e) {
@@ -2402,7 +2319,5 @@
       item.addEventListener('click', item._selectItemClickHandler);
     });
   }
-
-  // 语言切换时由 app.js 统一重新渲染当前页面，无需在此额外处理
 
 })();

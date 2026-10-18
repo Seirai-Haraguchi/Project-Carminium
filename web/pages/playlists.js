@@ -1,8 +1,3 @@
-/**
- * Carminium — 歌单详情页
- * 通过 navigate('playlists', {playlist_id: X, playlist_name: 'xxx'}) 进入。
- * 歌单列表由侧边栏的飞出副菜单提供，本页只负责展示单个歌单内容。
- */
 (function () {
   'use strict';
 
@@ -44,24 +39,18 @@ owner_email: params.owner_email || null,
     `;
   }
 
-  /**
-   * 渲染创建者信息（有 Gravatar 才显示头像）。
-   * 创建人和服务器名同行显示：创建人 · 服务器
-   */
   function _renderOwnerInfo(playlist) {
     const isRemote = playlist.source === 'subsonic';
     const owner = playlist.owner;
     const email = playlist.owner_email || '';
     const serverName = (isRemote && playlist.server_name) ? playlist.server_name : null;
 
-    // 组装文字部分：创建人 · 服务器
     var textParts = [];
     if (owner) textParts.push(App.utils.esc(owner));
     if (serverName) textParts.push(App.utils.esc(serverName));
     if (textParts.length === 0) return '';
     var textHtml = textParts.join(' &middot; ');
 
-    // 有 email 才显示 Gravatar 头像，否则只显示文字
     if (email) {
       var hash = _md5(email.toLowerCase().trim());
       var gravatarUrl = 'https://www.gravatar.com/avatar/' + hash + '?d=404&s=48';
@@ -74,13 +63,9 @@ owner_email: params.owner_email || null,
         '</div>';
     }
 
-    // 无头像：只显示文字
     return '<p class="detail-sub playlist-owner-text">' + textHtml + '</p>';
   }
 
-  /**
-   * 简易 MD5 哈希（用于 Gravatar URL）。
-   */
   function _md5(str) {
     function _rl(n, c) { return (n << c) | (n >>> (32 - c)); }
     function _add(a, b) { return (a + b) & 0xFFFFFFFF; }
@@ -145,13 +130,11 @@ owner_email: params.owner_email || null,
   function _renderDetail(container, playlist) {
     const isRemote = playlist.source === 'subsonic';
 
-    // 确定封面 URL
     let coverUrl = null;
     if (isRemote && playlist.cover_art_id && playlist.server_id && window.__coverBase) {
       coverUrl = window.__coverBase + '/subsonic/cover/' + playlist.server_id + '/' + encodeURIComponent(playlist.cover_art_id) + '?size=512';
     }
 
-    // 始终使用英雄式布局
     container.innerHTML = `
       <div class="detail-header playlist-detail-header">
         <div class="detail-cover playlist-detail-cover">
@@ -192,10 +175,8 @@ owner_email: params.owner_email || null,
       <ul class="track-list az-list" id="playlist-track-list"></ul>
     `;
 
-    // 对动态插入的 DOM 应用 i18n 翻译
     if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(container);
 
-    // 设置封面：有封面用封面，无封面用渐变占位符
     const blurEl = document.getElementById('pl-cover-blur');
     const mainEl = document.getElementById('pl-cover-main');
     if (coverUrl) {
@@ -205,7 +186,6 @@ owner_email: params.owner_email || null,
         mainEl.innerHTML = `<img src="${coverUrl}" alt="" style="width:100%;height:100%;object-fit:cover;" loading="lazy" onerror="this.style.display='none'">`;
       }
     } else {
-      // 无封面：使用基于歌单名的渐变色占位符
       const hashColor = App.utils.hashColor(playlist.name);
       if (blurEl) blurEl.style.background = hashColor;
       if (mainEl) {
@@ -216,7 +196,6 @@ owner_email: params.owner_email || null,
 
     const searchInput = document.getElementById('playlist-search');
     searchInput.value = searchText;
-    // 防抖：每敲一个字符都会全量过滤 + 重建列表 DOM。
     var _searchDebounceTimer = null;
     searchInput.addEventListener('input', function (e) {
       searchText = e.target.value;
@@ -296,7 +275,6 @@ owner_email: params.owner_email || null,
   }
 
   function _promptRename(playlist) {
-    // 简易内联输入对话框
     const overlay = document.createElement('div');
     overlay.className = 'cmd-dialog-overlay';
     const dlg = document.createElement('div');
@@ -336,7 +314,6 @@ owner_email: params.owner_email || null,
       App.utils.call('rename_playlist', playlist.id, name).then(function () {
         currentPlaylist.name = name;
         close();
-        // 重新渲染当前页
         const container = document.getElementById('page-container');
         if (container) _renderDetail(container, currentPlaylist);
       });
@@ -353,7 +330,6 @@ owner_email: params.owner_email || null,
   function _loadTracks(playlistId) {
     App.utils.call('get_playlist_tracks', playlistId).then(function (res) {
       tracks = JSON.parse(res);
-      // 本地歌单：尝试从第一个有封面的曲目设置封面
       if (currentPlaylist && currentPlaylist.source !== 'subsonic') {
         const trackWithCover = tracks.find(t => t.has_cover);
         if (trackWithCover && window.coverUrl) {
@@ -404,7 +380,6 @@ owner_email: params.owner_email || null,
       const li = App.utils.trackRow(track, i + 1, function (clickedTrack, idx) {
         App.backend.play_from_list(JSON.stringify(list), list.indexOf(clickedTrack));
       }, true);
-      // 添加"从歌单移除"按钮（右键菜单中也可提供）
       const removeBtn = document.createElement('button');
       removeBtn.className = 'track-action-btn';
 removeBtn.title = App.i18n.t('playlist.removeFromPlaylist');
@@ -437,7 +412,6 @@ removeBtn.title = App.i18n.t('playlist.removeFromPlaylist');
     });
   };
 
-  // 歌单列表变化（增删/重命名）时，若当前歌单仍存在则刷新，否则返回音乐页
   page.onPlaylistsChanged = function (jsonStr) {
     let lists = [];
     try { lists = JSON.parse(jsonStr); } catch (e) { return; }
@@ -447,7 +421,6 @@ removeBtn.title = App.i18n.t('playlist.removeFromPlaylist');
       App.navigate('music');
       return;
     }
-    // 同步名称、owner、owner_email 等元数据变更
     const updated = lists.find(p => p.id === currentPlaylist.id);
     if (updated) {
       let needReRender = false;

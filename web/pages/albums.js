@@ -1,6 +1,3 @@
-/**
- * Carminium — 专辑页
- */
 (function () {
   'use strict';
 
@@ -11,12 +8,10 @@
   let allAlbums = [];
   let filterStr = '';
   let searchText = '';
-  let sortMode = 'az'; // 'az', 'za', 'artist', 'year'
+  let sortMode = 'az';
 
-  // 虚拟列表实例引用（专辑网格不虚拟化，但保留销毁用）
   let _vl = null;
 
-  // 排序选项配置
   const SORT_OPTIONS = [
     { key: 'az', label: 'A-Z', icon: 'sort_by_alpha' },
     { key: 'za', label: 'Z-A', icon: 'sort_by_alpha' },
@@ -59,8 +54,7 @@
 
     const searchInput = document.getElementById('album-search');
     searchInput.value = searchText;
-    // 防抖：每敲一个字符都会全量过滤 + 排序 + 重建网格 DOM，
-    // 专辑数上千时单个字符可达数十毫秒。180ms 静默后才渲染。
+
     var _searchDebounceTimer = null;
     searchInput.addEventListener('input', function (e) {
       searchText = e.target.value;
@@ -72,10 +66,8 @@
       }, 180);
     });
 
-    // 排序下拉菜单事件
     _setupSortDropdown(container);
 
-    // 从前端缓存读取（启动时已拉取，library_updated 时刷新）
     allAlbums = (App.state && App.state.allAlbums) ? App.state.allAlbums : [];
     if (params && params.album && params.album_artist) {
       const target = allAlbums.find(function (a) {
@@ -120,13 +112,13 @@
         const newSort = this.dataset.value;
         if (newSort && newSort !== sortMode) {
           sortMode = newSort;
-          // 更新触发器显示
+
           const opt = SORT_OPTIONS.find(o => o.key === sortMode);
           if (opt) {
             select.querySelector('.md-select-icon').textContent = opt.icon;
             select.querySelector('.md-select-label').textContent = opt.labelKey ? App.i18n.t(opt.labelKey) : opt.label;
           }
-          // 更新选项选中状态
+
           menu.querySelectorAll('.md-select-option').forEach(o => {
             o.classList.remove('selected');
             o.setAttribute('aria-selected', 'false');
@@ -139,7 +131,7 @@
           checkSpan.className = 'material-symbols-rounded md-select-check';
           checkSpan.textContent = 'check';
           this.appendChild(checkSpan);
-          // 重新渲染
+
           _renderGrid(container);
         }
         closeMenu();
@@ -175,7 +167,7 @@
           const aa = App.utils.itemSortKey(a, 'album_artist_sort_key', 'album_artist');
           const ab = App.utils.itemSortKey(b, 'album_artist_sort_key', 'album_artist');
           if (aa !== ab) return aa.localeCompare(ab);
-          // 同歌手按专辑名排序
+
           const ka = App.utils.itemSortKey(a, 'sort_key', 'album');
           const kb = App.utils.itemSortKey(b, 'sort_key', 'album');
           return ka.localeCompare(kb);
@@ -185,8 +177,8 @@
         sorted.sort((a, b) => {
           const ya = a.year || 0;
           const yb = b.year || 0;
-          if (ya !== yb) return yb - ya; // 年份降序（最新的在前）
-          // 同年按专辑名排序
+          if (ya !== yb) return yb - ya;
+
           const ka = App.utils.itemSortKey(a, 'sort_key', 'album');
           const kb = App.utils.itemSortKey(b, 'sort_key', 'album');
           return ka.localeCompare(kb);
@@ -203,7 +195,7 @@
       case 'year':
         return album.year ? String(album.year) : App.i18n.t('music.unknownYear');
       case 'za':
-        // Z-A 排序时，按首字母分组但显示为 Z-A 顺序
+
         return App.utils.itemSortLetter(album, 'sort_key', 'album');
       case 'az':
       default:
@@ -212,11 +204,11 @@
   }
 
   function _groupAlbums(list) {
-    // A-Z 和 Z-A 使用原有的 groupByLetter
+
     if (sortMode === 'az' || sortMode === 'za') {
       return App.utils.groupByLetter(list, a => a.album || '');
     }
-    // 其他排序模式按对应字段分组
+
     const groups = [];
     let current = null;
     for (let i = 0; i < list.length; i++) {
@@ -231,11 +223,33 @@
     return groups;
   }
 
+  function _openLetterIndex() {
+    const grid = document.getElementById('album-grid');
+    const az = window.App && App.azIndex;
+    if (!grid || !az) return;
+    const heads = grid.querySelectorAll('.az-grid-header');
+    const letters = [];
+    heads.forEach(function (h) { if (h.dataset.letter != null) letters.push(h.dataset.letter); });
+    if (!az.isAlphabetical(letters)) return;
+    az.open({
+      host: grid,
+      letters: letters,
+      onPick: function (letter) {
+        const target = Array.prototype.find.call(
+          grid.querySelectorAll('.az-grid-header'),
+          function (h) { return h.dataset.letter === letter; }
+        );
+        if (target) az.scrollTo(az.offsetOf(target));
+      },
+    });
+  }
+
   function _renderGrid(container) {
     const grid = document.getElementById('album-grid');
     if (!grid) return;
 
-    // 销毁可能存在的旧虚拟列表实例（专辑网格不需要虚拟化，数量少）
+    if (window.App.azIndex) App.azIndex.reset();
+
     if (_vl) { _vl.destroy(); _vl = null; }
 
     let list = filterStr ? allAlbums.filter(a => App.utils.matchItem(filterStr, a, [
@@ -243,7 +257,6 @@
       { text: 'album_artist', key: 'album_artist_sort_key' },
     ])) : allAlbums;
 
-    // 应用排序
     list = _sortAlbums(list);
 
     const countEl = document.getElementById('album-count');
@@ -262,20 +275,26 @@
       return;
     }
 
-    // 恢复 CSS grid 布局
     grid.style.display = 'grid';
     grid.classList.add('album-grid');
     grid.innerHTML = '';
     const frag = document.createDocumentFragment();
 
-    // 根据排序模式生成分组
     const groups = filterStr ? [{ letter: '', items: list }] : _groupAlbums(list);
+
+    const canIndex = !filterStr && window.App.azIndex &&
+      App.azIndex.isAlphabetical(groups.map(g => g.letter));
 
     groups.forEach(group => {
       if (!filterStr) {
         const header = document.createElement('div');
         header.className = 'az-grid-header';
+        header.dataset.letter = group.letter;
         header.innerHTML = `<span class="az-section-letter">${group.letter}</span>`;
+        if (canIndex) {
+          header.classList.add('az-header-action');
+          header.addEventListener('click', _openLetterIndex);
+        }
         frag.appendChild(header);
       }
       group.items.forEach(album => {
@@ -311,9 +330,9 @@
   }
 
   function _renderDetail(container, album) {
-    // 保存列表滚动位置，以便返回时恢复
+
     App.scrollMemory.save('albums');
-    // 渲染专辑详情页
+
     container.innerHTML = `
       <div class="detail-header">
         <div class="detail-cover" id="detail-cover">
@@ -338,7 +357,6 @@
       <ul class="track-list" id="album-track-list"></ul>
     `;
 
-    // 对动态插入的 DOM 应用 i18n 翻译
     if (App.i18n && App.i18n.applyToDOM) App.i18n.applyToDOM(container);
 
     const coverUrl = album.cover_track_id ? window.coverUrl(album.cover_track_id, 512) : null;
@@ -360,8 +378,6 @@
       shapes.forEach(s => { s.style.background = color; });
     }
 
-    // 从前端 allTracks 缓存过滤专辑曲目（按 album + album_artist 匹配，
-    // 按 disc_number / track_number 排序，与后端 get_album_tracks 行为一致）
     const allTracks = (App.state && App.state.allTracks) ? App.state.allTracks : [];
     const tracks = allTracks.filter(function (t) {
       if (t.album !== album.album) return false;
@@ -377,8 +393,7 @@
     const frag = document.createDocumentFragment();
 
     tracks.forEach((track, i) => {
-      // 表示番号はメタデータの曲番号、再生位置はリスト内の実際の並び順(0-based)を使用する。
-      // 両者が異なる場合でも、クリックした行が正しく再生されるようにする。
+
       const displayNum = track.track_number || (i + 1);
       const li = App.utils.trackRow(track, displayNum, function (clickedTrack, idx) {
         App.backend.play_from_list(JSON.stringify(tracks), idx);
