@@ -40,9 +40,10 @@ function _request(urlStr, { method = 'GET', body = null, headers = null, json = 
       opts.headers['Content-Length'] = Buffer.byteLength(body);
     }
     const req = lib.request(opts, (resp) => {
-      let data = '';
-      resp.on('data', (chunk) => (data += chunk));
-      resp.on('end', () => resolve(data));
+      // 用 Buffer 累积再统一转 utf8，避免多字节字符被 chunk 边界截断成乱码
+      const chunks = [];
+      resp.on('data', (chunk) => chunks.push(chunk));
+      resp.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     });
     req.on('error', reject);
     req.setTimeout(TIMEOUT, () => {
@@ -389,14 +390,245 @@ async function fetchLrclibLyrics(songId) {
 }
 
 
-const AMLLDB_RAW_BASE =
-  'https://raw.githubusercontent.com/Steve-xmh/amll-ttml-db/main/raw/';
+// ─── AMLL TTML DB（amll-dev/amll-ttml-db，AMLLDB）───────────────────────────
+// 仓库按平台 ID 索引歌词：ncm-lyrics/<id>.ttml、qq-lyrics/<id>.ttml、
+// apple-lyrics/<id>.ttml、spotify-lyrics/<id>.ttml；每个平台文件夹下有
+// index.jsonl（逐行 JSON：id + metadata[musicName/artists/album] 等）。
+// 检索 = 下载 index.jsonl 建本地索引（内存缓存 24h）；取词 = 按平台 ID 直取 TTML。
+// 主链路 jsDelivr CDN（国内可达），回退 raw.githubusercontent，ncm 另有官方镜像站。
 
-function _normalizeAmllFilename(str) {
-  return str
-    .replace(/[/\\:*?"<>|]/g, '')
+const AMLLDB_PLATFORMS = ['ncm', 'qq', 'apple', 'spotify'];
+const AMLLDB_URL_JSDELIVR = 'https://cdn.jsdelivr.net/gh/amll-dev/amll-ttml-db@main/';
+const AMLLDB_URL_RAW =
+  'https://raw.githubusercontent.com/amll-dev/amll-ttml-db/main/';
+const AMLLDB_URL_NCM_MIRROR = 'https://amll-ttml-db.stevexmh.net/ncm/';
+const AMLLDB_INDEX_TTL = 24 * 3600 * 1000;
+const AMLLDB_INDEX_FAIL_TTL = 10 * 60 * 1000;
+const AMLLDB_UA = 'Carminium/1.0 (https://github.com/ProjectCarminium)';
+
+const _amllIndex = { entries: null, loadedAt: 0, failedAt: 0, loading: null };
+
+function _amllRequest(urlStr, accept) {
+  return _request(urlStr, {
+    headers: { 'User-Agent': AMLLDB_UA, 'Accept': accept || 'text/plain, */*' },
+  });
+}
+
+async function _amllFetchTTML(platform, id) {
+  const tries = [];
+  if (platform === 'ncm') {
+    tries.push(AMLLDB_URL_NCM_MIRROR + encodeURIComponent(id));
+  }
+  tries.push(
+    AMLLDB_URL_JSDELIVR + platform + '-lyrics/' + encodeURIComponent(id) + '.ttml',
+    AMLLDB_URL_RAW + platform + '-lyrics/' + encodeURIComponent(id) + '.ttml',
+  );
+  for (const url of tries) {
+    try {
+      const raw = await _amllRequest(url, 'application/xml, text/xml, text/plain, */*');
+      if (raw && raw.indexOf('<tt') >= 0) return raw;
+    } catch (e) {
+      // 换下一个镜像
+    }
+  }
+  return '';
+}
+
+async function _amllFetchIndex(platform) {
+  const urls = [
+    AMLLDB_URL_JSDELIVR + platform + '-lyrics/index.jsonl',
+    AMLLDB_URL_RAW + platform + '-lyrics/index.jsonl',
+  ];
+  for (const url of urls) {
+    try {
+      const raw = await _amllRequest(url, 'application/x-ndjson, */*');
+      if (raw) return raw;
+    } catch (e) {
+      // 换下一个源
+    }
+  }
+  return '';
+}
+
+async function _loadAmllIndex() {
+  const now = Date.now();
+  if (_amllIndex.entries && now - _amllIndex.loadedAt < AMLLDB_INDEX_TTL) {
+    return _amllIndex.entries;
+  }
+  if (_amllIndex.failedAt && now - _amllIndex.failedAt < AMLLDB_INDEX_FAIL_TTL) {
+    return null;
+  }
+  if (!_amllIndex.loading) {
+    _amllIndex.loading = (async () => {
+      const entries = [];
+      for (const platform of AMLLDB_PLATFORMS) {
+        try {
+          const raw = await _amllFetchIndex(platform);
+          if (!raw) continue;
+          for (const line of raw.split('\n')) {
+            const s = line.trim();
+            if (!s) continue;
+            try {
+              const o = JSON.parse(s);
+              const md = {};
+              for (const kv of o.metadata || []) md[kv[0]] = kv[1];
+              const id = String(o.id || (md[platform + 'MusicId'] || [])[0] || '');
+              if (!id) continue;
+              entries.push({
+                platform,
+                id,
+                name: (md.musicName || [])[0] || '',
+                artists: md.artists || [],
+                album: (md.album || [])[0] || '',
+              });
+            } catch (e) {
+              // 单行坏数据忽略
+            }
+          }
+        } catch (e) {
+          // 单个平台拉取失败不阻塞其它平台
+        }
+      }
+      if (entries.length > 0) {
+        _amllIndex.entries = entries;
+        _amllIndex.loadedAt = Date.now();
+        _amllIndex.failedAt = 0;
+      } else {
+        _amllIndex.failedAt = Date.now();
+      }
+      _amllIndex.loading = null;
+      return entries.length > 0 ? entries : null;
+    })();
+  }
+  return _amllIndex.loading;
+}
+
+function _normAmll(s) {
+  if (!s) return '';
+  return s
+    .toLowerCase()
+    .replace(/[·・、，。！？：“”‘’”"（）()【】\[\]{}\-_/\\|《》<>`~!@#$%^&*+=?;:,'.\u3000]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+const AMLLDB_PLATFORM_BONUS = { ncm: 6, qq: 3, apple: 1, spotify: 0 };
+
+function _amllScoreTokens(hay, tokens) {
+  // hay 中每个 token 被 query token 命中的比例（hay 为空返回 0）
+  const hayTokens = hay.split(' ').filter((t) => t.length >= 2);
+  if (hayTokens.length === 0) return 0;
+  let hit = 0;
+  for (const t of hayTokens) {
+    if (tokens.indexOf(t) >= 0) hit++;
+  }
+  return hit / hayTokens.length;
+}
+
+async function searchAMLldb(query) {
+  if (!query || !query.trim()) {
+    return JSON.stringify({ songs: [], error: null });
+  }
+  try {
+    const entries = await _loadAmllIndex();
+    if (!entries) {
+      return JSON.stringify({ songs: [], error: 'AMLL TTML DB index unavailable' });
+    }
+    const nq = _normAmll(query);
+    if (!nq) return JSON.stringify({ songs: [], error: null });
+    const qTokens = nq.split(' ');
+
+    const scored = [];
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      const name = _normAmll(e.name);
+      if (!name) continue;
+      const artist = _normAmll(e.artists.join(' '));
+      const album = _normAmll(e.album || '');
+
+      let score = 0;
+      if (name === nq) {
+        score += 120;
+      } else if (nq.indexOf(name) >= 0) {
+        score += 80;
+      } else if (name.indexOf(nq) >= 0) {
+        score += 40;
+      } else {
+        score += _amllScoreTokens(name, qTokens) * 60;
+      }
+      if (score <= 0) continue;
+
+      if (artist) {
+        if (nq.indexOf(artist) >= 0) {
+          score += 50;
+        } else {
+          score += _amllScoreTokens(artist, qTokens) * 30;
+        }
+      }
+      if (album && nq.indexOf(album) >= 0) score += 10;
+
+      score += AMLLDB_PLATFORM_BONUS[e.platform] || 0;
+      score -= i * 0.001;
+      scored.push({ e, score });
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    const songs = scored.slice(0, 20).map(({ e }) => ({
+      id: e.platform + ':' + e.id,
+      name: e.name,
+      artist: e.artists.join(', '),
+      album: e.album,
+      duration: 0,
+    }));
+    return JSON.stringify({ songs, error: null });
+  } catch (e) {
+    return JSON.stringify({ songs: [], error: String(e) });
+  }
+}
+
+async function fetchAMLldbLyrics(songId) {
+  try {
+    const sid = String(songId);
+    const colonIdx = sid.indexOf(':');
+    const platform = colonIdx > 0 ? sid.slice(0, colonIdx) : '';
+    const pid = colonIdx > 0 ? sid.slice(colonIdx + 1) : '';
+    if (AMLLDB_PLATFORMS.indexOf(platform) < 0 || !pid) {
+      return JSON.stringify({
+        lyrics: '',
+        has_translation: false,
+        has_romaji: false,
+        error: 'invalid AMLLDB id',
+      });
+    }
+    const cached = _fetchCache.get('amll:' + sid);
+    if (cached) {
+      _fetchCache.delete('amll:' + sid);
+      return JSON.stringify({ ...cached, error: null });
+    }
+    const ttml = await _amllFetchTTML(platform, pid);
+    if (!ttml) {
+      return JSON.stringify({
+        lyrics: '',
+        has_translation: false,
+        has_romaji: false,
+        error: 'not found',
+      });
+    }
+    const conv = _ttmlToEnhancedLrc(ttml);
+    return JSON.stringify({
+      lyrics: conv.lrc,
+      has_translation: conv.hasTranslation,
+      has_romaji: conv.hasRoman,
+      error: null,
+    });
+  } catch (e) {
+    return JSON.stringify({
+      lyrics: '',
+      has_translation: false,
+      has_romaji: false,
+      error: String(e),
+    });
+  }
 }
 
 function _ttmlTimeToMs(timeStr) {
@@ -415,132 +647,246 @@ function _ttmlTimeToMs(timeStr) {
   return 0;
 }
 
-function _msToLrcTime(ms) {
-  const totalSec = ms / 1000.0;
-  const mm = Math.floor(totalSec / 60);
-  const ss = totalSec % 60;
-  const ssStr = ss.toFixed(2).padStart(5, '0');
-  return '[' + String(mm).padStart(2, '0') + ':' + ssStr + ']';
+function _spanAttr(attrs, name) {
+  const m = attrs.match(new RegExp('(?:^|\\s)' + name + '="([^"]*)"'));
+  return m ? m[1] : '';
 }
 
-function _ttmlToLrc(ttmlText) {
-  if (!ttmlText) return '';
-  const lines = [];
-  const pRegex = /<p\s+[^>]*?begin="([^"]*)"[^>]*>([\s\S]*?)<\/p>/gi;
+function _spanText(xml) {
+  return (xml || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(parseInt(n, 10)));
+}
+
+// 提取顶层 <span> 节点（考虑嵌套），返回 [{ attrs, inner, gapBefore }]
+// gapBefore = 该 span 与上一个 span 之间的原文——AMLL DB 有两种空格写法：
+// 写在 span 内（<span> beat</span>）或写在 span 之间（</span> <span>），后者靠它保留
+function _extractSpans(xml) {
+  const spans = [];
+  let prevEnd = 0;
+  let idx = 0;
+  while (idx < xml.length) {
+    const openIdx = xml.indexOf('<span', idx);
+    if (openIdx < 0) break;
+    const tagEnd = xml.indexOf('>', openIdx);
+    if (tagEnd < 0) break;
+    const attrs = xml.slice(openIdx, tagEnd + 1);
+    const gapBefore = xml.slice(prevEnd, openIdx);
+    if (attrs.charAt(attrs.length - 2) === '/') {
+      spans.push({ attrs, inner: '', gapBefore });
+      idx = tagEnd + 1;
+      prevEnd = idx;
+      continue;
+    }
+    let depth = 1;
+    let pos = tagEnd + 1;
+    let closeIdx = -1;
+    while (pos < xml.length) {
+      const nextOpen = xml.indexOf('<span', pos);
+      const nextClose = xml.indexOf('</span>', pos);
+      if (nextClose < 0) break;
+      if (nextOpen >= 0 && nextOpen < nextClose) {
+        depth++;
+        pos = xml.indexOf('>', nextOpen) + 1;
+      } else {
+        depth--;
+        if (depth === 0) {
+          closeIdx = nextClose;
+          break;
+        }
+        pos = nextClose + 7;
+      }
+    }
+    const inner = closeIdx >= 0 ? xml.slice(tagEnd + 1, closeIdx) : '';
+    spans.push({ attrs, inner, gapBefore });
+    idx = closeIdx >= 0 ? closeIdx + 7 : tagEnd + 1;
+    prevEnd = idx;
+  }
+  return spans;
+}
+
+// 间隙里只保留真正的空格类字符（换行/缩进等格式化空白不算词间空格）
+function _gapSpaces(gap) {
+  return (gap || '').replace(/[^\t \u00a0]/g, '');
+}
+
+function _wordsToLrcLine(beginMs, words, endMs, prefix) {
+  // prefix（[s:..]/[bg]）必须放在时间戳之后，否则会被 LRC 解析器当作头部丢弃
+  let line = _formatTime(beginMs) + (prefix || '');
+  for (const w of words) {
+    line += _formatWordTime(w.t) + w.text;
+  }
+  line += _formatWordTime(endMs || beginMs);
+  return line;
+}
+
+// 解析 <ttm:agent> 定义：xml:id → 显示名（full > abbreviated > role > xml:id）
+function _parseTtmlAgents(ttmlText) {
+  const agents = {};
+  if (!ttmlText) return agents;
+  const agentRe = /<ttm:agent\b([^>]*?)(?:\/>|>([\s\S]*?)<\/ttm:agent>)/gi;
+  let m;
+  while ((m = agentRe.exec(ttmlText)) !== null) {
+    const attrs = m[1] || '';
+    const inner = m[2] || '';
+    const idM = attrs.match(/xml:id="([^"]*)"/);
+    if (!idM) continue;
+    let name = '';
+    let bestRank = 0;
+    const nameRe = /<ttm:name\b([^>]*)>([\s\S]*?)<\/ttm:name>/gi;
+    let nm;
+    while ((nm = nameRe.exec(inner)) !== null) {
+      const type = ((nm[1].match(/type="([^"]*)"/) || [])[1]) || '';
+      const text = _spanText(nm[2]).trim();
+      if (!text) continue;
+      const rank = type === 'full' ? 4 : type === 'abbreviated' ? 3 : type === 'role' ? 2 : 1;
+      if (rank > bestRank) {
+        bestRank = rank;
+        name = text;
+      }
+    }
+    if (!name) name = idM[1];
+    agents[idM[1]] = name.replace(/[\[\]]/g, '');
+  }
+  return agents;
+}
+
+function _agentTag(agentIds, agents, multiAgent) {
+  if (!multiAgent || !agentIds || !agentIds.length) return '';
+  const name = agents[agentIds[0]];
+  return name ? '[s:' + name + ']' : '';
+}
+
+function _trimEdgeWordSpace(words) {
+  // 行首/行尾空白去掉（TTML 常在句首词带格式空格），行中保留（英文词间距）
+  while (words.length > 0 && words[0].text.replace(/^\s+/, '') === '') {
+    words.shift();
+  }
+  while (words.length > 0 && words[words.length - 1].text.replace(/\s+$/, '') === '') {
+    words.pop();
+  }
+  if (words.length > 0) {
+    words[0].text = words[0].text.replace(/^\s+/, '');
+    words[words.length - 1].text = words[words.length - 1].text.replace(/\s+$/, '');
+  }
+}
+
+// AMLL TTML → 增强 LRC
+// - 逐词 <mm:ss.xx>；ttm:role="x-bg" 背景人声 → [bg] 标记行（含内嵌翻译/音译）
+// - 对唱：解析 ttm:agent 定义，多歌手时行首加 [s:歌手名]
+// - x-translation / x-roman → 同时间戳的翻译/音译行
+function _ttmlToEnhancedLrc(ttmlText) {
+  const result = { lrc: '', hasTranslation: false, hasRoman: false, isDuet: false };
+  if (!ttmlText) return result;
+  const agents = _parseTtmlAgents(ttmlText);
+
+  // 统计全文档引用的 agent，≥2 才视为对唱（避免单歌手文件出现无意义标签）
+  const seenAgents = new Set();
+  const refRe = /\sttm:agent="([^"]*)"/g;
+  let refM;
+  while ((refM = refRe.exec(ttmlText)) !== null) {
+    const ids = refM[1].trim().split(/\s+/).filter(Boolean);
+    for (const id of ids) seenAgents.add(id);
+  }
+  const multiAgent = seenAgents.size >= 2;
+  result.isDuet = multiAgent;
+
+  const outLines = [];
+  const pRegex = /<p\b([^>]*)>([\s\S]*?)<\/p>/gi;
   let match;
   while ((match = pRegex.exec(ttmlText)) !== null) {
-    const beginMs = _ttmlTimeToMs(match[1]);
-    const text = match[2]
-      .replace(/<br\s*\/?>(?:\s*<\/br>)?/gi, '\n')
-      .replace(/<[^>]+>/g, '')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .trim();
-    if (text) {
-      const subLines = text.split('\n');
-      for (const sl of subLines) {
-        const trimmed = sl.trim();
-        if (trimmed) {
-          lines.push(_msToLrcTime(beginMs) + trimmed);
+    const attrs = match[1];
+    const beginMs = _ttmlTimeToMs(_spanAttr(attrs, 'begin'));
+    const endMs = _ttmlTimeToMs(_spanAttr(attrs, 'end')) || beginMs;
+    const pAgentIds = _spanAttr(attrs, 'ttm:agent').trim().split(/\s+/).filter(Boolean);
+    const singerTag = _agentTag(pAgentIds, agents, multiAgent);
+
+    const words = [];
+    const bgLines = [];
+    let transText = '';
+    let romanText = '';
+    for (const sp of _extractSpans(match[2])) {
+      const role = _spanAttr(sp.attrs, 'ttm:role');
+      if (role.indexOf('x-translation') >= 0) {
+        transText = _spanText(sp.inner).trim();
+        if (transText) result.hasTranslation = true;
+      } else if (role.indexOf('x-roman') >= 0) {
+        romanText = _spanText(sp.inner).trim();
+        if (romanText) result.hasRoman = true;
+      } else if (role.indexOf('x-bg') >= 0) {
+        // 背景人声：内部可嵌套逐词 span 与 bg 专属翻译/音译
+        const bgBegin = _ttmlTimeToMs(_spanAttr(sp.attrs, 'begin')) || beginMs;
+        const bgEnd = _ttmlTimeToMs(_spanAttr(sp.attrs, 'end')) || endMs;
+        const bgAgentIds = _spanAttr(sp.attrs, 'ttm:agent').trim().split(/\s+/).filter(Boolean);
+        const bgSingerTag = _agentTag(bgAgentIds, agents, multiAgent);
+        const bgTag = '[bg]' + bgSingerTag;
+        const bgWords = [];
+        let bgTrans = '';
+        let bgRoman = '';
+        for (const bsp of _extractSpans(sp.inner)) {
+          const bRole = _spanAttr(bsp.attrs, 'ttm:role');
+          if (bRole.indexOf('x-translation') >= 0) {
+            bgTrans = _spanText(bsp.inner).trim();
+            if (bgTrans) result.hasTranslation = true;
+          } else if (bRole.indexOf('x-roman') >= 0) {
+            bgRoman = _spanText(bsp.inner).trim();
+            if (bgRoman) result.hasRoman = true;
+          } else {
+            const t = _gapSpaces(bsp.gapBefore) + _spanText(bsp.inner);
+            // 不 trim：词间空格可能写在 span 内或 span 之间，trim 会吞掉单词间距
+            if (t !== '') {
+              bgWords.push({
+                t: _ttmlTimeToMs(_spanAttr(bsp.attrs, 'begin')) || bgBegin,
+                text: t,
+              });
+            }
+          }
+        }
+        _trimEdgeWordSpace(bgWords);
+        if (bgWords.length > 0) {
+          bgLines.push(_wordsToLrcLine(bgBegin, bgWords, bgEnd, bgTag));
+        } else {
+          const plain = _spanText(sp.inner).trim();
+          if (plain) bgLines.push(_formatTime(bgBegin) + bgTag + plain);
+        }
+        if (bgRoman) bgLines.push(_formatTime(bgBegin) + bgTag + bgRoman);
+        if (bgTrans) bgLines.push(_formatTime(bgBegin) + bgTag + bgTrans);
+      } else {
+        // 逐词 span（无 role 或非特殊 role）；不 trim，保留 span 内/span 之间的词间空格
+        const t = _gapSpaces(sp.gapBefore) + _spanText(sp.inner);
+        if (t !== '') {
+          words.push({
+            t: _ttmlTimeToMs(_spanAttr(sp.attrs, 'begin')) ||
+              (words.length > 0 ? words[words.length - 1].t : beginMs),
+            text: t,
+          });
         }
       }
     }
+
+    _trimEdgeWordSpace(words);
+
+    if (words.length > 0) {
+      outLines.push(_wordsToLrcLine(beginMs, words, endMs, singerTag));
+    } else {
+      // 无逐词信息的行：整行纯文本（剔除翻译/音译后）
+      const plain = _spanText(match[2]).trim();
+      if (plain && plain !== transText && plain !== romanText) {
+        outLines.push(_formatTime(beginMs) + singerTag + plain);
+      }
+    }
+    if (romanText) outLines.push(_formatTime(beginMs) + romanText);
+    if (transText) outLines.push(_formatTime(beginMs) + transText);
+    for (const bl of bgLines) outLines.push(bl);
   }
-  return lines.join('\n');
-}
-
-async function searchAMLldb(query) {
-  if (!query || !query.trim()) {
-    return JSON.stringify({ songs: [], error: null });
-  }
-  try {
-    const filename = _normalizeAmllFilename(query) + '.ttml';
-    const url = AMLLDB_RAW_BASE + encodeURIComponent(filename);
-
-    const raw = await _request(url, {
-      headers: {
-        'User-Agent': 'Carminium/1.0 (https://github.com/ProjectCarminium)',
-        'Accept': 'text/plain, */*',
-      },
-    });
-
-    if (!raw || raw.length < 10 || raw.indexOf('<tt') < 0) {
-      return JSON.stringify({ songs: [], error: null });
-    }
-
-    const lrc = _ttmlToLrc(raw);
-    if (!lrc) {
-      return JSON.stringify({ songs: [], error: null });
-    }
-
-    let artist = '';
-    let title = query.trim();
-    const dashIdx = query.indexOf(' - ');
-    if (dashIdx > 0) {
-      artist = query.substring(0, dashIdx).trim();
-      title = query.substring(dashIdx + 3).trim();
-    }
-
-    const songId = filename;
-    _fetchCache.set('amll:' + songId, {
-      lyrics: lrc,
-      has_translation: false,
-      has_romaji: false,
-    });
-
-    const songs = [{
-      id: songId,
-      name: title,
-      artist: artist,
-      album: '',
-      duration: 0,
-    }];
-    return JSON.stringify({ songs, error: null });
-  } catch (e) {
-    return JSON.stringify({ songs: [], error: null });
-  }
-}
-
-async function fetchAMLldbLyrics(filename) {
-  try {
-    const cached = _fetchCache.get('amll:' + String(filename));
-    if (cached) {
-      _fetchCache.delete('amll:' + String(filename));
-      return JSON.stringify({ ...cached, error: null });
-    }
-    const url = AMLLDB_RAW_BASE + encodeURIComponent(String(filename));
-    const raw = await _request(url, {
-      headers: {
-        'User-Agent': 'Carminium/1.0 (https://github.com/ProjectCarminium)',
-        'Accept': 'text/plain, */*',
-      },
-    });
-    if (!raw || raw.indexOf('<tt') < 0) {
-      return JSON.stringify({
-        lyrics: '',
-        has_translation: false,
-        has_romaji: false,
-        error: 'not found',
-      });
-    }
-    const lrc = _ttmlToLrc(raw);
-    return JSON.stringify({
-      lyrics: lrc,
-      has_translation: false,
-      has_romaji: false,
-      error: null,
-    });
-  } catch (e) {
-    return JSON.stringify({
-      lyrics: '',
-      has_translation: false,
-      has_romaji: false,
-      error: String(e),
-    });
-  }
+  result.lrc = outLines.join('\n');
+  return result;
 }
 
 
@@ -802,5 +1148,5 @@ module.exports = {
   fetchLrclibLyrics,
   searchAMLldb,
   fetchAMLldbLyrics,
-  ttmlToLrc: _ttmlToLrc,
+  ttmlToEnhancedLrc: _ttmlToEnhancedLrc,
 };

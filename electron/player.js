@@ -54,14 +54,18 @@ class MusicPlayer extends EventEmitter {
       }
     }
 
-    this._automix_active = false;
+    // AutoMix 是唯一过渡模式；无可执行淡变时由引擎按条件使用无缝切换。
     this._automixEnabled = settings ? !!settings.get('automix', false) : false;
     this._radicalTransitions = settings ? !!settings.get('radical_transitions', false) : false;
     this._crossfadeDurationMs = settings ? parseInt(settings.get('crossfade_duration', 4000), 10) || 4000 : 4000;
 
     this._inCrossfade = false;
 
-    this._gaplessEnabled = settings ? !!settings.get('gapless', false) : false;
+    // 规划器确定流媒体 next 的非零入轨点后，预滚解码必须从该位置开始。
+    // 0 表示从文件头预滚（本地 buffer 的 entry 由渲染侧 source.start(offset) 实现）。
+    this._plannedNextEntryMs = 0;
+    this._lastAppliedNextEntryMs = -1;
+    this._applyPlanInFlight = false;
 
     this._webAudioEnabled = false;
 
@@ -69,17 +73,11 @@ class MusicPlayer extends EventEmitter {
     this._queueChangedDelayTimer = null;
 
     if (this._renderer) {
-      if (this._automixEnabled && this._gaplessEnabled) {
-        this._gaplessEnabled = false;
-        if (settings) settings.set('gapless', false);
-      }
-
       this._renderer.on('state_changed', (state) => {
         this._fe_state = state;
         this.emit('state_changed', state);
       });
 
-      this.emit('audio_control', JSON.stringify({ action: 'set_gapless', enabled: this._gaplessEnabled }));
       this.emit('audio_control', JSON.stringify({ action: 'set_crossfade', enabled: this._automixEnabled }));
       this.emit('audio_control', JSON.stringify({ action: 'set_radical_transitions', enabled: this._radicalTransitions }));
       this.emit('audio_control', JSON.stringify({ action: 'set_crossfade_duration', ms: this._crossfadeDurationMs }));
@@ -188,10 +186,6 @@ class MusicPlayer extends EventEmitter {
   }
 
   _handleAudioEnded() {
-    if (this._automix_active) {
-      this.emit('automix_takeover');
-      return;
-    }
     this.nextTrack();
   }
 
@@ -289,7 +283,7 @@ class MusicPlayer extends EventEmitter {
       this._renderer.cancelPreloadNext();
       this.emit('audio_control', JSON.stringify({ action: 'clear_next' }));
     }
-    if (this._automixEnabled || this._gaplessEnabled) {
+    if (this._automixEnabled) {
       this._preloadNextTrack();
     }
   }
@@ -304,7 +298,7 @@ class MusicPlayer extends EventEmitter {
     this._original_queue.push(track);
     this._emitQueueChanged();
 
-    if (needsPreload && (this._automixEnabled || this._gaplessEnabled)) {
+    if (needsPreload && this._automixEnabled) {
       this._preloadNextTrack();
     }
   }
@@ -334,7 +328,7 @@ class MusicPlayer extends EventEmitter {
       this._renderer.cancelPreloadNext();
       this.emit('audio_control', JSON.stringify({ action: 'clear_next' }));
     }
-    if (wasPreloadedNext && (this._automixEnabled || this._gaplessEnabled)) {
+    if (wasPreloadedNext && this._automixEnabled) {
       this._preloadNextTrack();
     }
   }
@@ -383,7 +377,7 @@ class MusicPlayer extends EventEmitter {
         this._renderer.cancelPreloadNext();
         this.emit('audio_control', JSON.stringify({ action: 'clear_next' }));
       }
-      if (this._automixEnabled || this._gaplessEnabled) {
+      if (this._automixEnabled) {
         this._preloadNextTrack();
       }
     }
@@ -421,7 +415,7 @@ class MusicPlayer extends EventEmitter {
     this._preloadDelayTimer = setTimeout(() => {
       this._preloadDelayTimer = null;
       if (this._fe_state !== 'playing') return;
-      if (this._automixEnabled || this._gaplessEnabled) {
+      if (this._automixEnabled) {
         this._preloadNextTrack();
       }
     }, delayMs);
@@ -510,6 +504,8 @@ class MusicPlayer extends EventEmitter {
     const myToken = ++this._nativePlayToken;
     this._cancelScheduledPreload();
     this._inCrossfade = false;
+    this._plannedNextEntryMs = 0;
+    this._lastAppliedNextEntryMs = -1;
 
     const filePath = this._resolvePlayablePath(track);
     if (!filePath) {
@@ -585,6 +581,13 @@ class MusicPlayer extends EventEmitter {
         trackId: track.id || '',
         title: track.title || '',
         artist: track.artist || track.album_artist || '',
+        album: track.album || '',
+        albumArtist: track.album_artist || '',
+        trackNumber: track.track_number || 0,
+        discNumber: track.disc_number || 0,
+        fileSize: track.file_size || 0,
+        suffix: track.suffix || '',
+        source: track.source || 'local',
       }));
 
       await this._renderer.play();
@@ -600,10 +603,17 @@ class MusicPlayer extends EventEmitter {
           trackId: track.id || '',
           title: track.title || '',
           artist: track.artist || track.album_artist || '',
+          album: track.album || '',
+          albumArtist: track.album_artist || '',
+          trackNumber: track.track_number || 0,
+          discNumber: track.disc_number || 0,
+          fileSize: track.file_size || 0,
+          suffix: track.suffix || '',
+          source: track.source || 'local',
         }));
       }
 
-      if (this._automixEnabled || this._gaplessEnabled) {
+      if (this._automixEnabled) {
         this._preloadNextTrack();
       }
     } catch (e) {
@@ -636,11 +646,10 @@ class MusicPlayer extends EventEmitter {
     console.log('[player] _preloadNextTrack called:',
       'renderer:', !!this._renderer,
       'automixEnabled:', this._automixEnabled,
-      'gaplessEnabled:', this._gaplessEnabled,
       'initialized:', !!this._renderer?.isInitialized,
       'nextFilePath:', !!this._renderer?._nextFilePath);
     if (!this._renderer) return;
-    if (!this._automixEnabled && !this._gaplessEnabled) return;
+    if (!this._automixEnabled) return;
     if (!this._renderer.isInitialized) return;
     if (this._renderer._nextFilePath) return;
 
@@ -663,8 +672,9 @@ class MusicPlayer extends EventEmitter {
     const skipFFmpeg = this._webAudioEnabled && !currentNeedsFFmpeg && !nextNeedsFFmpeg;
 
     const forceStreaming = currentNeedsFFmpeg;
+    const nextStartOffsetMs = nextNeedsFFmpeg ? Math.max(0, this._plannedNextEntryMs || 0) : 0;
 
-    const mode = this._gaplessEnabled ? 'Gapless' : 'AutoMix';
+    const mode = 'AutoMix';
     console.log(`[player] ${mode}: preloading next track:`, nextTrack.title || nextTrack.id,
       'skipFFmpeg:', skipFFmpeg, 'forceStreaming:', forceStreaming);
 
@@ -677,11 +687,21 @@ class MusicPlayer extends EventEmitter {
       trackId: nextTrack.id || '',
       title: nextTrack.title || '',
       artist: nextTrack.artist || nextTrack.album_artist || '',
+      album: nextTrack.album || '',
+      albumArtist: nextTrack.album_artist || '',
+      trackNumber: nextTrack.track_number || 0,
+      discNumber: nextTrack.disc_number || 0,
+      fileSize: nextTrack.file_size || 0,
+      suffix: nextTrack.suffix || '',
+      source: nextTrack.source || 'local',
+      nextStartOffsetMs: nextStartOffsetMs,
     }));
-    console.log(`[player] ${mode}: set_next_info sent early (duration=${metaDurationMs}ms from metadata)`);
+    this._lastAppliedNextEntryMs = nextStartOffsetMs;
+    console.log(`[player] ${mode}: set_next_info sent early (duration=${metaDurationMs}ms from metadata`,
+      'nextOffset=' + nextStartOffsetMs + 'ms)');
 
     try {
-      const info = await this._renderer.preloadNext(filePath, { skipFFmpeg });
+      const info = await this._renderer.preloadNext(filePath, { skipFFmpeg, seekMs: nextStartOffsetMs });
       const probedMs = this._resolveDuration(info.durationMs, nextTrack);
       if (probedMs > 0 && probedMs !== metaDurationMs) {
         this.emit('audio_control', JSON.stringify({
@@ -692,11 +712,78 @@ class MusicPlayer extends EventEmitter {
           trackId: nextTrack.id || '',
           title: nextTrack.title || '',
           artist: nextTrack.artist || nextTrack.album_artist || '',
+          album: nextTrack.album || '',
+          albumArtist: nextTrack.album_artist || '',
+          trackNumber: nextTrack.track_number || 0,
+          discNumber: nextTrack.disc_number || 0,
+          fileSize: nextTrack.file_size || 0,
+          suffix: nextTrack.suffix || '',
+          source: nextTrack.source || 'local',
+          nextStartOffsetMs: nextStartOffsetMs,
         }));
         console.log(`[player] ${mode}: set_next_info updated (duration=${probedMs}ms from ffprobe)`);
       }
     } catch (e) {
       console.warn('[player] preloadNext failed:', e.message, '- AudioEngine already notified');
+    }
+  }
+
+  /**
+   * 规划器可能在首次预滚之后才算出非零 entry。流媒体的 PCM 无法在渲染侧
+   * "跳过"已解码的数据而不破坏时间轴，因此必须清掉旧预滚、让 FFmpeg 从
+   * entry 重新解码。仅处理需要 FFmpeg 的 next；本地 buffer 由入轨偏移处理。
+   */
+  async applyTransitionPlan(plan) {
+    const entryMs = plan ? Math.max(0, Number(plan.nextStartOffsetMs || plan.entryMs) || 0) : 0;
+    const previousEntry = this._lastAppliedNextEntryMs;
+    this._plannedNextEntryMs = entryMs;
+    if (!this._renderer || !plan) return false;
+    if (!this._webAudioEnabled || !this._renderer.isInitialized) return false;
+    if (this._inCrossfade) return false;
+    if (!this._renderer._nextFilePath) return false;
+    if (previousEntry === entryMs) return false;
+    // 正常只处理非零 entry；但若先前预滚在 12s、新计划退回 0，
+    // 必须把解码器也拉回 0，否则计划写 0、实际从 12s 进入。
+    const resetToZero = entryMs === 0 && previousEntry > 0;
+    if (entryMs <= 0 && !resetToZero) return false;
+    if (this._applyPlanInFlight) return false;
+
+    const nextTrack = this._getNextTrackForPreload();
+    if (!nextTrack || !this._needsFFmpegForTrack(nextTrack)) return false;
+    const filePath = this._resolvePlayablePath(nextTrack);
+    if (!filePath) return false;
+
+    this._applyPlanInFlight = true;
+    this._lastAppliedNextEntryMs = entryMs;
+    try {
+      // 先让渲染端丢弃 0 起点预滚，再重建 next 信息与解码器。
+      this.emit('audio_control', JSON.stringify({ action: 'clear_next' }));
+      this.emit('audio_control', JSON.stringify({
+        action: 'set_next_info',
+        filePath: filePath,
+        durationMs: this._resolveDuration(0, nextTrack),
+        forceStreaming: true,
+        trackId: nextTrack.id || '',
+        title: nextTrack.title || '',
+        artist: nextTrack.artist || nextTrack.album_artist || '',
+        album: nextTrack.album || '',
+        albumArtist: nextTrack.album_artist || '',
+        trackNumber: nextTrack.track_number || 0,
+        discNumber: nextTrack.disc_number || 0,
+        fileSize: nextTrack.file_size || 0,
+        suffix: nextTrack.suffix || '',
+        source: nextTrack.source || 'local',
+        nextStartOffsetMs: entryMs,
+      }));
+      await this._renderer.preloadNext(filePath, { skipFFmpeg: false, seekMs: entryMs });
+      console.log('[player] streaming next re-preloaded at entry', entryMs + 'ms:', filePath);
+      return true;
+    } catch (e) {
+      this._lastAppliedNextEntryMs = -1;
+      console.warn('[player] applyTransitionPlan re-preload failed:', e.message);
+      return false;
+    } finally {
+      this._applyPlanInFlight = false;
     }
   }
 
@@ -742,11 +829,6 @@ class MusicPlayer extends EventEmitter {
 
   setAutomixEnabled(enabled) {
     this._automixEnabled = !!enabled;
-    if (this._automixEnabled && this._gaplessEnabled) {
-      this._gaplessEnabled = false;
-      if (this._settings) this._settings.set('gapless', false);
-      this.emit('audio_control', JSON.stringify({ action: 'set_gapless', enabled: false }));
-    }
     this.emit('audio_control', JSON.stringify({ action: 'set_crossfade', enabled: this._automixEnabled }));
     if (this._settings) {
       this._settings.set('automix', this._automixEnabled);
@@ -782,27 +864,6 @@ class MusicPlayer extends EventEmitter {
 
   get crossfadeDurationMs() {
     return this._crossfadeDurationMs;
-  }
-
-
-  setGaplessEnabled(enabled) {
-    this._gaplessEnabled = !!enabled;
-    if (this._gaplessEnabled && this._automixEnabled) {
-      this._automixEnabled = false;
-      if (this._settings) this._settings.set('automix', false);
-      this.emit('audio_control', JSON.stringify({ action: 'set_crossfade', enabled: false }));
-    }
-    this.emit('audio_control', JSON.stringify({ action: 'set_gapless', enabled: this._gaplessEnabled }));
-    if (this._settings) {
-      this._settings.set('gapless', this._gaplessEnabled);
-    }
-    if (this._gaplessEnabled && this._fe_state === 'playing') {
-      this._preloadNextTrack();
-    }
-  }
-
-  get gaplessEnabled() {
-    return this._gaplessEnabled;
   }
 
 
@@ -928,9 +989,6 @@ class MusicPlayer extends EventEmitter {
     if (this._automixEnabled) {
       this.emit('audio_control', JSON.stringify({ action: 'set_crossfade', enabled: !stActive }));
     }
-    if (this._gaplessEnabled) {
-      this.emit('audio_control', JSON.stringify({ action: 'set_gapless', enabled: !stActive }));
-    }
   }
 
   setPitch(pitch) {
@@ -939,9 +997,6 @@ class MusicPlayer extends EventEmitter {
     if (this._automixEnabled) {
       this.emit('audio_control', JSON.stringify({ action: 'set_crossfade', enabled: !stActive }));
     }
-    if (this._gaplessEnabled) {
-      this.emit('audio_control', JSON.stringify({ action: 'set_gapless', enabled: !stActive }));
-    }
   }
 
   setRate(rate) {
@@ -949,9 +1004,6 @@ class MusicPlayer extends EventEmitter {
     const stActive = (this._tempo !== 1.0 || this._pitch !== 1.0 || this._rate !== 1.0);
     if (this._automixEnabled) {
       this.emit('audio_control', JSON.stringify({ action: 'set_crossfade', enabled: !stActive }));
-    }
-    if (this._gaplessEnabled) {
-      this.emit('audio_control', JSON.stringify({ action: 'set_gapless', enabled: !stActive }));
     }
     this.emit('audio_control', JSON.stringify({ action: 'set_rate', value: this._rate }));
   }
@@ -1234,10 +1286,6 @@ class MusicPlayer extends EventEmitter {
     return this._liked_tracks.has(trackId);
   }
 
-
-  setAutomixActive(active) {
-    this._automix_active = active;
-  }
 
   peekNextTrack() {
     if (!this._queue.length) return null;

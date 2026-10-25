@@ -146,7 +146,59 @@
     }
   }
 
-  utils.applyDynamicTheme = function(rgb, scheme) {
+  // ── 日语字段字体 ──────────────────────────────────────────────
+  // 规则与「日语歌词字体」一致：字体族取 lyrics_jp_font（留空则用默认日文
+  // 字体栈），判定依据是假名区段。实现方式是把该字体族注册成一个只覆盖假名
+  // 区段的 @font-face，挂在 --ui-font 之前：含假名的字符自动落到日语字体，
+  // 其余字符继续走界面字体，不需要逐个 DOM 打标记。
+  var JP_UI_FAMILY = 'Carminium JP UI';
+  var JP_UI_DEFAULT_STACK = ['Yu Gothic UI', 'Yu Gothic', 'Hiragino Kaku Gothic ProN', 'Meiryo', 'MS PGothic'];
+  var JP_UI_UNICODE_RANGE = 'U+3040-309F, U+30A0-30FF, U+31F0-31FF, U+FF66-FF9D';
+  var _jpUiEnabled = false;
+  var _jpUiFont = '';
+  var _jpUiStyleEl = null;
+
+  function _splitFontFamilies(list) {
+    return String(list || '')
+      .split(',')
+      .map(function (f) { return f.trim().replace(/^['"]+|['"]+$/g, '').trim(); })
+      .filter(Boolean);
+  }
+
+  // enabled / fontList 传 null/undefined 表示「保持原值」，便于只更新其中一项
+  utils.applyJpUiFont = function (enabled, fontList) {
+    if (enabled !== undefined && enabled !== null) _jpUiEnabled = !!enabled;
+    if (fontList !== undefined && fontList !== null) _jpUiFont = String(fontList);
+    var root = document.documentElement;
+    if (!root) return;
+
+    if (!_jpUiStyleEl) {
+      _jpUiStyleEl = document.createElement('style');
+      _jpUiStyleEl.id = 'jp-ui-font-face';
+      (document.head || root).appendChild(_jpUiStyleEl);
+    }
+
+    root.classList.toggle('jp-ui-font', _jpUiEnabled);
+    if (!_jpUiEnabled) {
+      _jpUiStyleEl.textContent = '';
+      return;
+    }
+
+    var families = _splitFontFamilies(_jpUiFont);
+    if (!families.length) families = JP_UI_DEFAULT_STACK;
+    var src = families.map(function (f) {
+      return "local('" + f.replace(/[\\']/g, '') + "')";
+    }).join(', ');
+    _jpUiStyleEl.textContent =
+      '@font-face { font-family: "' + JP_UI_FAMILY + '"; font-style: normal;' +
+      ' font-weight: 100 900; src: ' + src + ';' +
+      ' unicode-range: ' + JP_UI_UNICODE_RANGE + '; }';
+  };
+
+  // 取色规范版本：'2021'（Material You 原始规范）或 '2025'（Material 3 Expressive）。
+  // 2021 沿用原先的 HSL 近似实现以保持既有观感；2025 走 HCT 精确实现
+  // （web/color/color_spec.js），两者可随时切换。
+  utils.applyDynamicTheme = function(rgb, scheme, spec) {
     var root = document.documentElement;
     if (!rgb) {
       var props = [
@@ -170,6 +222,21 @@
     }
 
     var schemeName = scheme || (window.App && App.state && App.state.colorScheme) || 'tonal_spot';
+    var specVersion = spec ||
+      (window.App && App.state && App.state.colorSpec) || '2021';
+
+    if (specVersion === '2025' && window.AppColorSpec) {
+      var isDarkTheme = root.getAttribute('data-theme') === 'dark';
+      var roles = AppColorSpec.generate(rgb,
+        { variant: schemeName, isDark: isDarkTheme, spec: '2025' });
+      AppColorSpec.apply(roles, root, '');
+      // -vd 是"强制深色"的并行令牌（侧栏/底栏等固定深色区域）
+      var rolesDark = isDarkTheme ? roles : AppColorSpec.generate(rgb,
+        { variant: schemeName, isDark: true, spec: '2025' });
+      AppColorSpec.apply(rolesDark, root, '-vd');
+      return;
+    }
+
     var sc = COLOR_SCHEMES[schemeName] || COLOR_SCHEMES.tonal_spot;
 
     var isDark = root.getAttribute('data-theme') === 'dark';
@@ -862,10 +929,24 @@
 
       if (times.length > 0) {
         var rawText = line.substring(lastIdx).trim();
+        // 行首标记：[s:歌手名]（对唱）、[bg]（和声）——AMLL TTML 转换产物
+        var singer = '';
+        var isBg = false;
+        var tagM;
+        while ((tagM = /^\[(?:s:([^\]]*)|bg)\]\s*/.exec(rawText)) !== null) {
+          if (tagM[0].charAt(1) === 'b') {
+            isBg = true;
+          } else {
+            singer = tagM[1] || '';
+          }
+          rawText = rawText.substring(tagM[0].length);
+        }
         var parsed = _parseLRCWords(rawText);
         for (var t = 0; t < times.length; t++) {
           var entry = { time: times[t], text: parsed.text };
           if (parsed.words) entry.words = parsed.words;
+          if (singer) entry.singer = singer;
+          if (isBg) entry.isBg = true;
           entries.push(entry);
         }
       }
@@ -882,16 +963,42 @@
         cluster.push(entries[j]);
         j++;
       }
-      var item = { time: entries[k].time, text: cluster[0].text };
-      if (cluster[0].words) item.words = cluster[0].words;
-      if (cluster.length >= 3) {
-        item.romaji = cluster[1].text;
-        if (cluster[1].words) item.romajiWords = cluster[1].words;
-        item.translation = cluster[2].text;
-        if (cluster[2].words) item.translationWords = cluster[2].words;
-      } else if (cluster.length === 2) {
-        item.translation = cluster[1].text;
-        if (cluster[1].words) item.translationWords = cluster[1].words;
+      // 和声行（[bg]）不参与主/音译/翻译的配对，挂在同时间戳的主行上
+      var nonBg = [];
+      var bgList = [];
+      for (var ci = 0; ci < cluster.length; ci++) {
+        if (cluster[ci].isBg) bgList.push(cluster[ci]);
+        else nonBg.push(cluster[ci]);
+      }
+      var allBg = nonBg.length === 0;
+      if (allBg) {
+        // 全为和声的簇：第一行作主体，其余照常走翻译/音译配对，不再挂 bgLines
+        nonBg = cluster;
+        bgList = [];
+      }
+      var head = nonBg[0];
+      var item = { time: head.time, text: head.text };
+      if (head.words) item.words = head.words;
+      if (head.singer) item.singer = head.singer;
+      if (allBg) item.isBg = true;
+      if (nonBg.length >= 3) {
+        item.romaji = nonBg[1].text;
+        if (nonBg[1].words) item.romajiWords = nonBg[1].words;
+        item.translation = nonBg[2].text;
+        if (nonBg[2].words) item.translationWords = nonBg[2].words;
+      } else if (nonBg.length === 2) {
+        item.translation = nonBg[1].text;
+        if (nonBg[1].words) item.translationWords = nonBg[1].words;
+      }
+      if (bgList.length > 0) {
+        item.bgLines = [];
+        for (var bi = 0; bi < bgList.length; bi++) {
+          var bgEntry = bgList[bi];
+          var bgItem = { text: bgEntry.text };
+          if (bgEntry.words) bgItem.words = bgEntry.words;
+          if (bgEntry.singer) bgItem.singer = bgEntry.singer;
+          item.bgLines.push(bgItem);
+        }
       }
       grouped.push(item);
       k = j;
@@ -1121,8 +1228,11 @@
       if (line.classList.contains('np-lyrics-static')) continue;
       d = Math.abs(i - activeIdx);
       var delay = Math.min(d * 18, 90);
-      line.style.transitionDelay = delay + 'ms';
-      line.style.setProperty('--lyrics-lift-delay', delay + 'ms');
+      if (line._cascDelay !== delay) {
+        line._cascDelay = delay;
+        line.style.transitionDelay = delay + 'ms';
+        line.style.setProperty('--lyrics-lift-delay', delay + 'ms');
+      }
 
       line.classList.remove('np-lyrics-lift');
       if (d <= 3) {

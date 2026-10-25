@@ -24,6 +24,9 @@
       </div>
       <div class="title-bar-center" id="title-bar-gamepad-hints" style="display:none;"></div>
       <div class="title-bar-right">
+        <button class="title-bar-btn title-bar-mini" id="title-bar-mini" data-i18n-title="np.floating" data-i18n-aria-label="np.floating">
+          <span class="material-symbols-rounded">picture_in_picture</span>
+        </button>
         <button class="title-bar-btn title-bar-settings" id="title-bar-settings" data-i18n-title="nav.settings" data-i18n-aria-label="nav.settings">
           <span class="material-symbols-rounded">settings</span>
         </button>
@@ -157,10 +160,6 @@
             <div class="split-dropdown-item" id="btn-theater">
               <span class="material-symbols-rounded">crop_free</span>
               <span data-i18n="np.fullScreen">全屏视图</span>
-            </div>
-            <div class="split-dropdown-item" id="btn-floating">
-              <span class="material-symbols-rounded">picture_in_picture</span>
-              <span data-i18n="np.floating">浮动窗口</span>
             </div>
           </div>
         </div>
@@ -475,6 +474,9 @@
 
   <script src="marquee.js"></script>
 
+  <script src="color/hct.js"></script>
+  <script src="color/color_spec.js"></script>
+
   <script src="pages/utils.js"></script>
 
   <script src="pages/az_index.js"></script>
@@ -497,8 +499,8 @@
   <script src="cover_cache.js"></script>
   <script src="audio_engine.js"></script>
 
-  <script src="track_analyzer.js"></script>
-  <script src="transition_planner.js"></script>
+  <script src="automix_planner.js"></script>
+  <script src="profile_client.js"></script>
 
   <script src="video_background.js"></script>
 

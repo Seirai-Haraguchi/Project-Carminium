@@ -5,6 +5,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const { makeSortKey, makeFirstLetter } = require('./sortkey');
+const { resolveCacheDir } = require('./cache_dir');
 
 const SCAN_PARSE_PARALLEL = 4;
 const SCAN_FLUSH_SIZE = 200;
@@ -193,7 +194,8 @@ class MusicLibrary {
     this._coverDataCacheMax = 48;
     this._coverDataCacheBytes = 0;
     this._coverDataCacheByteMax = 32 * 1024 * 1024;
-    this._coverCacheDir = path.join(settings.dataDir, 'cover_cache');
+    this._cacheBaseDir = resolveCacheDir(settings);
+    this._coverCacheDir = path.join(this._cacheBaseDir, 'cover_cache');
     try {
       fs.mkdirSync(this._coverCacheDir, { recursive: true });
     } catch {  }
@@ -2343,7 +2345,26 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
 
   _subsonicCoverCacheDir() {
-    return path.join(this._settings.dataDir, 'subsonic_covers');
+    return path.join(this._cacheBaseDir, 'subsonic_covers');
+  }
+
+  // 当前缓存根目录（供 cover-server 等复用）。
+  getCacheDir() {
+    return this._cacheBaseDir;
+  }
+
+  // 运行时热更新缓存根目录（设置变更后由 bridge 调用）。
+  setCacheDir(newBase) {
+    if (!newBase) return;
+    this._cacheBaseDir = path.resolve(newBase);
+    this._coverCacheDir = path.join(this._cacheBaseDir, 'cover_cache');
+    try {
+      fs.mkdirSync(this._coverCacheDir, { recursive: true });
+    } catch {  }
+    if (this._coverDataCache) {
+      this._coverDataCache.clear();
+      this._coverDataCacheBytes = 0;
+    }
   }
 
   getSubsonicCoverCachePath(serverId, coverId, size) {

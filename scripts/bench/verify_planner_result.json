@@ -1,0 +1,5164 @@
+[
+  {
+    "pair": "Lacrimosa → Otona",
+    "ms": 2.05,
+    "coldMs": 49.01,
+    "v": 3,
+    "engine": "carminium-automix",
+    "a": "t0",
+    "b": "t1",
+    "aTitle": "Lacrimosa",
+    "bTitle": "Otona",
+    "strategy": "beatmatch",
+    "gaplessFallback": false,
+    "exitMs": 55391,
+    "entryMs": 7953,
+    "durationMs": 7248,
+    "bars": 4,
+    "ratio": 0.971,
+    "semitones": -0.51,
+    "phaseErrMs": 0,
+    "transitionStartMs": 55391,
+    "crossfadeDurationMs": 7248,
+    "nextStartOffsetMs": 7953,
+    "preloadTriggerMs": 43391,
+    "bpmCurrent": 133,
+    "bpmNext": 84.75,
+    "bpmTempoAdjust": 0.971,
+    "tempoRampMs": 0,
+    "score": 0.647,
+    "terms": {
+      "tempo": 0.691,
+      "phase": 1,
+      "phrase": 1,
+      "energy": 0.2,
+      "low": 0.985,
+      "transient": 0.086,
+      "key": null,
+      "vocal": 0.719,
+      "structure": 0.585,
+      "mixPoint": 0.869
+    },
+    "confidence": 0.719,
+    "eq": {
+      "enabled": true,
+      "aHighpassHz": 220,
+      "bLowpassHz": 4200,
+      "swapAt": 0.5,
+      "bassSwap": true,
+      "curve": "equal-power"
+    },
+    "reason": {
+      "selected": {
+        "strategy": "beatmatch",
+        "total": 0.647,
+        "baseScore": 0.595,
+        "strategyBonus": 0.052,
+        "confidence": 0.719,
+        "exitMs": 55391,
+        "entryMs": 7953,
+        "durationMs": 7248,
+        "bars": 4,
+        "ratio": 0.971,
+        "terms": {
+          "tempo": 0.691,
+          "phase": 1,
+          "phrase": 1,
+          "energy": 0.2,
+          "low": 0.985,
+          "transient": 0.086,
+          "key": null,
+          "vocal": 0.719,
+          "structure": 0.585,
+          "mixPoint": 0.869
+        },
+        "weights": {
+          "tempo": 0.086,
+          "phase": 0.048,
+          "phrase": 0.042,
+          "energy": 0.17,
+          "low": 0.11,
+          "transient": 0.08,
+          "key": 0,
+          "vocal": 0.036,
+          "structure": 0.1,
+          "mixPoint": 0.06
+        },
+        "lowConflict": 0.015,
+        "vocalConflict": 0.281,
+        "energyGapDb": 25,
+        "why": [
+          "interval_loudness_gap_penalty",
+          "aligned_tempo_and_downbeat_grid"
+        ],
+        "interval": {
+          "a": {
+            "rmsDb": {
+              "known": true,
+              "mean": -34.636,
+              "start": -32.43,
+              "end": -68.54,
+              "slope": -4.514
+            },
+            "lowRatio": {
+              "known": true,
+              "mean": 0.007,
+              "start": 0,
+              "end": 0.05,
+              "slope": 0.006
+            },
+            "transient": {
+              "known": true,
+              "mean": 0.792,
+              "start": 1,
+              "end": 0,
+              "slope": -0.125
+            },
+            "vocal": {
+              "known": true,
+              "mean": 0.572,
+              "start": 0.32,
+              "end": 0,
+              "slope": -0.04
+            }
+          },
+          "b": {
+            "rmsDb": {
+              "known": true,
+              "mean": -9.634,
+              "start": -10.01,
+              "end": -6.04,
+              "slope": 0.441
+            },
+            "lowRatio": {
+              "known": true,
+              "mean": 0.098,
+              "start": 0.11,
+              "end": 0.21,
+              "slope": 0.011
+            },
+            "transient": {
+              "known": true,
+              "mean": 0.953,
+              "start": 0.99,
+              "end": 0.99,
+              "slope": 0
+            },
+            "vocal": {
+              "known": true,
+              "mean": 0.501,
+              "start": 0.75,
+              "end": 0.5,
+              "slope": -0.028
+            }
+          },
+          "joint": {
+            "low": 0,
+            "transient": 0.836,
+            "vocal": 0.281
+          }
+        }
+      },
+      "confidence": 0.719,
+      "gaplessFallback": false,
+      "topCandidates": [
+        {
+          "strategy": "beatmatch",
+          "total": 0.647,
+          "baseScore": 0.595,
+          "strategyBonus": 0.052,
+          "confidence": 0.719,
+          "exitMs": 55391,
+          "entryMs": 7953,
+          "durationMs": 7248,
+          "bars": 4,
+          "ratio": 0.971,
+          "terms": {
+            "tempo": 0.691,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.985,
+            "transient": 0.086,
+            "key": null,
+            "vocal": 0.719,
+            "structure": 0.585,
+            "mixPoint": 0.869
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.048,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.015,
+          "vocalConflict": 0.281,
+          "energyGapDb": 25,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        },
+        {
+          "strategy": "tempo-ramp",
+          "total": 0.635,
+          "baseScore": 0.595,
+          "strategyBonus": 0.041,
+          "confidence": 0.719,
+          "exitMs": 55391,
+          "entryMs": 7953,
+          "durationMs": 7248,
+          "bars": 4,
+          "ratio": 0.971,
+          "terms": {
+            "tempo": 0.691,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.985,
+            "transient": 0.086,
+            "key": null,
+            "vocal": 0.719,
+            "structure": 0.585,
+            "mixPoint": 0.869
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.048,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.015,
+          "vocalConflict": 0.281,
+          "energyGapDb": 25,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "small_tempo_ramp_within_native_three_percent_limit"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.629,
+          "baseScore": 0.584,
+          "strategyBonus": 0.045,
+          "confidence": 0.719,
+          "exitMs": 55391,
+          "entryMs": 13572,
+          "durationMs": 7248,
+          "bars": 4,
+          "ratio": 0.971,
+          "terms": {
+            "tempo": 0.691,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.981,
+            "transient": 0.061,
+            "key": null,
+            "vocal": 0.649,
+            "structure": 0.522,
+            "mixPoint": 0.93
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.048,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.019,
+          "vocalConflict": 0.351,
+          "energyGapDb": 27.61,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        },
+        {
+          "strategy": "tempo-ramp",
+          "total": 0.617,
+          "baseScore": 0.584,
+          "strategyBonus": 0.033,
+          "confidence": 0.719,
+          "exitMs": 55391,
+          "entryMs": 13572,
+          "durationMs": 7248,
+          "bars": 4,
+          "ratio": 0.971,
+          "terms": {
+            "tempo": 0.691,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.981,
+            "transient": 0.061,
+            "key": null,
+            "vocal": 0.649,
+            "structure": 0.522,
+            "mixPoint": 0.93
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.048,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.019,
+          "vocalConflict": 0.351,
+          "energyGapDb": 27.61,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "small_tempo_ramp_within_native_three_percent_limit"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.611,
+          "baseScore": 0.614,
+          "strategyBonus": -0.003,
+          "confidence": 0.719,
+          "exitMs": 60778,
+          "entryMs": 7953,
+          "durationMs": 3624,
+          "bars": 2,
+          "ratio": 0.971,
+          "terms": {
+            "tempo": 0.691,
+            "phase": 1,
+            "phrase": 0.45,
+            "energy": 0.2,
+            "low": 0.948,
+            "transient": 0.5,
+            "key": null,
+            "vocal": 0.938,
+            "structure": 0.585,
+            "mixPoint": 0.869
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.048,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.052,
+          "vocalConflict": 0.062,
+          "energyGapDb": 43.34,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        }
+      ],
+      "rejectedCandidates": [
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 64000,
+          "entryMs": 7953,
+          "durationMs": 1281,
+          "ratio": 1,
+          "why": [
+            "duration_below_minimum"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 64000,
+          "entryMs": 13572,
+          "durationMs": 1281,
+          "ratio": 1,
+          "why": [
+            "duration_below_minimum"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 64000,
+          "entryMs": 30546,
+          "durationMs": 1281,
+          "ratio": 1,
+          "why": [
+            "duration_below_minimum"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "exitMs": 64000,
+          "entryMs": 7953,
+          "durationMs": 1281,
+          "ratio": 1,
+          "why": [
+            "duration_below_minimum"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "exitMs": 64000,
+          "entryMs": 13000,
+          "durationMs": 1281,
+          "ratio": 1,
+          "why": [
+            "duration_below_minimum"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "exitMs": 64000,
+          "entryMs": 13572,
+          "durationMs": 1281,
+          "ratio": 1,
+          "why": [
+            "duration_below_minimum"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "exitMs": 64000,
+          "entryMs": 28000,
+          "durationMs": 1281,
+          "ratio": 1,
+          "why": [
+            "duration_below_minimum"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "exitMs": 64000,
+          "entryMs": 30546,
+          "durationMs": 1281,
+          "ratio": 1,
+          "why": [
+            "duration_below_minimum"
+          ]
+        },
+        {
+          "strategy": "short-fade",
+          "exitMs": 64000,
+          "entryMs": 13000,
+          "durationMs": 1281,
+          "ratio": 1,
+          "why": [
+            "duration_below_minimum"
+          ]
+        },
+        {
+          "strategy": "short-fade",
+          "exitMs": 64000,
+          "entryMs": 28000,
+          "durationMs": 1281,
+          "ratio": 1,
+          "why": [
+            "duration_below_minimum"
+          ]
+        },
+        {
+          "strategy": "structure-blend",
+          "exitMs": 64000,
+          "entryMs": 7953,
+          "durationMs": 1281,
+          "ratio": 1,
+          "why": [
+            "duration_below_minimum"
+          ]
+        },
+        {
+          "strategy": "structure-blend",
+          "exitMs": 64000,
+          "entryMs": 13000,
+          "durationMs": 1281,
+          "ratio": 1,
+          "why": [
+            "duration_below_minimum"
+          ]
+        },
+        {
+          "strategy": "structure-blend",
+          "exitMs": 64000,
+          "entryMs": 13572,
+          "durationMs": 1281,
+          "ratio": 1,
+          "why": [
+            "duration_below_minimum"
+          ]
+        },
+        {
+          "strategy": "structure-blend",
+          "exitMs": 64000,
+          "entryMs": 28000,
+          "durationMs": 1281,
+          "ratio": 1,
+          "why": [
+            "duration_below_minimum"
+          ]
+        },
+        {
+          "strategy": "structure-blend",
+          "exitMs": 64000,
+          "entryMs": 30546,
+          "durationMs": 1281,
+          "ratio": 1,
+          "why": [
+            "duration_below_minimum"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "strategy": "tempo-ramp",
+          "total": 0.635,
+          "baseScore": 0.595,
+          "strategyBonus": 0.041,
+          "confidence": 0.719,
+          "exitMs": 55391,
+          "entryMs": 7953,
+          "durationMs": 7248,
+          "bars": 4,
+          "ratio": 0.971,
+          "terms": {
+            "tempo": 0.691,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.985,
+            "transient": 0.086,
+            "key": null,
+            "vocal": 0.719,
+            "structure": 0.585,
+            "mixPoint": 0.869
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.048,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.015,
+          "vocalConflict": 0.281,
+          "energyGapDb": 25,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "small_tempo_ramp_within_native_three_percent_limit",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.629,
+          "baseScore": 0.584,
+          "strategyBonus": 0.045,
+          "confidence": 0.719,
+          "exitMs": 55391,
+          "entryMs": 13572,
+          "durationMs": 7248,
+          "bars": 4,
+          "ratio": 0.971,
+          "terms": {
+            "tempo": 0.691,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.981,
+            "transient": 0.061,
+            "key": null,
+            "vocal": 0.649,
+            "structure": 0.522,
+            "mixPoint": 0.93
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.048,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.019,
+          "vocalConflict": 0.351,
+          "energyGapDb": 27.61,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "tempo-ramp",
+          "total": 0.617,
+          "baseScore": 0.584,
+          "strategyBonus": 0.033,
+          "confidence": 0.719,
+          "exitMs": 55391,
+          "entryMs": 13572,
+          "durationMs": 7248,
+          "bars": 4,
+          "ratio": 0.971,
+          "terms": {
+            "tempo": 0.691,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.981,
+            "transient": 0.061,
+            "key": null,
+            "vocal": 0.649,
+            "structure": 0.522,
+            "mixPoint": 0.93
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.048,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.019,
+          "vocalConflict": 0.351,
+          "energyGapDb": 27.61,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "small_tempo_ramp_within_native_three_percent_limit",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.611,
+          "baseScore": 0.614,
+          "strategyBonus": -0.003,
+          "confidence": 0.719,
+          "exitMs": 60778,
+          "entryMs": 7953,
+          "durationMs": 3624,
+          "bars": 2,
+          "ratio": 0.971,
+          "terms": {
+            "tempo": 0.691,
+            "phase": 1,
+            "phrase": 0.45,
+            "energy": 0.2,
+            "low": 0.948,
+            "transient": 0.5,
+            "key": null,
+            "vocal": 0.938,
+            "structure": 0.585,
+            "mixPoint": 0.869
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.048,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.052,
+          "vocalConflict": 0.062,
+          "energyGapDb": 43.34,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.608,
+          "baseScore": 0.568,
+          "strategyBonus": 0.041,
+          "confidence": 0.719,
+          "exitMs": 55391,
+          "entryMs": 30546,
+          "durationMs": 7248,
+          "bars": 4,
+          "ratio": 0.971,
+          "terms": {
+            "tempo": 0.691,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.985,
+            "transient": 0.061,
+            "key": null,
+            "vocal": 0.861,
+            "structure": 0.321,
+            "mixPoint": 0.926
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.048,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.015,
+          "vocalConflict": 0.139,
+          "energyGapDb": 28.96,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.602,
+          "baseScore": 0.528,
+          "strategyBonus": 0.074,
+          "confidence": 0.719,
+          "exitMs": 46393,
+          "entryMs": 7953,
+          "durationMs": 7248,
+          "bars": 4,
+          "ratio": 0.971,
+          "terms": {
+            "tempo": 0.691,
+            "phase": 1,
+            "phrase": 0.45,
+            "energy": 0.1,
+            "low": 1,
+            "transient": 0.029,
+            "key": null,
+            "vocal": 0.603,
+            "structure": 0.585,
+            "mixPoint": 0.842
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.048,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0,
+          "vocalConflict": 0.397,
+          "energyGapDb": 17.91,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid",
+            "not_selected_lower_total"
+          ]
+        }
+      ],
+      "rejectedCount": 15,
+      "candidates": 100,
+      "top3": [
+        {
+          "strategy": "beatmatch",
+          "total": 0.647,
+          "baseScore": 0.595,
+          "strategyBonus": 0.052,
+          "confidence": 0.719,
+          "exitMs": 55391,
+          "entryMs": 7953,
+          "durationMs": 7248,
+          "bars": 4,
+          "ratio": 0.971,
+          "terms": {
+            "tempo": 0.691,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.985,
+            "transient": 0.086,
+            "key": null,
+            "vocal": 0.719,
+            "structure": 0.585,
+            "mixPoint": 0.869
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.048,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.015,
+          "vocalConflict": 0.281,
+          "energyGapDb": 25,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        },
+        {
+          "strategy": "tempo-ramp",
+          "total": 0.635,
+          "baseScore": 0.595,
+          "strategyBonus": 0.041,
+          "confidence": 0.719,
+          "exitMs": 55391,
+          "entryMs": 7953,
+          "durationMs": 7248,
+          "bars": 4,
+          "ratio": 0.971,
+          "terms": {
+            "tempo": 0.691,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.985,
+            "transient": 0.086,
+            "key": null,
+            "vocal": 0.719,
+            "structure": 0.585,
+            "mixPoint": 0.869
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.048,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.015,
+          "vocalConflict": 0.281,
+          "energyGapDb": 25,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "small_tempo_ramp_within_native_three_percent_limit"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.629,
+          "baseScore": 0.584,
+          "strategyBonus": 0.045,
+          "confidence": 0.719,
+          "exitMs": 55391,
+          "entryMs": 13572,
+          "durationMs": 7248,
+          "bars": 4,
+          "ratio": 0.971,
+          "terms": {
+            "tempo": 0.691,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.981,
+            "transient": 0.061,
+            "key": null,
+            "vocal": 0.649,
+            "structure": 0.522,
+            "mixPoint": 0.93
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.048,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.019,
+          "vocalConflict": 0.351,
+          "energyGapDb": 27.61,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        }
+      ],
+      "exitType": "drop",
+      "entryType": "phrase",
+      "isPhraseExit": true,
+      "isDownbeatEntry": true,
+      "keyUsed": false,
+      "energyA": -34.64,
+      "energyB": -9.63,
+      "fallback": null
+    },
+    "conservative": false
+  },
+  {
+    "pair": "Otona → Blossom",
+    "ms": 2.79,
+    "v": 3,
+    "engine": "carminium-automix",
+    "a": "t1",
+    "b": "t2",
+    "aTitle": "Otona",
+    "bTitle": "Blossom",
+    "strategy": "beatmatch",
+    "gaplessFallback": false,
+    "exitMs": 86924,
+    "entryMs": 23301,
+    "durationMs": 11328,
+    "bars": 4,
+    "ratio": 1,
+    "semitones": 0,
+    "phaseErrMs": 0,
+    "transitionStartMs": 86924,
+    "crossfadeDurationMs": 11328,
+    "nextStartOffsetMs": 23301,
+    "preloadTriggerMs": 74924,
+    "bpmCurrent": 84.75,
+    "bpmNext": 102.25,
+    "bpmTempoAdjust": 1,
+    "tempoRampMs": 0,
+    "score": 0.874,
+    "terms": {
+      "tempo": 1,
+      "phase": 1,
+      "phrase": 0.6,
+      "energy": 0.886,
+      "low": 0.896,
+      "transient": 0.214,
+      "key": null,
+      "vocal": 0.99,
+      "structure": 0.412,
+      "mixPoint": 0.956
+    },
+    "confidence": 0.719,
+    "eq": {
+      "enabled": true,
+      "aHighpassHz": 220,
+      "bLowpassHz": 4200,
+      "swapAt": 0.5,
+      "bassSwap": true,
+      "curve": "equal-power"
+    },
+    "reason": {
+      "selected": {
+        "strategy": "beatmatch",
+        "total": 0.874,
+        "baseScore": 0.764,
+        "strategyBonus": 0.11,
+        "confidence": 0.719,
+        "exitMs": 86924,
+        "entryMs": 23301,
+        "durationMs": 11328,
+        "bars": 4,
+        "ratio": 1,
+        "terms": {
+          "tempo": 1,
+          "phase": 1,
+          "phrase": 0.6,
+          "energy": 0.886,
+          "low": 0.896,
+          "transient": 0.214,
+          "key": null,
+          "vocal": 0.99,
+          "structure": 0.412,
+          "mixPoint": 0.956
+        },
+        "weights": {
+          "tempo": 0.086,
+          "phase": 0.047,
+          "phrase": 0.042,
+          "energy": 0.17,
+          "low": 0.11,
+          "transient": 0.08,
+          "key": 0,
+          "vocal": 0.036,
+          "structure": 0.1,
+          "mixPoint": 0.06
+        },
+        "lowConflict": 0.104,
+        "vocalConflict": 0.01,
+        "energyGapDb": 0.28,
+        "why": [
+          "aligned_tempo_and_downbeat_grid"
+        ],
+        "interval": {
+          "a": {
+            "rmsDb": {
+              "known": true,
+              "mean": -6.603,
+              "start": -6.89,
+              "end": -5.99,
+              "slope": 0.069
+            },
+            "lowRatio": {
+              "known": true,
+              "mean": 0.136,
+              "start": 0.09,
+              "end": 0.16,
+              "slope": 0.005
+            },
+            "transient": {
+              "known": true,
+              "mean": 0.99,
+              "start": 0.99,
+              "end": 0.99,
+              "slope": 0
+            },
+            "vocal": {
+              "known": true,
+              "mean": 0.141,
+              "start": 0,
+              "end": 0.08,
+              "slope": 0.006
+            }
+          },
+          "b": {
+            "rmsDb": {
+              "known": true,
+              "mean": -6.888,
+              "start": -8.53,
+              "end": -5.37,
+              "slope": 0.263
+            },
+            "lowRatio": {
+              "known": true,
+              "mean": 0.078,
+              "start": 0.06,
+              "end": 0.13,
+              "slope": 0.006
+            },
+            "transient": {
+              "known": true,
+              "mean": 0.625,
+              "start": 0.57,
+              "end": 0.65,
+              "slope": 0.007
+            },
+            "vocal": {
+              "known": true,
+              "mean": 0.077,
+              "start": 0,
+              "end": 0.25,
+              "slope": 0.021
+            }
+          },
+          "joint": {
+            "low": 0.011,
+            "transient": 0.617,
+            "vocal": 0.01
+          }
+        }
+      },
+      "confidence": 0.719,
+      "gaplessFallback": false,
+      "topCandidates": [
+        {
+          "strategy": "beatmatch",
+          "total": 0.874,
+          "baseScore": 0.764,
+          "strategyBonus": 0.11,
+          "confidence": 0.719,
+          "exitMs": 86924,
+          "entryMs": 23301,
+          "durationMs": 11328,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.886,
+            "low": 0.896,
+            "transient": 0.214,
+            "key": null,
+            "vocal": 0.99,
+            "structure": 0.412,
+            "mixPoint": 0.956
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.047,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.104,
+          "vocalConflict": 0.01,
+          "energyGapDb": 0.28,
+          "why": [
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "total": 0.868,
+          "baseScore": 0.848,
+          "strategyBonus": 0.02,
+          "confidence": 0.738,
+          "exitMs": 106545,
+          "entryMs": 0,
+          "durationMs": 4000,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.985,
+            "low": 0.953,
+            "transient": 0.533,
+            "key": null,
+            "vocal": 0.25,
+            "structure": 0.746,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.047,
+          "vocalConflict": 0.75,
+          "energyGapDb": 0.23,
+          "why": [
+            "energy_safe_alternative_when_long_overlap_is_unreliable"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.867,
+          "baseScore": 0.757,
+          "strategyBonus": 0.11,
+          "confidence": 0.719,
+          "exitMs": 86924,
+          "entryMs": 81,
+          "durationMs": 11328,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.66,
+            "low": 0.877,
+            "transient": 0.405,
+            "key": null,
+            "vocal": 0.842,
+            "structure": 0.673,
+            "mixPoint": 0.934
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.047,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.123,
+          "vocalConflict": 0.158,
+          "energyGapDb": 4.42,
+          "why": [
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        },
+        {
+          "strategy": "short-fade",
+          "total": 0.863,
+          "baseScore": 0.843,
+          "strategyBonus": 0.02,
+          "confidence": 0.769,
+          "exitMs": 112164,
+          "entryMs": 0,
+          "durationMs": 2200,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.832,
+            "low": 0.942,
+            "transient": 0.559,
+            "key": null,
+            "vocal": 0.333,
+            "structure": 0.933,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.058,
+          "vocalConflict": 0.667,
+          "energyGapDb": 2.52,
+          "why": [
+            "short_fade_limits_overlap_conflicts"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "total": 0.86,
+          "baseScore": 0.83,
+          "strategyBonus": 0.03,
+          "confidence": 0.719,
+          "exitMs": 112164,
+          "entryMs": 81,
+          "durationMs": 2200,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": 1,
+            "phrase": 0.75,
+            "energy": 0.832,
+            "low": 0.942,
+            "transient": 0.559,
+            "key": null,
+            "vocal": 0.333,
+            "structure": 0.841,
+            "mixPoint": 0.934
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.047,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.058,
+          "vocalConflict": 0.667,
+          "energyGapDb": 2.52,
+          "why": [
+            "phrase_boundary_short_fade"
+          ]
+        }
+      ],
+      "rejectedCandidates": [],
+      "alternatives": [
+        {
+          "strategy": "safe-fade",
+          "total": 0.868,
+          "baseScore": 0.848,
+          "strategyBonus": 0.02,
+          "confidence": 0.738,
+          "exitMs": 106545,
+          "entryMs": 0,
+          "durationMs": 4000,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.985,
+            "low": 0.953,
+            "transient": 0.533,
+            "key": null,
+            "vocal": 0.25,
+            "structure": 0.746,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.047,
+          "vocalConflict": 0.75,
+          "energyGapDb": 0.23,
+          "why": [
+            "energy_safe_alternative_when_long_overlap_is_unreliable",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.867,
+          "baseScore": 0.757,
+          "strategyBonus": 0.11,
+          "confidence": 0.719,
+          "exitMs": 86924,
+          "entryMs": 81,
+          "durationMs": 11328,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.66,
+            "low": 0.877,
+            "transient": 0.405,
+            "key": null,
+            "vocal": 0.842,
+            "structure": 0.673,
+            "mixPoint": 0.934
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.047,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.123,
+          "vocalConflict": 0.158,
+          "energyGapDb": 4.42,
+          "why": [
+            "aligned_tempo_and_downbeat_grid",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "short-fade",
+          "total": 0.863,
+          "baseScore": 0.843,
+          "strategyBonus": 0.02,
+          "confidence": 0.769,
+          "exitMs": 112164,
+          "entryMs": 0,
+          "durationMs": 2200,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.832,
+            "low": 0.942,
+            "transient": 0.559,
+            "key": null,
+            "vocal": 0.333,
+            "structure": 0.933,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.058,
+          "vocalConflict": 0.667,
+          "energyGapDb": 2.52,
+          "why": [
+            "short_fade_limits_overlap_conflicts",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "total": 0.86,
+          "baseScore": 0.83,
+          "strategyBonus": 0.03,
+          "confidence": 0.719,
+          "exitMs": 112164,
+          "entryMs": 81,
+          "durationMs": 2200,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": 1,
+            "phrase": 0.75,
+            "energy": 0.832,
+            "low": 0.942,
+            "transient": 0.559,
+            "key": null,
+            "vocal": 0.333,
+            "structure": 0.841,
+            "mixPoint": 0.934
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.047,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.058,
+          "vocalConflict": 0.667,
+          "energyGapDb": 2.52,
+          "why": [
+            "phrase_boundary_short_fade",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "vocal-avoid",
+          "total": 0.857,
+          "baseScore": 0.724,
+          "strategyBonus": 0.133,
+          "confidence": 0.769,
+          "exitMs": 103805,
+          "entryMs": 0,
+          "durationMs": 11328,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.61,
+            "low": 0.901,
+            "transient": 0.441,
+            "key": null,
+            "vocal": 0.167,
+            "structure": 0.746,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.099,
+          "vocalConflict": 0.833,
+          "energyGapDb": 5.85,
+          "why": [
+            "asymmetric_eq_timing_for_relative_vocal_density",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.855,
+          "baseScore": 0.745,
+          "strategyBonus": 0.11,
+          "confidence": 0.719,
+          "exitMs": 86924,
+          "entryMs": 27980,
+          "durationMs": 11328,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.862,
+            "low": 0.879,
+            "transient": 0.21,
+            "key": null,
+            "vocal": 0.986,
+            "structure": 0.371,
+            "mixPoint": 0.898
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.047,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.121,
+          "vocalConflict": 0.014,
+          "energyGapDb": 0.58,
+          "why": [
+            "aligned_tempo_and_downbeat_grid",
+            "not_selected_lower_total"
+          ]
+        }
+      ],
+      "rejectedCount": 0,
+      "candidates": 104,
+      "top3": [
+        {
+          "strategy": "beatmatch",
+          "total": 0.874,
+          "baseScore": 0.764,
+          "strategyBonus": 0.11,
+          "confidence": 0.719,
+          "exitMs": 86924,
+          "entryMs": 23301,
+          "durationMs": 11328,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.886,
+            "low": 0.896,
+            "transient": 0.214,
+            "key": null,
+            "vocal": 0.99,
+            "structure": 0.412,
+            "mixPoint": 0.956
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.047,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.104,
+          "vocalConflict": 0.01,
+          "energyGapDb": 0.28,
+          "why": [
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "total": 0.868,
+          "baseScore": 0.848,
+          "strategyBonus": 0.02,
+          "confidence": 0.738,
+          "exitMs": 106545,
+          "entryMs": 0,
+          "durationMs": 4000,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.985,
+            "low": 0.953,
+            "transient": 0.533,
+            "key": null,
+            "vocal": 0.25,
+            "structure": 0.746,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.047,
+          "vocalConflict": 0.75,
+          "energyGapDb": 0.23,
+          "why": [
+            "energy_safe_alternative_when_long_overlap_is_unreliable"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.867,
+          "baseScore": 0.757,
+          "strategyBonus": 0.11,
+          "confidence": 0.719,
+          "exitMs": 86924,
+          "entryMs": 81,
+          "durationMs": 11328,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.66,
+            "low": 0.877,
+            "transient": 0.405,
+            "key": null,
+            "vocal": 0.842,
+            "structure": 0.673,
+            "mixPoint": 0.934
+          },
+          "weights": {
+            "tempo": 0.086,
+            "phase": 0.047,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.123,
+          "vocalConflict": 0.158,
+          "energyGapDb": 4.42,
+          "why": [
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        }
+      ],
+      "exitType": "drop",
+      "entryType": "phrase",
+      "isPhraseExit": true,
+      "isDownbeatEntry": true,
+      "keyUsed": false,
+      "energyA": -6.6,
+      "energyB": -6.89,
+      "fallback": null
+    },
+    "conservative": false
+  },
+  {
+    "pair": "Blossom → LWYMMD",
+    "ms": 1.99,
+    "v": 3,
+    "engine": "carminium-automix",
+    "a": "t2",
+    "b": "t3",
+    "aTitle": "Blossom",
+    "bTitle": "LWYMMD",
+    "strategy": "beatmatch",
+    "gaplessFallback": false,
+    "exitMs": 173999,
+    "entryMs": 1718,
+    "durationMs": 4736,
+    "bars": 2,
+    "ratio": 1,
+    "semitones": 0,
+    "phaseErrMs": 0,
+    "transitionStartMs": 173999,
+    "crossfadeDurationMs": 4736,
+    "nextStartOffsetMs": 1718,
+    "preloadTriggerMs": 161999,
+    "bpmCurrent": 102.25,
+    "bpmNext": 127.75,
+    "bpmTempoAdjust": 1,
+    "tempoRampMs": 0,
+    "score": 0.978,
+    "terms": {
+      "tempo": 1,
+      "phase": 1,
+      "phrase": 0.6,
+      "energy": 0.875,
+      "low": 0.95,
+      "transient": 0.56,
+      "key": null,
+      "vocal": 1,
+      "structure": 0.818,
+      "mixPoint": 1
+    },
+    "confidence": 0.719,
+    "eq": {
+      "enabled": true,
+      "aHighpassHz": 220,
+      "bLowpassHz": 4200,
+      "swapAt": 0.5,
+      "bassSwap": true,
+      "curve": "equal-power"
+    },
+    "reason": {
+      "selected": {
+        "strategy": "beatmatch",
+        "total": 0.978,
+        "baseScore": 0.868,
+        "strategyBonus": 0.11,
+        "confidence": 0.719,
+        "exitMs": 173999,
+        "entryMs": 1718,
+        "durationMs": 4736,
+        "bars": 2,
+        "ratio": 1,
+        "terms": {
+          "tempo": 1,
+          "phase": 1,
+          "phrase": 0.6,
+          "energy": 0.875,
+          "low": 0.95,
+          "transient": 0.56,
+          "key": null,
+          "vocal": 1,
+          "structure": 0.818,
+          "mixPoint": 1
+        },
+        "weights": {
+          "tempo": 0.088,
+          "phase": 0.047,
+          "phrase": 0.042,
+          "energy": 0.17,
+          "low": 0.11,
+          "transient": 0.08,
+          "key": 0,
+          "vocal": 0.036,
+          "structure": 0.1,
+          "mixPoint": 0.06
+        },
+        "lowConflict": 0.05,
+        "vocalConflict": 0,
+        "energyGapDb": 1.88,
+        "why": [
+          "aligned_tempo_and_downbeat_grid"
+        ],
+        "interval": {
+          "a": {
+            "rmsDb": {
+              "known": true,
+              "mean": -28.712,
+              "start": -9.57,
+              "end": -60.65,
+              "slope": -10.216
+            },
+            "lowRatio": {
+              "known": true,
+              "mean": 0.08,
+              "start": 0.07,
+              "end": 0.04,
+              "slope": -0.006
+            },
+            "transient": {
+              "known": true,
+              "mean": 0.407,
+              "start": 0.65,
+              "end": 0,
+              "slope": -0.13
+            },
+            "vocal": {
+              "known": true,
+              "mean": 0.5,
+              "start": 1,
+              "end": 0,
+              "slope": -0.2
+            }
+          },
+          "b": {
+            "rmsDb": {
+              "known": true,
+              "mean": -26.836,
+              "start": -36.32,
+              "end": -21.84,
+              "slope": 2.413
+            },
+            "lowRatio": {
+              "known": true,
+              "mean": 0.034,
+              "start": 0.01,
+              "end": 0.06,
+              "slope": 0.008
+            },
+            "transient": {
+              "known": true,
+              "mean": 0.573,
+              "start": 0,
+              "end": 0.76,
+              "slope": 0.127
+            },
+            "vocal": {
+              "known": true,
+              "mean": 0.476,
+              "start": 0,
+              "end": 0.44,
+              "slope": 0.073
+            }
+          },
+          "joint": {
+            "low": 0.002,
+            "transient": 0.194,
+            "vocal": 0
+          }
+        }
+      },
+      "confidence": 0.719,
+      "gaplessFallback": false,
+      "topCandidates": [
+        {
+          "strategy": "beatmatch",
+          "total": 0.978,
+          "baseScore": 0.868,
+          "strategyBonus": 0.11,
+          "confidence": 0.719,
+          "exitMs": 173999,
+          "entryMs": 1718,
+          "durationMs": 4736,
+          "bars": 2,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.875,
+            "low": 0.95,
+            "transient": 0.56,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.818,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.088,
+            "phase": 0.047,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.05,
+          "vocalConflict": 0,
+          "energyGapDb": 1.88,
+          "why": [
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "total": 0.939,
+          "baseScore": 0.919,
+          "strategyBonus": 0.02,
+          "confidence": 0.77,
+          "exitMs": 173999,
+          "entryMs": 1000,
+          "durationMs": 4000,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.996,
+            "low": 0.961,
+            "transient": 0.629,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.828,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.088,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.039,
+          "vocalConflict": 0,
+          "energyGapDb": 0.06,
+          "why": [
+            "energy_safe_alternative_when_long_overlap_is_unreliable"
+          ]
+        },
+        {
+          "strategy": "structure-blend",
+          "total": 0.927,
+          "baseScore": 0.907,
+          "strategyBonus": 0.021,
+          "confidence": 0.77,
+          "exitMs": 173999,
+          "entryMs": 1000,
+          "durationMs": 4736,
+          "bars": 2,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.93,
+            "low": 0.96,
+            "transient": 0.668,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.828,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.088,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.04,
+          "vocalConflict": 0,
+          "energyGapDb": 1.04,
+          "why": [
+            "structure_and_interval_energy_without_rate_change"
+          ]
+        },
+        {
+          "strategy": "vocal-avoid",
+          "total": 0.907,
+          "baseScore": 0.907,
+          "strategyBonus": 0,
+          "confidence": 0.77,
+          "exitMs": 173999,
+          "entryMs": 1000,
+          "durationMs": 4736,
+          "bars": 2,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.93,
+            "low": 0.96,
+            "transient": 0.668,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.828,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.088,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.04,
+          "vocalConflict": 0,
+          "energyGapDb": 1.04,
+          "why": [
+            "asymmetric_eq_timing_for_relative_vocal_density"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "total": 0.894,
+          "baseScore": 0.875,
+          "strategyBonus": 0.019,
+          "confidence": 0.719,
+          "exitMs": 173999,
+          "entryMs": 1718,
+          "durationMs": 4000,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.93,
+            "low": 0.95,
+            "transient": 0.508,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.818,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.088,
+            "phase": 0.047,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.05,
+          "vocalConflict": 0,
+          "energyGapDb": 1.04,
+          "why": [
+            "energy_safe_alternative_when_long_overlap_is_unreliable"
+          ]
+        }
+      ],
+      "rejectedCandidates": [],
+      "alternatives": [
+        {
+          "strategy": "safe-fade",
+          "total": 0.939,
+          "baseScore": 0.919,
+          "strategyBonus": 0.02,
+          "confidence": 0.77,
+          "exitMs": 173999,
+          "entryMs": 1000,
+          "durationMs": 4000,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.996,
+            "low": 0.961,
+            "transient": 0.629,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.828,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.088,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.039,
+          "vocalConflict": 0,
+          "energyGapDb": 0.06,
+          "why": [
+            "energy_safe_alternative_when_long_overlap_is_unreliable",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "structure-blend",
+          "total": 0.927,
+          "baseScore": 0.907,
+          "strategyBonus": 0.021,
+          "confidence": 0.77,
+          "exitMs": 173999,
+          "entryMs": 1000,
+          "durationMs": 4736,
+          "bars": 2,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.93,
+            "low": 0.96,
+            "transient": 0.668,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.828,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.088,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.04,
+          "vocalConflict": 0,
+          "energyGapDb": 1.04,
+          "why": [
+            "structure_and_interval_energy_without_rate_change",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "vocal-avoid",
+          "total": 0.907,
+          "baseScore": 0.907,
+          "strategyBonus": 0,
+          "confidence": 0.77,
+          "exitMs": 173999,
+          "entryMs": 1000,
+          "durationMs": 4736,
+          "bars": 2,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.93,
+            "low": 0.96,
+            "transient": 0.668,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.828,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.088,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.04,
+          "vocalConflict": 0,
+          "energyGapDb": 1.04,
+          "why": [
+            "asymmetric_eq_timing_for_relative_vocal_density",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "total": 0.894,
+          "baseScore": 0.875,
+          "strategyBonus": 0.019,
+          "confidence": 0.719,
+          "exitMs": 173999,
+          "entryMs": 1718,
+          "durationMs": 4000,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.93,
+            "low": 0.95,
+            "transient": 0.508,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.818,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.088,
+            "phase": 0.047,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.05,
+          "vocalConflict": 0,
+          "energyGapDb": 1.04,
+          "why": [
+            "energy_safe_alternative_when_long_overlap_is_unreliable",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "structure-blend",
+          "total": 0.888,
+          "baseScore": 0.868,
+          "strategyBonus": 0.02,
+          "confidence": 0.719,
+          "exitMs": 173999,
+          "entryMs": 1718,
+          "durationMs": 4736,
+          "bars": 2,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.875,
+            "low": 0.95,
+            "transient": 0.56,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.818,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.088,
+            "phase": 0.047,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.05,
+          "vocalConflict": 0,
+          "energyGapDb": 1.88,
+          "why": [
+            "structure_and_interval_energy_without_rate_change",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "vocal-avoid",
+          "total": 0.868,
+          "baseScore": 0.868,
+          "strategyBonus": 0,
+          "confidence": 0.719,
+          "exitMs": 173999,
+          "entryMs": 1718,
+          "durationMs": 4736,
+          "bars": 2,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.875,
+            "low": 0.95,
+            "transient": 0.56,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.818,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.088,
+            "phase": 0.047,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.05,
+          "vocalConflict": 0,
+          "energyGapDb": 1.88,
+          "why": [
+            "asymmetric_eq_timing_for_relative_vocal_density",
+            "not_selected_lower_total"
+          ]
+        }
+      ],
+      "rejectedCount": 0,
+      "candidates": 97,
+      "top3": [
+        {
+          "strategy": "beatmatch",
+          "total": 0.978,
+          "baseScore": 0.868,
+          "strategyBonus": 0.11,
+          "confidence": 0.719,
+          "exitMs": 173999,
+          "entryMs": 1718,
+          "durationMs": 4736,
+          "bars": 2,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.875,
+            "low": 0.95,
+            "transient": 0.56,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.818,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.088,
+            "phase": 0.047,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.05,
+          "vocalConflict": 0,
+          "energyGapDb": 1.88,
+          "why": [
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "total": 0.939,
+          "baseScore": 0.919,
+          "strategyBonus": 0.02,
+          "confidence": 0.77,
+          "exitMs": 173999,
+          "entryMs": 1000,
+          "durationMs": 4000,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.996,
+            "low": 0.961,
+            "transient": 0.629,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.828,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.088,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.039,
+          "vocalConflict": 0,
+          "energyGapDb": 0.06,
+          "why": [
+            "energy_safe_alternative_when_long_overlap_is_unreliable"
+          ]
+        },
+        {
+          "strategy": "structure-blend",
+          "total": 0.927,
+          "baseScore": 0.907,
+          "strategyBonus": 0.021,
+          "confidence": 0.77,
+          "exitMs": 173999,
+          "entryMs": 1000,
+          "durationMs": 4736,
+          "bars": 2,
+          "ratio": 1,
+          "terms": {
+            "tempo": 1,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.93,
+            "low": 0.96,
+            "transient": 0.668,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.828,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.088,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.04,
+          "vocalConflict": 0,
+          "energyGapDb": 1.04,
+          "why": [
+            "structure_and_interval_energy_without_rate_change"
+          ]
+        }
+      ],
+      "exitType": "drop",
+      "entryType": "phrase",
+      "isPhraseExit": true,
+      "isDownbeatEntry": true,
+      "keyUsed": false,
+      "energyA": -28.71,
+      "energyB": -26.84,
+      "fallback": null
+    },
+    "conservative": false
+  },
+  {
+    "pair": "LWYMMD → NodKrai",
+    "ms": 1.58,
+    "v": 3,
+    "engine": "carminium-automix",
+    "a": "t3",
+    "b": "t4",
+    "aTitle": "LWYMMD",
+    "bTitle": "NodKrai",
+    "strategy": "beatmatch",
+    "gaplessFallback": false,
+    "exitMs": 207981,
+    "entryMs": 5968,
+    "durationMs": 3720,
+    "bars": 2,
+    "ratio": 0.993,
+    "semitones": -0.12,
+    "phaseErrMs": 0,
+    "transitionStartMs": 207981,
+    "crossfadeDurationMs": 3720,
+    "nextStartOffsetMs": 5968,
+    "preloadTriggerMs": 195981,
+    "bpmCurrent": 127.75,
+    "bpmNext": 103.25,
+    "bpmTempoAdjust": 0.993,
+    "tempoRampMs": 0,
+    "score": 0.81,
+    "terms": {
+      "tempo": 0.978,
+      "phase": 1,
+      "phrase": 1,
+      "energy": 0.2,
+      "low": 1,
+      "transient": 0.416,
+      "key": null,
+      "vocal": 1,
+      "structure": 0.656,
+      "mixPoint": 1
+    },
+    "confidence": 0.729,
+    "eq": {
+      "enabled": true,
+      "aHighpassHz": 220,
+      "bLowpassHz": 4200,
+      "swapAt": 0.5,
+      "bassSwap": true,
+      "curve": "equal-power"
+    },
+    "reason": {
+      "selected": {
+        "strategy": "beatmatch",
+        "total": 0.81,
+        "baseScore": 0.71,
+        "strategyBonus": 0.1,
+        "confidence": 0.729,
+        "exitMs": 207981,
+        "entryMs": 5968,
+        "durationMs": 3720,
+        "bars": 2,
+        "ratio": 0.993,
+        "terms": {
+          "tempo": 0.978,
+          "phase": 1,
+          "phrase": 1,
+          "energy": 0.2,
+          "low": 1,
+          "transient": 0.416,
+          "key": null,
+          "vocal": 1,
+          "structure": 0.656,
+          "mixPoint": 1
+        },
+        "weights": {
+          "tempo": 0.101,
+          "phase": 0.056,
+          "phrase": 0.042,
+          "energy": 0.17,
+          "low": 0.11,
+          "transient": 0.08,
+          "key": 0,
+          "vocal": 0.036,
+          "structure": 0.1,
+          "mixPoint": 0.06
+        },
+        "lowConflict": 0,
+        "vocalConflict": 0,
+        "energyGapDb": 14.76,
+        "why": [
+          "interval_loudness_gap_penalty",
+          "aligned_tempo_and_downbeat_grid"
+        ],
+        "interval": {
+          "a": {
+            "rmsDb": {
+              "known": true,
+              "mean": -11.16,
+              "start": -5.09,
+              "end": -17.48,
+              "slope": -4.13
+            },
+            "lowRatio": {
+              "known": true,
+              "mean": 0.13,
+              "start": 0.2,
+              "end": 0.08,
+              "slope": -0.04
+            },
+            "transient": {
+              "known": true,
+              "mean": 0.87,
+              "start": 0.87,
+              "end": 0.87,
+              "slope": 0
+            },
+            "vocal": {
+              "known": true,
+              "mean": 0.445,
+              "start": 0.89,
+              "end": 0,
+              "slope": -0.297
+            }
+          },
+          "b": {
+            "rmsDb": {
+              "known": true,
+              "mean": -25.922,
+              "start": -26.74,
+              "end": -25.36,
+              "slope": 0.276
+            },
+            "lowRatio": {
+              "known": true,
+              "mean": 0,
+              "start": 0,
+              "end": 0,
+              "slope": 0
+            },
+            "transient": {
+              "known": true,
+              "mean": 0.412,
+              "start": 0.45,
+              "end": 0.45,
+              "slope": 0
+            },
+            "vocal": {
+              "known": true,
+              "mean": 0.022,
+              "start": 0,
+              "end": 0,
+              "slope": 0
+            }
+          },
+          "joint": {
+            "low": 0,
+            "transient": 0.341,
+            "vocal": 0
+          }
+        }
+      },
+      "confidence": 0.729,
+      "gaplessFallback": false,
+      "topCandidates": [
+        {
+          "strategy": "beatmatch",
+          "total": 0.81,
+          "baseScore": 0.71,
+          "strategyBonus": 0.1,
+          "confidence": 0.729,
+          "exitMs": 207981,
+          "entryMs": 5968,
+          "durationMs": 3720,
+          "bars": 2,
+          "ratio": 0.993,
+          "terms": {
+            "tempo": 0.978,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 1,
+            "transient": 0.416,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.656,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0,
+          "vocalConflict": 0,
+          "energyGapDb": 14.76,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.796,
+          "baseScore": 0.687,
+          "strategyBonus": 0.109,
+          "confidence": 0.729,
+          "exitMs": 209850,
+          "entryMs": 5968,
+          "durationMs": 2009,
+          "bars": 2,
+          "ratio": 0.993,
+          "terms": {
+            "tempo": 0.978,
+            "phase": 1,
+            "phrase": 0.45,
+            "energy": 0.23,
+            "low": 1,
+            "transient": 0.43,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.656,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0,
+          "vocalConflict": 0,
+          "energyGapDb": 10.79,
+          "why": [
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        },
+        {
+          "strategy": "tempo-ramp",
+          "total": 0.795,
+          "baseScore": 0.71,
+          "strategyBonus": 0.086,
+          "confidence": 0.729,
+          "exitMs": 207981,
+          "entryMs": 5968,
+          "durationMs": 3720,
+          "bars": 2,
+          "ratio": 0.993,
+          "terms": {
+            "tempo": 0.978,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 1,
+            "transient": 0.416,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.656,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0,
+          "vocalConflict": 0,
+          "energyGapDb": 14.76,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "small_tempo_ramp_within_native_three_percent_limit"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "total": 0.795,
+          "baseScore": 0.779,
+          "strategyBonus": 0.016,
+          "confidence": 0.778,
+          "exitMs": 209000,
+          "entryMs": 33000,
+          "durationMs": 2859,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.978,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.805,
+            "low": 0.931,
+            "transient": 0.446,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.42,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.069,
+          "vocalConflict": 0,
+          "energyGapDb": 2.93,
+          "why": [
+            "energy_safe_alternative_when_long_overlap_is_unreliable"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.794,
+          "baseScore": 0.71,
+          "strategyBonus": 0.084,
+          "confidence": 0.729,
+          "exitMs": 177969,
+          "entryMs": 5968,
+          "durationMs": 7440,
+          "bars": 4,
+          "ratio": 0.993,
+          "terms": {
+            "tempo": 0.978,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.105,
+            "low": 0.968,
+            "transient": 0.465,
+            "key": null,
+            "vocal": 0.991,
+            "structure": 0.819,
+            "mixPoint": 0.998
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.032,
+          "vocalConflict": 0.009,
+          "energyGapDb": 20.11,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        }
+      ],
+      "rejectedCandidates": [],
+      "alternatives": [
+        {
+          "strategy": "beatmatch",
+          "total": 0.796,
+          "baseScore": 0.687,
+          "strategyBonus": 0.109,
+          "confidence": 0.729,
+          "exitMs": 209850,
+          "entryMs": 5968,
+          "durationMs": 2009,
+          "bars": 2,
+          "ratio": 0.993,
+          "terms": {
+            "tempo": 0.978,
+            "phase": 1,
+            "phrase": 0.45,
+            "energy": 0.23,
+            "low": 1,
+            "transient": 0.43,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.656,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0,
+          "vocalConflict": 0,
+          "energyGapDb": 10.79,
+          "why": [
+            "aligned_tempo_and_downbeat_grid",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "tempo-ramp",
+          "total": 0.795,
+          "baseScore": 0.71,
+          "strategyBonus": 0.086,
+          "confidence": 0.729,
+          "exitMs": 207981,
+          "entryMs": 5968,
+          "durationMs": 3720,
+          "bars": 2,
+          "ratio": 0.993,
+          "terms": {
+            "tempo": 0.978,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 1,
+            "transient": 0.416,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.656,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0,
+          "vocalConflict": 0,
+          "energyGapDb": 14.76,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "small_tempo_ramp_within_native_three_percent_limit",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "total": 0.795,
+          "baseScore": 0.779,
+          "strategyBonus": 0.016,
+          "confidence": 0.778,
+          "exitMs": 209000,
+          "entryMs": 33000,
+          "durationMs": 2859,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.978,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.805,
+            "low": 0.931,
+            "transient": 0.446,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.42,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.069,
+          "vocalConflict": 0,
+          "energyGapDb": 2.93,
+          "why": [
+            "energy_safe_alternative_when_long_overlap_is_unreliable",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.794,
+          "baseScore": 0.71,
+          "strategyBonus": 0.084,
+          "confidence": 0.729,
+          "exitMs": 177969,
+          "entryMs": 5968,
+          "durationMs": 7440,
+          "bars": 4,
+          "ratio": 0.993,
+          "terms": {
+            "tempo": 0.978,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.105,
+            "low": 0.968,
+            "transient": 0.465,
+            "key": null,
+            "vocal": 0.991,
+            "structure": 0.819,
+            "mixPoint": 0.998
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.032,
+          "vocalConflict": 0.009,
+          "energyGapDb": 20.11,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "total": 0.794,
+          "baseScore": 0.778,
+          "strategyBonus": 0.016,
+          "confidence": 0.778,
+          "exitMs": 209850,
+          "entryMs": 33000,
+          "durationMs": 2009,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.978,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.805,
+            "low": 0.925,
+            "transient": 0.446,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.42,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.075,
+          "vocalConflict": 0,
+          "energyGapDb": 2.93,
+          "why": [
+            "energy_safe_alternative_when_long_overlap_is_unreliable",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "structure-blend",
+          "total": 0.789,
+          "baseScore": 0.779,
+          "strategyBonus": 0.011,
+          "confidence": 0.778,
+          "exitMs": 209000,
+          "entryMs": 33000,
+          "durationMs": 2859,
+          "bars": 2,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.978,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.805,
+            "low": 0.931,
+            "transient": 0.446,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.42,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.069,
+          "vocalConflict": 0,
+          "energyGapDb": 2.93,
+          "why": [
+            "structure_and_interval_energy_without_rate_change",
+            "not_selected_lower_total"
+          ]
+        }
+      ],
+      "rejectedCount": 0,
+      "candidates": 87,
+      "top3": [
+        {
+          "strategy": "beatmatch",
+          "total": 0.81,
+          "baseScore": 0.71,
+          "strategyBonus": 0.1,
+          "confidence": 0.729,
+          "exitMs": 207981,
+          "entryMs": 5968,
+          "durationMs": 3720,
+          "bars": 2,
+          "ratio": 0.993,
+          "terms": {
+            "tempo": 0.978,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 1,
+            "transient": 0.416,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.656,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0,
+          "vocalConflict": 0,
+          "energyGapDb": 14.76,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.796,
+          "baseScore": 0.687,
+          "strategyBonus": 0.109,
+          "confidence": 0.729,
+          "exitMs": 209850,
+          "entryMs": 5968,
+          "durationMs": 2009,
+          "bars": 2,
+          "ratio": 0.993,
+          "terms": {
+            "tempo": 0.978,
+            "phase": 1,
+            "phrase": 0.45,
+            "energy": 0.23,
+            "low": 1,
+            "transient": 0.43,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.656,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0,
+          "vocalConflict": 0,
+          "energyGapDb": 10.79,
+          "why": [
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        },
+        {
+          "strategy": "tempo-ramp",
+          "total": 0.795,
+          "baseScore": 0.71,
+          "strategyBonus": 0.086,
+          "confidence": 0.729,
+          "exitMs": 207981,
+          "entryMs": 5968,
+          "durationMs": 3720,
+          "bars": 2,
+          "ratio": 0.993,
+          "terms": {
+            "tempo": 0.978,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 1,
+            "transient": 0.416,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.656,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0,
+          "vocalConflict": 0,
+          "energyGapDb": 14.76,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "small_tempo_ramp_within_native_three_percent_limit"
+          ]
+        }
+      ],
+      "exitType": "drop",
+      "entryType": "segment",
+      "isPhraseExit": true,
+      "isDownbeatEntry": true,
+      "keyUsed": false,
+      "energyA": -11.16,
+      "energyB": -25.92,
+      "fallback": null
+    },
+    "conservative": false
+  },
+  {
+    "pair": "NodKrai → ATW",
+    "ms": 1.78,
+    "v": 3,
+    "engine": "carminium-automix",
+    "a": "t4",
+    "b": "t5",
+    "aTitle": "NodKrai",
+    "bTitle": "ATW",
+    "strategy": "vocal-avoid",
+    "gaplessFallback": false,
+    "exitMs": 247652,
+    "entryMs": 18588,
+    "durationMs": 9296,
+    "bars": 4,
+    "ratio": 1,
+    "semitones": 0,
+    "phaseErrMs": 0,
+    "transitionStartMs": 247652,
+    "crossfadeDurationMs": 9296,
+    "nextStartOffsetMs": 18588,
+    "preloadTriggerMs": 235652,
+    "bpmCurrent": 103.25,
+    "bpmNext": 185,
+    "bpmTempoAdjust": 1,
+    "tempoRampMs": 0,
+    "score": 0.7,
+    "terms": {
+      "tempo": 0.127,
+      "phase": 1,
+      "phrase": 0.6,
+      "energy": 0.804,
+      "low": 0.823,
+      "transient": 0.52,
+      "key": null,
+      "vocal": 0.757,
+      "structure": 0.527,
+      "mixPoint": 0.942
+    },
+    "confidence": 0.729,
+    "eq": {
+      "enabled": true,
+      "aHighpassHz": 180,
+      "bLowpassHz": 5000,
+      "swapAt": 0.65,
+      "bassSwap": false,
+      "curve": "asymmetric-vocal-avoid",
+      "aCurve": {
+        "startAt": 0,
+        "endAt": 0.65,
+        "startMs": 0,
+        "endMs": 6042,
+        "curve": "equal-power-out"
+      },
+      "bCurve": {
+        "startAt": 0.65,
+        "endAt": 1,
+        "startMs": 6042,
+        "endMs": 9296,
+        "curve": "equal-power-in"
+      }
+    },
+    "reason": {
+      "selected": {
+        "strategy": "vocal-avoid",
+        "total": 0.7,
+        "baseScore": 0.661,
+        "strategyBonus": 0.039,
+        "confidence": 0.729,
+        "exitMs": 247652,
+        "entryMs": 18588,
+        "durationMs": 9296,
+        "bars": 4,
+        "ratio": 1,
+        "terms": {
+          "tempo": 0.127,
+          "phase": 1,
+          "phrase": 0.6,
+          "energy": 0.804,
+          "low": 0.823,
+          "transient": 0.52,
+          "key": null,
+          "vocal": 0.757,
+          "structure": 0.527,
+          "mixPoint": 0.942
+        },
+        "weights": {
+          "tempo": 0.101,
+          "phase": 0.056,
+          "phrase": 0.042,
+          "energy": 0.17,
+          "low": 0.11,
+          "transient": 0.08,
+          "key": 0,
+          "vocal": 0.036,
+          "structure": 0.1,
+          "mixPoint": 0.06
+        },
+        "lowConflict": 0.177,
+        "vocalConflict": 0.243,
+        "energyGapDb": 2.94,
+        "why": [
+          "asymmetric_eq_timing_for_relative_vocal_density"
+        ],
+        "interval": {
+          "a": {
+            "rmsDb": {
+              "known": true,
+              "mean": -15.876,
+              "start": -7.73,
+              "end": -50.03,
+              "slope": -4.23
+            },
+            "lowRatio": {
+              "known": true,
+              "mean": 0.145,
+              "start": 0.11,
+              "end": 0.12,
+              "slope": 0.001
+            },
+            "transient": {
+              "known": true,
+              "mean": 0.343,
+              "start": 0.45,
+              "end": 0,
+              "slope": -0.045
+            },
+            "vocal": {
+              "known": true,
+              "mean": 0.274,
+              "start": 0.5,
+              "end": 0,
+              "slope": -0.05
+            }
+          },
+          "b": {
+            "rmsDb": {
+              "known": true,
+              "mean": -18.813,
+              "start": -21.72,
+              "end": -17.27,
+              "slope": 0.445
+            },
+            "lowRatio": {
+              "known": true,
+              "mean": 0.221,
+              "start": 0.33,
+              "end": 0.29,
+              "slope": -0.004
+            },
+            "transient": {
+              "known": true,
+              "mean": 0.675,
+              "start": 0.39,
+              "end": 0.77,
+              "slope": 0.038
+            },
+            "vocal": {
+              "known": true,
+              "mean": 0.975,
+              "start": 1,
+              "end": 1,
+              "slope": 0
+            }
+          },
+          "joint": {
+            "low": 0.031,
+            "transient": 0.23,
+            "vocal": 0.243
+          }
+        }
+      },
+      "confidence": 0.729,
+      "gaplessFallback": false,
+      "topCandidates": [
+        {
+          "strategy": "vocal-avoid",
+          "total": 0.7,
+          "baseScore": 0.661,
+          "strategyBonus": 0.039,
+          "confidence": 0.729,
+          "exitMs": 247652,
+          "entryMs": 18588,
+          "durationMs": 9296,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.127,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.804,
+            "low": 0.823,
+            "transient": 0.52,
+            "key": null,
+            "vocal": 0.757,
+            "structure": 0.527,
+            "mixPoint": 0.942
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.177,
+          "vocalConflict": 0.243,
+          "energyGapDb": 2.94,
+          "why": [
+            "asymmetric_eq_timing_for_relative_vocal_density"
+          ]
+        },
+        {
+          "strategy": "structure-blend",
+          "total": 0.69,
+          "baseScore": 0.674,
+          "strategyBonus": 0.017,
+          "confidence": 0.729,
+          "exitMs": 249974,
+          "entryMs": 534,
+          "durationMs": 9296,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.127,
+            "phase": 1,
+            "phrase": 0.75,
+            "energy": 0.665,
+            "low": 0.796,
+            "transient": 0.683,
+            "key": null,
+            "vocal": 0.789,
+            "structure": 0.668,
+            "mixPoint": 0.965
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.204,
+          "vocalConflict": 0.211,
+          "energyGapDb": 5.02,
+          "why": [
+            "structure_and_interval_energy_without_rate_change"
+          ]
+        },
+        {
+          "strategy": "structure-blend",
+          "total": 0.675,
+          "baseScore": 0.661,
+          "strategyBonus": 0.013,
+          "confidence": 0.729,
+          "exitMs": 247652,
+          "entryMs": 18588,
+          "durationMs": 9296,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.127,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.804,
+            "low": 0.823,
+            "transient": 0.52,
+            "key": null,
+            "vocal": 0.757,
+            "structure": 0.527,
+            "mixPoint": 0.942
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.177,
+          "vocalConflict": 0.243,
+          "energyGapDb": 2.94,
+          "why": [
+            "structure_and_interval_energy_without_rate_change"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "total": 0.657,
+          "baseScore": 0.641,
+          "strategyBonus": 0.016,
+          "confidence": 0.778,
+          "exitMs": 247652,
+          "entryMs": 40000,
+          "durationMs": 4000,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.127,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.791,
+            "low": 0.804,
+            "transient": 0.596,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.42,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.196,
+          "vocalConflict": 0,
+          "energyGapDb": 3.09,
+          "why": [
+            "energy_safe_alternative_when_long_overlap_is_unreliable"
+          ]
+        },
+        {
+          "strategy": "vocal-avoid",
+          "total": 0.654,
+          "baseScore": 0.628,
+          "strategyBonus": 0.026,
+          "confidence": 0.729,
+          "exitMs": 247652,
+          "entryMs": 534,
+          "durationMs": 9296,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.127,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.524,
+            "low": 0.791,
+            "transient": 0.621,
+            "key": null,
+            "vocal": 0.837,
+            "structure": 0.668,
+            "mixPoint": 0.965
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.209,
+          "vocalConflict": 0.163,
+          "energyGapDb": 7.15,
+          "why": [
+            "asymmetric_eq_timing_for_relative_vocal_density"
+          ]
+        }
+      ],
+      "rejectedCandidates": [
+        {
+          "strategy": "beatmatch",
+          "exitMs": 247652,
+          "entryMs": 534,
+          "durationMs": 9296,
+          "ratio": 1.073,
+          "why": [
+            "rate_capability_exceeded"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "exitMs": 247652,
+          "entryMs": 18588,
+          "durationMs": 9296,
+          "ratio": 1.073,
+          "why": [
+            "rate_capability_exceeded"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "exitMs": 247652,
+          "entryMs": 39195,
+          "durationMs": 9296,
+          "ratio": 1.073,
+          "why": [
+            "rate_capability_exceeded"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "exitMs": 249974,
+          "entryMs": 534,
+          "durationMs": 9296,
+          "ratio": 1.073,
+          "why": [
+            "rate_capability_exceeded"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "exitMs": 249974,
+          "entryMs": 18588,
+          "durationMs": 9296,
+          "ratio": 1.073,
+          "why": [
+            "rate_capability_exceeded"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "exitMs": 249974,
+          "entryMs": 39195,
+          "durationMs": 9296,
+          "ratio": 1.073,
+          "why": [
+            "rate_capability_exceeded"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "exitMs": 254560,
+          "entryMs": 534,
+          "durationMs": 4648,
+          "ratio": 1.073,
+          "why": [
+            "rate_capability_exceeded"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "exitMs": 254560,
+          "entryMs": 18588,
+          "durationMs": 4648,
+          "ratio": 1.073,
+          "why": [
+            "rate_capability_exceeded"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "exitMs": 254560,
+          "entryMs": 39195,
+          "durationMs": 4648,
+          "ratio": 1.073,
+          "why": [
+            "rate_capability_exceeded"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "exitMs": 256882,
+          "entryMs": 534,
+          "durationMs": 3436,
+          "ratio": 1.073,
+          "why": [
+            "rate_capability_exceeded"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "exitMs": 256882,
+          "entryMs": 18588,
+          "durationMs": 3436,
+          "ratio": 1.073,
+          "why": [
+            "rate_capability_exceeded"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "exitMs": 256882,
+          "entryMs": 39195,
+          "durationMs": 3436,
+          "ratio": 1.073,
+          "why": [
+            "rate_capability_exceeded"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 247652,
+          "entryMs": 534,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 247652,
+          "entryMs": 18588,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 247652,
+          "entryMs": 39000,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 247652,
+          "entryMs": 39195,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "strategy": "structure-blend",
+          "total": 0.69,
+          "baseScore": 0.674,
+          "strategyBonus": 0.017,
+          "confidence": 0.729,
+          "exitMs": 249974,
+          "entryMs": 534,
+          "durationMs": 9296,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.127,
+            "phase": 1,
+            "phrase": 0.75,
+            "energy": 0.665,
+            "low": 0.796,
+            "transient": 0.683,
+            "key": null,
+            "vocal": 0.789,
+            "structure": 0.668,
+            "mixPoint": 0.965
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.204,
+          "vocalConflict": 0.211,
+          "energyGapDb": 5.02,
+          "why": [
+            "structure_and_interval_energy_without_rate_change",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "structure-blend",
+          "total": 0.675,
+          "baseScore": 0.661,
+          "strategyBonus": 0.013,
+          "confidence": 0.729,
+          "exitMs": 247652,
+          "entryMs": 18588,
+          "durationMs": 9296,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.127,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.804,
+            "low": 0.823,
+            "transient": 0.52,
+            "key": null,
+            "vocal": 0.757,
+            "structure": 0.527,
+            "mixPoint": 0.942
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.177,
+          "vocalConflict": 0.243,
+          "energyGapDb": 2.94,
+          "why": [
+            "structure_and_interval_energy_without_rate_change",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "total": 0.657,
+          "baseScore": 0.641,
+          "strategyBonus": 0.016,
+          "confidence": 0.778,
+          "exitMs": 247652,
+          "entryMs": 40000,
+          "durationMs": 4000,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.127,
+            "phase": null,
+            "phrase": null,
+            "energy": 0.791,
+            "low": 0.804,
+            "transient": 0.596,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.42,
+            "mixPoint": 1
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0,
+            "phrase": 0,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.196,
+          "vocalConflict": 0,
+          "energyGapDb": 3.09,
+          "why": [
+            "energy_safe_alternative_when_long_overlap_is_unreliable",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "vocal-avoid",
+          "total": 0.654,
+          "baseScore": 0.628,
+          "strategyBonus": 0.026,
+          "confidence": 0.729,
+          "exitMs": 247652,
+          "entryMs": 534,
+          "durationMs": 9296,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.127,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.524,
+            "low": 0.791,
+            "transient": 0.621,
+            "key": null,
+            "vocal": 0.837,
+            "structure": 0.668,
+            "mixPoint": 0.965
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.209,
+          "vocalConflict": 0.163,
+          "energyGapDb": 7.15,
+          "why": [
+            "asymmetric_eq_timing_for_relative_vocal_density",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "total": 0.648,
+          "baseScore": 0.635,
+          "strategyBonus": 0.014,
+          "confidence": 0.729,
+          "exitMs": 247652,
+          "entryMs": 39195,
+          "durationMs": 4000,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.127,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.676,
+            "low": 0.793,
+            "transient": 0.57,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.42,
+            "mixPoint": 0.991
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.207,
+          "vocalConflict": 0,
+          "energyGapDb": 4.48,
+          "why": [
+            "energy_safe_alternative_when_long_overlap_is_unreliable",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "structure-blend",
+          "total": 0.646,
+          "baseScore": 0.635,
+          "strategyBonus": 0.011,
+          "confidence": 0.729,
+          "exitMs": 247652,
+          "entryMs": 39195,
+          "durationMs": 9296,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.127,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.735,
+            "low": 0.744,
+            "transient": 0.612,
+            "key": null,
+            "vocal": 0.793,
+            "structure": 0.42,
+            "mixPoint": 0.991
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.256,
+          "vocalConflict": 0.207,
+          "energyGapDb": 3.97,
+          "why": [
+            "structure_and_interval_energy_without_rate_change",
+            "not_selected_lower_total"
+          ]
+        }
+      ],
+      "rejectedCount": 43,
+      "candidates": 103,
+      "top3": [
+        {
+          "strategy": "vocal-avoid",
+          "total": 0.7,
+          "baseScore": 0.661,
+          "strategyBonus": 0.039,
+          "confidence": 0.729,
+          "exitMs": 247652,
+          "entryMs": 18588,
+          "durationMs": 9296,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.127,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.804,
+            "low": 0.823,
+            "transient": 0.52,
+            "key": null,
+            "vocal": 0.757,
+            "structure": 0.527,
+            "mixPoint": 0.942
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.177,
+          "vocalConflict": 0.243,
+          "energyGapDb": 2.94,
+          "why": [
+            "asymmetric_eq_timing_for_relative_vocal_density"
+          ]
+        },
+        {
+          "strategy": "structure-blend",
+          "total": 0.69,
+          "baseScore": 0.674,
+          "strategyBonus": 0.017,
+          "confidence": 0.729,
+          "exitMs": 249974,
+          "entryMs": 534,
+          "durationMs": 9296,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.127,
+            "phase": 1,
+            "phrase": 0.75,
+            "energy": 0.665,
+            "low": 0.796,
+            "transient": 0.683,
+            "key": null,
+            "vocal": 0.789,
+            "structure": 0.668,
+            "mixPoint": 0.965
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.204,
+          "vocalConflict": 0.211,
+          "energyGapDb": 5.02,
+          "why": [
+            "structure_and_interval_energy_without_rate_change"
+          ]
+        },
+        {
+          "strategy": "structure-blend",
+          "total": 0.675,
+          "baseScore": 0.661,
+          "strategyBonus": 0.013,
+          "confidence": 0.729,
+          "exitMs": 247652,
+          "entryMs": 18588,
+          "durationMs": 9296,
+          "bars": 4,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.127,
+            "phase": 1,
+            "phrase": 0.6,
+            "energy": 0.804,
+            "low": 0.823,
+            "transient": 0.52,
+            "key": null,
+            "vocal": 0.757,
+            "structure": 0.527,
+            "mixPoint": 0.942
+          },
+          "weights": {
+            "tempo": 0.101,
+            "phase": 0.056,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.177,
+          "vocalConflict": 0.243,
+          "energyGapDb": 2.94,
+          "why": [
+            "structure_and_interval_energy_without_rate_change"
+          ]
+        }
+      ],
+      "exitType": "drop",
+      "entryType": "segment",
+      "isPhraseExit": true,
+      "isDownbeatEntry": true,
+      "keyUsed": false,
+      "energyA": -15.88,
+      "energyB": -18.81,
+      "fallback": null
+    },
+    "conservative": false
+  },
+  {
+    "pair": "ATW → Sparkle",
+    "ms": 1.55,
+    "v": 3,
+    "engine": "carminium-automix",
+    "a": "t5",
+    "b": "t6",
+    "aTitle": "ATW",
+    "bTitle": "Sparkle",
+    "strategy": "beatmatch",
+    "gaplessFallback": false,
+    "exitMs": 316639,
+    "entryMs": 12,
+    "durationMs": 5200,
+    "bars": 4,
+    "ratio": 1.003,
+    "semitones": 0.05,
+    "phaseErrMs": 0,
+    "transitionStartMs": 316639,
+    "crossfadeDurationMs": 5200,
+    "nextStartOffsetMs": 12,
+    "preloadTriggerMs": 304639,
+    "bpmCurrent": 185,
+    "bpmNext": 123.25,
+    "bpmTempoAdjust": 1.003,
+    "tempoRampMs": 0,
+    "score": 0.906,
+    "terms": {
+      "tempo": 0.997,
+      "phase": 1,
+      "phrase": 0.45,
+      "energy": 0.609,
+      "low": 0.764,
+      "transient": 1,
+      "key": null,
+      "vocal": 0.738,
+      "structure": 0.674,
+      "mixPoint": 0.915
+    },
+    "confidence": 0.76,
+    "eq": {
+      "enabled": true,
+      "aHighpassHz": 220,
+      "bLowpassHz": 4200,
+      "swapAt": 0.5,
+      "bassSwap": true,
+      "curve": "equal-power"
+    },
+    "reason": {
+      "selected": {
+        "strategy": "beatmatch",
+        "total": 0.906,
+        "baseScore": 0.796,
+        "strategyBonus": 0.11,
+        "confidence": 0.76,
+        "exitMs": 316639,
+        "entryMs": 12,
+        "durationMs": 5200,
+        "bars": 4,
+        "ratio": 1.003,
+        "terms": {
+          "tempo": 0.997,
+          "phase": 1,
+          "phrase": 0.45,
+          "energy": 0.609,
+          "low": 0.764,
+          "transient": 1,
+          "key": null,
+          "vocal": 0.738,
+          "structure": 0.674,
+          "mixPoint": 0.915
+        },
+        "weights": {
+          "tempo": 0.131,
+          "phase": 0.071,
+          "phrase": 0.042,
+          "energy": 0.17,
+          "low": 0.11,
+          "transient": 0.08,
+          "key": 0,
+          "vocal": 0.036,
+          "structure": 0.1,
+          "mixPoint": 0.06
+        },
+        "lowConflict": 0.236,
+        "vocalConflict": 0.262,
+        "energyGapDb": 5.87,
+        "why": [
+          "aligned_tempo_and_downbeat_grid"
+        ],
+        "interval": {
+          "a": {
+            "rmsDb": {
+              "known": true,
+              "mean": -27.633,
+              "start": -11.65,
+              "end": -42.41,
+              "slope": -5.127
+            },
+            "lowRatio": {
+              "known": true,
+              "mean": 0.61,
+              "start": 0.6,
+              "end": 0.31,
+              "slope": -0.048
+            },
+            "transient": {
+              "known": true,
+              "mean": 0.041,
+              "start": 0.29,
+              "end": 0,
+              "slope": -0.048
+            },
+            "vocal": {
+              "known": true,
+              "mean": 0.429,
+              "start": 1,
+              "end": 0,
+              "slope": -0.167
+            }
+          },
+          "b": {
+            "rmsDb": {
+              "known": true,
+              "mean": -21.764,
+              "start": -24,
+              "end": -18.78,
+              "slope": 0.87
+            },
+            "lowRatio": {
+              "known": true,
+              "mean": 0.117,
+              "start": 0.06,
+              "end": 0.21,
+              "slope": 0.025
+            },
+            "transient": {
+              "known": true,
+              "mean": 0.49,
+              "start": 0.57,
+              "end": 0.49,
+              "slope": -0.013
+            },
+            "vocal": {
+              "known": true,
+              "mean": 0.877,
+              "start": 0.57,
+              "end": 1,
+              "slope": 0.072
+            }
+          },
+          "joint": {
+            "low": 0.056,
+            "transient": 0,
+            "vocal": 0.262
+          }
+        }
+      },
+      "confidence": 0.76,
+      "gaplessFallback": false,
+      "topCandidates": [
+        {
+          "strategy": "beatmatch",
+          "total": 0.906,
+          "baseScore": 0.796,
+          "strategyBonus": 0.11,
+          "confidence": 0.76,
+          "exitMs": 316639,
+          "entryMs": 12,
+          "durationMs": 5200,
+          "bars": 4,
+          "ratio": 1.003,
+          "terms": {
+            "tempo": 0.997,
+            "phase": 1,
+            "phrase": 0.45,
+            "energy": 0.609,
+            "low": 0.764,
+            "transient": 1,
+            "key": null,
+            "vocal": 0.738,
+            "structure": 0.674,
+            "mixPoint": 0.915
+          },
+          "weights": {
+            "tempo": 0.131,
+            "phase": 0.071,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.236,
+          "vocalConflict": 0.262,
+          "energyGapDb": 5.87,
+          "why": [
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        },
+        {
+          "strategy": "tempo-ramp",
+          "total": 0.891,
+          "baseScore": 0.796,
+          "strategyBonus": 0.095,
+          "confidence": 0.76,
+          "exitMs": 316639,
+          "entryMs": 12,
+          "durationMs": 5200,
+          "bars": 4,
+          "ratio": 1.003,
+          "terms": {
+            "tempo": 0.997,
+            "phase": 1,
+            "phrase": 0.45,
+            "energy": 0.609,
+            "low": 0.764,
+            "transient": 1,
+            "key": null,
+            "vocal": 0.738,
+            "structure": 0.674,
+            "mixPoint": 0.915
+          },
+          "weights": {
+            "tempo": 0.131,
+            "phase": 0.071,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.236,
+          "vocalConflict": 0.262,
+          "energyGapDb": 5.87,
+          "why": [
+            "small_tempo_ramp_within_native_three_percent_limit"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.858,
+          "baseScore": 0.749,
+          "strategyBonus": 0.109,
+          "confidence": 0.76,
+          "exitMs": 317939,
+          "entryMs": 12,
+          "durationMs": 5200,
+          "bars": 4,
+          "ratio": 1.003,
+          "terms": {
+            "tempo": 0.997,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.789,
+            "transient": 1,
+            "key": null,
+            "vocal": 0.905,
+            "structure": 0.674,
+            "mixPoint": 0.915
+          },
+          "weights": {
+            "tempo": 0.131,
+            "phase": 0.071,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.211,
+          "vocalConflict": 0.095,
+          "energyGapDb": 12.16,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.852,
+          "baseScore": 0.782,
+          "strategyBonus": 0.07,
+          "confidence": 0.76,
+          "exitMs": 320540,
+          "entryMs": 12,
+          "durationMs": 5200,
+          "bars": 4,
+          "ratio": 1.003,
+          "terms": {
+            "tempo": 0.997,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.849,
+            "transient": 1,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.842,
+            "mixPoint": 0.915
+          },
+          "weights": {
+            "tempo": 0.131,
+            "phase": 0.071,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.151,
+          "vocalConflict": 0,
+          "energyGapDb": 25.31,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "total": 0.851,
+          "baseScore": 0.835,
+          "strategyBonus": 0.016,
+          "confidence": 0.76,
+          "exitMs": 316639,
+          "entryMs": 12,
+          "durationMs": 4000,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.997,
+            "phase": 1,
+            "phrase": 0.45,
+            "energy": 0.806,
+            "low": 0.784,
+            "transient": 1,
+            "key": null,
+            "vocal": 0.608,
+            "structure": 0.674,
+            "mixPoint": 0.915
+          },
+          "weights": {
+            "tempo": 0.131,
+            "phase": 0.071,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.216,
+          "vocalConflict": 0.392,
+          "energyGapDb": 2.91,
+          "why": [
+            "energy_safe_alternative_when_long_overlap_is_unreliable"
+          ]
+        }
+      ],
+      "rejectedCandidates": [
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 316639,
+          "entryMs": 12,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 316639,
+          "entryMs": 15511,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 316639,
+          "entryMs": 30987,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 317939,
+          "entryMs": 12,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 317939,
+          "entryMs": 15511,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 317939,
+          "entryMs": 18000,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 317939,
+          "entryMs": 30000,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 317939,
+          "entryMs": 30987,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 320000,
+          "entryMs": 12,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 320000,
+          "entryMs": 15511,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 320000,
+          "entryMs": 30987,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 320540,
+          "entryMs": 12,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 320540,
+          "entryMs": 15511,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 320540,
+          "entryMs": 18000,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 320540,
+          "entryMs": 30000,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        },
+        {
+          "strategy": "phrase-cut",
+          "exitMs": 320540,
+          "entryMs": 30987,
+          "durationMs": 2200,
+          "ratio": 1,
+          "why": [
+            "phrase_grid_required"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "strategy": "tempo-ramp",
+          "total": 0.891,
+          "baseScore": 0.796,
+          "strategyBonus": 0.095,
+          "confidence": 0.76,
+          "exitMs": 316639,
+          "entryMs": 12,
+          "durationMs": 5200,
+          "bars": 4,
+          "ratio": 1.003,
+          "terms": {
+            "tempo": 0.997,
+            "phase": 1,
+            "phrase": 0.45,
+            "energy": 0.609,
+            "low": 0.764,
+            "transient": 1,
+            "key": null,
+            "vocal": 0.738,
+            "structure": 0.674,
+            "mixPoint": 0.915
+          },
+          "weights": {
+            "tempo": 0.131,
+            "phase": 0.071,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.236,
+          "vocalConflict": 0.262,
+          "energyGapDb": 5.87,
+          "why": [
+            "small_tempo_ramp_within_native_three_percent_limit",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.858,
+          "baseScore": 0.749,
+          "strategyBonus": 0.109,
+          "confidence": 0.76,
+          "exitMs": 317939,
+          "entryMs": 12,
+          "durationMs": 5200,
+          "bars": 4,
+          "ratio": 1.003,
+          "terms": {
+            "tempo": 0.997,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.789,
+            "transient": 1,
+            "key": null,
+            "vocal": 0.905,
+            "structure": 0.674,
+            "mixPoint": 0.915
+          },
+          "weights": {
+            "tempo": 0.131,
+            "phase": 0.071,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.211,
+          "vocalConflict": 0.095,
+          "energyGapDb": 12.16,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.852,
+          "baseScore": 0.782,
+          "strategyBonus": 0.07,
+          "confidence": 0.76,
+          "exitMs": 320540,
+          "entryMs": 12,
+          "durationMs": 5200,
+          "bars": 4,
+          "ratio": 1.003,
+          "terms": {
+            "tempo": 0.997,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.849,
+            "transient": 1,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.842,
+            "mixPoint": 0.915
+          },
+          "weights": {
+            "tempo": 0.131,
+            "phase": 0.071,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.151,
+          "vocalConflict": 0,
+          "energyGapDb": 25.31,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "safe-fade",
+          "total": 0.851,
+          "baseScore": 0.835,
+          "strategyBonus": 0.016,
+          "confidence": 0.76,
+          "exitMs": 316639,
+          "entryMs": 12,
+          "durationMs": 4000,
+          "bars": 0,
+          "ratio": 1,
+          "terms": {
+            "tempo": 0.997,
+            "phase": 1,
+            "phrase": 0.45,
+            "energy": 0.806,
+            "low": 0.784,
+            "transient": 1,
+            "key": null,
+            "vocal": 0.608,
+            "structure": 0.674,
+            "mixPoint": 0.915
+          },
+          "weights": {
+            "tempo": 0.131,
+            "phase": 0.071,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.216,
+          "vocalConflict": 0.392,
+          "energyGapDb": 2.91,
+          "why": [
+            "energy_safe_alternative_when_long_overlap_is_unreliable",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "tempo-ramp",
+          "total": 0.843,
+          "baseScore": 0.749,
+          "strategyBonus": 0.094,
+          "confidence": 0.76,
+          "exitMs": 317939,
+          "entryMs": 12,
+          "durationMs": 5200,
+          "bars": 4,
+          "ratio": 1.003,
+          "terms": {
+            "tempo": 0.997,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.789,
+            "transient": 1,
+            "key": null,
+            "vocal": 0.905,
+            "structure": 0.674,
+            "mixPoint": 0.915
+          },
+          "weights": {
+            "tempo": 0.131,
+            "phase": 0.071,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.211,
+          "vocalConflict": 0.095,
+          "energyGapDb": 12.16,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "small_tempo_ramp_within_native_three_percent_limit",
+            "not_selected_lower_total"
+          ]
+        },
+        {
+          "strategy": "tempo-ramp",
+          "total": 0.837,
+          "baseScore": 0.782,
+          "strategyBonus": 0.055,
+          "confidence": 0.76,
+          "exitMs": 320540,
+          "entryMs": 12,
+          "durationMs": 5200,
+          "bars": 4,
+          "ratio": 1.003,
+          "terms": {
+            "tempo": 0.997,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.849,
+            "transient": 1,
+            "key": null,
+            "vocal": 1,
+            "structure": 0.842,
+            "mixPoint": 0.915
+          },
+          "weights": {
+            "tempo": 0.131,
+            "phase": 0.071,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.151,
+          "vocalConflict": 0,
+          "energyGapDb": 25.31,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "small_tempo_ramp_within_native_three_percent_limit",
+            "not_selected_lower_total"
+          ]
+        }
+      ],
+      "rejectedCount": 16,
+      "candidates": 88,
+      "top3": [
+        {
+          "strategy": "beatmatch",
+          "total": 0.906,
+          "baseScore": 0.796,
+          "strategyBonus": 0.11,
+          "confidence": 0.76,
+          "exitMs": 316639,
+          "entryMs": 12,
+          "durationMs": 5200,
+          "bars": 4,
+          "ratio": 1.003,
+          "terms": {
+            "tempo": 0.997,
+            "phase": 1,
+            "phrase": 0.45,
+            "energy": 0.609,
+            "low": 0.764,
+            "transient": 1,
+            "key": null,
+            "vocal": 0.738,
+            "structure": 0.674,
+            "mixPoint": 0.915
+          },
+          "weights": {
+            "tempo": 0.131,
+            "phase": 0.071,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.236,
+          "vocalConflict": 0.262,
+          "energyGapDb": 5.87,
+          "why": [
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        },
+        {
+          "strategy": "tempo-ramp",
+          "total": 0.891,
+          "baseScore": 0.796,
+          "strategyBonus": 0.095,
+          "confidence": 0.76,
+          "exitMs": 316639,
+          "entryMs": 12,
+          "durationMs": 5200,
+          "bars": 4,
+          "ratio": 1.003,
+          "terms": {
+            "tempo": 0.997,
+            "phase": 1,
+            "phrase": 0.45,
+            "energy": 0.609,
+            "low": 0.764,
+            "transient": 1,
+            "key": null,
+            "vocal": 0.738,
+            "structure": 0.674,
+            "mixPoint": 0.915
+          },
+          "weights": {
+            "tempo": 0.131,
+            "phase": 0.071,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.236,
+          "vocalConflict": 0.262,
+          "energyGapDb": 5.87,
+          "why": [
+            "small_tempo_ramp_within_native_three_percent_limit"
+          ]
+        },
+        {
+          "strategy": "beatmatch",
+          "total": 0.858,
+          "baseScore": 0.749,
+          "strategyBonus": 0.109,
+          "confidence": 0.76,
+          "exitMs": 317939,
+          "entryMs": 12,
+          "durationMs": 5200,
+          "bars": 4,
+          "ratio": 1.003,
+          "terms": {
+            "tempo": 0.997,
+            "phase": 1,
+            "phrase": 1,
+            "energy": 0.2,
+            "low": 0.789,
+            "transient": 1,
+            "key": null,
+            "vocal": 0.905,
+            "structure": 0.674,
+            "mixPoint": 0.915
+          },
+          "weights": {
+            "tempo": 0.131,
+            "phase": 0.071,
+            "phrase": 0.042,
+            "energy": 0.17,
+            "low": 0.11,
+            "transient": 0.08,
+            "key": 0,
+            "vocal": 0.036,
+            "structure": 0.1,
+            "mixPoint": 0.06
+          },
+          "lowConflict": 0.211,
+          "vocalConflict": 0.095,
+          "energyGapDb": 12.16,
+          "why": [
+            "interval_loudness_gap_penalty",
+            "aligned_tempo_and_downbeat_grid"
+          ]
+        }
+      ],
+      "exitType": "drop",
+      "entryType": "phrase",
+      "isPhraseExit": false,
+      "isDownbeatEntry": true,
+      "keyUsed": false,
+      "energyA": -27.63,
+      "energyB": -21.76,
+      "fallback": null
+    },
+    "conservative": false
+  }
+]

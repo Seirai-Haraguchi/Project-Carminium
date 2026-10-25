@@ -3,130 +3,49 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Carminium — 正在播放</title>
-
-
+  <title>Mini Window | Project Carminium</title>
   <link rel="stylesheet" href="floating.css">
 </head>
 <body>
-  <div class="floating-root">
+  <div class="floating-root mini-root">
+    <div class="mini-cover" id="np-cover">
+      <span class="material-symbols-rounded" id="np-cover-icon">music_note</span>
+      <img id="np-cover-img" src="" alt="" data-i18n-alt="floating.albumCover" hidden>
+      <div class="mini-tint" id="mini-tint"></div>
+    </div>
+    <div class="mini-shade"></div>
 
-    <div class="floating-titlebar">
-      <span class="floating-titlebar-label" data-i18n="common.nowPlaying">正在播放</span>
-      <button class="icon-btn" id="btn-dock" data-i18n-title="floating.dock" title="还原到侧边栏">
-        <span class="material-symbols-rounded">dock_to_right</span>
-      </button>
-      <button class="icon-btn" id="btn-minimize" data-i18n-title="title.minimize" title="最小化">
-        <span class="material-symbols-rounded">horizontal_rule</span>
-      </button>
-      <button class="icon-btn close-btn" id="btn-close" data-i18n-title="title.close" title="关闭">
-        <span class="material-symbols-rounded">close</span>
-      </button>
+    <img class="mini-brand" src="logo-dark.svg" alt="Carminium">
+    <button class="mini-close" id="btn-close" data-i18n-title="title.close" data-i18n-aria-label="title.close" title="关闭" aria-label="关闭">
+      <span class="material-symbols-rounded">close</span>
+    </button>
+
+    <div class="mini-track">
+      <p class="mini-title" id="np-title">未在播放</p>
+      <p class="mini-artist" id="np-artist">—</p>
     </div>
 
-    <div class="np-pivot" role="tablist">
-      <button class="np-pivot-tab active" data-tab="info" role="tab" aria-selected="true" data-i18n="np.tab.info">音乐信息</button>
-      <button class="np-pivot-tab" data-tab="queue" role="tab" aria-selected="false" data-i18n="np.tab.queue">接下来播放</button>
-      <button class="np-pivot-tab" data-tab="lyrics" role="tab" aria-selected="false" data-i18n="np.tab.lyrics">歌词</button>
-    </div>
+    <button class="mini-play" id="btn-play-pause" data-i18n-title="np.playPause" data-i18n-aria-label="np.playPause" title="播放/暂停" aria-label="播放/暂停">
+      <span class="material-symbols-rounded" id="play-icon">play_arrow</span>
+    </button>
 
-    <div class="np-mini-info" id="np-mini-info" style="display:none;">
-      <div class="np-mini-cover" id="np-mini-cover">
-        <span class="material-symbols-rounded" id="np-mini-cover-icon">music_note</span>
-        <img id="np-mini-cover-img" src="" alt="" style="display:none">
-      </div>
-      <div class="np-mini-text">
-        <p class="np-mini-title" id="np-mini-title">未在播放</p>
-        <p class="np-mini-artist" id="np-mini-artist">—</p>
-      </div>
-    </div>
-
-    <div class="np-panels">
-
-      <div class="np-panel np-panel--info active" data-panel="info">
-        <div class="np-cover-wrap">
-          <div class="np-cover" id="np-cover">
-            <span class="np-cover-placeholder material-symbols-rounded" id="np-cover-icon">music_note</span>
-            <img id="np-cover-img" src="" alt="" data-i18n-alt="floating.albumCover" style="display:none">
-          </div>
-        </div>
-
-        <div class="np-info">
-          <div class="np-text">
-            <p class="np-title" id="np-title">未在播放</p>
-            <p class="np-artist" id="np-artist">—</p>
-            <p class="np-album" id="np-album"></p>
-          </div>
-        </div>
-
-        <div class="np-progress-wrap">
-          <div class="np-progress-bar" id="np-progress-bar" role="slider"
-               data-i18n-aria-label="np.progress" aria-label="播放进度"
-               aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-            <div class="np-progress-track">
-              <div class="np-progress-fill" id="np-progress-fill"></div>
-              <div class="np-progress-thumb" id="np-progress-thumb"></div>
-            </div>
-          </div>
-          <div class="np-time-row">
-            <span id="np-time-cur">0:00</span>
-            <span id="np-time-dur">-0:00</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="np-panel np-panel--queue" data-panel="queue">
-        <div class="np-queue-list" id="np-queue-list"></div>
-      </div>
-
-      <div class="np-panel np-panel--lyrics" data-panel="lyrics">
-        <div class="np-lyrics-wrap" id="np-lyrics-wrap">
-          <div class="np-lyrics" id="np-lyrics">
-            <div class="np-lyrics-placeholder">
-              <span class="material-symbols-rounded">lyrics</span>
-              <p data-i18n="np.noLyrics">暂无歌词</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="np-main-controls">
-      <button class="np-control-pill" id="btn-prev" data-i18n-aria-label="np.prev" data-i18n-title="np.prev" aria-label="上一首" title="上一首">
+    <div class="mini-bottom">
+      <button class="mini-skip" id="btn-prev" data-i18n-title="np.prev" data-i18n-aria-label="np.prev" title="上一首" aria-label="上一首">
         <span class="material-symbols-rounded">skip_previous</span>
       </button>
-      <button class="np-play-pill" id="btn-play-pause" data-i18n-aria-label="np.playPause" aria-label="播放/暂停">
-        <span class="material-symbols-rounded" id="play-icon">play_arrow</span>
-      </button>
-      <button class="np-control-pill" id="btn-next" data-i18n-aria-label="np.next" data-i18n-title="np.next" aria-label="下一首" title="下一首">
+      <div class="mini-progress" id="np-progress-bar" role="slider" tabindex="0"
+           data-i18n-aria-label="np.progress" aria-label="播放进度"
+           aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="mini-progress-track">
+          <div class="mini-progress-fill" id="np-progress-fill"></div>
+          <div class="mini-progress-thumb" id="np-progress-thumb"></div>
+        </div>
+      </div>
+      <button class="mini-skip" id="btn-next" data-i18n-title="np.next" data-i18n-aria-label="np.next" title="下一首" aria-label="下一首">
         <span class="material-symbols-rounded">skip_next</span>
       </button>
+      <div class="mini-time"><span id="np-time-cur">0:00</span>/<span id="np-time-dur">-0:00</span></div>
     </div>
-
-    <div class="np-secondary-controls">
-      <button class="np-secondary-btn" id="btn-shuffle" data-i18n-aria-label="np.shuffle" data-i18n-title="np.shuffle" aria-label="随机" title="随机播放">
-        <span class="material-symbols-rounded">shuffle</span>
-      </button>
-      <button class="np-secondary-btn" id="btn-repeat" data-i18n-aria-label="np.repeat" data-i18n-title="np.repeat" aria-label="循环" title="循环播放">
-        <span class="material-symbols-rounded">repeat</span>
-      </button>
-      <button class="np-secondary-btn" id="btn-like" data-i18n-aria-label="np.like" data-i18n-title="np.like" aria-label="收藏" title="收藏">
-        <span class="material-symbols-rounded">favorite</span>
-      </button>
-      <button class="np-audio-mode-btn" id="btn-audio-mode" data-i18n-aria-label="np.audioMode" data-i18n-title="np.audioMode" aria-label="切换音频模式" title="音频模式">
-        <span class="np-audio-mode-label" id="audio-mode-label">shrd</span>
-      </button>
-    </div>
-
-    <div class="np-volume">
-      <button class="icon-btn volume-icon-btn" id="btn-mute" data-i18n-aria-label="np.mute" data-i18n-title="np.mute" aria-label="静音" title="静音">
-        <span class="material-symbols-rounded" id="vol-icon">volume_up</span>
-      </button>
-      <input type="range" class="volume-slider" id="volume-slider"
-             min="0" max="100" value="80" data-i18n-aria-label="np.volume" aria-label="音量">
-      <span class="vol-label" id="vol-label">80</span>
-    </div>
-
   </div>
 
   <script src="marquee.js"></script>

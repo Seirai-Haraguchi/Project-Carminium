@@ -6,25 +6,25 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-let AnalysisCache = null;
-let OsuBeatmapProvider = null;
-try {
-  ({ AnalysisCache } = require('./analysis_cache'));
-} catch (e) {
-  console.warn('[bridge] AnalysisCache module not available:', e.message);
-}
-try {
-  ({ OsuBeatmapProvider } = require('./osu_beatmap_provider'));
-} catch (e) {
-  console.warn('[bridge] OsuBeatmapProvider module not available:', e.message);
-}
-
 let LoudnessAnalyzer = null;
 try {
   ({ LoudnessAnalyzer } = require('./loudness'));
 } catch (e) {
   console.warn('[bridge] LoudnessAnalyzer module not available:', e.message);
 }
+
+let ProfileStore = null;
+let AnalysisService = null;
+try {
+  ({ ProfileStore } = require('./profile_store'));
+  ({ AnalysisService } = require('./analysis_service'));
+} catch (e) {
+  console.warn('[bridge] ProfileStore/AnalysisService not available:', e.message);
+}
+
+// 必须与 web/analysis/analyzer.js 的 PROFILE_VERSION 保持一致：
+// v5 起 profile 带 analysisTruncated / edges.*Known（截断分析的尾部证据作废）。
+const PROFILE_VERSION = 5;
 
 let AudioQualityProbe = null;
 let _qualityClassifyFromSuffix = null;
@@ -81,14 +81,30 @@ class Bridge extends EventEmitter {
       try { this._emit('library_scan_status', _dump(status)); } catch {  }
     });
 
-    this._analysisCache = AnalysisCache ? new AnalysisCache() : null;
-    this._osuProvider = OsuBeatmapProvider ? new OsuBeatmapProvider() : null;
     this._currentTransitionPlan = null;
-    if (this._analysisCache) {
-      console.log('[bridge] AnalysisCache initialized');
-    }
-    if (this._osuProvider) {
-      console.log('[bridge] OsuBeatmapProvider initialized');
+    this._cacheMigrating = false;
+
+    // 新版档案库（SQLite）+ 分析服务（worker_thread）
+    this._profiles = null;
+    this._analysis = null;
+    try {
+      if (ProfileStore && library && library._db) {
+        this._profiles = new ProfileStore(library._db);
+        console.log('[bridge] ProfileStore ready:', JSON.stringify(this._profiles.stats()));
+      }
+      if (AnalysisService && this._profiles) {
+        const wasapiMod = require('./wasapi');
+        const ffmpeg = (wasapiMod && typeof wasapiMod.findFFmpeg === 'function') ? wasapiMod.findFFmpeg() : null;
+        this._analysis = new AnalysisService({
+          store: this._profiles,
+          ffmpegPath: ffmpeg,
+          version: PROFILE_VERSION,
+          log: (m) => console.log('[analysis] ' + m),
+        });
+        console.log('[analysis] service ready, ffmpeg=' + (ffmpeg ? 'yes' : 'NO'));
+      }
+    } catch (e) {
+      console.warn('[bridge] AutoMix infra init failed:', e.message);
     }
 
     this._loudness = LoudnessAnalyzer ? new LoudnessAnalyzer() : null;
@@ -127,11 +143,6 @@ class Bridge extends EventEmitter {
       const memMgr = getMemoryManager();
       memMgr.onCleanup(() => {
 
-        if (this._analysisCache && this._analysisCache._dirty) {
-          try { this._analysisCache.flush(); } catch (e) {
-            console.warn('[bridge] AnalysisCache flush during cleanup failed:', e.message);
-          }
-        }
       });
 
       memMgr.onEmergencyCleanup(() => {
@@ -168,7 +179,6 @@ class Bridge extends EventEmitter {
     player.on('queue_changed', (queueJson) => this._emit('queue_changed', queueJson));
     player.on('liked_changed', (liked) => this._emit('liked_changed', liked));
     player.on('lyrics_changed', (trackId) => this._emit('lyrics_changed', trackId));
-    player.on('automix_takeover', () => this._emit('automix_takeover'));
 player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
 
     player.on('settings_changed', (settingsJson) => {
@@ -517,6 +527,19 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       return (result && result.length > 0) ? result[0] : '';
     });
 
+    ipcMain.handle('pick_cache_folder', () => {
+      const result = dialog.showOpenDialogSync(this._mainWindow, {
+        title: '选择缓存文件夹',
+        buttonLabel: '选择',
+        properties: ['openDirectory', 'createDirectory'],
+      });
+      return (result && result.length > 0) ? result[0] : '';
+    });
+
+    ipcMain.handle('set_cache_dir', async (_e, newPath) => {
+      return this._setCacheDir(newPath);
+    });
+
     ipcMain.handle('add_folder', (_e, folderPath) => {
       if (!folderPath) return _dump({ error: 'no path' });
       const folder = this._lib.addFolder(folderPath);
@@ -636,6 +659,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       this._player.setRadicalTransitionsEnabled(!!enabled);
     });
     ipcMain.handle('get_radical_transitions', () => this._player.radicalTransitionsEnabled);
+
     ipcMain.handle('set_crossfade_duration', (_e, ms) => {
       this._player.setCrossfadeDuration(parseInt(ms, 10));
     });
@@ -643,28 +667,56 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
 
     ipcMain.handle('get_system_accent_color', async () => _getSystemAccentColor());
 
-    ipcMain.handle('set_gapless', (_e, enabled) => {
-      this._player.setGaplessEnabled(!!enabled);
-    });
-    ipcMain.handle('get_gapless', () => this._player.gaplessEnabled);
-
-    ipcMain.handle('get_track_analysis', (_e, trackId) => {
-      if (!this._analysisCache || !trackId) return null;
+    /* ---------- AutoMix：TrackProfile 档案库 ---------- */
+    ipcMain.handle('get_track_profile', (_e, trackId, version, hash) => {
+      if (!this._profiles || !trackId) return null;
       try {
-        return this._analysisCache.get(trackId);
+        return this._profiles.get(trackId, version, hash);
       } catch (e) {
-        console.warn('[bridge] get_track_analysis error:', e.message);
+        console.warn('[bridge] get_track_profile error:', e.message);
         return null;
       }
     });
 
-    ipcMain.handle('save_track_analysis', (_e, trackId, analysis) => {
-      if (!this._analysisCache || !trackId || !analysis) return;
+    ipcMain.handle('save_track_profile', (_e, trackId, version, hash, costMs, profile) => {
+      if (!this._profiles || !trackId || !profile) return false;
       try {
-        this._analysisCache.set(trackId, analysis);
+        return this._profiles.set(trackId, version, hash, costMs, profile);
       } catch (e) {
-        console.warn('[bridge] save_track_analysis error:', e.message);
+        console.warn('[bridge] save_track_profile error:', e.message);
+        return false;
       }
+    });
+
+    ipcMain.handle('delete_track_profile', (_e, trackId) => {
+      if (!this._profiles || !trackId) return false;
+      try { this._profiles.delete(trackId); return true; } catch { return false; }
+    });
+
+    ipcMain.handle('profile_stats', () => {
+      if (!this._profiles) return { entries: 0, bytes: 0, available: false };
+      const s = this._profiles.stats();
+      return { entries: s.entries, bytes: s.bytes, available: true };
+    });
+
+    ipcMain.handle('prune_track_profiles', (_e, version) => {
+      if (!this._profiles) return 0;
+      try { return this._profiles.pruneOtherVersions(version); } catch { return 0; }
+    });
+
+    ipcMain.handle('analyze_track_profile', async (_e, trackId, filePath, meta) => {
+      if (!this._analysis) return null;
+      try {
+        return await this._analysis.analyze(trackId, filePath, meta || {});
+      } catch (e) {
+        console.warn('[bridge] analyze_track_profile failed:', e.message);
+        return null;
+      }
+    });
+
+    ipcMain.handle('analysis_stats', () => {
+      if (!this._analysis) return { available: false };
+      return Object.assign({ available: true, version: PROFILE_VERSION }, this._analysis.stats());
     });
 
     ipcMain.handle('get_track_loudness', async (_e, trackId, filePath) => {
@@ -750,21 +802,17 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       }
     });
 
-    ipcMain.handle('search_osu_beatmap', async (_e, title, artist, durationMs) => {
-      if (!this._osuProvider || !title) return null;
-      try {
-        return await this._osuProvider.search(title, artist, durationMs);
-      } catch (e) {
-        console.warn('[bridge] search_osu_beatmap error:', e.message);
-        return null;
-      }
-    });
-
     ipcMain.handle('set_transition_plan', (_e, plan) => {
       this._currentTransitionPlan = plan || null;
       if (plan) {
         console.log('[bridge] Transition plan received: start=' + plan.transitionStartMs +
           'ms, duration=' + plan.crossfadeDurationMs + 'ms, confidence=' + plan.confidence);
+        // 流媒体 next 的预滚起点只能在计划确定后重设；本地 buffer 不需要。
+        if (this._player && typeof this._player.applyTransitionPlan === 'function') {
+          this._player.applyTransitionPlan(plan).catch((e) => {
+            console.warn('[bridge] applyTransitionPlan failed:', e.message);
+          });
+        }
       }
       return true;
     });
@@ -1501,6 +1549,56 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     });
   }
 
+  async _setCacheDir(newPath) {
+    if (this._cacheMigrating) {
+      return _dump({ accepted: false, busy: true });
+    }
+
+    const { resolveCacheDir, defaultCacheDir, migrateCache } = require('./cache_dir');
+    const raw = (newPath == null ? '' : String(newPath)).trim();
+    const oldBase = resolveCacheDir(this._settings);
+    const newBase = raw ? path.resolve(raw) : defaultCacheDir(this._settings);
+
+    const applyDir = () => {
+      this._settings.set('cache_dir', raw);
+      if (this._lib && typeof this._lib.setCacheDir === 'function') {
+        this._lib.setCacheDir(newBase);
+      }
+      if (this._coverServer && typeof this._coverServer.setCacheDir === 'function') {
+        this._coverServer.setCacheDir(newBase);
+      }
+    };
+
+    // 目录未变化：直接落设置并通知，无需迁移。
+    if (oldBase === newBase) {
+      try {
+        applyDir();
+        this._emit('cache_migrate_done', _dump({ ok: true, noop: true, dir: newBase, moved: [], skipped: [], toDefault: !raw }));
+      } catch (e) {
+        this._emit('cache_migrate_done', _dump({ ok: false, error: String(e && e.message ? e.message : e), toDefault: !raw }));
+      }
+      return _dump({ accepted: true });
+    }
+
+    // 后台异步迁移，进度经事件推送到渲染进程。
+    this._cacheMigrating = true;
+    (async () => {
+      try {
+        const m = await migrateCache(oldBase, newBase, (p) => {
+          try { this._emit('cache_migrate_progress', _dump(p)); } catch (e) {  }
+        });
+        applyDir();
+        this._emit('cache_migrate_done', _dump({ ok: true, noop: false, dir: newBase, moved: m.moved, skipped: m.skipped, toDefault: !raw }));
+      } catch (e) {
+        this._emit('cache_migrate_done', _dump({ ok: false, error: String(e && e.message ? e.message : e), toDefault: !raw }));
+      } finally {
+        this._cacheMigrating = false;
+      }
+    })();
+
+    return _dump({ accepted: true });
+  }
+
   _scanFolderAsync(folderPath, useIncremental = false) {
     setImmediate(() => {
       const run = useIncremental
@@ -1884,32 +1982,23 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
   }
 
   floatingWindowOptions() {
-
-    let bg = '#191C20';
-    try {
-      const theme = this._settings.all().theme || 'system';
-      let dark = true;
-      if (theme === 'dark') dark = true;
-      else if (theme === 'light') dark = false;
-      else {
-        const { nativeTheme } = require('electron');
-        dark = nativeTheme.shouldUseDarkColors !== false;
-      }
-      bg = dark ? '#191C20' : '#F0F4F9';
-    } catch {  }
-
     return {
-      width: 360,
-      height: 760,
-      minWidth: 320,
-      minHeight: 420,
-      resizable: true,
+      width: 420,
+      height: 191,
+      useContentSize: true,
+      resizable: false,
+      maximizable: false,
+      minimizable: false,
       frame: false,
+      transparent: false,
+      roundedCorners: true,
+      thickFrame: true,
+      hasShadow: true,
       alwaysOnTop: true,
       show: false,
-      backgroundColor: bg,
+      backgroundColor: '#202020',
       autoHideMenuBar: true,
-      title: 'Project Carminium',
+      title: 'Mini Window | Project Carminium',
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
       },
@@ -1948,7 +2037,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
 
     win.webContents
       .executeJavaScript(
-        "(function(){try{window.open('floating.html','carminium-floating','width=360,height=760');return 'ok';}catch(e){return 'ERR:'+(e&&e.message);}})()"
+        "(function(){try{window.open('floating.html','carminium-mini','width=420,height=191');return 'ok';}catch(e){return 'ERR:'+(e&&e.message);}})()"
       )
       .then((r) => {
         if (r && r !== 'ok') { this._floatingOpening = false; console.warn('[bridge] floating open returned', r); }
@@ -1981,11 +2070,6 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     }
     this._libraryUpdatedPending = false;
 
-    if (this._analysisCache) {
-      try { this._analysisCache.flush(); } catch (e) {
-        console.warn('[bridge] AnalysisCache flush failed:', e.message);
-      }
-    }
 
     if (this._loudness) {
       try { this._loudness.flush(); } catch (e) {

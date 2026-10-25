@@ -1007,16 +1007,33 @@ class CoverHTTPServer {
     if (this._artistImgCacheDir) return this._artistImgCacheDir;
     let base = null;
     try {
-      const electron = require('electron');
-      if (electron && electron.app && electron.app.getPath) {
-        base = electron.app.getPath('userData');
+      if (this._library && typeof this._library.getCacheDir === 'function') {
+        base = this._library.getCacheDir();
       }
     } catch (e) {  }
+    if (!base) {
+      try {
+        const electron = require('electron');
+        if (electron && electron.app && electron.app.getPath) {
+          base = electron.app.getPath('userData');
+        }
+      } catch (e) {  }
+    }
     if (!base) base = os.tmpdir();
     const dir = path.join(base, 'carminium-artist-images');
     try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {  }
     this._artistImgCacheDir = dir;
     return dir;
+  }
+
+  // 运行时热更新缓存根目录（设置变更后由 bridge 调用）。
+  setCacheDir(newBase) {
+    if (!newBase) return;
+    this._artistImgCacheDir = null;
+    this._aliasIndex = null;
+    const dir = path.join(path.resolve(newBase), 'carminium-artist-images');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {  }
+    this._artistImgCacheDir = dir;
   }
 
   _artistMissFresh(cacheFile, ttlMs = 7 * 24 * 3600 * 1000) {
@@ -1050,7 +1067,8 @@ class CoverHTTPServer {
     if (!norm) { this._sendError(res, 400); return; }
 
     const key = crypto.createHash('md5').update(norm.toLowerCase()).digest('hex');
-    const cacheFile = path.join(this._getArtistImageCacheDir(), key + '.bio.txt');
+    // v4：v3 缓存可能仍是百度百科预览片段（酷狗源加入前生成），换后缀使其失效。
+    const cacheFile = path.join(this._getArtistImageCacheDir(), key + '.v4.bio.txt');
 
     if (!this._artistInflight) this._artistInflight = {};
 
@@ -1291,19 +1309,8 @@ class CoverHTTPServer {
     let sawError = false;
     const q = encodeURIComponent(name);
 
-    try {
-      const bk = await this._httpJson(
-        'https://baike.baidu.com/api/openapi/BaikeLemmaCardApi?scope=103&format=json&appid=379020&bk_length=600&bk_key=' + q,
-        { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Carminium/1.0' },
-        timeoutMs
-      );
-      if (bk && bk.errCode) {
-      } else if (bk && (bk.abstract || bk.desc)) {
-        const txt = String(bk.abstract || bk.desc || '').trim();
-        if (txt.length > 40) return this._cleanBioText(txt);
-      }
-    } catch (e) { sawError = true; }
-
+    // 源顺序说明：网易云 briefDesc 与酷狗 profile 均为完整全文，优先；
+    // 百度百科摘要接口（BaikeLemmaCardApi）返回的是词条预览片段，末尾自带"..."截断，只作兜底。
     try {
       const ne = await this._httpPostFormJson(
         'https://music.163.com/api/search/get/web',
@@ -1331,6 +1338,39 @@ class CoverHTTPServer {
           }
           if (txt && txt.length > 40) return this._cleanBioText(txt);
         }
+      }
+    } catch (e) { sawError = true; }
+
+    // 酷狗：search 拿 singerid（要求歌手名精确匹配，避免"周杰伦fm"之类张冠李戴），info 拿完整 profile。
+    try {
+      const ks = await this._httpJson(
+        'https://mobiles.kugou.com/api/v3/search/singer?keyword=' + q + '&page=1&pagesize=5',
+        null, timeoutMs
+      );
+      const norm = String(name || '').trim().toLowerCase();
+      const list = (ks && ks.status === 1 && Array.isArray(ks.data)) ? ks.data : [];
+      const hit = list.find((x) => x && typeof x.singername === 'string' && x.singername.trim().toLowerCase() === norm)
+        || (list.length === 1 ? list[0] : null);
+      if (hit && hit.singerid) {
+        const ki = await this._httpJson(
+          'https://mobiles.kugou.com/api/v5/singer/info?singerid=' + hit.singerid,
+          null, timeoutMs
+        );
+        const txt = ki && ki.data && typeof ki.data.profile === 'string' ? ki.data.profile.trim() : '';
+        if (txt && txt.length > 40) return this._cleanBioText(txt);
+      }
+    } catch (e) { sawError = true; }
+
+    try {
+      const bk = await this._httpJson(
+        'https://baike.baidu.com/api/openapi/BaikeLemmaCardApi?scope=103&format=json&appid=379020&bk_length=600&bk_key=' + q,
+        { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Carminium/1.0' },
+        timeoutMs
+      );
+      if (bk && bk.errCode) {
+      } else if (bk && (bk.abstract || bk.desc)) {
+        const txt = String(bk.abstract || bk.desc || '').trim();
+        if (txt.length > 40) return this._cleanBioText(txt);
       }
     } catch (e) { sawError = true; }
 
@@ -1384,8 +1424,9 @@ class CoverHTTPServer {
       .replace(/[ \t]+\n/g, '\n')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
-    if (t.length > 2000) {
-      t = t.slice(0, 2000);
+    // 上限只作为防御性兜底（防止异常超长文本撑爆渲染），正常百科/网易云简介远达不到。
+    if (t.length > 20000) {
+      t = t.slice(0, 20000);
       const cut = Math.max(t.lastIndexOf('\n'), t.lastIndexOf('。'), t.lastIndexOf('. '));
       if (cut > 800) t = t.slice(0, cut + 1);
       t = t.trimEnd() + '…';

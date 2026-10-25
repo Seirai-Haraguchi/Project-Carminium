@@ -69,8 +69,11 @@
           '</div>' +
           '<div class="about-version-expander" id="about-version-expander">' +
             '<div class="about-version-expander-inner">' +
-              '<p class="about-copyright">COPYRIGHT © 2025–2026 Seirai Haraguchi</p>' +
-              '<p class="about-license" data-i18n="about.license">本程序根据 GNU General Public License v3.0 获得许可</p>' +
+              '<p class="about-copyright">Project Carminium, Version <span id="about-detail-version">…</span></p>' +
+              '<p class="about-copyright"><span data-i18n="about.buildLabel">构建版本</span>: <span id="about-detail-build">…</span></p>' +
+              '<p class="about-copyright">© 2026 Seirai Haraguchi, YUNOFACTORY. All rights reserved.</p>' +
+              '<p class="about-copyright">"Carminium" is an Open-Source Software.</p>' +
+              '<p class="about-copyright">Made with ❤ by Seirai Haraguchi.</p>' +
               '<div class="about-links">' +
                 '<a class="btn-filled" href="' + GITHUB_REPO + '" target="_blank" rel="noopener noreferrer">' +
                   '<span data-i18n="about.githubRepo">GitHub 仓库</span>' +
@@ -195,6 +198,10 @@
         if (info.codename) text += ' (Codename ' + info.codename + ')';
         el.textContent = text;
       }
+      var verEl = document.getElementById('about-detail-version');
+      if (verEl) verEl.textContent = info.version || '0.0.0';
+      var buildEl = document.getElementById('about-detail-build');
+      if (buildEl) buildEl.textContent = info.build !== undefined && info.build !== '' ? info.build : 'N/A';
     });
   }
 

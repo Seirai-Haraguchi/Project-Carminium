@@ -28,6 +28,7 @@
   var ROW_ICONS = {
     theme: 'contrast',
     color_scheme: 'palette',
+    color_spec: 'science',
     wasapi_exclusive: 'speaker',
     eq_enabled: 'graphic_eq',
     dynamic_bass: 'piano',
@@ -35,7 +36,6 @@
     vocal_enhance: 'mic',
     shuffle: 'shuffle',
     automix: 'auto_awesome',
-    gapless: 'link',
     smtc_lyrics: 'subtitles',
   };
   function _rowIcon(bind) {
@@ -65,6 +65,10 @@
     { value: 'tonal_spot' }, { value: 'fidelity' }, { value: 'monochrome' },
     { value: 'neutral' }, { value: 'vibrant' }, { value: 'expressive' },
     { value: 'content' }, { value: 'rainbow' }, { value: 'fruit_salad' },
+  ];
+
+  var SPEC_VERSIONS = [
+    { value: '2021' }, { value: '2025' },
   ];
 
   var THEMES = [
@@ -581,6 +585,7 @@
 
     var theme = (_settings && _settings.theme) || 'system';
     var scheme = (_settings && _settings.color_scheme) || 'tonal_spot';
+    var spec = (_settings && _settings.color_spec) || '2021';
 
     var themeOptsHtml = THEMES.map(function (t) {
       return '<div class="md-dropdown-item" data-value="' + t.value + '" role="menuitem">' +
@@ -590,6 +595,11 @@
     var schemeOptsHtml = COLOR_SCHEMES.map(function (c) {
       return '<div class="md-dropdown-item" data-value="' + c.value + '" role="menuitem">' +
         _t('settings.colorScheme.' + c.value) + '</div>';
+    }).join('');
+
+    var specOptsHtml = SPEC_VERSIONS.map(function (v) {
+      return '<div class="md-dropdown-item" data-value="' + v.value + '" role="menuitem">' +
+        _t('settings.colorSpec.v' + v.value) + '</div>';
     }).join('');
 
     content.innerHTML =
@@ -621,6 +631,19 @@
             '</div>' +
           '</div>' +
         '</div>' +
+        '<div class="settings-row" data-bind="color_spec">' +
+          _iconHtml('color_spec') +
+          _bodyHtml('settings.colorSpec.label', 'settings.colorSpec.sub') +
+          '<div class="settings-row-trailing">' +
+            '<div class="md-dropdown" data-bind="color_spec">' +
+              '<button class="md-dropdown-trigger" type="button" aria-haspopup="true" aria-expanded="false">' +
+                '<span class="md-dropdown-value">—</span>' +
+                '<span class="material-symbols-rounded md-dropdown-arrow">arrow_drop_down</span>' +
+              '</button>' +
+              '<div class="md-dropdown-menu" role="menu">' + specOptsHtml + '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
       '</div>';
 
     actions.innerHTML = _buildActions({ next: true });
@@ -636,6 +659,12 @@
       return { value: c.value, label: _t('settings.colorScheme.' + c.value) };
     }), scheme, function (val) {
       _save({ color_scheme: val }, function () { _applyColorScheme(val); });
+    });
+
+    _bindDropdown(content, 'color_spec', SPEC_VERSIONS.map(function (v) {
+      return { value: v.value, label: _t('settings.colorSpec.v' + v.value) };
+    }), spec, function (val) {
+      _save({ color_spec: val }, function () { _applyColorSpec(val); });
     });
   }
 
@@ -654,6 +683,14 @@
   function _applyColorScheme(val) {
     if (!App.state) return;
     App.state.colorScheme = val || 'tonal_spot';
+    if (App.state.currentDominantRgb && App.utils.applyDynamicTheme) {
+      App.utils.applyDynamicTheme(App.state.currentDominantRgb, App.state.colorScheme);
+    }
+  }
+
+  function _applyColorSpec(val) {
+    if (!App.state) return;
+    App.state.colorSpec = val === '2025' ? '2025' : '2021';
     if (App.state.currentDominantRgb && App.utils.applyDynamicTheme) {
       App.utils.applyDynamicTheme(App.state.currentDominantRgb, App.state.colorScheme);
     }
@@ -707,11 +744,6 @@
       { bind: 'shuffle',     key: 'settings.shuffle',     apply: function (v) { App.backend.set_shuffle(v); } },
       { bind: 'automix',     key: 'settings.automix',     apply: function (v) {
           App.utils.call('set_automix', v);
-          if (v) { _obUncheck(content, 'gapless'); App.utils.call('set_gapless', false); }
-        } },
-      { bind: 'gapless',     key: 'settings.gapless',     apply: function (v) {
-          App.utils.call('set_gapless', v);
-          if (v) { _obUncheck(content, 'automix'); App.utils.call('set_automix', false); }
         } },
       { bind: 'smtc_lyrics', key: 'settings.smtcLyrics',  apply: function () {} },
     ];
@@ -749,13 +781,14 @@
     var langLabel = (LANGUAGES.find(function (l) { return l.value === lang; }) || {}).label || lang;
     var theme = (_settings && _settings.theme) || 'system';
     var scheme = (_settings && _settings.color_scheme) || 'tonal_spot';
+    var spec = (_settings && _settings.color_spec) || '2021';
 
     content.innerHTML =
       '<div class="settings-group-header" data-i18n="onboarding.start.summary">' + _t('onboarding.start.summary') + '</div>' +
       '<div class="md-seglist">' +
         _summaryRow('translate', 'onboarding.step.language', langLabel) +
         _summaryRow('folder_open', 'onboarding.step.library', _t('onboarding.library.added', { count: _libraryCount })) +
-        _summaryRow('palette', 'onboarding.step.personalize', _t('settings.theme.' + theme) + ' · ' + _t('settings.colorScheme.' + scheme)) +
+        _summaryRow('palette', 'onboarding.step.personalize', _t('settings.theme.' + theme) + ' · ' + _t('settings.colorScheme.' + scheme) + ' · ' + _t('settings.colorSpec.v' + spec)) +
       '</div>';
 
     actions.innerHTML = _buildActions({ back: true, skip: false, finish: true });

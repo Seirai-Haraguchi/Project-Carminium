@@ -20,7 +20,6 @@
     btnFullscreen: document.getElementById('btn-fullscreen'),
     btnMoreDropdown: document.getElementById('btn-more-dropdown'),
     dropdownMenu: document.getElementById('split-dropdown-menu'),
-    btnFloating: document.getElementById('btn-floating'),
     btnTheater: document.getElementById('btn-theater'),
     btnCollapse: document.getElementById('btn-collapse'),
     btnMute: document.getElementById('btn-mute'),
@@ -187,8 +186,14 @@ let duration = 0;
 let isSeeking = false;
 let lyricsData = [];
 let lastLyricsIdx = -1;
+// 同唱分组：时间区间重叠的行（主唱+和声/对唱叠唱）归入同组，同时点亮
+let lineGroups = [];
+let groupOfLine = [];
+// 滚动以组为单位：组内行推进不滚动，整组亮完滚到下一组锚点
+let lastGroupIdx = -1;
 let _lyricsTrackId = null;
 let _lastKnownPositionMs = 0;
+let _lyricLineEls = null;
   let lyricsRaf = null;
 
   const INTERLUDE_MIN_GAP = 4000;
@@ -214,10 +219,15 @@ let _lastKnownPositionMs = 0;
   };
   let progressiveBlurEnabled = false;
   let lyricsCentered = false;
+  // 对唱歌词（≥2 个歌手）：强制左右分侧，暂停居中排版设置
+  let _lyricsIsDuet = false;
   let lyricsFontSize = 16;
   let circularCover = false;
   let waveProgress = true;
   let lyricsCreditFilters = '';
+  // 正在播放页背景模式：'cover' = 专辑图混色模糊，'solid' = 纯色（与其他页面一致）
+  let npBackgroundMode = 'cover';
+
 
   let _npDefaultView = 'side';
 
@@ -336,8 +346,9 @@ let _lastKnownPositionMs = 0;
       return;
     }
 
-    var analysis = App.currentAnalysis;
-    var bpm = analysis && analysis.bpm ? analysis.bpm : 0;
+    var profiles = App.automix && App.automix.profiles ? App.automix.profiles() : null;
+    var currentProfile = profiles && profiles.current;
+    var bpm = currentProfile && currentProfile.tempo ? currentProfile.tempo.primary : 0;
     if (bpm !== _beatBpm) {
       _beatBpm = bpm;
       _beatIntervalMs = bpm > 0 ? (60000 / bpm) : 500;
@@ -416,6 +427,9 @@ let _lastKnownPositionMs = 0;
         if (s.np_content_mode) setContentMode(s.np_content_mode, false);
         _videoBgEnabled = !!s.video_background;
         if (_videoBg) _videoBg.setEnabled(_videoBgEnabled);
+        _miniLyricsEnabled = s.mini_player_lyrics !== false;
+        npBackgroundMode = s.np_background_mode === 'solid' ? 'solid' : 'cover';
+        _applyBackgroundModeClass();
         _applyLyricsLayout();
         _applyCircularCoverClass();
         _applyWaveProgressClass();
@@ -432,8 +446,9 @@ let _lastKnownPositionMs = 0;
     });
   }
 
-  var BG_BLUR_SOURCE_MAX = 384;
-  var BG_BAKE_BLUR = 16;
+  var BG_BLUR_SOURCE_MAX = 192;
+  var BG_BAKE_BLUR = 8;
+  var BG_BAKE_JPEG_QUALITY = 0.7;
   var BG_BLUR_CACHE_LIMIT = 8;
   var _bgBlurSourceCache = new Map();
 
@@ -462,7 +477,7 @@ let _lastKnownPositionMs = 0;
           var sctx = src.getContext('2d');
           if (!sctx) { resolve({ base: url, surge: url }); return; }
           sctx.imageSmoothingEnabled = true;
-          sctx.imageSmoothingQuality = 'high';
+          sctx.imageSmoothingQuality = 'low';
           sctx.drawImage(img, 0, 0, w, h);
           var pad = Math.ceil(BG_BAKE_BLUR * 3);
           function bake(filter) {
@@ -473,7 +488,7 @@ let _lastKnownPositionMs = 0;
             if (!ctx) return null;
             ctx.filter = filter;
             ctx.drawImage(src, -pad, -pad, w + pad * 2, h + pad * 2);
-            return c.toDataURL('image/jpeg', 0.82);
+            return c.toDataURL('image/jpeg', BG_BAKE_JPEG_QUALITY);
           }
           var base = bake('blur(' + BG_BAKE_BLUR + 'px) saturate(1.6) brightness(1.05)');
           var surge = bake('blur(' + BG_BAKE_BLUR + 'px) saturate(2.5) brightness(1.28)');
@@ -690,11 +705,6 @@ let _lastKnownPositionMs = 0;
       if (!e.target.closest('.split-button')) {
         _closeDropdown();
       }
-    });
-
-    els.btnFloating.addEventListener('click', function () {
-      _closeDropdown();
-      App.backend.toggle_floating_window();
     });
 
     els.btnTheater.addEventListener('click', function () {
@@ -1235,9 +1245,20 @@ let _lastKnownPositionMs = 0;
     return { start: start, end: end, nextStart: nextStart, lineIdx: lineIdx, el: el, wrap: dotsWrap, dots: dots };
   }
 
+  function _getLyricLineEls() {
+    if (!_lyricLineEls) {
+      _lyricLineEls = els.lyricsWrap
+        ? els.lyricsWrap.querySelectorAll('.np-lyrics-line')
+        : [];
+    }
+    return _lyricLineEls;
+  }
+
   function _renderLyrics(track) {
     lyricsData = [];
     lastLyricsIdx = -1;
+    lastGroupIdx = -1;
+    _lyricLineEls = null;
     _miniLrcClear();
     lyricsTimeOffset = 0;
     _lyricsTrackId = track ? track.id : null;
@@ -1250,6 +1271,10 @@ let _lastKnownPositionMs = 0;
     if (_interludeScrollTimer) { clearTimeout(_interludeScrollTimer); _interludeScrollTimer = 0; }
     _stopInterludeRaf();
     _clearWordAnim();
+    _lyricsIsDuet = false;
+    lineGroups = [];
+    groupOfLine = [];
+    _applyLyricsLayout();
 
     if (!els.lyrics) return;
     els.lyrics.innerHTML = '';
@@ -1362,6 +1387,37 @@ let _lastKnownPositionMs = 0;
       interludes.sort(function (a, b) { return a.start - b.start; });
       lyricsData = displayLines;
 
+      // 对唱：按歌手首次出现顺序分侧，奇数序歌手右对齐
+      var singerOrder = [];
+      for (var so = 0; so < lyricsData.length; so++) {
+        var sName = lyricsData[so].singer;
+        if (sName && singerOrder.indexOf(sName) < 0) singerOrder.push(sName);
+      }
+      if (singerOrder.length >= 2) _lyricsIsDuet = true;
+
+      // 同唱分组：下一行开始时间早于当前行结束时间（末词 end）→ 重叠，归入同组
+      lineGroups = [];
+      var groupEnd = -1;
+      for (var li = 0; li < lyricsData.length; li++) {
+        var ld = lyricsData[li];
+        var ldEnd = (ld.words && ld.words.length)
+          ? ld.words[ld.words.length - 1].end
+          : ((li + 1 < lyricsData.length) ? lyricsData[li + 1].time : (trackDurMs || ld.time));
+        if (li > 0 && ld.time < groupEnd) {
+          lineGroups[lineGroups.length - 1].push(li);
+        } else {
+          lineGroups.push([li]);
+          groupEnd = -1;
+        }
+        if (ldEnd > groupEnd) groupEnd = ldEnd;
+      }
+      groupOfLine = new Array(lyricsData.length);
+      for (var lg = 0; lg < lineGroups.length; lg++) {
+        for (var lgj = 0; lgj < lineGroups[lg].length; lgj++) {
+          groupOfLine[lineGroups[lg][lgj]] = lg;
+        }
+      }
+
       var frag = document.createDocumentFragment();
       var ilCursor = 0;
       var flushInterludesBefore = function (time) {
@@ -1377,13 +1433,46 @@ let _lastKnownPositionMs = 0;
         var lineHasJp = /[\u3040-\u309F\u30A0-\u30FF]/.test(line.text);
         var div = document.createElement('div');
         div.className = 'np-lyrics-line';
+        if (line.isBg) div.classList.add('np-lyrics-bg-line');
         div.dataset.time = String(line.time);
         div.dataset.timeLabel = _formatSeekTarget(line.time);
         _applyLineFont(div, lineHasJp && useJpDistinct, baseFont, jpFont);
+        // v1/v2 等 agent id 兜底名不显示（仅用于分侧），有真实歌手名才渲染标签
+        if (line.singer && !/^v\d+$/i.test(line.singer)) {
+          var singerEl = document.createElement('span');
+          singerEl.className = 'np-lyrics-singer';
+          singerEl.textContent = line.singer;
+          div.appendChild(singerEl);
+          if (_lyricsIsDuet && singerOrder.indexOf(line.singer) % 2 === 1) {
+            div.classList.add('np-lyrics-align-right');
+          }
+        } else if (line.singer && _lyricsIsDuet &&
+                   singerOrder.indexOf(line.singer) % 2 === 1) {
+          div.classList.add('np-lyrics-align-right');
+        }
         if (line.words && line.words.length) {
           _appendWords(div, line.words);
         } else {
           div.textContent = line.text;
+        }
+        if (line.bgLines && line.bgLines.length) {
+          for (var bgi = 0; bgi < line.bgLines.length; bgi++) {
+            var bgLine = line.bgLines[bgi];
+            var bgEl = document.createElement('span');
+            bgEl.className = 'np-lyrics-bg';
+            if (bgLine.singer && !/^v\d+$/i.test(bgLine.singer)) {
+              var bgSingerEl = document.createElement('span');
+              bgSingerEl.className = 'np-lyrics-singer';
+              bgSingerEl.textContent = bgLine.singer;
+              bgEl.appendChild(bgSingerEl);
+            }
+            if (bgLine.words && bgLine.words.length) {
+              _appendWords(bgEl, bgLine.words);
+            } else {
+              bgEl.textContent = bgLine.text;
+            }
+            div.appendChild(bgEl);
+          }
         }
         if (line.romaji) {
           var romaji = document.createElement('span');
@@ -1412,6 +1501,7 @@ let _lastKnownPositionMs = 0;
       while (ilCursor < interludes.length) { frag.appendChild(interludes[ilCursor].el); ilCursor++; }
 
       els.lyrics.appendChild(frag);
+      _applyLyricsLayout();
 
       if (creditsText) {
         els.lyrics.appendChild(_buildCreditsElement(creditsText));
@@ -1513,7 +1603,7 @@ let _lastKnownPositionMs = 0;
 
   const WL_MIN_CHAR_LIFT_MS = 120;
   const WL_EMPHASIS_MIN_MS = 1000;
-  let _wordAnimLine = null;
+  let _wordAnimLines = [];
   let _wordRafId = 0;
 
   function _wlProgress(pos, start, end) {
@@ -1703,8 +1793,10 @@ let _lastKnownPositionMs = 0;
   }
 
   function _clearWordAnim() {
-    if (_wordAnimLine) _teardownWordLine(_wordAnimLine);
-    _wordAnimLine = null;
+    for (var i = 0; i < _wordAnimLines.length; i++) {
+      _teardownWordLine(_wordAnimLines[i]);
+    }
+    _wordAnimLines = [];
     _stopWordRaf();
   }
 
@@ -1712,12 +1804,13 @@ let _lastKnownPositionMs = 0;
     if (_wordRafId) return;
     var tick = function () {
       _wordRafId = 0;
-      var lineEl = _wordAnimLine;
-      if (!lineEl) return;
+      if (!_wordAnimLines.length) return;
       if (window.__appFrozen) { _wordRafId = requestAnimationFrame(tick); return; }
-      if (App.state.playbackState === 'playing' && lineEl._wl) {
+      if (App.state.playbackState === 'playing') {
         var pos = _beatGetPrecisePosition() - lyricsTimeOffset;
-        _renderWordLine(lineEl, pos);
+        for (var i = 0; i < _wordAnimLines.length; i++) {
+          if (_wordAnimLines[i]._wl) _renderWordLine(_wordAnimLines[i], pos);
+        }
         if (_miniLrcWordLine && _miniLrcWordLine._wl) _renderWordLine(_miniLrcWordLine, pos);
       }
       _wordRafId = requestAnimationFrame(tick);
@@ -1734,6 +1827,10 @@ let _lastKnownPositionMs = 0;
   var _miniLrcSwap = null;
   var _miniLrcWordLine = null;
   var _miniLrcOutTimer = 0;
+  // 间奏态：当前处于（已唱完这一句 → 下一句开始）之间的空白段，
+  // 底栏让位给进度条，而不是把上一句凝固住
+  var _miniLrcInGap = false;
+  var _miniLrcGapTimer = 0;
 
   function _setMiniTime(curLabel, remLabel) {
     if (els.miniTimeCur) els.miniTimeCur.textContent = curLabel;
@@ -1799,7 +1896,9 @@ let _lastKnownPositionMs = 0;
   }
 
   function _miniLrcClear() {
-    if (_miniLrcSwap || _miniLrcWordLine || _miniLrcIdx !== -2) {
+    _miniLrcInGap = false;
+    if (_miniLrcGapTimer) { clearTimeout(_miniLrcGapTimer); _miniLrcGapTimer = 0; }
+    if (_miniLrcSwap || _miniLrcWordLine || _miniLrcIdx !== -2 || els.miniLrc && els.miniLrc.firstChild) {
       if (_miniLrcWordLine) _teardownWordLine(_miniLrcWordLine);
       _miniLrcSwap = null;
       _miniLrcWordLine = null;
@@ -1816,7 +1915,11 @@ let _lastKnownPositionMs = 0;
     }
   }
 
+  // 底栏歌词开关（设置页「在底栏进度条的位置上显示歌词」）
+  var _miniLyricsEnabled = true;
+
   function _miniLrcVisible() {
+    if (!_miniLyricsEnabled) return false;
     return !!(document.body && document.body.classList.contains('player-collapsed'));
   }
 
@@ -1853,9 +1956,49 @@ let _lastKnownPositionMs = 0;
     _updateMiniLyric(pos, idx);
   }
 
+  // 底栏的间奏判定：区间一直延到下一句真正开始（nextStart）为止，
+  // 这样「间奏收尾 250ms」那段空白也不会把上一句重新顶出来
+  function _miniLrcGapAt(pos) {
+    for (var k = 0; k < interludes.length; k++) {
+      var il = interludes[k];
+      if (pos < il.start) break;
+      var stop = isFinite(il.nextStart) ? il.nextStart : il.end;
+      if (pos < stop) return il;
+    }
+    return null;
+  }
+
+  // 进间奏：底栏让位给进度条，旧歌词由 CSS 过渡淡出后再移除
+  function _miniLrcEnterGap() {
+    if (_miniLrcInGap) return;
+    _miniLrcInGap = true;
+    var old = _miniLrcSwap;
+    if (_miniLrcWordLine) _teardownWordLine(_miniLrcWordLine);
+    _miniLrcSwap = null;
+    _miniLrcWordLine = null;
+    _miniLrcIdx = -2;
+    _miniLrcOverflowToken++;
+    if (_miniLrcOverflowTimer) { clearTimeout(_miniLrcOverflowTimer); _miniLrcOverflowTimer = 0; }
+    if (els.miniProgressSlot) els.miniProgressSlot.classList.remove('has-lyric');
+    if (els.miniProgressInline) els.miniProgressInline.classList.remove('lrc-mode');
+    if (els.miniPlayer) els.miniPlayer.classList.remove('mini-lrc-wide');
+    if (_miniLrcGapTimer) clearTimeout(_miniLrcGapTimer);
+    _miniLrcGapTimer = setTimeout(function () {
+      _miniLrcGapTimer = 0;
+      if (old && old.parentNode) old.parentNode.removeChild(old);
+      if (els.miniProgressSlot && !_miniLrcSwap) {
+        els.miniProgressSlot.style.removeProperty('--mini-lrc-w');
+      }
+    }, MINI_LRC_OUT_MS + 40);
+  }
+
   function _updateMiniLyric(pos, idx) {
     if (!els.miniLrc) return;
     if (!_miniLrcVisible()) { _miniLrcClear(); return; }
+
+    // 间奏段：不凝固上一句，回到进度条态
+    if (_miniLrcGapAt(pos)) { _miniLrcEnterGap(); return; }
+    _miniLrcInGap = false;
 
     var line = lyricsData[idx];
     if (!line) { _miniLrcClear(); return; }
@@ -1946,7 +2089,7 @@ let _lastKnownPositionMs = 0;
   }
   function _applyProgressiveBlurToLines(activeIdx) {
     if (!progressiveBlurEnabled) return;
-    var lines = els.lyricsWrap.querySelectorAll('.np-lyrics-line');
+    var lines = _getLyricLineEls();
     for (var j = 0; j < lines.length; j++) {
       var blurPx = _blurForDistance(Math.abs(j - activeIdx));
       if (lines[j]._blurPx === blurPx) continue;
@@ -1960,7 +2103,7 @@ let _lastKnownPositionMs = 0;
     var wrap = document.getElementById('np-lyrics-wrap');
     if (wrap) wrap.classList.toggle('progressive-blur', progressiveBlurEnabled);
     if (!progressiveBlurEnabled) {
-      var lines = els.lyricsWrap.querySelectorAll('.np-lyrics-line');
+      var lines = _getLyricLineEls();
       for (var j = 0; j < lines.length; j++) {
         lines[j].style.filter = '';
         lines[j]._blurPx = null;
@@ -2037,6 +2180,32 @@ let _lastKnownPositionMs = 0;
     _applyWaveProgressClass();
   };
 
+  // 底栏歌词开关：关闭后进度条位置始终显示进度条本身
+  np.refreshMiniLyrics = function (enabled) {
+    var next = enabled !== false;
+    if (next === _miniLyricsEnabled) return;
+    _miniLyricsEnabled = next;
+    if (!_miniLyricsEnabled) {
+      _miniLrcClear();
+      _miniLrcWasVisible = false;
+    } else {
+      _miniLrcResync();
+    }
+  };
+
+  np.refreshBackgroundMode = function (mode) {
+    var next = mode === 'solid' ? 'solid' : 'cover';
+    if (next === npBackgroundMode) return;
+    npBackgroundMode = next;
+    _applyBackgroundModeClass();
+  };
+
+  function _applyBackgroundModeClass() {
+    var pane = document.querySelector('.now-playing-pane');
+    if (!pane) return;
+    pane.classList.toggle('np-bg-solid', npBackgroundMode === 'solid');
+  }
+
   function _applyWaveProgressClass() {
     if (els.barFill) {
       els.barFill.classList.toggle('flat', !waveProgress);
@@ -2054,8 +2223,10 @@ let _lastKnownPositionMs = 0;
 
   function _applyLyricsLayout() {
     if (!els.lyrics) return;
-    els.lyrics.classList.toggle('lyrics-centered', lyricsCentered);
+    els.lyrics.classList.toggle('lyrics-centered', lyricsCentered && !_lyricsIsDuet);
     els.lyrics.style.setProperty('--lyrics-font-size', lyricsFontSize + 'px');
+    // 对唱歌词强制左右分侧排版，居中排版开关禁用
+    if (els.lyricsCenterToggle) els.lyricsCenterToggle.disabled = _lyricsIsDuet;
   }
 
 
@@ -2229,7 +2400,7 @@ let _lastKnownPositionMs = 0;
 
     _updateMiniLyric(adjustedPos, idx);
 
-    var lines = els.lyricsWrap.querySelectorAll('.np-lyrics-line');
+    var lines = _getLyricLineEls();
 
     var il = _findInterlude(adjustedPos);
     if (il) {
@@ -2251,65 +2422,92 @@ let _lastKnownPositionMs = 0;
       _interludeExiting = true;
       _activeInterlude = null;
       lastLyricsIdx = -1;
+      lastGroupIdx = -1;
     }
     for (var k2 = 0; k2 < interludes.length; k2++) {
       if (adjustedPos >= interludes[k2].end && adjustedPos < interludes[k2].nextStart) return;
     }
 
-    if (idx !== lastLyricsIdx) {
-      var prevLyricsIdx = lastLyricsIdx;
+    var groupIdx = (groupOfLine && groupOfLine[idx] !== undefined) ? groupOfLine[idx] : idx;
+    var activeGroup = lineGroups[groupIdx] || [idx];
+    var groupAnchor = activeGroup[0];
+    var groupChanged = groupIdx !== lastGroupIdx;
+    var prevGroupIdx = lastGroupIdx;
+
+    if (idx !== lastLyricsIdx || groupChanged) {
       lastLyricsIdx = idx;
       for (var j = 0; j < lines.length; j++) {
+        var jg = (groupOfLine && groupOfLine[j] !== undefined) ? groupOfLine[j] : j;
         lines[j].classList.remove('active', 'past');
-        if (j < idx) lines[j].classList.add('past');
+        if (jg < groupIdx) lines[j].classList.add('past');
+        else if (jg === groupIdx) lines[j].classList.add('active');
         lines[j].classList.toggle('np-near', j >= idx - 4 && j <= idx + 4);
       }
-      if (lines[idx]) lines[idx].classList.add('active');
 
       _applyProgressiveBlurToLines(idx);
+    }
 
-      App.utils.cascadeLyricLines(lines, idx, prevLyricsIdx);
-
-      var activeLine = lines[idx];
-      if (activeLine) {
+    if (groupChanged) {
+      // 滚动以组为单位：高亮在组内推进时不滚动，整组结束后一次性滚到下一组锚点（组首行）
+      lastGroupIdx = groupIdx;
+      App.utils.cascadeLyricLines(lines, groupAnchor, -1);
+      var anchorLine = lines[groupAnchor];
+      if (anchorLine) {
+        var prevAnchor = (prevGroupIdx >= 0 && lineGroups[prevGroupIdx])
+          ? lineGroups[prevGroupIdx][0] : -1;
         if (_interludeExiting) {
-          _schedulePostCollapseScroll(activeLine, idx, prevLyricsIdx);
+          _schedulePostCollapseScroll(anchorLine, groupAnchor, prevAnchor);
         } else {
-          _doActivationScroll(activeLine, idx, prevLyricsIdx);
+          _doActivationScroll(anchorLine, groupAnchor, prevAnchor);
         }
       }
     }
 
-    if (lines[idx]) {
-      var words = lines[idx].querySelectorAll('.np-lyrics-word');
-      for (var w = 0; w < words.length; w++) {
-        var word = words[w];
-        var start = parseInt(word.dataset.time, 10);
-        var end = parseInt(word.dataset.end, 10);
-        word.classList.remove('active', 'past');
-        if (adjustedPos >= end) {
-          word.classList.add('past');
-        } else if (adjustedPos >= start) {
-          word.classList.add('active');
+    // 同唱组内所有行一起点亮：词级 active/past 高亮
+    for (var agi = 0; agi < activeGroup.length; agi++) {
+      var agLine = lines[activeGroup[agi]];
+      if (!agLine) continue;
+      var agWords = agLine.querySelectorAll('.np-lyrics-word');
+      for (var aw = 0; aw < agWords.length; aw++) {
+        var aWord = agWords[aw];
+        var aStart = parseInt(aWord.dataset.time, 10);
+        var aEnd = parseInt(aWord.dataset.end, 10);
+        aWord.classList.remove('active', 'past');
+        if (adjustedPos >= aEnd) {
+          aWord.classList.add('past');
+        } else if (adjustedPos >= aStart) {
+          aWord.classList.add('active');
         }
       }
     }
 
-    var wLine = lines[idx];
-    if (wLine && wLine.querySelector('.np-lyrics-word')) {
-      var lineChanged = _wordAnimLine !== wLine;
-      if (lineChanged) {
-        if (_wordAnimLine) _teardownWordLine(_wordAnimLine);
-        _wordAnimLine = wLine;
-        wLine.classList.add('word-sync');
-        _prepareWordLine(wLine);
+    // 同唱组内所有含词行同时做逐词渐进动画
+    var wantLines = [];
+    for (var wgi = 0; wgi < activeGroup.length; wgi++) {
+      var wgLine = lines[activeGroup[wgi]];
+      if (wgLine && wgLine.querySelector('.np-lyrics-word')) wantLines.push(wgLine);
+    }
+    for (var oi = _wordAnimLines.length - 1; oi >= 0; oi--) {
+      if (wantLines.indexOf(_wordAnimLines[oi]) < 0) {
+        _teardownWordLine(_wordAnimLines[oi]);
+        _wordAnimLines.splice(oi, 1);
       }
-      if (lineChanged || App.state.playbackState !== 'playing') {
-        _renderWordLine(wLine, adjustedPos);
+    }
+    for (var wi = 0; wi < wantLines.length; wi++) {
+      if (_wordAnimLines.indexOf(wantLines[wi]) < 0) {
+        wantLines[wi].classList.add('word-sync');
+        _prepareWordLine(wantLines[wi]);
+        _renderWordLine(wantLines[wi], adjustedPos);
+        _wordAnimLines.push(wantLines[wi]);
+      }
+    }
+    if (_wordAnimLines.length) {
+      if (App.state.playbackState !== 'playing') {
+        for (var ri = 0; ri < _wordAnimLines.length; ri++) {
+          if (_wordAnimLines[ri]._wl) _renderWordLine(_wordAnimLines[ri], adjustedPos);
+        }
       }
       _startWordRaf();
-    } else if (_wordAnimLine) {
-      _clearWordAnim();
     }
   }
 
@@ -2437,6 +2635,7 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
       if (_videoBg) _videoBg.clear();
       lyricsData = [];
       lastLyricsIdx = -1;
+      lastGroupIdx = -1;
       _miniLrcClear();
     } else {
       els.coverImg.style.transition = 'opacity ' + dur + ', filter ' + dur;
@@ -3484,7 +3683,7 @@ function _updateLyricsSourceBadge() {
     'ncm': 'NETEASE CLOUD MUSIC',
     'qqmusic': 'QQ MUSIC',
     'lrclib': 'LRCLIB',
-    'amll': 'AMLLDB',
+    'amll': 'AMLL TTML DB',
     'subsonic': 'EMBEDDED(SUBSONIC)',
   };
   var displaySource = lyricsSource || lyricsSearchSource;
@@ -3554,10 +3753,6 @@ function _updateLyricsSourceBadge() {
     if (!query) {
       _showAutoSearchFailed();
       return;
-    }
-
-    if (source === 'amll') {
-      query = artist ? (artist + ' - ' + title) : title;
     }
 
     _searchLyricsBySource(track, gen, query, source);
@@ -3778,17 +3973,11 @@ function _updateLyricsSourceBadge() {
           return;
         }
         var fallbackQuery = query;
-        if (lyricsSearchSource === 'amll' && artist) {
-          fallbackQuery = artist + ' - ' + title;
-        }
         _searchLyricsBySource(track, gen, fallbackQuery, lyricsSearchSource);
       });
       return;
     }
 
-    if (lyricsSearchSource === 'amll' && artist) {
-      query = artist + ' - ' + title;
-    }
     _searchLyricsBySource(track, gen, query, lyricsSearchSource);
   }
 

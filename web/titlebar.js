@@ -97,6 +97,7 @@
     if (!_isWin) _rearrangeTrafficLights();
 
     _applyIcons();
+    _bindMiniWindowButton();
     _bindWindowControls();
     _bindBackButton();
     _bindDoubleClick();
@@ -121,6 +122,17 @@
     group.appendChild(maxBtn);
 
     leftContainer.insertBefore(group, leftContainer.firstChild);
+  }
+
+
+  function _bindMiniWindowButton() {
+    var miniBtn = document.getElementById('title-bar-mini');
+    if (!miniBtn) return;
+    miniBtn.addEventListener('click', function () {
+      if (window.__electronAPI) {
+        window.__electronAPI.invoke('toggle_floating_window');
+      }
+    });
   }
 
 

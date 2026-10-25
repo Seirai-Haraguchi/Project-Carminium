@@ -209,6 +209,7 @@ class NativeRenderer extends EventEmitter {
 
     this._nextDurationMs = 0;
     this._nextFilePath = null;
+    this._nextSeekMs = 0;
 
     this._nextReady = false;
 
@@ -682,12 +683,18 @@ class NativeRenderer extends EventEmitter {
     if (!filePath) throw new Error('No file path');
 
     let skipFFmpeg = false;
-    if (typeof seekMsOrOpts === 'object') {
+    let seekMs = 0;
+    if (typeof seekMsOrOpts === 'object' && seekMsOrOpts !== null) {
       skipFFmpeg = !!seekMsOrOpts.skipFFmpeg;
+      seekMs = Math.max(0, Number(seekMsOrOpts.seekMs) || 0);
+    } else {
+      // 兼容旧的数值参数：preloadNext(path, seekMs)
+      seekMs = Math.max(0, Number(seekMsOrOpts) || 0);
     }
 
     if (this._decoder) this._decoder.stopSlot('next');
     this._nextFilePath = filePath;
+    this._nextSeekMs = skipFFmpeg ? 0 : seekMs;
     this._nextReady = false;
 
     this._nextDurationMs = await this._probeDuration(filePath);
@@ -700,7 +707,7 @@ class NativeRenderer extends EventEmitter {
     if (!this._decoder) throw new Error('ffmpeg not found');
 
     const _this = this;
-    this._decoder.start('next', filePath, 0,
+    this._decoder.start('next', filePath, seekMs / 1000,
        (fa) => {
         if (_this.sendPcmToRenderer) _this.sendPcmToRenderer('next', fa);
       },
@@ -738,9 +745,10 @@ class NativeRenderer extends EventEmitter {
 
     this._currentFilePath = this._nextFilePath;
     this._durationMs = this._nextDurationMs;
-    this._seekOffsetMs = 0;
+    this._seekOffsetMs = this._nextSeekMs || 0;
     this._nextFilePath = null;
     this._nextDurationMs = 0;
+    this._nextSeekMs = 0;
     this._nextReady = false;
 
     if (this._decoder) {
@@ -781,6 +789,7 @@ class NativeRenderer extends EventEmitter {
     if (this._decoder) this._decoder.stopSlot('next');
     this._nextFilePath = null;
     this._nextDurationMs = 0;
+    this._nextSeekMs = 0;
     this._nextReady = false;
   }
 
@@ -845,8 +854,6 @@ class NativeRenderer extends EventEmitter {
     return this._dummyMode;
   }
 
-  set setGaplessEnabled(_) {  }
-  get gaplessEnabled() { return false; }
   set setCrossfadeEnabled(_) {  }
   get crossfadeEnabled() { return false; }
   setCrossfadeDuration() {  }

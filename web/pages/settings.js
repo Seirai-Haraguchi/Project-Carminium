@@ -6,6 +6,7 @@
   window.App.pages.settings = page;
 
   let _lastSettings = null;
+  let _cacheProgressToast = null;
 
   function _t(key) { return window.App && App.i18n ? App.i18n.t(key) : key; }
 
@@ -92,6 +93,17 @@
             },
             {
               type: 'select',
+              bind: 'color_spec',
+              label: _t('settings.colorSpec.label'),
+              sub: _t('settings.colorSpec.sub'),
+              options: [
+                { value: '2021', label: _t('settings.colorSpec.v2021') },
+                { value: '2025', label: _t('settings.colorSpec.v2025') },
+              ],
+              onApply: function (val) { _applyColorSpec(val); },
+            },
+            {
+              type: 'select',
               bind: 'monet_source',
               label: _t('settings.monetSource.label'),
               sub: _t('settings.monetSource.sub'),
@@ -122,6 +134,13 @@
             },
             {
               type: 'toggle',
+              bind: 'mini_player_lyrics',
+              label: _t('settings.miniLyrics.label'),
+              sub: _t('settings.miniLyrics.sub'),
+              onChange: function (checked) { _applyMiniLyrics(checked); },
+            },
+            {
+              type: 'toggle',
               bind: 'show_quality',
               label: _t('settings.showQuality.label'),
               sub: _t('settings.showQuality.sub'),
@@ -130,6 +149,17 @@
                   App.nowPlaying.setQualityEnabled(checked);
                 }
               },
+            },
+            {
+              type: 'select',
+              bind: 'np_background_mode',
+              label: _t('settings.npBackgroundMode.label'),
+              sub: _t('settings.npBackgroundMode.sub'),
+              options: [
+                { value: 'cover', label: _t('settings.npBackgroundMode.cover') },
+                { value: 'solid', label: _t('settings.npBackgroundMode.solid') },
+              ],
+              onApply: function (val) { _applyNpBackgroundMode(val); },
             },
             {
               type: 'toggle',
@@ -168,6 +198,13 @@
               placeholder: 'Google Sans Flex, Noto Sans SC, sans-serif',
               onApply: function (val) { _applyUiFont(val); },
             },
+            {
+              type: 'toggle',
+              bind: 'ui_jp_font',
+              label: _t('settings.uiJpFont.label'),
+              sub: _t('settings.uiJpFont.sub'),
+              onChange: function (checked) { _applyUiJpFont(checked); },
+            },
           ],
         },
       ],
@@ -202,11 +239,6 @@
               sub: _t('settings.automix.sub'),
               onChange: function (checked) {
                 App.utils.call('set_automix', checked);
-                if (checked) {
-                  App.utils.call('set_gapless', false);
-                  var gaplessEl = document.querySelector('input[type="checkbox"][data-bind="gapless"]');
-                  if (gaplessEl) gaplessEl.checked = false;
-                }
               },
             },
             {
@@ -220,20 +252,6 @@
                   App.utils.call('set_automix', true);
                   var automixEl = document.querySelector('input[type="checkbox"][data-bind="automix"]');
                   if (automixEl) automixEl.checked = true;
-                }
-              },
-            },
-            {
-              type: 'toggle',
-              bind: 'gapless',
-              label: _t('settings.gapless.label'),
-              sub: _t('settings.gapless.sub'),
-              onChange: function (checked) {
-                App.utils.call('set_gapless', checked);
-                if (checked) {
-                  App.utils.call('set_automix', false);
-                  var automixEl = document.querySelector('input[type="checkbox"][data-bind="automix"]');
-                  if (automixEl) automixEl.checked = false;
                 }
               },
             },
@@ -622,6 +640,19 @@
             {
               type: 'memory_info',
               bind: '_memory_info',
+            },
+          ],
+        },
+        {
+          titleKey: 'settings.group.cache',
+          rows: [
+            {
+              type: 'cache_dir',
+              bind: 'cache_dir',
+              label: _t('settings.cacheDir.label'),
+              sub: _t('settings.cacheDir.sub'),
+              placeholder: _t('settings.cacheDir.placeholder'),
+              pickLabel: _t('settings.cacheDir.pick'),
             },
           ],
         },
@@ -1108,10 +1139,14 @@
     artist_separators: 'call_split',
     theme: 'contrast',
     color_scheme: 'palette',
+    color_spec: 'science',
     monet_source: 'wallpaper',
     ui_font: 'text_fields',
+    ui_jp_font: 'translate',
     circular_cover: 'album',
     wave_progress: 'graphic_eq',
+    mini_player_lyrics: 'lyrics',
+    np_background_mode: 'wallpaper',
     show_quality: 'equalizer',
     video_background: 'movie',
     np_default_view: 'view_agenda',
@@ -1133,7 +1168,6 @@
     resume_playback: 'play_circle',
     automix: 'auto_awesome',
     radical_transitions: 'bolt',
-    gapless: 'link',
 
     lyrics_font: 'lyrics',
     lyrics_jp_font: 'translate',
@@ -1156,6 +1190,7 @@
     toggle_mute: 'volume_off',
 
     memory_optimization: 'memory',
+    cache_dir: 'folder',
     _debug_show_platform: 'memory',
     _debug_toggle_traffic: 'api',
     _debug_test_confirm: 'help',
@@ -1184,7 +1219,7 @@
 
   function _rowBodyHtml(row, innerHtml) {
     var inner = innerHtml || '';
-    if (row.type === 'text' || row.type === 'file_picker') {
+    if (row.type === 'text' || row.type === 'file_picker' || row.type === 'cache_dir') {
       return '<div class="settings-row-body">' +
         '<div class="settings-row-heading">' + _rowHeadingHtml(row) + '</div>' +
         inner +
@@ -1279,6 +1314,22 @@
         <div class="settings-row settings-row-text settings-row-file-picker" data-bind="${row.bind}">
           ${_rowIconHtml(row)}
           ${_rowBodyHtml(row, pickerHtml)}
+        </div>
+      `;
+    }
+    if (row.type === 'cache_dir') {
+      var cachePickerHtml = '<div class="settings-file-picker-control">' +
+        '<input type="text" class="settings-font-input" data-bind="' + row.bind +
+          '" placeholder="' + (row.placeholder || '') + '">' +
+        '<button class="md-text-btn settings-file-picker-btn settings-cache-pick-btn" type="button">' +
+          '<span class="material-symbols-rounded">folder_open</span>' +
+          '<span>' + (row.pickLabel || '浏览') + '</span>' +
+        '</button>' +
+        '</div>';
+      return `
+        <div class="settings-row settings-row-text settings-row-cache-dir" data-bind="${row.bind}">
+          ${_rowIconHtml(row)}
+          ${_rowBodyHtml(row, cachePickerHtml)}
         </div>
       `;
     }
@@ -1459,6 +1510,8 @@
         el.addEventListener('change', el._settingsChangeHandler);
       } else if (row.type === 'file_picker') {
         _bindFilePickerRow(row, settings[row.bind] || '');
+      } else if (row.type === 'cache_dir') {
+        _bindCacheDirRow(row, settings[row.bind] || '');
       } else if (row.type === 'device_select') {
         _bindDeviceSelectRow(row, settings[row.bind] || '');
       } else if (row.type === 'shortcut') {
@@ -1527,6 +1580,61 @@
     window.__bridge.on('discord_status', function (payload) {
       _renderDiscordStatus(payload);
     });
+
+    window.__bridge.on('cache_migrate_progress', function (json) {
+      var p;
+      try { p = JSON.parse(json); } catch (e) { return; }
+      if (!_cacheProgressToast) return;
+      _cacheProgressToast.update(p.percent || 0, _t('settings.cacheDir.migrating'));
+    });
+
+    window.__bridge.on('cache_migrate_done', function (json) {
+      var r;
+      try { r = JSON.parse(json); } catch (e) { return; }
+      if (!_cacheProgressToast) return;
+      var text;
+      if (!r.ok) {
+        text = _t('settings.cacheDir.failed').replace('{error}', (r && r.error) || '');
+      } else if (r.noop) {
+        text = _t('settings.cacheDir.noop');
+      } else if (r.toDefault) {
+        text = _t('settings.cacheDir.movedBack');
+      } else {
+        text = _t('settings.cacheDir.moved');
+      }
+      _cacheProgressToast.finish(text);
+      _cacheProgressToast = null;
+    });
+  }
+
+  function _showCacheProgressToast() {
+    var el = document.createElement('div');
+    el.className = 'toast-snackbar toast-snackbar-progress';
+    el.innerHTML =
+      '<div class="toast-progress-text">' + _t('settings.cacheDir.migrating') + '</div>' +
+      '<div class="toast-progress-track"><div class="toast-progress-fill"></div></div>';
+    document.body.appendChild(el);
+    requestAnimationFrame(function () { el.classList.add('show'); });
+    return {
+      update: function (percent, text) {
+        var fill = el.querySelector('.toast-progress-fill');
+        var txt = el.querySelector('.toast-progress-text');
+        if (fill) fill.style.width = (percent || 0) + '%';
+        if (txt && text) txt.textContent = text + ' ' + (percent || 0) + '%';
+      },
+      finish: function (text) {
+        var fill = el.querySelector('.toast-progress-fill');
+        var txt = el.querySelector('.toast-progress-text');
+        if (fill) fill.style.width = '100%';
+        if (txt && text) txt.textContent = text;
+        setTimeout(function () {
+          el.classList.remove('show');
+          setTimeout(function () {
+            if (el.parentNode) el.parentNode.removeChild(el);
+          }, 400);
+        }, 1600);
+      },
+    };
   }
 
   var NP_SECONDARY_MAX = 5;
@@ -1875,6 +1983,58 @@
     btn.addEventListener('click', btn._pickerClickHandler);
   }
 
+  function _bindCacheDirRow(row, currentValue) {
+    const rowEl = document.querySelector(`.settings-row-cache-dir[data-bind="${row.bind}"]`);
+    if (!rowEl) return;
+    const input = rowEl.querySelector('input[type="text"]');
+    const pickBtn = rowEl.querySelector('.settings-cache-pick-btn');
+    if (!input || !pickBtn) return;
+
+    input.value = currentValue || '';
+
+    const apply = function (val) {
+      // 已有迁移进行中时忽略重复触发，避免进度提示叠加。
+      if (_cacheProgressToast) return;
+      // 乐观创建进度提示，随后由 cache_migrate_progress / cache_migrate_done 事件驱动更新。
+      _cacheProgressToast = _showCacheProgressToast();
+      App.utils.call('set_cache_dir', val).then(function (res) {
+        let r;
+        try { r = JSON.parse(res); } catch (e) { r = null; }
+        if (!r) {
+          if (_cacheProgressToast) {
+            _cacheProgressToast.finish(_t('settings.cacheDir.failed').replace('{error}', ''));
+            _cacheProgressToast = null;
+          }
+          return;
+        }
+        if (r.busy) {
+          if (_cacheProgressToast) {
+            _cacheProgressToast.finish(_t('settings.cacheDir.busy'));
+            _cacheProgressToast = null;
+          }
+          return;
+        }
+        // r.accepted：迁移已在后台启动，等待事件更新；输入框即时回填用户选择。
+        input.value = val || '';
+        if (row.onApply) row.onApply(val);
+      });
+    };
+
+    input.removeEventListener('change', input._cacheChangeHandler);
+    input._cacheChangeHandler = function () { apply(this.value.trim()); };
+    input.addEventListener('change', input._cacheChangeHandler);
+
+    pickBtn.removeEventListener('click', pickBtn._cachePickHandler);
+    pickBtn._cachePickHandler = function () {
+      App.utils.call('pick_cache_folder').then(function (picked) {
+        if (!picked) return;
+        input.value = picked;
+        apply(picked);
+      });
+    };
+    pickBtn.addEventListener('click', pickBtn._cachePickHandler);
+  }
+
   function _bindDeviceSelectRow(row, currentValue) {
     const dropdown = document.querySelector(`.md-dropdown[data-bind="${row.bind}"]`);
     if (!dropdown) return;
@@ -2168,6 +2328,25 @@
     }
   }
 
+  function _applyMiniLyrics(enabled) {
+    if (window.App && App.nowPlaying && App.nowPlaying.refreshMiniLyrics) {
+      App.nowPlaying.refreshMiniLyrics(enabled);
+    }
+  }
+
+  function _applyNpBackgroundMode(val) {
+    if (window.App && App.nowPlaying && App.nowPlaying.refreshBackgroundMode) {
+      App.nowPlaying.refreshBackgroundMode(val);
+    }
+  }
+
+  function _applyUiJpFont(enabled) {
+    if (window.App && App.utils && App.utils.applyJpUiFont) {
+      var jpFont = (_lastSettings && _lastSettings.lyrics_jp_font) || '';
+      App.utils.applyJpUiFont(!!enabled, jpFont);
+    }
+  }
+
   function _applyUiFont(val) {
     var root = document.documentElement;
     if (val && val.trim()) {
@@ -2186,6 +2365,10 @@
   function _applyLyricsJpFont(val) {
     if (window.App && App.nowPlaying && App.nowPlaying.refreshLyricsFont) {
       App.nowPlaying.refreshLyricsFont(undefined, val);
+    }
+    // 日语字段字体与日语歌词字体同源，改了字号族要同步重建假名 @font-face
+    if (window.App && App.utils && App.utils.applyJpUiFont) {
+      App.utils.applyJpUiFont(null, val || '');
     }
   }
 
@@ -2212,6 +2395,15 @@
   function _applyColorScheme(val) {
     if (!window.App) return;
     App.state.colorScheme = val || 'tonal_spot';
+
+    if (App.state.currentDominantRgb) {
+      App.utils.applyDynamicTheme(App.state.currentDominantRgb, App.state.colorScheme);
+    }
+  }
+
+  function _applyColorSpec(val) {
+    if (!window.App) return;
+    App.state.colorSpec = val === '2025' ? '2025' : '2021';
 
     if (App.state.currentDominantRgb) {
       App.utils.applyDynamicTheme(App.state.currentDominantRgb, App.state.colorScheme);

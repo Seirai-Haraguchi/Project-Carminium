@@ -19,6 +19,7 @@
     allSubsonicServers: [],
     allRemoteServers: [],
     colorScheme: 'tonal_spot',
+    colorSpec: '2021',
     monetSource: 'album_cover',
     isExclusive: false,
     tagEditorPath: '',
@@ -300,8 +301,31 @@
               _applyUiFont(s.ui_font || '');
             }
 
+            if (s.ui_jp_font !== undefined || s.lyrics_jp_font !== undefined) {
+              if (App.utils && App.utils.applyJpUiFont) {
+                App.utils.applyJpUiFont(!!s.ui_jp_font, s.lyrics_jp_font || '');
+              }
+            }
+
+            if (s.mini_player_lyrics !== undefined && App.nowPlaying &&
+                App.nowPlaying.refreshMiniLyrics) {
+              App.nowPlaying.refreshMiniLyrics(s.mini_player_lyrics !== false);
+            }
+
+            if (s.np_background_mode !== undefined && App.nowPlaying &&
+                App.nowPlaying.refreshBackgroundMode) {
+              App.nowPlaying.refreshBackgroundMode(s.np_background_mode);
+            }
+
             if (s.language !== undefined && App.i18n && App.i18n.getLang() !== s.language) {
               App.i18n.init(s.language);
+            }
+
+            if (s.color_spec !== undefined) {
+              App.state.colorSpec = s.color_spec || '2021';
+              if (App.state.currentDominantRgb) {
+                App.utils.applyDynamicTheme(App.state.currentDominantRgb, App.state.colorScheme);
+              }
             }
 
             if (s.monet_source !== undefined) {
@@ -503,6 +527,10 @@
       if (App.state.currentDominantRgb) App.utils.applyDynamicTheme(App.state.currentDominantRgb);
 
       App.state.colorScheme = settings.color_scheme || 'tonal_spot';
+      App.state.colorSpec = settings.color_spec || '2021';
+      if (App.state.currentDominantRgb) {
+        App.utils.applyDynamicTheme(App.state.currentDominantRgb, App.state.colorScheme);
+      }
 
       App.state.monetSource = settings.monet_source || 'album_cover';
       if (App.state.monetSource === 'system_wallpaper') {
@@ -510,6 +538,9 @@
       }
 
       _applyUiFont(settings.ui_font || '');
+      if (App.utils && App.utils.applyJpUiFont) {
+        App.utils.applyJpUiFont(!!settings.ui_jp_font, settings.lyrics_jp_font || '');
+      }
 
       if (App.i18n && settings.language) {
         App.i18n.init(settings.language);
@@ -1255,9 +1286,6 @@
     get: function () { return _audioEngine; }
   });
 
-  Object.defineProperty(App, 'currentAnalysis', {
-    get: function () { return _currentTrackAnalysis; }
-  });
   var _skipNextTrackGlitch = false;
   var _gaplessSwitchPending = false;
   var _crossfadeSwitchPending = false;
@@ -1367,7 +1395,7 @@
             _applyTrackLoudness(cmd.filePath, cmd.trackId);
 
             if (_audioEngine._crossfadeEnabled) {
-              _analyzeCurrentTrack(cmd.filePath, cmd.trackId, cmd.title, cmd.artist, cmd.durationMs);
+              _analyzeCurrentTrack(cmd);
             }
             break;
           case 'play_streaming':
@@ -1377,7 +1405,7 @@
             _applyTrackLoudness(cmd.filePath, cmd.trackId);
 
             if (_audioEngine._crossfadeEnabled) {
-              _analyzeCurrentTrack(cmd.filePath, cmd.trackId, cmd.title, cmd.artist, cmd.durationMs);
+              _analyzeCurrentTrack(cmd);
             }
             break;
           case 'stop':
@@ -1394,9 +1422,6 @@
             break;
           case 'set_volume':
             _audioEngine.setVolume(cmd.level);
-            break;
-          case 'set_gapless':
-            _audioEngine.setGaplessEnabled(cmd.enabled);
             break;
           case 'set_crossfade':
             _audioEngine.setCrossfadeEnabled(cmd.enabled);
@@ -1417,12 +1442,13 @@
             break;
           case 'set_next_info':
 
-            _audioEngine.setNextInfo(cmd.filePath, cmd.durationMs, cmd.forceStreaming);
+            _audioEngine.setNextInfo(cmd.filePath, cmd.durationMs,
+              cmd.forceStreaming, cmd.nextStartOffsetMs);
 
             _prefetchTrackLoudness(cmd.filePath, cmd.trackId);
 
             if (_audioEngine._crossfadeEnabled) {
-              _analyzeNextTrack(cmd.filePath, cmd.trackId, cmd.title, cmd.artist, cmd.durationMs);
+              _analyzeNextTrack(cmd);
             }
             break;
           case 'set_transition_plan':
@@ -1455,15 +1481,11 @@
     if (ea && ea.invoke) {
       ea.invoke('get_automix').then(function (enabled) {
         _audioEngine.setCrossfadeEnabled(!!enabled);
-        console.log('[app] Synced automix (crossfade):', enabled);
+        console.log('[app] Synced AutoMix:', enabled);
       }).catch(function (e) { console.warn('[app] get_automix failed:', e); });
       ea.invoke('get_radical_transitions').then(function (enabled) {
         _audioEngine.setRadicalTransitionsEnabled(!!enabled);
       }).catch(function (e) { console.warn('[app] get_radical_transitions failed:', e); });
-      ea.invoke('get_gapless').then(function (enabled) {
-        _audioEngine.setGaplessEnabled(!!enabled);
-        console.log('[app] Synced gapless:', enabled);
-      }).catch(function (e) { console.warn('[app] get_gapless failed:', e); });
       ea.invoke('get_crossfade_duration').then(function (ms) {
         _audioEngine.setCrossfadeDuration(parseInt(ms, 10) || 4000);
         console.log('[app] Synced crossfade duration:', ms);
@@ -1542,189 +1564,165 @@
     App.nowPlaying.onQualityReady(payload);
   }
 
-  var _trackAnalyzer = null;
-  var _transitionPlanner = null;
-  var _currentTrackAnalysis = null;
-  var _nextTrackAnalysis = null;
-  var _currentAnalysisToken = 0;
-  var _nextAnalysisToken = 0;
-  var _analysisPendingTimer = null;
+  /* ================= AutoMix 分析/规划 ================= */
+
+  var _planner = null;
+  var _profileClient = null;
+  var _currentProfile = null;
+  var _nextProfile = null;
+  var _currentProfileId = '';
+  var _nextProfileId = '';
+  var _lastPlan = null;
+  var _currentProfileToken = 0;
+  var _nextProfileToken = 0;
+  // 队列元数据：判断「同专辑、按原顺序」只靠档案里的音频特征不够，
+  // 必须先知道这两首在专辑里的位置。
+  var _currentTrackMeta = null;
+  var _nextTrackMeta = null;
 
   function _initAutoMixAnalysis() {
-    if (!window.TrackAnalyzer || !window.TransitionPlanner) {
-      console.warn('[app] TrackAnalyzer or TransitionPlanner not loaded, AutoMix analysis disabled');
-      return;
-    }
-    _trackAnalyzer = new window.TrackAnalyzer(_audioEngine);
-    _transitionPlanner = new window.TransitionPlanner();
-    console.log('[app] AutoMix analysis initialized');
+    _planner = window.AutoMixPlanner || null;
+    _profileClient = (window.App && window.App.profileClient) || null;
+    if (!_planner) console.error('[app] AutoMixPlanner 未加载');
+    console.log('[app] AutoMix initialized',
+      'planner=' + !!_planner,
+      'profileClient=' + !!_profileClient);
   }
 
-  function _analyzeCurrentTrack(filePath, trackId, title, artist, durationMs) {
-    if (!_trackAnalyzer) return;
-
-    if (filePath && (filePath.indexOf('http://') === 0 || filePath.indexOf('https://') === 0)) {
-      ++_currentAnalysisToken;
-      _currentTrackAnalysis = null;
-      _maybeComputePlan();
-      return;
-    }
-    var token = ++_currentAnalysisToken;
-    _currentTrackAnalysis = null;
-
-    if (trackId && window.__electronAPI && window.__electronAPI.invoke) {
-      window.__electronAPI.invoke('get_track_analysis', trackId).then(function (cached) {
-        if (token !== _currentAnalysisToken) return;
-        if (cached) {
-          _currentTrackAnalysis = cached;
-          console.log('[app] Current track analysis loaded from cache:', title);
-          _maybeComputePlan();
-          return;
-        }
-
-        _performSpectrumAnalysis(filePath, trackId, title, artist, durationMs, token, true);
-      }).catch(function () {
-        if (token !== _currentAnalysisToken) return;
-        _performSpectrumAnalysis(filePath, trackId, title, artist, durationMs, token, true);
-      });
-    } else {
-      _performSpectrumAnalysis(filePath, trackId, title, artist, durationMs, token, true);
-    }
+  /** 把 audio_control 的载荷包成 profile 客户端需要的 track 形状 */
+  function _profileTrack(cmd) {
+    return {
+      id: cmd.trackId || '',
+      title: cmd.title || '',
+      artist: cmd.artist || '',
+      album: cmd.album || '',
+      albumArtist: cmd.albumArtist || '',
+      trackNumber: cmd.trackNumber || 0,
+      discNumber: cmd.discNumber || 0,
+      duration_ms: cmd.durationMs || 0,
+      filePath: cmd.filePath || '',
+      path: cmd.filePath || '',
+      file_size: cmd.fileSize || 0,
+      suffix: cmd.suffix || '',
+      source: cmd.source || 'local',
+    };
   }
 
-  function _analyzeNextTrack(filePath, trackId, title, artist, durationMs) {
-    if (!_trackAnalyzer) return;
-
-    if (filePath && (filePath.indexOf('http://') === 0 || filePath.indexOf('https://') === 0)) {
-      ++_nextAnalysisToken;
-      _nextTrackAnalysis = null;
-      _maybeComputePlan();
-      return;
-    }
-    var token = ++_nextAnalysisToken;
-    _nextTrackAnalysis = null;
-
-    if (trackId && window.__electronAPI && window.__electronAPI.invoke) {
-      window.__electronAPI.invoke('get_track_analysis', trackId).then(function (cached) {
-        if (token !== _nextAnalysisToken) return;
-        if (cached) {
-          _nextTrackAnalysis = cached;
-          console.log('[app] Next track analysis loaded from cache:', title);
-          _maybeComputePlan();
-          return;
-        }
-        _performSpectrumAnalysis(filePath, trackId, title, artist, durationMs, token, false);
-      }).catch(function () {
-        if (token !== _nextAnalysisToken) return;
-        _performSpectrumAnalysis(filePath, trackId, title, artist, durationMs, token, false);
-      });
-    } else {
-      _performSpectrumAnalysis(filePath, trackId, title, artist, durationMs, token, false);
-    }
+  function _trackMetaOf(track) {
+    return {
+      album: String(track.album || '').trim(),
+      albumArtist: String(track.albumArtist || '').trim(),
+      trackNumber: Number(track.trackNumber) || 0,
+      discNumber: Number(track.discNumber) || 0,
+    };
   }
 
-  function _performSpectrumAnalysis(filePath, trackId, title, artist, durationMs, token, isCurrent) {
+  /** 同专辑、同碟（或紧邻下一碟）、轨号紧接：才考虑「保留原文件过渡」。 */
+  function _isAlbumSequence(cur, next) {
+    return !!(_planner && _planner.isAlbumSequence && _planner.isAlbumSequence(cur, next));
+  }
 
-    var spectrumPromise = _trackAnalyzer.analyze(
-      { title: title, artist: artist, duration_ms: durationMs },
-      filePath
-    );
-
-    var osuPromise = Promise.resolve(null);
-    if (title && window.__electronAPI && window.__electronAPI.invoke) {
-      osuPromise = window.__electronAPI.invoke('search_osu_beatmap', title, artist, durationMs)
-        .catch(function () { return null; });
+  function _analyzeCurrentTrack(cmd) {
+    if (!_planner || !_profileClient) return;
+    var track = _profileTrack(cmd);
+    if (!track.id) return;
+    if (track.id !== _currentProfileId) {
+      // 换歌了：上一对（A,B）的方案必须立即作废，
+      // 否则在旧 plan 的 exitMs 上会按上一首的时间轴触发淡变。
+      _nextProfile = null;
+      _nextProfileId = '';
+      _nextTrackMeta = null;
+      _audioEngine.setTransitionPlan(null);
+      App.nowPlaying.clearTransitionPoint();
+      _onTrackSwitchedCurrent(track.id);
     }
-
-    Promise.all([spectrumPromise, osuPromise]).then(function (results) {
-
-      var currentToken = isCurrent ? _currentAnalysisToken : _nextAnalysisToken;
-      if (token !== currentToken) return;
-
-      var spectrum = results[0];
-      var osu = results[1];
-
-      if (!spectrum && !osu) {
-        console.log('[app] Analysis failed for:', title, '(no spectrum or osu data)');
-        if (isCurrent) _currentTrackAnalysis = null;
-        else _nextTrackAnalysis = null;
-        _maybeComputePlan();
-        return;
+    _currentTrackMeta = _trackMetaOf(track);
+    _currentProfileId = track.id;
+    _currentProfile = null;
+    var token = ++_currentProfileToken;
+    _profileClient.ensure(track, { priority: 2 }).then(function (profile) {
+      if (token !== _currentProfileToken) return;
+      _currentProfile = profile;
+      if (profile) {
+        console.log('[app] current profile:', track.title,
+          'bpm=' + profile.tempo.primary, 'conf=' + profile.tempo.confidence,
+          'beats=' + profile.beats.timesMs.length, 'segs=' + profile.segments.length,
+          'cost=' + profile.costMs + 'ms');
       }
-
-      var analysis = spectrum || {
-        bpm: 0,
-        energy: null,
-        introEndMs: 0,
-        outroStartMs: 0,
-        climaxMs: 0,
-        durationMs: durationMs || 0,
-        analyzedAt: Date.now(),
-        source: 'osu',
-      };
-      if (osu) {
-        analysis.osu = osu;
-
-        if (osu.bpm > 0) {
-          analysis.bpm = osu.bpm;
-        }
-      }
-      analysis.trackId = trackId;
-
-      currentToken = isCurrent ? _currentAnalysisToken : _nextAnalysisToken;
-      if (token !== currentToken) return;
-
-      if (isCurrent) {
-        _currentTrackAnalysis = analysis;
-      } else {
-        _nextTrackAnalysis = analysis;
-      }
-
-      console.log('[app] Analysis complete for', (isCurrent ? 'current' : 'next') + ':', title,
-        'BPM=' + analysis.bpm, 'source=' + analysis.source);
-
-      if (trackId && window.__electronAPI && window.__electronAPI.invoke) {
-        window.__electronAPI.invoke('save_track_analysis', trackId, analysis).catch(function () {});
-      }
-
-      _maybeComputePlan();
-    }).catch(function (e) {
-      console.error('[app] Analysis error:', e);
-      var currentToken = isCurrent ? _currentAnalysisToken : _nextAnalysisToken;
-      if (token !== currentToken) return;
-      if (isCurrent) _currentTrackAnalysis = null;
-      else _nextTrackAnalysis = null;
       _maybeComputePlan();
     });
   }
 
-  function _maybeComputePlan() {
-    if (!_transitionPlanner || !_audioEngine) return;
-    if (!_audioEngine._crossfadeEnabled) return;
-
-    var plan = _transitionPlanner.plan(
-      _currentTrackAnalysis || null,
-      _nextTrackAnalysis || null,
-      {
-        crossfadeDurationMs: _audioEngine._crossfadeDurationMs,
-        radicalTransitions: !!_audioEngine._radicalTransitions
+  function _analyzeNextTrack(cmd) {
+    if (!_planner || !_profileClient) return;
+    var track = _profileTrack(cmd);
+    if (!track.id) return;
+    if (track.id !== _nextProfileId) {
+      // 下一首换了：旧计划（尤其 gaplessFallback）必须立刻失效，
+      // 不能等新档案回来才覆盖，否则新 buffer 会按旧计划切换。
+      _audioEngine.setTransitionPlan(null);
+      App.nowPlaying.clearTransitionPoint();
+    }
+    _nextProfileId = track.id;
+    _nextTrackMeta = _trackMetaOf(track);
+    _nextProfile = null;
+    var token = ++_nextProfileToken;
+    _profileClient.ensure(track, { priority: 1 }).then(function (profile) {
+      if (token !== _nextProfileToken) return;
+      _nextProfile = profile;
+      if (profile) {
+        console.log('[app] next profile:', track.title,
+          'bpm=' + profile.tempo.primary, 'conf=' + profile.tempo.confidence,
+          'cost=' + profile.costMs + 'ms');
       }
-    );
+      _maybeComputePlan();
+    });
+  }
 
+  /** 曲目切换时丢掉过期任务，避免为已经不会播放的歌烧 CPU */
+  function _onTrackSwitchedCurrent(trackId) {
+    if (_profileClient && typeof _profileClient.cancelPending === 'function') {
+      _profileClient.cancelPending(trackId);
+    }
+  }
+
+  function _maybeComputePlan() {
+    if (!_audioEngine || !_audioEngine._crossfadeEnabled || !_planner) return;
+
+    // 两侧都还没档案时也给一个可执行的回落方案，保证引擎行为确定。
+    var plan = _planner.plan(_currentProfile, _nextProfile, {
+      fallbackDurationMs: _audioEngine._crossfadeDurationMs,
+      radical: !!_audioEngine._radicalTransitions,
+      // 下一首是流式时没有 playbackRate/resample，只能规划 ratio=1。
+      nextStreaming: !!_audioEngine._nextIsStreaming,
+      // 同专辑按原顺序播放：若两侧文件边界都没有留白，原文件本来就连着，
+      // 交叉淡化会直接毁掉作者做好的过渡。规划器据此让位，不做重叠。
+      albumSequence: _isAlbumSequence(_currentTrackMeta, _nextTrackMeta),
+    });
+    _lastPlan = plan;
     _audioEngine.setTransitionPlan(plan);
+    console.log('[app] AutoMix plan:', _planner.describe(plan),
+      'conf=' + plan.confidence, 'resolved=' + !!(_currentProfile && _nextProfile));
 
     var curDuration = _audioEngine._currentDurationMs ||
-      (_currentTrackAnalysis && _currentTrackAnalysis.durationMs) || 0;
+      (_currentProfile && _currentProfile.durationMs) || 0;
     if (plan.transitionStartMs >= 0 && curDuration > 0) {
       App.nowPlaying.setTransitionPoint(plan.transitionStartMs, curDuration);
     } else {
       App.nowPlaying.clearTransitionPoint();
     }
-
     if (window.__electronAPI && window.__electronAPI.invoke) {
-      window.__electronAPI.invoke('set_transition_plan', plan).catch(function () {});
+      window.__electronAPI.invoke('set_transition_plan', plan).catch(function () {  });
     }
   }
+
+  /* 调试出口：设置页/控制台可以查看当前档案与最近一次规划的理由 */
+  App.automix = {
+    lastPlan: function () { return _lastPlan; },
+    profiles: function () { return { current: _currentProfile, next: _nextProfile }; },
+    stats: function () { return _profileClient ? _profileClient.profileStats() : Promise.resolve(null); },
+    describe: function () { return (_planner && _lastPlan) ? _planner.describe(_lastPlan) : ''; },
+  };
 
   function _promptImportSubsonicPlaylists() {
     _closePlaylistsSubmenu();

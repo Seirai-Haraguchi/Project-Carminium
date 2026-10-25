@@ -15,7 +15,6 @@ const DEFAULTS = {
   wasapi_exclusive: false,
   automix: false,
   radical_transitions: false,
-  gapless: false,
   lyrics_progressive_blur: false,
   lyrics_center: false,
   lyrics_font_size: 16,
@@ -28,7 +27,11 @@ const DEFAULTS = {
   wave_progress: true,
   video_background: false,
   ui_font: '',
+  ui_jp_font: false,
+  mini_player_lyrics: true,
+  np_background_mode: 'cover',
   color_scheme: 'tonal_spot',
+  color_spec: '2021',
   monet_source: 'album_cover',
   language: 'zh-CN',
   smtc_lyrics: false,
@@ -36,6 +39,7 @@ const DEFAULTS = {
   taskbar_thumb_controls: true,
   artist_separators: ';',
   tag_editor_path: '',
+  cache_dir: '',
 
   discord_rpc: false,
   discord_rpc_show_paused: true,
@@ -87,6 +91,25 @@ const DEFAULTS = {
   },
 };
 
+/**
+ * 把 V1 时代的 Gapless / AutoMix v2 / WSOLA 配置收敛为单一 `automix`。
+ * 返回是否发生迁移；调用方负责持久化。
+ */
+function normalizeLegacySettings(data) {
+  let migrated = false;
+  if (data.gapless === true && data.automix !== true) {
+    data.automix = true;
+    migrated = true;
+  }
+  for (const legacy of ['automix_v2', 'automix_wsola', 'gapless']) {
+    if (legacy in data) {
+      delete data[legacy];
+      migrated = true;
+    }
+  }
+  return migrated;
+}
+
 const NP_SECONDARY_ACTIONS = {
   ids: [
     'shuffle', 'repeat', 'like', 'audio_mode',
@@ -135,6 +158,12 @@ class AppSettings {
         const raw = fs.readFileSync(this._path, 'utf-8');
         const stored = JSON.parse(raw);
         Object.assign(this._data, stored);
+
+        // 合并后 AutoMix 是唯一入口：曾开启 Gapless 的用户保留其无缝诉求，
+        // 由 AutoMix 在条件满足时自动选无缝、否则选内容过渡。
+        if (normalizeLegacySettings(this._data)) {
+          try { this.save(); } catch {  }
+        }
       }
     } catch (e) {
 
@@ -190,4 +219,4 @@ class AppSettings {
   }
 }
 
-module.exports = { AppSettings, DEFAULTS, NP_SECONDARY_ACTIONS };
+module.exports = { AppSettings, DEFAULTS, NP_SECONDARY_ACTIONS, normalizeLegacySettings };

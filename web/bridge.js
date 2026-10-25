@@ -44,7 +44,7 @@
     'lyrics_changed', 'playlists_changed', 'history_changed',
     'liked_tracks_changed', 'subsonic_servers_changed',
     'remote_servers_changed', 'library_scan_status',
-    'automix_takeover', 'playback_error'
+    'playback_error'
   ]);
 
   function createSignal(eventName) {

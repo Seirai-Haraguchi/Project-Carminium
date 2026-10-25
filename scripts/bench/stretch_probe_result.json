@@ -1,0 +1,703 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-24T12:04:36.888Z",
+  "runtime": {
+    "node": "v24.19.0",
+    "node_path": "C:\\Users\\rezen\\.workbuddy\\binaries\\node\\versions\\24.19.0\\node.exe",
+    "platform": "win32",
+    "arch": "x64",
+    "ffmpeg_path": "H:\\Dev\\carminium-\\electron\\bin\\win32\\ffmpeg.exe",
+    "ffmpeg_version": "ffmpeg version N-125716-g1b1f602699-20260722 Copyright (c) 2000-2026 the FFmpeg developers"
+  },
+  "configuration": {
+    "ratios": [
+      0.97,
+      1.03,
+      0.9,
+      1.1
+    ],
+    "source_seconds": 30,
+    "output_sample_rate": 48000,
+    "output_channels": 2,
+    "output_pcm": "32-bit float WAV analyzed in memory",
+    "timing": "One ffmpeg process per case; includes process startup, decode, filter and WAV encode; excludes PCM analysis.",
+    "relative_real_time_cost_definition": "wall_seconds / expected_output_duration_seconds"
+  },
+  "ratio_semantics": {
+    "ratio": "playbackRate/content-speed multiplier for the resampling proxy",
+    "playbackRate_output_duration": "source_duration / ratio",
+    "requested_atempo_parameter": "1 / ratio",
+    "verified_atempo_behavior": "atempo is the content-speed multiplier; output duration is source_duration / atempo = source_duration * ratio",
+    "correction_for_matching_playbackRate": "atempo = ratio"
+  },
+  "samples": [
+    {
+      "id": "blossom",
+      "path": "j:/Users/rezen/Music/PIKASONIC - Blossom.flac",
+      "trim": {
+        "start_seconds": 0,
+        "requested_duration_seconds": 30
+      },
+      "baseline": {
+        "wall_seconds": 0.21506,
+        "relative_real_time_cost": 0.007169,
+        "real_time_speed_x": 139.495695,
+        "wall_per_output_second": 0.007169,
+        "output_duration_seconds": 30,
+        "expected_duration_seconds": 30,
+        "duration_error_seconds": 0,
+        "absolute_duration_error_seconds": 0,
+        "output_frames": 1440000,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.999885,
+        "rms": 0.322211,
+        "silence_sample_ratio": 0.000502,
+        "near_silence_sample_ratio": 0.002455,
+        "full_scale_sample_ratio": 0,
+        "non_finite_sample_count": 0
+      },
+      "runs": [
+        {
+          "method": "playbackRate_resampling_proxy",
+          "ratio": 0.97,
+          "playback_rate": 0.97,
+          "actual_content_speed_ratio": 0.97,
+          "filter": "asetrate=48000*0.97,aresample=48000",
+          "expected_pitch_hz_for_220hz_input": 213.4,
+          "metrics": {
+            "wall_seconds": 0.24476,
+            "relative_real_time_cost": 0.007914,
+            "real_time_speed_x": 126.359688,
+            "wall_per_output_second": 0.007914,
+            "output_duration_seconds": 30.927854,
+            "expected_duration_seconds": 30.927835,
+            "duration_error_seconds": 0.000019,
+            "absolute_duration_error_seconds": 0.000019,
+            "output_frames": 1484537,
+            "sample_rate": 48000,
+            "channels": 2,
+            "peak": 1.002195,
+            "rms": 0.322203,
+            "silence_sample_ratio": 0.000502,
+            "near_silence_sample_ratio": 0.002473,
+            "full_scale_sample_ratio": 0.000043,
+            "non_finite_sample_count": 0
+          }
+        },
+        {
+          "method": "ffmpeg_atempo",
+          "ratio": 0.97,
+          "atempo_parameter": 1.030927835,
+          "requested_parameter_rule": "1/ratio",
+          "actual_content_speed_ratio": 1.030927835,
+          "atempo_required_for_content_speed_ratio": 0.97,
+          "filter": "atempo=1.0309278350515465",
+          "expected_pitch_hz_for_220hz_input": 220,
+          "metrics": {
+            "wall_seconds": 0.268954,
+            "relative_real_time_cost": 0.009242,
+            "real_time_speed_x": 108.197021,
+            "wall_per_output_second": 0.009239,
+            "output_duration_seconds": 29.109688,
+            "expected_duration_seconds": 29.1,
+            "duration_error_seconds": 0.009688,
+            "absolute_duration_error_seconds": 0.009688,
+            "output_frames": 1397265,
+            "sample_rate": 48000,
+            "channels": 2,
+            "peak": 0.999884,
+            "rms": 0.320813,
+            "silence_sample_ratio": 0.000422,
+            "near_silence_sample_ratio": 0.00241,
+            "full_scale_sample_ratio": 0,
+            "non_finite_sample_count": 0
+          },
+          "comparison_with_playbackRate_ratio": {
+            "requested_assumption_verified": false,
+            "playbackRate_target_duration_seconds": 30.927835,
+            "duration_minus_playbackRate_target_seconds": -1.818147,
+            "note": "atempo=1/ratio produces speed 1/ratio; use atempo=ratio to match playbackRate=ratio."
+          }
+        },
+        {
+          "method": "playbackRate_resampling_proxy",
+          "ratio": 1.03,
+          "playback_rate": 1.03,
+          "actual_content_speed_ratio": 1.03,
+          "filter": "asetrate=48000*1.03,aresample=48000",
+          "expected_pitch_hz_for_220hz_input": 226.6,
+          "metrics": {
+            "wall_seconds": 0.239777,
+            "relative_real_time_cost": 0.008232,
+            "real_time_speed_x": 121.472344,
+            "wall_per_output_second": 0.008232,
+            "output_duration_seconds": 29.126229,
+            "expected_duration_seconds": 29.126214,
+            "duration_error_seconds": 0.000016,
+            "absolute_duration_error_seconds": 0.000016,
+            "output_frames": 1398059,
+            "sample_rate": 48000,
+            "channels": 2,
+            "peak": 1.01599,
+            "rms": 0.322189,
+            "silence_sample_ratio": 0.000501,
+            "near_silence_sample_ratio": 0.002473,
+            "full_scale_sample_ratio": 0.000069,
+            "non_finite_sample_count": 0
+          }
+        },
+        {
+          "method": "ffmpeg_atempo",
+          "ratio": 1.03,
+          "atempo_parameter": 0.970873786,
+          "requested_parameter_rule": "1/ratio",
+          "actual_content_speed_ratio": 0.970873786,
+          "atempo_required_for_content_speed_ratio": 1.03,
+          "filter": "atempo=0.970873786407767",
+          "expected_pitch_hz_for_220hz_input": 220,
+          "metrics": {
+            "wall_seconds": 0.277631,
+            "relative_real_time_cost": 0.008985,
+            "real_time_speed_x": 111.29885,
+            "wall_per_output_second": 0.00899,
+            "output_duration_seconds": 30.883646,
+            "expected_duration_seconds": 30.9,
+            "duration_error_seconds": -0.016354,
+            "absolute_duration_error_seconds": 0.016354,
+            "output_frames": 1482415,
+            "sample_rate": 48000,
+            "channels": 2,
+            "peak": 0.99988,
+            "rms": 0.320794,
+            "silence_sample_ratio": 0.000398,
+            "near_silence_sample_ratio": 0.002348,
+            "full_scale_sample_ratio": 0,
+            "non_finite_sample_count": 0
+          },
+          "comparison_with_playbackRate_ratio": {
+            "requested_assumption_verified": false,
+            "playbackRate_target_duration_seconds": 29.126214,
+            "duration_minus_playbackRate_target_seconds": 1.757432,
+            "note": "atempo=1/ratio produces speed 1/ratio; use atempo=ratio to match playbackRate=ratio."
+          }
+        },
+        {
+          "method": "playbackRate_resampling_proxy",
+          "ratio": 0.9,
+          "playback_rate": 0.9,
+          "actual_content_speed_ratio": 0.9,
+          "filter": "asetrate=48000*0.9,aresample=48000",
+          "expected_pitch_hz_for_220hz_input": 198,
+          "metrics": {
+            "wall_seconds": 0.25909,
+            "relative_real_time_cost": 0.007773,
+            "real_time_speed_x": 128.655273,
+            "wall_per_output_second": 0.007773,
+            "output_duration_seconds": 33.333333,
+            "expected_duration_seconds": 33.333333,
+            "duration_error_seconds": 0,
+            "absolute_duration_error_seconds": 0,
+            "output_frames": 1600000,
+            "sample_rate": 48000,
+            "channels": 2,
+            "peak": 1.002151,
+            "rms": 0.322203,
+            "silence_sample_ratio": 0.000501,
+            "near_silence_sample_ratio": 0.002458,
+            "full_scale_sample_ratio": 0.000035,
+            "non_finite_sample_count": 0
+          }
+        },
+        {
+          "method": "ffmpeg_atempo",
+          "ratio": 0.9,
+          "atempo_parameter": 1.111111111,
+          "requested_parameter_rule": "1/ratio",
+          "actual_content_speed_ratio": 1.111111111,
+          "atempo_required_for_content_speed_ratio": 0.9,
+          "filter": "atempo=1.1111111111111112",
+          "expected_pitch_hz_for_220hz_input": 220,
+          "metrics": {
+            "wall_seconds": 0.303261,
+            "relative_real_time_cost": 0.011232,
+            "real_time_speed_x": 89.032161,
+            "wall_per_output_second": 0.011228,
+            "output_duration_seconds": 27.010146,
+            "expected_duration_seconds": 27,
+            "duration_error_seconds": 0.010146,
+            "absolute_duration_error_seconds": 0.010146,
+            "output_frames": 1296487,
+            "sample_rate": 48000,
+            "channels": 2,
+            "peak": 0.999884,
+            "rms": 0.318471,
+            "silence_sample_ratio": 0.000454,
+            "near_silence_sample_ratio": 0.002423,
+            "full_scale_sample_ratio": 0,
+            "non_finite_sample_count": 0
+          },
+          "comparison_with_playbackRate_ratio": {
+            "requested_assumption_verified": false,
+            "playbackRate_target_duration_seconds": 33.333333,
+            "duration_minus_playbackRate_target_seconds": -6.323187,
+            "note": "atempo=1/ratio produces speed 1/ratio; use atempo=ratio to match playbackRate=ratio."
+          }
+        },
+        {
+          "method": "playbackRate_resampling_proxy",
+          "ratio": 1.1,
+          "playback_rate": 1.1,
+          "actual_content_speed_ratio": 1.1,
+          "filter": "asetrate=48000*1.1,aresample=48000",
+          "expected_pitch_hz_for_220hz_input": 242,
+          "metrics": {
+            "wall_seconds": 0.266243,
+            "relative_real_time_cost": 0.009762,
+            "real_time_speed_x": 102.435356,
+            "wall_per_output_second": 0.009762,
+            "output_duration_seconds": 27.272729,
+            "expected_duration_seconds": 27.272727,
+            "duration_error_seconds": 0.000002,
+            "absolute_duration_error_seconds": 0.000002,
+            "output_frames": 1309091,
+            "sample_rate": 48000,
+            "channels": 2,
+            "peak": 1.020625,
+            "rms": 0.322175,
+            "silence_sample_ratio": 0.000501,
+            "near_silence_sample_ratio": 0.002464,
+            "full_scale_sample_ratio": 0.000116,
+            "non_finite_sample_count": 0
+          }
+        },
+        {
+          "method": "ffmpeg_atempo",
+          "ratio": 1.1,
+          "atempo_parameter": 0.909090909,
+          "requested_parameter_rule": "1/ratio",
+          "actual_content_speed_ratio": 0.909090909,
+          "atempo_required_for_content_speed_ratio": 1.1,
+          "filter": "atempo=0.9090909090909091",
+          "expected_pitch_hz_for_220hz_input": 220,
+          "metrics": {
+            "wall_seconds": 0.289114,
+            "relative_real_time_cost": 0.008761,
+            "real_time_speed_x": 114.141787,
+            "wall_per_output_second": 0.008764,
+            "output_duration_seconds": 32.98975,
+            "expected_duration_seconds": 33,
+            "duration_error_seconds": -0.01025,
+            "absolute_duration_error_seconds": 0.01025,
+            "output_frames": 1583508,
+            "sample_rate": 48000,
+            "channels": 2,
+            "peak": 0.999868,
+            "rms": 0.31818,
+            "silence_sample_ratio": 0.000374,
+            "near_silence_sample_ratio": 0.002365,
+            "full_scale_sample_ratio": 0,
+            "non_finite_sample_count": 0
+          },
+          "comparison_with_playbackRate_ratio": {
+            "requested_assumption_verified": false,
+            "playbackRate_target_duration_seconds": 27.272727,
+            "duration_minus_playbackRate_target_seconds": 5.717023,
+            "note": "atempo=1/ratio produces speed 1/ratio; use atempo=ratio to match playbackRate=ratio."
+          }
+        }
+      ]
+    },
+    {
+      "id": "breed",
+      "path": "j:/Users/rezen/Music/Nirvana - Breed.mp3",
+      "trim": {
+        "start_seconds": 0,
+        "requested_duration_seconds": 30
+      },
+      "baseline": {
+        "wall_seconds": 0.287933,
+        "relative_real_time_cost": 0.009598,
+        "real_time_speed_x": 104.190942,
+        "wall_per_output_second": 0.009598,
+        "output_duration_seconds": 30,
+        "expected_duration_seconds": 30,
+        "duration_error_seconds": 0,
+        "absolute_duration_error_seconds": 0,
+        "output_frames": 1440000,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 1.026126,
+        "rms": 0.263066,
+        "silence_sample_ratio": 0.000007,
+        "near_silence_sample_ratio": 0.000607,
+        "full_scale_sample_ratio": 0.00003,
+        "non_finite_sample_count": 0
+      },
+      "runs": [
+        {
+          "method": "playbackRate_resampling_proxy",
+          "ratio": 0.97,
+          "playback_rate": 0.97,
+          "actual_content_speed_ratio": 0.97,
+          "filter": "asetrate=48000*0.97,aresample=48000",
+          "expected_pitch_hz_for_220hz_input": 213.4,
+          "metrics": {
+            "wall_seconds": 0.300008,
+            "relative_real_time_cost": 0.0097,
+            "real_time_speed_x": 103.090103,
+            "wall_per_output_second": 0.0097,
+            "output_duration_seconds": 30.927854,
+            "expected_duration_seconds": 30.927835,
+            "duration_error_seconds": 0.000019,
+            "absolute_duration_error_seconds": 0.000019,
+            "output_frames": 1484537,
+            "sample_rate": 48000,
+            "channels": 2,
+            "peak": 1.028335,
+            "rms": 0.263065,
+            "silence_sample_ratio": 0.000004,
+            "near_silence_sample_ratio": 0.000571,
+            "full_scale_sample_ratio": 0.00003,
+            "non_finite_sample_count": 0
+          }
+        },
+        {
+          "method": "ffmpeg_atempo",
+          "ratio": 0.97,
+          "atempo_parameter": 1.030927835,
+          "requested_parameter_rule": "1/ratio",
+          "actual_content_speed_ratio": 1.030927835,
+          "atempo_required_for_content_speed_ratio": 0.97,
+          "filter": "atempo=1.0309278350515465",
+          "expected_pitch_hz_for_220hz_input": 220,
+          "metrics": {
+            "wall_seconds": 0.299171,
+            "relative_real_time_cost": 0.010281,
+            "real_time_speed_x": 97.268786,
+            "wall_per_output_second": 0.010274,
+            "output_duration_seconds": 29.117979,
+            "expected_duration_seconds": 29.1,
+            "duration_error_seconds": 0.017979,
+            "absolute_duration_error_seconds": 0.017979,
+            "output_frames": 1397663,
+            "sample_rate": 48000,
+            "channels": 2,
+            "peak": 1.025867,
+            "rms": 0.26164,
+            "silence_sample_ratio": 0.000005,
+            "near_silence_sample_ratio": 0.000598,
+            "full_scale_sample_ratio": 0.000027,
+            "non_finite_sample_count": 0
+          },
+          "comparison_with_playbackRate_ratio": {
+            "requested_assumption_verified": false,
+            "playbackRate_target_duration_seconds": 30.927835,
+            "duration_minus_playbackRate_target_seconds": -1.809856,
+            "note": "atempo=1/ratio produces speed 1/ratio; use atempo=ratio to match playbackRate=ratio."
+          }
+        },
+        {
+          "method": "playbackRate_resampling_proxy",
+          "ratio": 1.03,
+          "playback_rate": 1.03,
+          "actual_content_speed_ratio": 1.03,
+          "filter": "asetrate=48000*1.03,aresample=48000",
+          "expected_pitch_hz_for_220hz_input": 226.6,
+          "metrics": {
+            "wall_seconds": 0.284384,
+            "relative_real_time_cost": 0.009764,
+            "real_time_speed_x": 102.418681,
+            "wall_per_output_second": 0.009764,
+            "output_duration_seconds": 29.126229,
+            "expected_duration_seconds": 29.126214,
+            "duration_error_seconds": 0.000016,
+            "absolute_duration_error_seconds": 0.000016,
+            "output_frames": 1398059,
+            "sample_rate": 48000,
+            "channels": 2,
+            "peak": 1.032699,
+            "rms": 0.263065,
+            "silence_sample_ratio": 0.000006,
+            "near_silence_sample_ratio": 0.000574,
+            "full_scale_sample_ratio": 0.000031,
+            "non_finite_sample_count": 0
+          }
+        },
+        {
+          "method": "ffmpeg_atempo",
+          "ratio": 1.03,
+          "atempo_parameter": 0.970873786,
+          "requested_parameter_rule": "1/ratio",
+          "actual_content_speed_ratio": 0.970873786,
+          "atempo_required_for_content_speed_ratio": 1.03,
+          "filter": "atempo=0.970873786407767",
+          "expected_pitch_hz_for_220hz_input": 220,
+          "metrics": {
+            "wall_seconds": 0.300375,
+            "relative_real_time_cost": 0.009721,
+            "real_time_speed_x": 102.871445,
+            "wall_per_output_second": 0.009726,
+            "output_duration_seconds": 30.882354,
+            "expected_duration_seconds": 30.9,
+            "duration_error_seconds": -0.017646,
+            "absolute_duration_error_seconds": 0.017646,
+            "output_frames": 1482353,
+            "sample_rate": 48000,
+            "channels": 2,
+            "peak": 1.026003,
+            "rms": 0.261988,
+            "silence_sample_ratio": 0.000004,
+            "near_silence_sample_ratio": 0.000601,
+            "full_scale_sample_ratio": 0.000026,
+            "non_finite_sample_count": 0
+          },
+          "comparison_with_playbackRate_ratio": {
+            "requested_assumption_verified": false,
+            "playbackRate_target_duration_seconds": 29.126214,
+            "duration_minus_playbackRate_target_seconds": 1.75614,
+            "note": "atempo=1/ratio produces speed 1/ratio; use atempo=ratio to match playbackRate=ratio."
+          }
+        },
+        {
+          "method": "playbackRate_resampling_proxy",
+          "ratio": 0.9,
+          "playback_rate": 0.9,
+          "actual_content_speed_ratio": 0.9,
+          "filter": "asetrate=48000*0.9,aresample=48000",
+          "expected_pitch_hz_for_220hz_input": 198,
+          "metrics": {
+            "wall_seconds": 0.278681,
+            "relative_real_time_cost": 0.00836,
+            "real_time_speed_x": 119.611073,
+            "wall_per_output_second": 0.00836,
+            "output_duration_seconds": 33.333333,
+            "expected_duration_seconds": 33.333333,
+            "duration_error_seconds": 0,
+            "absolute_duration_error_seconds": 0,
+            "output_frames": 1600000,
+            "sample_rate": 48000,
+            "channels": 2,
+            "peak": 1.024695,
+            "rms": 0.263065,
+            "silence_sample_ratio": 0.000007,
+            "near_silence_sample_ratio": 0.000597,
+            "full_scale_sample_ratio": 0.00003,
+            "non_finite_sample_count": 0
+          }
+        },
+        {
+          "method": "ffmpeg_atempo",
+          "ratio": 0.9,
+          "atempo_parameter": 1.111111111,
+          "requested_parameter_rule": "1/ratio",
+          "actual_content_speed_ratio": 1.111111111,
+          "atempo_required_for_content_speed_ratio": 0.9,
+          "filter": "atempo=1.1111111111111112",
+          "expected_pitch_hz_for_220hz_input": 220,
+          "metrics": {
+            "wall_seconds": 0.338526,
+            "relative_real_time_cost": 0.012538,
+            "real_time_speed_x": 79.757584,
+            "wall_per_output_second": 0.01253,
+            "output_duration_seconds": 27.016208,
+            "expected_duration_seconds": 27,
+            "duration_error_seconds": 0.016208,
+            "absolute_duration_error_seconds": 0.016208,
+            "output_frames": 1296778,
+            "sample_rate": 48000,
+            "channels": 2,
+            "peak": 1.025774,
+            "rms": 0.258666,
+            "silence_sample_ratio": 0.000006,
+            "near_silence_sample_ratio": 0.000617,
+            "full_scale_sample_ratio": 0.000019,
+            "non_finite_sample_count": 0
+          },
+          "comparison_with_playbackRate_ratio": {
+            "requested_assumption_verified": false,
+            "playbackRate_target_duration_seconds": 33.333333,
+            "duration_minus_playbackRate_target_seconds": -6.317125,
+            "note": "atempo=1/ratio produces speed 1/ratio; use atempo=ratio to match playbackRate=ratio."
+          }
+        },
+        {
+          "method": "playbackRate_resampling_proxy",
+          "ratio": 1.1,
+          "playback_rate": 1.1,
+          "actual_content_speed_ratio": 1.1,
+          "filter": "asetrate=48000*1.1,aresample=48000",
+          "expected_pitch_hz_for_220hz_input": 242,
+          "metrics": {
+            "wall_seconds": 0.296085,
+            "relative_real_time_cost": 0.010856,
+            "real_time_speed_x": 92.111172,
+            "wall_per_output_second": 0.010856,
+            "output_duration_seconds": 27.272729,
+            "expected_duration_seconds": 27.272727,
+            "duration_error_seconds": 0.000002,
+            "absolute_duration_error_seconds": 0.000002,
+            "output_frames": 1309091,
+            "sample_rate": 48000,
+            "channels": 2,
+            "peak": 1.025739,
+            "rms": 0.263068,
+            "silence_sample_ratio": 0.000006,
+            "near_silence_sample_ratio": 0.000593,
+            "full_scale_sample_ratio": 0.00003,
+            "non_finite_sample_count": 0
+          }
+        },
+        {
+          "method": "ffmpeg_atempo",
+          "ratio": 1.1,
+          "atempo_parameter": 0.909090909,
+          "requested_parameter_rule": "1/ratio",
+          "actual_content_speed_ratio": 0.909090909,
+          "atempo_required_for_content_speed_ratio": 1.1,
+          "filter": "atempo=0.9090909090909091",
+          "expected_pitch_hz_for_220hz_input": 220,
+          "metrics": {
+            "wall_seconds": 0.321658,
+            "relative_real_time_cost": 0.009747,
+            "real_time_speed_x": 102.593278,
+            "wall_per_output_second": 0.009753,
+            "output_duration_seconds": 32.980917,
+            "expected_duration_seconds": 33,
+            "duration_error_seconds": -0.019083,
+            "absolute_duration_error_seconds": 0.019083,
+            "output_frames": 1583084,
+            "sample_rate": 48000,
+            "channels": 2,
+            "peak": 1.02566,
+            "rms": 0.260018,
+            "silence_sample_ratio": 0.000007,
+            "near_silence_sample_ratio": 0.000598,
+            "full_scale_sample_ratio": 0.000021,
+            "non_finite_sample_count": 0
+          },
+          "comparison_with_playbackRate_ratio": {
+            "requested_assumption_verified": false,
+            "playbackRate_target_duration_seconds": 27.272727,
+            "duration_minus_playbackRate_target_seconds": 5.70819,
+            "note": "atempo=1/ratio produces speed 1/ratio; use atempo=ratio to match playbackRate=ratio."
+          }
+        }
+      ]
+    }
+  ],
+  "synthetic_220hz": {
+    "generator": "ffmpeg lavfi sine=frequency=220:sample_rate=48000:duration=4",
+    "baseline_frequency_hz": 220,
+    "analysis": "Positive-going zero crossings over the middle 60% of channel 0; edge regions excluded.",
+    "runs": [
+      {
+        "method": "resampling",
+        "ratio": 0.97,
+        "expected_frequency_hz": 213.4,
+        "positive_zero_crossing_frequency_hz": 213.4,
+        "frequency_error_hz": 0,
+        "output_duration_seconds": 4.123729,
+        "non_finite_sample_count": 0
+      },
+      {
+        "method": "ffmpeg_atempo",
+        "ratio": 0.97,
+        "atempo_parameter": 1.030927835,
+        "expected_frequency_hz": 220,
+        "positive_zero_crossing_frequency_hz": 220.042,
+        "frequency_error_hz": 0.042,
+        "output_duration_seconds": 3.881146,
+        "duration_error_seconds": 0.001146,
+        "non_finite_sample_count": 0
+      },
+      {
+        "method": "resampling",
+        "ratio": 1.03,
+        "expected_frequency_hz": 226.6,
+        "positive_zero_crossing_frequency_hz": 226.6,
+        "frequency_error_hz": 0,
+        "output_duration_seconds": 3.8835,
+        "non_finite_sample_count": 0
+      },
+      {
+        "method": "ffmpeg_atempo",
+        "ratio": 1.03,
+        "atempo_parameter": 0.970873786,
+        "expected_frequency_hz": 220,
+        "positive_zero_crossing_frequency_hz": 219.946,
+        "frequency_error_hz": -0.054,
+        "output_duration_seconds": 4.11475,
+        "duration_error_seconds": -0.00525,
+        "non_finite_sample_count": 0
+      },
+      {
+        "method": "resampling",
+        "ratio": 0.9,
+        "expected_frequency_hz": 198,
+        "positive_zero_crossing_frequency_hz": 198,
+        "frequency_error_hz": 0,
+        "output_duration_seconds": 4.444458,
+        "non_finite_sample_count": 0
+      },
+      {
+        "method": "ffmpeg_atempo",
+        "ratio": 0.9,
+        "atempo_parameter": 1.111111111,
+        "expected_frequency_hz": 220,
+        "positive_zero_crossing_frequency_hz": 219.992,
+        "frequency_error_hz": -0.008,
+        "output_duration_seconds": 3.600063,
+        "duration_error_seconds": 0.000063,
+        "non_finite_sample_count": 0
+      },
+      {
+        "method": "resampling",
+        "ratio": 1.1,
+        "expected_frequency_hz": 242,
+        "positive_zero_crossing_frequency_hz": 242,
+        "frequency_error_hz": 0,
+        "output_duration_seconds": 3.636375,
+        "non_finite_sample_count": 0
+      },
+      {
+        "method": "ffmpeg_atempo",
+        "ratio": 1.1,
+        "atempo_parameter": 0.909090909,
+        "expected_frequency_hz": 220,
+        "positive_zero_crossing_frequency_hz": 219.986,
+        "frequency_error_hz": -0.014,
+        "output_duration_seconds": 4.400229,
+        "duration_error_seconds": 0.000229,
+        "non_finite_sample_count": 0
+      }
+    ]
+  },
+  "summary": {
+    "real_case_count": 16,
+    "all_real_outputs_finite": true,
+    "max_absolute_duration_error_seconds": {
+      "playbackRate_resampling_proxy": 0.000019,
+      "ffmpeg_atempo_against_atempo_1_over_ratio_expectation": 0.019083
+    },
+    "max_absolute_mapping_error_seconds_against_playbackRate_target": 6.323187,
+    "max_wall_seconds": {
+      "playbackRate_resampling_proxy": 0.300008,
+      "ffmpeg_atempo": 0.338526
+    },
+    "synthetic_220hz_max_absolute_frequency_error_hz": {
+      "ffmpeg_atempo_vs_220hz": 0.054,
+      "resampling_vs_220hz_times_ratio": 0
+    },
+    "recommendation": "Do not directly integrate into the product from this probe alone. atempo passed basic signal and synthetic-pitch checks, but listening artifacts, implementation lineage, product latency and seek/transition behavior remain unvalidated."
+  },
+  "limitations": [
+    "FFmpeg atempo is evaluated only as FFmpeg atempo. Its implementation was not inspected or verified as WSOLA, and it is not claimed to equal a validated WSOLA implementation.",
+    "No listening test was performed. Real-music audible artifacts and subjective pitch-preservation quality are unverified.",
+    "The playbackRate cases are ideal resampling proxies, not measurements of Electron/HTMLMediaElement. Browser pitch behavior also depends on preservePitch settings; no product playback path was run or modified.",
+    "The requested atempo=1/ratio mapping does not produce content speed ratio when ratio means playbackRate. Mapping mismatch is reported separately from codec/filter duration accuracy.",
+    "Single-run wall-clock measurements include process startup and decoding, so they are not product in-process latency or statistically stable performance benchmarks.",
+    "The synthetic zero-crossing test verifies narrowband pitch behavior for a steady 220Hz sine, not complex-music transient or timbre quality.",
+    "No product integration, seek accuracy, gapless playback, transition behavior, memory use or long-running stability was tested."
+  ]
+}

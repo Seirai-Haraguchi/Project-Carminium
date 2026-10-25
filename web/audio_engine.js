@@ -121,6 +121,7 @@
       this._nextBuffer = null;
       this._nextFilePath = '';
       this._nextDurationMs = 0;
+      this._nextStartOffsetMs = 0;
 
       this._nextStreamingNode = null;
 
@@ -145,7 +146,7 @@
       this._crossfadeEnabled = false;
       this._radicalTransitions = false;
       this._crossfadeDurationMs = 5000;
-      this._gaplessEnabled = false;
+      this._lastTransitionExecution = '';
       this._crossfadeTimer = null;
 
       this._crossfadeActive = false;
@@ -1002,9 +1003,17 @@
       return out;
     }
 
-    async setNextInfo(filePath, durationMs, forceStreaming) {
+    async setNextInfo(filePath, durationMs, forceStreaming, nextStartOffsetMs) {
+      if (this._nextFilePath && this._nextFilePath !== filePath) {
+        this._transitionPlan = null;
+        this._cancelGaplessSchedule();
+        this._lastTransitionExecution = '';
+      }
       this._nextFilePath = filePath;
       this._nextDurationMs = durationMs;
+      // 流媒体预滚必须从主进程解码器 seek，而不能在渲染侧丢弃已解码的 PCM：
+      // 后者会让"入轨位置"与已建立的时间轴错开。此值由规划器/主进程确定。
+      this._nextStartOffsetMs = Math.max(0, Number(nextStartOffsetMs) || 0);
 
       this._nextIsStreaming = forceStreaming ||
         filePath.startsWith('http://') || filePath.startsWith('https://');
@@ -1075,7 +1084,9 @@
     }
 
     startCrossfade() {
-
+      this._cancelGaplessSchedule();
+      this._lastTransitionExecution = this._transitionPlan
+        ? (this._transitionPlan.strategy || 'crossfade') : 'crossfade';
       this._startExpansionEffect();
       var currentIsBuffer = !!this._currentBuffer;
       var nextIsBuffer = !!this._nextBuffer;
@@ -1119,7 +1130,7 @@
 
       const now = this._ctx.currentTime;
 
-      this._engageOutgoingWash(this._currentStreamingGain, now, cfSec);
+      this._attachOutgoingDeck(this._currentStreamingGain, now, cfSec);
       var curves = this._getCrossfadeCurves(cfFrames);
       var fadeOut = curves.fadeOut;
       var fadeIn = curves.fadeIn;
@@ -1132,7 +1143,7 @@
       nextGain.gain.value = 0;
       nextSrc.connect(nextGain);
 
-      if (!this._routeIncomingWash(nextGain, now, cfSec)) {
+      if (!this._attachIncomingDeck(nextGain, now, cfSec)) {
         nextGain.connect(this._effectsInput || this._outputNode);
       }
 
@@ -1192,7 +1203,7 @@
 
       const now = this._ctx.currentTime;
 
-      this._engageOutgoingWash(this._currentGain, now, cfSec);
+      this._attachOutgoingDeck(this._currentGain, now, cfSec);
 
       var curves = this._getCrossfadeCurves(cfFrames);
       var fadeOut = curves.fadeOut;
@@ -1203,7 +1214,7 @@
       nextGain.gain.value = 0;
       nextSrc.connect(nextGain);
 
-      if (!this._routeIncomingWash(nextGain, now, cfSec)) {
+      if (!this._attachIncomingDeck(nextGain, now, cfSec)) {
         nextGain.connect(this._effectsInput || this._outputNode);
       }
 
@@ -1291,8 +1302,8 @@
 
       const now = this._ctx.currentTime;
 
-      this._engageOutgoingWash(this._currentStreamingGain, now, cfSec);
-      this._routeIncomingWash(this._nextStreamingGain, now, cfSec);
+      this._attachOutgoingDeck(this._currentStreamingGain, now, cfSec);
+      this._attachIncomingDeck(this._nextStreamingGain, now, cfSec);
       if (this._currentStreamingGain) {
         this._currentStreamingGain.gain.setValueCurveAtTime(fadeOut, now, cfSec);
       }
@@ -1300,9 +1311,15 @@
       this._nextStreamingGain.gain.setValueCurveAtTime(fadeIn, now, cfSec);
       this._trackCrossfade(this._currentStreamingGain, this._nextStreamingGain, now, cfSec);
 
-      this._xfadeAnchor = { ctxTime: now, baseMs: 0, rate: 1, streaming: true };
+      this._xfadeAnchor = {
+        ctxTime: now,
+        baseMs: this._nextStartOffsetMs || 0,
+        rate: 1,
+        streaming: true,
+      };
 
-      console.log('[AudioEngine] Streaming crossfade start:', cfMs, 'ms');
+      console.log('[AudioEngine] Streaming crossfade start:', cfMs, 'ms',
+        'entry=' + (this._nextStartOffsetMs || 0) + 'ms');
       if (this.onCrossfadeStart) this.onCrossfadeStart();
 
       this._crossfadeTimer = setTimeout(() => {
@@ -1333,8 +1350,8 @@
 
       const now = this._ctx.currentTime;
 
-      this._engageOutgoingWash(this._currentGain, now, cfSec);
-      this._routeIncomingWash(this._nextStreamingGain, now, cfSec);
+      this._attachOutgoingDeck(this._currentGain, now, cfSec);
+      this._attachIncomingDeck(this._nextStreamingGain, now, cfSec);
 
       if (this._currentGain) {
         this._currentGain.gain.setValueCurveAtTime(fadeOut, now, cfSec);
@@ -1346,14 +1363,144 @@
       }
       this._trackCrossfade(this._currentGain, this._nextStreamingGain, now, cfSec);
 
-      this._xfadeAnchor = { ctxTime: now, baseMs: 0, rate: 1, streaming: true };
+      this._xfadeAnchor = {
+        ctxTime: now,
+        baseMs: this._nextStartOffsetMs || 0,
+        rate: 1,
+        streaming: true,
+      };
 
-      console.log('[AudioEngine] Buffer→Streaming crossfade start:', cfMs, 'ms');
+      console.log('[AudioEngine] Buffer→Streaming crossfade start:', cfMs, 'ms',
+        'entry=' + (this._nextStartOffsetMs || 0) + 'ms');
       if (this.onCrossfadeStart) this.onCrossfadeStart();
 
       this._crossfadeTimer = setTimeout(() => {
         this._finishTransition();
       }, cfMs + 50);
+    }
+
+    /* ---------- EQ 交换链（AutoMix） ----------
+     * 比 wash 更可控的过渡手法：A 逐步收掉低频、B 从中高频进入，在中点完成"低音交接"。
+     * 不使用压缩器（wash 的压缩器会在过渡里改变动态，听感像"被压扁"）。
+     */
+    _createEqSwapChain(role, deckGain, eq) {
+      var input = this._ctx.createGain();
+      var filter = this._ctx.createBiquadFilter();
+      filter.type = role === 'out' ? 'highpass' : 'lowpass';
+      filter.Q.value = 0.707;
+      filter.frequency.value = role === 'out' ? 22 : 19500;
+
+      // 低频交接是独立于 filter 的第二条控制：仅靠 highpass/lowpass 无法
+      // 表达"A 的低频先让出、B 的低频后进入"的非对称时序。
+      var bass = this._ctx.createBiquadFilter();
+      bass.type = 'lowshelf';
+      bass.frequency.value = 180;
+      bass.gain.value = 0;
+      input.connect(filter);
+      filter.connect(bass);
+      return {
+        kind: 'eq',
+        role: role,
+        deckGain: deckGain || null,
+        input: input,
+        filter: filter,
+        bass: bass,
+        output: bass,
+        nodes: [input, filter, bass],
+        restoreTimer: null,
+      };
+    }
+
+    _engageOutgoingEq(deckGain, t0, cfSec, eq) {
+      if (!this._ctx || !deckGain) return null;
+      this._disposeWash(this._currentWash, deckGain);
+      var chain = this._createEqSwapChain('out', deckGain, eq);
+      try {
+        deckGain.disconnect();
+        deckGain.connect(chain.input);
+        chain.output.connect(this._effectsInput || this._outputNode);
+      } catch (e) {
+        this._disposeWash(chain, null);
+        return null;
+      }
+      var target = Math.max(60, Math.min(900, eq.aHighpassHz || 220));
+      var endAt = eq.aCurve && eq.aCurve.endAt != null ? eq.aCurve.endAt : 0.9;
+      var t1 = t0 + Math.max(0.25, cfSec * Math.max(0.15, Math.min(0.95, endAt)));
+      chain.filter.frequency.setValueAtTime(22, t0);
+      chain.filter.frequency.exponentialRampToValueAtTime(eq.bassSwap ? Math.min(target, 90) : target, t1);
+      if (eq.bassSwap) {
+        chain.bass.gain.setValueAtTime(0, t0);
+        chain.bass.gain.linearRampToValueAtTime(-14, t1);
+      }
+      this._currentWash = chain;
+      return chain;
+    }
+
+    _routeIncomingEq(deckGain, t0, cfSec, eq) {
+      if (!this._ctx || !deckGain) return null;
+      this._disposeWash(this._nextWash, null);
+      var chain = this._createEqSwapChain('in', deckGain, eq);
+      try {
+        deckGain.disconnect();
+        deckGain.connect(chain.input);
+        chain.output.connect(this._effectsInput || this._outputNode);
+      } catch (e) {
+        this._disposeWash(chain, null);
+        return null;
+      }
+      var start = Math.max(300, Math.min(12000, eq.bLowpassHz || 4200));
+      var settleSec = Math.max(1.2, Math.min(4.0, cfSec * 0.6));
+      var startAt = eq.bCurve && eq.bCurve.startAt != null ? eq.bCurve.startAt : 0;
+      var tIn = t0 + cfSec * Math.max(0, Math.min(0.9, startAt));
+      var t1 = t0 + cfSec;
+      chain.filter.frequency.setValueAtTime(start, t0);
+      chain.filter.frequency.setValueAtTime(start, tIn);
+      chain.filter.frequency.exponentialRampToValueAtTime(19500, t1 + settleSec);
+      if (eq.bassSwap) {
+        chain.bass.gain.setValueAtTime(-14, t0);
+        chain.bass.gain.setValueAtTime(-14, tIn);
+        chain.bass.gain.linearRampToValueAtTime(0, t1 + settleSec * 0.5);
+      }
+
+      var self = this;
+      chain.restoreTimer = setTimeout(function () {
+        chain.restoreTimer = null;
+        var live = chain.deckGain &&
+          (chain.deckGain === self._currentGain || chain.deckGain === self._currentStreamingGain);
+        self._disposeWash(chain, live ? chain.deckGain : null);
+        if (self._currentWash === chain) self._currentWash = null;
+        if (self._nextWash === chain) self._nextWash = null;
+      }, Math.ceil((cfSec + settleSec + 0.3) * 1000));
+      this._nextWash = chain;
+      return chain;
+    }
+
+    _planEq() {
+      var plan = this._transitionPlan;
+      if (!plan || !plan.eq || !plan.eq.enabled) return null;
+      if (plan.strategy === 'hard-cut' || plan.strategy === 'fixed-crossfade') return null;
+      return plan.eq;
+    }
+
+    _attachOutgoingDeck(deckGain, t0, cfSec) {
+      var eq = this._planEq();
+      if (eq) return this._engageOutgoingEq(deckGain, t0, cfSec, eq);
+      // v2+ 规划器明确给出 eq:null（普通淡化/结构过渡/安全淡化）时必须走
+      // deck gain 自身曲线，不能回退到旧 wash，否则声明与听感不一致。
+      if (this._isModelPlan()) return null;
+      return this._engageOutgoingWash(deckGain, t0, cfSec);
+    }
+
+    _attachIncomingDeck(deckGain, t0, cfSec) {
+      var eq = this._planEq();
+      if (eq) return this._routeIncomingEq(deckGain, t0, cfSec, eq);
+      if (this._isModelPlan()) return null;
+      return this._routeIncomingWash(deckGain, t0, cfSec);
+    }
+
+    _isModelPlan() {
+      var plan = this._transitionPlan;
+      return !!(plan && Number(plan.v) >= 2);
     }
 
     _createWashChain(role, deckGain) {
@@ -1476,7 +1623,7 @@
         try { liveDeckGain.disconnect(); } catch (_) {}
         try { liveDeckGain.connect(this._effectsInput || this._outputNode); } catch (_) {}
       }
-      var nodes = [wash.input, wash.highpass, wash.lowpass, wash.comp, wash.makeup];
+      var nodes = wash.nodes || [wash.input, wash.highpass, wash.lowpass, wash.comp, wash.makeup];
       for (var i = 0; i < nodes.length; i++) this._safeDisconnect(nodes[i]);
     }
 
@@ -1568,6 +1715,7 @@
       this._nextBuffer = null;
       this._nextFilePath = '';
       this._nextDurationMs = 0;
+      this._nextStartOffsetMs = 0;
       this._nextIsStreaming = false;
       this._nextStreamingNode = null;
       this._nextStreamingGain = null;
@@ -1647,13 +1795,18 @@
         this._streamingConsumedFrames);
     }
 
+    _autoGaplessEligible() {
+      var plan = this._transitionPlan;
+      return !!(plan && (plan.seamless || plan.gaplessFallback) && this._crossfadeEnabled &&
+        this._currentBuffer && this._nextBuffer && !this._nextIsStreaming &&
+        Math.abs((this._userRate || 1) - 1) < 1e-6 &&
+        !this._crossfadeActive && !this._pendingBufferToStreamingCrossfade &&
+        this._isPlaying && !this._isPaused);
+    }
+
     _scheduleGaplessSwitch() {
-      if (!this._gaplessEnabled) return;
-      if (this._crossfadeEnabled) return;
-      if (!this._currentBuffer || !this._nextBuffer) return;
-      if (this._nextIsStreaming) return;
+      if (!this._autoGaplessEligible()) return;
       if (this._gaplessScheduledSource) return;
-      if (!this._isPlaying || this._isPaused) return;
 
       var posMs = this._tlPositionNow();
       var gRate = (this._userRate > 0) ? this._userRate : 1;
@@ -1674,8 +1827,11 @@
       this._gaplessScheduledSource = nextSrc;
       this._gaplessScheduledGain = nextGain;
       this._gaplessScheduledEndTime = endTime;
+      this._lastTransitionExecution =
+        (this._transitionPlan && this._transitionPlan.seamless) ? 'seamless' : 'gapless';
 
-      console.log('[AudioEngine] Gapless scheduled: next starts in',
+      console.log('[AudioEngine] AutoMix ' +
+        (this._transitionPlan.seamless ? 'seamless' : 'gapless') + ' scheduled: next starts in',
         Math.round((endTime - this._ctx.currentTime) * 1000) + 'ms');
     }
 
@@ -1722,12 +1878,15 @@
       this._gaplessScheduledSource = null;
       this._gaplessScheduledGain = null;
       this._gaplessScheduledEndTime = 0;
+      this._transitionPlan = null;
+      this._cachedCrossfadeCurves = null;
 
       this._nextSource = null;
       this._nextGain = null;
       this._nextBuffer = null;
       this._nextFilePath = '';
       this._nextDurationMs = 0;
+      this._nextStartOffsetMs = 0;
       this._nextIsStreaming = false;
 
       source.onended = function () {
@@ -1741,7 +1900,7 @@
         }
       };
 
-      console.log('[AudioEngine] Gapless switch (pre-scheduled buffer)');
+      console.log('[AudioEngine] AutoMix gapless switch (pre-scheduled buffer)');
 
       var cb = this.onGaplessSwitch;
       if (cb) {
@@ -1780,9 +1939,10 @@
       this._nextBuffer = null;
       this._nextFilePath = '';
       this._nextDurationMs = 0;
+      this._nextStartOffsetMs = 0;
       this._nextIsStreaming = false;
 
-      console.log('[AudioEngine] Gapless switch (buffer)');
+      console.log('[AudioEngine] AutoMix direct switch (buffer)');
       if (this.onGaplessSwitch) this.onGaplessSwitch();
       return true;
     }
@@ -1790,7 +1950,7 @@
     _switchToNextStreaming() {
       if (!this._nextStreamingNode) {
 
-        console.warn('[AudioEngine] Gapless switch (streaming): next node not ready');
+        console.warn('[AudioEngine] AutoMix direct switch (streaming): next node not ready');
         return false;
       }
 
@@ -1803,10 +1963,11 @@
 
       this._currentFilePath = this._nextFilePath;
       this._currentDurationMs = this._nextDurationMs;
-      this._seekOffsetMs = 0;
+      this._seekOffsetMs = this._nextStartOffsetMs || 0;
 
       this._nextFilePath = '';
       this._nextDurationMs = 0;
+      this._nextStartOffsetMs = 0;
       this._nextIsStreaming = false;
       this._nextStreamingNode = null;
       this._nextStreamingGain = null;
@@ -1815,7 +1976,7 @@
       this._pendingNextStreamingPcm = [];
       this._nextStreamingPrimed = false;
 
-      console.log('[AudioEngine] Gapless switch (streaming)');
+      console.log('[AudioEngine] AutoMix direct switch (streaming)');
       if (this.onGaplessSwitch) this.onGaplessSwitch();
       return true;
     }
@@ -1906,7 +2067,17 @@
       } else if (this._ctx && this._ctx.baseLatency) {
         total += Math.round(this._ctx.baseLatency * 1000);
       }
-      return total;
+      // 上限保护：设备被暂停/独占失败时 outputLatency 会飙到秒级，
+      // 全量扣掉会让 UI 进度"冻住"，并且让 AutoMix 的触发点被无限推迟
+      // （getCurrentPositionMs 是所有触发判断的唯一输入）。
+      if (total > 800) {
+        if (!this._latencyClampWarned) {
+          this._latencyClampWarned = true;
+          console.warn('[AudioEngine] latency compensation clamped:', total, 'ms → 800ms');
+        }
+        total = 800;
+      }
+      return Math.max(0, total);
     }
 
     getCurrentPositionMs() {
@@ -1945,6 +2116,10 @@
         latencyMs: Math.round(this._currentLatencyMs()),
         streamingConsumedFrames: this._streamingConsumedFrames,
         anchoredAt: this._tlCursor,
+        planStrategy: this._transitionPlan ? this._transitionPlan.strategy : '',
+        executionMode: this._lastTransitionExecution || '',
+        planExitMs: this._transitionPlan ? this._transitionPlan.exitMs : -1,
+        planRatio: this._transitionPlan ? this._transitionPlan.ratio : 1,
       };
     }
 
@@ -1952,11 +2127,18 @@
       this._dllBufferLatencyMs = ms || 0;
     }
 
-    setCrossfadeEnabled(enabled) { this._crossfadeEnabled = !!enabled; }
+    setCrossfadeEnabled(enabled) {
+      this._crossfadeEnabled = !!enabled;
+      if (!this._crossfadeEnabled) {
+        this._cancelGaplessSchedule();
+        this._transitionPlan = null;
+        this._lastTransitionExecution = '';
+      } else if (this._autoGaplessEligible()) {
+        this._scheduleGaplessSwitch();
+      }
+    }
     setRadicalTransitionsEnabled(enabled) { this._radicalTransitions = !!enabled; }
     setCrossfadeDuration(ms) { this._crossfadeDurationMs = ms; this._cachedCrossfadeCurves = null; }
-    setGaplessEnabled(enabled) { this._gaplessEnabled = !!enabled; }
-
     setEqEnabled(enabled) {
       this._eqEnabled = !!enabled;
       if (!this._eqBands) return;
@@ -2180,6 +2362,10 @@
 
     setTransitionPlan(plan) {
       this._transitionPlan = plan || null;
+      // 旧计划可能已经排好无缝衔接；计划变化时一律先撤销，再按新计划决定。
+      this._cancelGaplessSchedule();
+      this._lastTransitionExecution = '';
+      if (this._autoGaplessEligible()) this._scheduleGaplessSwitch();
 
       var cfMs = this._getEffectiveCrossfadeMs();
       if (cfMs > 0 && this._ctx) {
@@ -2428,6 +2614,7 @@
       this._nextBuffer = null;
       this._nextFilePath = '';
       this._nextDurationMs = 0;
+      this._nextStartOffsetMs = 0;
       this._nextIsStreaming = false;
 
       this._disposeStreamingNode(this._nextStreamingNode, this._nextStreamingGain);
@@ -2643,16 +2830,6 @@
           self._checkCrossfadeTrigger();
         }
 
-      if (self._gaplessEnabled && remainingMs <= 250 && !self._gaplessScheduledSource) {
-          var isBufferMode = !!self._currentBuffer;
-          var isStreamingMode = !isBufferMode && !!self._currentStreamingNode;
-          var gaplessReady = self._isNextReady(isBufferMode, isStreamingMode);
-          if (gaplessReady) {
-            console.log('[AudioEngine] Gapless trigger: remaining=' +
-              Math.round(remainingMs) + 'ms');
-            self.switchToNext();
-          }
-        }
       }, 100);
     }
 
@@ -2681,6 +2858,16 @@
       if (this._pendingBufferToStreamingCrossfade) return;
       if (this._isPaused) return;
 
+      var plan = this._transitionPlan;
+      // 条件式无缝：计划明确没有可执行重叠时，在自然结束点排程。
+      // seamless 是「专辑连续曲，刻意不重叠」：即使下一首是流式、当前无法
+      // 预排，也绝不能回落到交叉淡化，否则会抹掉原文件做好的过渡。
+      if (plan && (plan.seamless || plan.gaplessFallback)) {
+        if (this._autoGaplessEligible()) this._scheduleGaplessSwitch();
+        if (plan.seamless) return;
+        if (this._gaplessScheduledSource) return;
+      }
+
       var durMs = this._currentDurationMs;
       if (durMs <= 0) return;
 
@@ -2688,7 +2875,6 @@
       var remainingMs = durMs - posMs;
       if (remainingMs <= 0) return;
 
-      var plan = this._transitionPlan;
       var triggerMs;
       if (plan && plan.transitionStartMs >= 0) {
         triggerMs = durMs - plan.transitionStartMs;

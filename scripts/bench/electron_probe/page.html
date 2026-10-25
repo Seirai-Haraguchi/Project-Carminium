@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>bench</title></head>
+<body>
+<script>
+const fs = require('fs');
+const FILES = {
+  fiveMin: "j:\\Users\\rezen\\Music\\PIKASONIC - Blossom.flac",
+  tenMin: "j:\\Users\\rezen\\Music\\Red (Taylor's Version)\\Taylor Swift - All Too Well (10 Minute Version) (Taylor's Version) (From The Vault).mp3",
+};
+
+function rssMB() { return Math.round(process.memoryUsage().rss / 1048576); }
+
+async function decodeOnce(ctx, file) {
+  const buf = fs.readFileSync(file);
+  const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  const t0 = performance.now();
+  const audio = await ctx.decodeAudioData(ab);
+  const ms = performance.now() - t0;
+  const bytes = audio.length * audio.numberOfChannels * 4;
+  return { ms, seconds: audio.duration, mb: +(bytes / 1048576).toFixed(1), audio };
+}
+
+function makeImpulse(ctx, seconds) {
+  const len = Math.floor(seconds * ctx.sampleRate);
+  const b = ctx.createBuffer(2, len, ctx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = b.getChannelData(ch);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.4);
+  }
+  return b;
+}
+
+// 复刻 audio_engine.js 的 _engageOutgoingWash / _routeIncomingWash / _startExpansionEffect 节点图
+function buildGraph(ctx, buffer, opts) {
+  const master = ctx.createGain();
+  master.gain.value = 0.398;
+  master.connect(ctx.destination);
+  const now = 0;
+  const cfSec = 8;
+
+  function deck(offsetSec, curveType) {
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    src.connect(g);
+    let tail = g;
+    if (opts.wash) {
+      const input = ctx.createGain();
+      const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.Q.value = 0.6; hp.frequency.value = 22;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.55; lp.frequency.value = 19500;
+      const comp = ctx.createDynamicsCompressor();
+      comp.knee.value = 12; comp.attack.value = 0.006; comp.release.value = 0.3;
+      comp.threshold.value = -20; comp.ratio.value = 3;
+      const makeup = ctx.createGain(); makeup.gain.value = 2.5;
+      g.connect(input); input.connect(hp); hp.connect(lp); lp.connect(comp); comp.connect(makeup);
+      tail = makeup;
+      lp.frequency.setValueAtTime(19500, now);
+      lp.frequency.exponentialRampToValueAtTime(1200, now + cfSec * 0.7);
+    }
+    tail.connect(master);
+    src.start(now, offsetSec);
+    return g;
+  }
+
+  const gOut = deck(120, 'out');
+  const gIn = deck(30, 'in');
+
+  const len = Math.round(cfSec * ctx.sampleRate);
+  const fo = new Float32Array(len), fi = new Float32Array(len);
+  for (let i = 0; i < len; i++) {
+    const p = i / (len - 1);
+    fo[i] = Math.cos(p * Math.PI / 2) * 0.398;
+    fi[i] = Math.sin(p * Math.PI / 2) * 0.398;
+  }
+  gOut.gain.setValueCurveAtTime(fo, now, cfSec);
+  gIn.gain.setValueCurveAtTime(fi, now, cfSec);
+
+  if (opts.expansion) {
+    const repeatBus = ctx.createGain(); repeatBus.gain.value = 0.72;
+    const air = ctx.createBiquadFilter(); air.type = 'highshelf'; air.frequency.value = 7000; air.gain.value = 1.5;
+    const conv = ctx.createConvolver(); conv.buffer = makeImpulse(ctx, 1.8);
+    const rv = ctx.createGain(); rv.gain.value = 0.2;
+    const delay = ctx.createDelay(2.0); delay.delayTime.value = 0.45;
+    const fb = ctx.createGain(); fb.gain.value = 0.18;
+    const dg = ctx.createGain(); dg.gain.value = 0.1;
+    repeatBus.connect(air); air.connect(master); air.connect(conv); conv.connect(rv); rv.connect(master);
+    air.connect(delay); delay.connect(dg); dg.connect(master); delay.connect(fb); fb.connect(delay);
+    const beat = 60 / 133;
+    for (let i = 0; i < 10; i++) {
+      const s = ctx.createBufferSource(); s.buffer = buffer;
+      const g = ctx.createGain(); const pan = ctx.createStereoPanner();
+      s.playbackRate.value = 1 + (i / 10) * 0.5;
+      g.gain.value = 0.3; pan.pan.value = i % 2 ? 0.5 : -0.5;
+      s.connect(g); g.connect(pan); pan.connect(repeatBus);
+      s.start(now + i * beat * 0.5, 118, 0.05);
+    }
+  }
+  return master;
+}
+
+async function renderCase(buffer, opts, seconds) {
+  const ctx = new OfflineAudioContext(2, Math.round(44100 * seconds), 44100);
+  buildGraph(ctx, buffer, opts);
+  const t0 = performance.now();
+  await ctx.startRendering();
+  const ms = performance.now() - t0;
+  return { ms: Math.round(ms), realtimeFactor: +(seconds * 1000 / ms).toFixed(1) };
+}
+
+async function runBench() {
+  const out = { decode: [], dsp: [], mem: {} };
+  const ctx = new AudioContext({ sampleRate: 44100, latencyHint: 'playback' });
+
+  // A) 整曲解码 ×2（模拟「播放解码一次 + 分析再解码一次」）
+  for (const [k, f] of Object.entries(FILES)) {
+    const rss0 = rssMB();
+    const a = await decodeOnce(ctx, f);
+    const rss1 = rssMB();
+    const b = await decodeOnce(ctx, f); // 缓存上限 24MB → 必然第二次全量解码
+    const rss2 = rssMB();
+    out.decode.push({ file: k, seconds: Math.round(a.seconds), decodeMs: Math.round(a.ms), decode2Ms: Math.round(b.ms), audioBufferMB: a.mb, rssAfter1: rss1 - rss0, rssAfter2: rss2 - rss0 });
+    if (k === 'fiveMin') var keep = a.audio;
+  }
+
+  // B) DSP 图实时因子（15 秒音频）
+  const secs = 15;
+  out.dsp.push({ config: 'baseline(2 src + 2 gain + curves)', ...(await renderCase(keep, {}, secs)) });
+  out.dsp.push({ config: '+ wash chains (HP+LP+Comp)', ...(await renderCase(keep, { wash: true }, secs)) });
+  out.dsp.push({ config: '+ wash + expansion(convolver 1.8s + 10 frags)', ...(await renderCase(keep, { wash: true, expansion: true }, secs)) });
+  out.dsp.push({ config: 'expansion only (no wash)', ...(await renderCase(keep, { expansion: true }, secs)) });
+
+  out.mem.audioBufferCacheLimitMB = 24;
+  await ctx.close();
+  return out;
+}
+window.runBench = runBench;
+</script>
+</body>
+</html>
