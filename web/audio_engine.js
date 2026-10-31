@@ -202,6 +202,8 @@
       this.onPositionTick = null;
       this.onCrossfadeStart = null;
       this.onCrossfadeComplete = null;
+      // 过渡被中止（seek / stop / 丢弃 next）时补发，避免上层只等到 complete 而卡在过渡态
+      this.onCrossfadeCancel = null;
       this.onStreamEnded = null;
       this.onGaplessSwitch = null;
 
@@ -703,6 +705,7 @@
     get userRate() { return this._userRate; }
 
     stop() {
+      var wasCrossfading = this._crossfadeActive;
       this._stopCrossfadeTimer();
       this._stopPositionTimer();
       this._stopExpansionEffect();
@@ -755,6 +758,7 @@
       this._clearCrossfadeTracking();
       this._cancelGaplessSchedule();
       this._xfadeAnchor = null;
+      if (wasCrossfading && this.onCrossfadeCancel) this.onCrossfadeCancel();
 
       this._isPlaying = false;
       this._isPaused = false;
@@ -794,6 +798,7 @@
       this._disposeWash(this._nextWash, null);
       this._nextWash = null;
 
+      var wasCrossfading = this._crossfadeActive;
       this._stopCrossfadeTimer();
       this._crossfadeActive = false;
       this._pendingBufferToStreamingCrossfade = false;
@@ -803,6 +808,7 @@
       this._clearCrossfadeTracking();
       this._cancelGaplessSchedule();
       this._xfadeAnchor = null;
+      if (wasCrossfading && this.onCrossfadeCancel) this.onCrossfadeCancel();
 
       this._safeStopSource(this._nextSource);
       this._safeDisconnect(this._nextGain);
@@ -2625,6 +2631,7 @@
       this._pendingNextStreamingPcm = [];
       this._nextStreamingPrimed = false;
 
+      var wasCrossfading = this._crossfadeActive;
       this._stopCrossfadeTimer();
       this._crossfadeActive = false;
       this._pendingBufferToStreamingCrossfade = false;
@@ -2634,6 +2641,7 @@
       this._cancelGaplessSchedule();
       this._transitionPlan = null;
       this._cachedCrossfadeCurves = null;
+      if (wasCrossfading && this.onCrossfadeCancel) this.onCrossfadeCancel();
     }
 
     pushStreamingPcm(float32Array) {

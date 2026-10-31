@@ -40,6 +40,8 @@ const DEFAULTS = {
   artist_separators: ';',
   tag_editor_path: '',
   cache_dir: '',
+  stream_cache_enabled: false,
+  stream_cache_limit_mb: 2048,
 
   discord_rpc: false,
   discord_rpc_show_paused: true,

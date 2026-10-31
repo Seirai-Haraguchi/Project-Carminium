@@ -37,12 +37,21 @@
       this._lastEndIndex = -1;
       this._lastRenderedScrollTop = this._scrollTop;
       this._rafPending = false;
+      // 视口高度参与渲染区间计算：容器从 display:none（clientHeight=0）变为可见时
+      // 必须重算，否则只按 bufferSize 渲染的那几行会一直留在列表里，下面一片空白。
+      this._lastViewportHeight = -1;
 
       this._onScrollBound = this._onScroll.bind(this);
       this._scrollContainer.addEventListener('scroll', this._onScrollBound, { passive: true });
 
       this._onResizeBound = this._onResize.bind(this);
       window.addEventListener('resize', this._onResizeBound);
+
+      this._ro = null;
+      if (typeof ResizeObserver !== 'undefined') {
+        this._ro = new ResizeObserver(this._onResizeBound);
+        this._ro.observe(this._scrollContainer);
+      }
 
       this._computeHeights();
       this._render();
@@ -73,6 +82,7 @@
     destroy() {
       this._scrollContainer.removeEventListener('scroll', this._onScrollBound);
       window.removeEventListener('resize', this._onResizeBound);
+      if (this._ro) { this._ro.disconnect(); this._ro = null; }
       this._container.innerHTML = '';
       this._pool = [];
       this._activeNodes = [];
@@ -167,6 +177,8 @@
 
       var scrollTop = this._scrollTop;
       var viewportHeight = this._scrollContainer.clientHeight;
+      var viewportChanged = viewportHeight !== this._lastViewportHeight;
+      this._lastViewportHeight = viewportHeight;
 
       var startIndex = this._findStartIndex(scrollTop);
       startIndex = Math.max(0, startIndex - this._bufferSize);
@@ -179,7 +191,7 @@
       }
       endIndex = Math.min(n, endIndex + this._bufferSize);
 
-      if (startIndex === this._lastStartIndex && endIndex === this._lastEndIndex) {
+      if (!viewportChanged && startIndex === this._lastStartIndex && endIndex === this._lastEndIndex) {
         return;
       }
       this._lastStartIndex = startIndex;

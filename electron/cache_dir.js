@@ -6,7 +6,7 @@ const path = require('path');
 // 所有落盘的「缓存」子目录，相对缓存根目录。迁移时逐项处理。
 // 注意：track_loudness.json / track_quality.json 属于分析结果（元数据），
 // 并非可丢弃缓存，仍保留在应用数据目录，不随缓存目录迁移。
-const CACHE_SUBDIRS = ['cover_cache', 'subsonic_covers', 'carminium-artist-images'];
+const CACHE_SUBDIRS = ['cover_cache', 'subsonic_covers', 'carminium-artist-images', 'stream_cache'];
 
 // 默认缓存根目录＝应用数据目录（userData），与历史行为保持一致。
 function defaultCacheDir(settings) {

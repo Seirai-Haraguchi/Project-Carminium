@@ -595,9 +595,23 @@
     App.utils.applyDynamicTheme(fallback, App.state.colorScheme);
   }
 
+  // 过渡态隐藏的兜底时长：引擎没发 complete（中止）时，超过这个时间必须自行恢复
+  function _crossfadeGuardMs() {
+    var ms = 0;
+    try {
+      if (_audioEngine && _audioEngine._getEffectiveCrossfadeMs) {
+        ms = _audioEngine._getEffectiveCrossfadeMs() || 0;
+      }
+    } catch (e) { ms = 0; }
+    return Math.max(2000, ms + 2500);
+  }
+
   function _onTrackChanged(trackJson) {
     const track = JSON.parse(trackJson);
     App.state.currentTrack = track;
+
+    // 🔴 必须在 gapless/crossfade 的提前 return 之前：自动推进也只有这一条通知。
+    _syncAutoMixCurrent(track);
 
     App.nowPlaying.clearTransitionPoint();
 
@@ -623,7 +637,7 @@
       _skipNextTrackGlitch = false;
     } else if (_audioEngine && _audioEngine._isPlaying) {
 
-      App.nowPlaying.setTrackInfoHidden(true);
+      App.nowPlaying.setTrackInfoHidden(true, { guardMs: 1600 });
       setTimeout(function () {
         App.nowPlaying.setTrackInfoHidden(false);
       }, 800);
@@ -980,6 +994,7 @@
   const playlistsSubmenu = document.getElementById('nav-playlists-submenu');
   const playlistsListEl = document.getElementById('nav-playlists-list');
   const playlistAddBtn = document.getElementById('nav-playlist-add');
+  const playlistImportBtn = document.getElementById('nav-playlist-import');
 
   function _positionPlaylistsSubmenu() {
     if (!playlistsNavBtn || !playlistsSubmenu) return;
@@ -987,7 +1002,7 @@
 
     const navDrawer = document.getElementById('nav-drawer');
     const navRect = navDrawer ? navDrawer.getBoundingClientRect() : { right: 80 };
-    const submenuWidth = 240;
+    const submenuWidth = playlistsSubmenu.offsetWidth || 320;
     const viewportWidth = window.innerWidth;
     let left = navRect.right + 4;
 
@@ -1026,61 +1041,63 @@
 
   function _renderPlaylistsSubmenu(playlists) {
     if (!playlistsListEl) return;
-    
+
     playlistsListEl.innerHTML = '';
-    const frag = document.createDocumentFragment();
+    var t = App.i18n ? App.i18n.t.bind(App.i18n) : function (k) { return k; };
+    var all = playlists || [];
 
-    var mixHeader = document.createElement('div');
-    mixHeader.className = 'nav-submenu-section-header';
-    mixHeader.innerHTML = '<span class="material-symbols-rounded" style="font-size:14px">auto_awesome</span><span>' + (App.i18n ? App.i18n.t('yourMix.dailyMix') : '每日合集') + '</span>';
-    frag.appendChild(mixHeader);
+    function _groupTitle(label) {
+      var el = document.createElement('div');
+      el.className = 'nav-submenu-group-title';
+      var name = document.createElement('span');
+      name.className = 'nav-submenu-group-label';
+      name.textContent = label;
+      el.appendChild(name);
+      return el;
+    }
 
-    var mixItem = document.createElement('button');
-    mixItem.className = 'nav-submenu-item nav-submenu-item--mix';
-    mixItem.type = 'button';
-    mixItem.innerHTML = `
-      <span class="material-symbols-rounded nav-submenu-item-icon">auto_awesome</span>
-      <span class="nav-submenu-item-name">${App.i18n ? App.i18n.t('nav.yourMix') : '探新'}</span>
-      <span class="material-symbols-rounded nav-submenu-item-chevron">chevron_right</span>
-    `;
-    mixItem.addEventListener('click', function () {
-      _closePlaylistsSubmenu();
-      navigate('your_mix');
-    });
-    frag.appendChild(mixItem);
+    function _groupList() {
+      var el = document.createElement('div');
+      el.className = 'md-seglist nav-submenu-group-list';
+      return el;
+    }
 
-    var divider = document.createElement('div');
-    divider.className = 'nav-submenu-divider';
-    frag.appendChild(divider);
+    // 一组 = 小标题 + 一个分段列表；组之间不画分隔线（靠小标题分段）
+    function _appendGroup(label, build) {
+      playlistsListEl.appendChild(_groupTitle(label));
+      var list = _groupList();
+      build(list);
+      playlistsListEl.appendChild(list);
+    }
 
-    var plHeader = document.createElement('div');
-    plHeader.className = 'nav-submenu-section-header';
-    plHeader.innerHTML = '<span class="material-symbols-rounded" style="font-size:14px">queue_music</span><span>' + (App.i18n ? App.i18n.t('nav.playlists') : '歌单') + '</span>';
-    frag.appendChild(plHeader);
+    function _emptyItem() {
+      var el = document.createElement('div');
+      el.className = 'nav-submenu-empty';
+      el.innerHTML = '<span class="material-symbols-rounded">queue_music</span><p>' +
+        App.utils.esc(t('empty.noPlaylists')) + '</p>';
+      return el;
+    }
 
-    if (!playlists || playlists.length === 0) {
-      var empty = document.createElement('div');
-      empty.className = 'nav-submenu-empty';
-      empty.innerHTML = '<span class="material-symbols-rounded">queue_music</span><p>' + (App.i18n ? App.i18n.t('empty.noPlaylists') : '暂无歌单') + '</p>';
-      frag.appendChild(empty);
-    } else {
-      playlists.forEach(pl => {
-        const isRemote = pl.source === 'subsonic';
-        const item = document.createElement('button');
-        item.className = 'nav-submenu-item';
-        item.type = 'button';
-        var iconHtml;
-        if (isRemote && pl.cover_art_id && pl.server_id && window.__coverBase) {
-          iconHtml = '<img class="nav-submenu-item-cover" src="' + window.__coverBase + '/subsonic/cover/' + pl.server_id + '/' + encodeURIComponent(pl.cover_art_id) + '" alt="" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'inline-flex\'"><span class="material-symbols-rounded nav-submenu-item-icon" style="display:none">cloud</span>';
-        } else {
-          iconHtml = '<span class="material-symbols-rounded nav-submenu-item-icon">' + (isRemote ? 'cloud' : 'playlist_play') + '</span>';
-        }
-        item.innerHTML = `
-          ${iconHtml}
-          <span class="nav-submenu-item-name">${App.utils.esc(pl.name)}</span>
-          ${isRemote ? '<span class="playlist-mini-badge">☁</span>' : ''}
-          <span class="nav-submenu-item-count">${pl.track_count || 0}</span>
-        `;
+    function _playlistItem(pl, isRemote) {
+      var item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'nav-submenu-item';
+
+      var iconHtml;
+      if (isRemote && pl.cover_art_id && pl.server_id && window.__coverBase) {
+        iconHtml = '<img class="nav-submenu-item-cover" src="' + window.__coverBase + '/subsonic/cover/' +
+          pl.server_id + '/' + encodeURIComponent(pl.cover_art_id) + '" alt="" loading="lazy"' +
+          ' onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'inline-flex\'">' +
+          '<span class="material-symbols-rounded nav-submenu-item-icon" style="display:none">cloud</span>';
+      } else {
+        iconHtml = '<span class="material-symbols-rounded nav-submenu-item-icon">' +
+          (isRemote ? 'cloud' : 'playlist_play') + '</span>';
+      }
+
+      item.innerHTML = iconHtml +
+        '<span class="nav-submenu-item-name">' + App.utils.esc(pl.name) + '</span>' +
+        '<span class="nav-submenu-item-count">' + (pl.track_count || 0) + '</span>';
+
       item.addEventListener('click', function () {
         _closePlaylistsSubmenu();
         navigate('playlists', { playlist_id: pl.id, playlist_name: pl.name, source: pl.source, server_id: pl.server_id, remote_id: pl.remote_id, server_name: pl.server_name, cover_art_id: pl.cover_art_id, owner: pl.owner, owner_email: pl.owner_email });
@@ -1126,10 +1143,59 @@
           console.warn('[playlists] drop parse error:', err);
         }
       });
-      frag.appendChild(item);
-    });
+
+      return item;
     }
-    playlistsListEl.appendChild(frag);
+
+    // ① 探新 / 每日合集：独立成卡，不挂在任何分类标题下
+    (function () {
+      var featureList = _groupList();
+      var feature = document.createElement('button');
+      feature.type = 'button';
+      feature.className = 'nav-submenu-feature';
+      feature.innerHTML =
+        '<span class="nav-submenu-feature-icon material-symbols-rounded">auto_awesome</span>' +
+        '<span class="nav-submenu-feature-body">' +
+          '<span class="nav-submenu-feature-title">' + App.utils.esc(t('yourMix.title')) + '</span>' +
+          '<span class="nav-submenu-feature-sub">' + App.utils.esc(t('yourMix.featured')) + '</span>' +
+        '</span>' +
+        '<span class="material-symbols-rounded nav-submenu-feature-chevron">chevron_right</span>';
+      feature.addEventListener('click', function () {
+        _closePlaylistsSubmenu();
+        navigate('your_mix');
+      });
+      featureList.appendChild(feature);
+      playlistsListEl.appendChild(featureList);
+    })();
+
+    // ② 本地歌单 / ③ 各远程服务器的歌单
+    var locals = [];
+    var remotesByServer = new Map();
+    all.forEach(function (pl) {
+      if (pl.source === 'subsonic') {
+        var key = pl.server_id || pl.server_name || 'remote';
+        if (!remotesByServer.has(key)) {
+          remotesByServer.set(key, { name: pl.server_name || t('playlist.remote'), items: [] });
+        }
+        remotesByServer.get(key).items.push(pl);
+      } else {
+        locals.push(pl);
+      }
+    });
+
+    _appendGroup(t('nav.localPlaylists'), function (list) {
+      if (locals.length === 0) {
+        list.appendChild(_emptyItem());
+        return;
+      }
+      locals.forEach(function (pl) { list.appendChild(_playlistItem(pl, false)); });
+    });
+
+    remotesByServer.forEach(function (group) {
+      _appendGroup(group.name, function (list) {
+        group.items.forEach(function (pl) { list.appendChild(_playlistItem(pl, true)); });
+      });
+    });
   }
 
   App.playlists = App.playlists || {};
@@ -1160,23 +1226,13 @@
       e.stopPropagation();
       _promptCreatePlaylist();
     });
-  if (playlistsSubmenu) {
-    const header = playlistsSubmenu.querySelector('.nav-submenu-header');
-    if (header && !header.querySelector('.nav-submenu-import')) {
-      const importBtn = document.createElement('button');
-      importBtn.className = 'nav-submenu-import';
-      importBtn.id = 'nav-playlist-import';
-      importBtn.innerHTML = '<span class="material-symbols-rounded">cloud_download</span>';
-      importBtn.title = '\u4ece Subsonic \u670d\u52a1\u5668\u5bfc\u5165\u6b4c\u5355';
-      importBtn.setAttribute('aria-label', '\u4ece Subsonic \u670d\u52a1\u5668\u5bfc\u5165\u6b4c\u5355');
-      importBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        _promptImportSubsonicPlaylists();
-      });
-      header.appendChild(importBtn);
-    }
   }
 
+  if (playlistImportBtn) {
+    playlistImportBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      _promptImportSubsonicPlaylists();
+    });
   }
 
   function _promptCreatePlaylist() {
@@ -1319,7 +1375,13 @@
         window.__electronAPI.sendAudioCrossfadeStart();
       }
       App.nowPlaying.showTransition(true);
-      App.nowPlaying.setTrackInfoHidden(true);
+      App.nowPlaying.setTrackInfoHidden(true, { guardMs: _crossfadeGuardMs() });
+    };
+    // 过渡被中止（seek / stop / next 被丢弃）时引擎不会再发 complete，
+    // 这里必须把“过渡态隐藏”收回来，否则歌词/封面会永久停在蒙层里。
+    _audioEngine.onCrossfadeCancel = function () {
+      App.nowPlaying.showTransition(false);
+      App.nowPlaying.setTrackInfoHidden(false);
     };
     _audioEngine.onCrossfadeComplete = function (positionMs) {
       _skipNextTrackGlitch = true;
@@ -1617,9 +1679,46 @@
     };
   }
 
+  /** 队列里的 track（library.db 行，snake_case）→ profile 客户端期望的形状 */
+  function _profileTrackFromQueue(track) {
+    var path = track.path || track.filePath || '';
+    return {
+      id: track.id || '',
+      title: track.title || '',
+      artist: track.artist || track.album_artist || '',
+      album: track.album || '',
+      albumArtist: track.album_artist || '',
+      trackNumber: track.track_number || 0,
+      discNumber: track.disc_number || 0,
+      duration_ms: track.duration_ms || 0,
+      filePath: path,
+      path: path,
+      file_size: track.file_size || 0,
+      suffix: track.suffix || '',
+      source: track.source || 'local',
+    };
+  }
+
   /** 同专辑、同碟（或紧邻下一碟）、轨号紧接：才考虑「保留原文件过渡」。 */
   function _isAlbumSequence(cur, next) {
     return !!(_planner && _planner.isAlbumSequence && _planner.isAlbumSequence(cur, next));
+  }
+
+  /** 取（或重取）当前曲档案；token 变化即作废更早的请求 */
+  function _ensureCurrentProfile(track) {
+    _currentProfile = null;
+    var token = ++_currentProfileToken;
+    _profileClient.ensure(track, { priority: 2 }).then(function (profile) {
+      if (token !== _currentProfileToken) return;
+      _currentProfile = profile;
+      if (profile) {
+        console.log('[app] current profile:', track.title,
+          'bpm=' + profile.tempo.primary, 'conf=' + profile.tempo.confidence,
+          'beats=' + profile.beats.timesMs.length, 'segs=' + profile.segments.length,
+          'cost=' + profile.costMs + 'ms');
+      }
+      _maybeComputePlan();
+    });
   }
 
   function _analyzeCurrentTrack(cmd) {
@@ -1638,20 +1737,45 @@
     }
     _currentTrackMeta = _trackMetaOf(track);
     _currentProfileId = track.id;
-    _currentProfile = null;
-    var token = ++_currentProfileToken;
-    _profileClient.ensure(track, { priority: 2 }).then(function (profile) {
-      if (token !== _currentProfileToken) return;
-      _currentProfile = profile;
-      if (profile) {
-        console.log('[app] current profile:', track.title,
-          'bpm=' + profile.tempo.primary, 'conf=' + profile.tempo.confidence,
-          'beats=' + profile.beats.timesMs.length, 'segs=' + profile.segments.length,
-          'cost=' + profile.costMs + 'ms');
-      }
-      _maybeComputePlan();
-    });
+    _ensureCurrentProfile(track);
   }
+
+  /**
+   * 自动推进（交叉淡化完成 / 无缝切换）之后唯一能纠正 current 的时刻。
+   *
+   * 播放器在这种推进里只发 track_changed，不会再发 audio_control.play，
+   * 所以 _currentTrackMeta/_currentProfile 会一直停在**上一首**：
+   * 下一对就被判成「专辑 A 第 1 轨 → 第 3 轨」，连号判定失配，
+   * 整张专辑只有第一次（用户手点的那次）是 gapless，之后全走交叉淡化。
+   *
+   * 预载那首刚变成当前时直接把它的档案搬过来，既省一次分析，
+   * 也避免"新 current 分析还没回来、plan 已经按旧 profile 算完"的竞态。
+   */
+  function _syncAutoMixCurrent(track) {
+    if (!_planner || !_profileClient || !track) return;
+    var t = _profileTrackFromQueue(track);
+    if (!t.id) return;
+    if (t.id === _currentProfileId) {
+      _currentTrackMeta = _trackMetaOf(t);
+      return;
+    }
+    var promoted = (t.id === _nextProfileId) ? _nextProfile : null;
+    _nextProfile = null;
+    _nextProfileId = '';
+    _nextTrackMeta = null;
+    _nextProfileToken++;              // 作废还没回来的 next 分析
+    _currentProfileId = t.id;
+    _currentTrackMeta = _trackMetaOf(t);
+    if (promoted) {
+      _currentProfile = promoted;
+      _currentProfileToken++;         // 作废旧 current 的 in-flight 分析
+      console.log('[app] AutoMix current promoted:', t.title);
+      _maybeComputePlan();
+      return;
+    }
+    _ensureCurrentProfile(t);
+  }
+
 
   function _analyzeNextTrack(cmd) {
     if (!_planner || !_profileClient) return;
@@ -1666,6 +1790,10 @@
     _nextProfileId = track.id;
     _nextTrackMeta = _trackMetaOf(track);
     _nextProfile = null;
+    // 专辑连续曲只依赖元数据。不等分析（新专辑可能要好几百毫秒）就先把
+    // seamless 计划交给引擎，否则自然结束时引擎手里还没有计划，会滑进
+    // 交叉淡化分支——正好毁掉原过渡。
+    if (_isAlbumSequence(_currentTrackMeta, _nextTrackMeta)) _maybeComputePlan();
     var token = ++_nextProfileToken;
     _profileClient.ensure(track, { priority: 1 }).then(function (profile) {
       if (token !== _nextProfileToken) return;
@@ -1695,8 +1823,8 @@
       radical: !!_audioEngine._radicalTransitions,
       // 下一首是流式时没有 playbackRate/resample，只能规划 ratio=1。
       nextStreaming: !!_audioEngine._nextIsStreaming,
-      // 同专辑按原顺序播放：若两侧文件边界都没有留白，原文件本来就连着，
-      // 交叉淡化会直接毁掉作者做好的过渡。规划器据此让位，不做重叠。
+      // 同专辑按原顺序播放（专辑同名 + 碟/轨连号）＝作者设计好的连续曲，
+      // 直接让位给自然结束的无缝切换，不做任何重叠。不看边界留白。
       albumSequence: _isAlbumSequence(_currentTrackMeta, _nextTrackMeta),
     });
     _lastPlan = plan;

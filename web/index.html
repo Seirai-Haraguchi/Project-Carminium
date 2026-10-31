@@ -156,7 +156,7 @@
           <button class="split-btn-dropdown" id="btn-more-dropdown" data-i18n-title="np.more">
             <span class="material-symbols-rounded">arrow_drop_down</span>
           </button>
-          <div class="split-dropdown-menu" id="split-dropdown-menu" style="display:none;">
+          <div class="split-dropdown-menu mdx md-seglist" id="split-dropdown-menu" style="display:none;">
             <div class="split-dropdown-item" id="btn-theater">
               <span class="material-symbols-rounded">crop_free</span>
               <span data-i18n="np.fullScreen">全屏视图</span>
@@ -201,6 +201,11 @@
               <p class="np-artist" id="np-artist">—</p>
               <p class="np-album" id="np-album"></p>
             </div>
+            <button class="np-more-btn" id="np-more-btn" type="button"
+                    data-i18n-title="np.more" data-i18n-aria-label="np.more"
+                    aria-haspopup="menu" aria-expanded="false">
+              <span class="material-symbols-rounded">more_vert</span>
+            </button>
           </div>
 
           <div class="np-progress-wrap">
@@ -248,7 +253,7 @@
             <span class="np-lyrics-source-label" id="np-lyrics-source-label">Embedded</span>
             <span class="np-lyrics-source-arrow material-symbols-rounded">expand_more</span>
 
-            <div class="np-lyrics-source-dropdown" id="np-lyrics-source-dropdown">
+            <div class="np-lyrics-source-dropdown mdx md-seglist" id="np-lyrics-source-dropdown">
               <button class="np-lyrics-source-option" data-source="embedded">
                 <span class="material-symbols-rounded">audio_file</span>
                 <span data-i18n="np.lyricsSourceEmbedded">EMBEDDED</span>
@@ -287,76 +292,76 @@
             </button>
           </div>
 
-          <div class="np-lyrics-settings-popup" id="np-lyrics-settings-popup" style="display:none">
-            <div class="np-lyrics-settings-header">
-              <span class="np-lyrics-settings-title" data-i18n="np.lyricsSettings">歌词设置</span>
-              <button class="np-lyrics-settings-close" id="np-lyrics-settings-close" data-i18n-aria-label="common.close">
-                <span class="material-symbols-rounded">close</span>
-              </button>
-            </div>
+          <div class="np-lyrics-settings-popup mdx" id="np-lyrics-settings-popup" style="display:none">
             <div class="np-lyrics-settings-body">
 
-              <div class="np-lyrics-setting-row">
-                <div class="np-lyrics-setting-label">
-                  <span class="material-symbols-rounded np-lyrics-setting-icon">schedule</span>
-                  <span data-i18n="np.lyricsOffset">时间偏移</span>
+              <div class="md-seglist">
+                <div class="np-lyrics-setting-row">
+                  <span class="np-lyrics-setting-label">
+                    <span class="material-symbols-rounded np-lyrics-setting-icon">schedule</span>
+                    <span data-i18n="np.lyricsOffset">时间偏移</span>
+                  </span>
+                  <div class="np-lyrics-setting-control">
+                    <button class="np-lyrics-setting-step-btn" id="np-lyrics-offset-dec" title="-200ms">
+                      <span class="material-symbols-rounded">remove</span>
+                    </button>
+                    <span class="np-lyrics-setting-value" id="np-lyrics-offset-value">0ms</span>
+                    <button class="np-lyrics-setting-step-btn" id="np-lyrics-offset-inc" title="+200ms">
+                      <span class="material-symbols-rounded">add</span>
+                    </button>
+                  </div>
                 </div>
-                <div class="np-lyrics-setting-control">
-                  <button class="np-lyrics-setting-step-btn" id="np-lyrics-offset-dec" title="-200ms">
-                    <span class="material-symbols-rounded">remove</span>
-                  </button>
-                  <span class="np-lyrics-setting-value" id="np-lyrics-offset-value">0ms</span>
-                  <button class="np-lyrics-setting-step-btn" id="np-lyrics-offset-inc" title="+200ms">
-                    <span class="material-symbols-rounded">add</span>
-                  </button>
+
+                <div class="np-lyrics-setting-row">
+                  <span class="np-lyrics-setting-label">
+                    <span class="material-symbols-rounded np-lyrics-setting-icon">format_size</span>
+                    <span data-i18n="np.lyricsFontSize">字体大小</span>
+                  </span>
+                  <div class="np-lyrics-setting-control">
+                    <input type="range" class="settings-slider np-lyrics-setting-slider" id="np-lyrics-font-size-slider" min="12" max="28" step="1" value="16">
+                    <span class="np-lyrics-setting-value" id="np-lyrics-font-size-value">16px</span>
+                  </div>
                 </div>
               </div>
 
-              <div class="np-lyrics-setting-row">
-                <div class="np-lyrics-setting-label">
-                  <span class="material-symbols-rounded np-lyrics-setting-icon">format_size</span>
-                  <span data-i18n="np.lyricsFontSize">字体大小</span>
+              <div class="md-seglist">
+                <div class="np-lyrics-setting-row np-lyrics-setting-toggle-row">
+                  <span class="np-lyrics-setting-label">
+                    <span class="material-symbols-rounded np-lyrics-setting-icon">blur_on</span>
+                    <span data-i18n="np.lyricsProgressiveBlur">渐进模糊</span>
+                  </span>
+                  <label class="toggle toggle--sm">
+                    <input type="checkbox" id="np-lyrics-blur-toggle">
+                    <div class="toggle-track"></div>
+                    <div class="toggle-thumb"></div>
+                  </label>
                 </div>
-                <div class="np-lyrics-setting-control">
-                  <input type="range" class="np-lyrics-setting-slider" id="np-lyrics-font-size-slider" min="12" max="28" step="1" value="16">
-                  <span class="np-lyrics-setting-value" id="np-lyrics-font-size-value">16px</span>
+
+                <div class="np-lyrics-setting-row np-lyrics-setting-toggle-row">
+                  <span class="np-lyrics-setting-label">
+                    <span class="material-symbols-rounded np-lyrics-setting-icon">format_align_center</span>
+                    <span data-i18n="np.lyricsCenter">居中排版</span>
+                  </span>
+                  <label class="toggle toggle--sm">
+                    <input type="checkbox" id="np-lyrics-center-toggle">
+                    <div class="toggle-track"></div>
+                    <div class="toggle-thumb"></div>
+                  </label>
+                </div>
+
+                <div class="np-lyrics-setting-row np-lyrics-setting-toggle-row">
+                  <span class="np-lyrics-setting-label">
+                    <span class="material-symbols-rounded np-lyrics-setting-icon">language</span>
+                    <span data-i18n="np.lyricsJpFont">日文独立字体</span>
+                  </span>
+                  <label class="toggle toggle--sm">
+                    <input type="checkbox" id="np-lyrics-jp-font-toggle">
+                    <div class="toggle-track"></div>
+                    <div class="toggle-thumb"></div>
+                  </label>
                 </div>
               </div>
 
-              <div class="np-lyrics-setting-divider"></div>
-
-              <div class="np-lyrics-setting-row np-lyrics-setting-toggle-row">
-                <div class="np-lyrics-setting-label">
-                  <span class="material-symbols-rounded np-lyrics-setting-icon">blur_on</span>
-                  <span data-i18n="np.lyricsProgressiveBlur">渐进模糊</span>
-                </div>
-                <label class="np-lyrics-setting-switch">
-                  <input type="checkbox" id="np-lyrics-blur-toggle">
-                  <span class="np-lyrics-setting-switch-slider"></span>
-                </label>
-              </div>
-
-              <div class="np-lyrics-setting-row np-lyrics-setting-toggle-row">
-                <div class="np-lyrics-setting-label">
-                  <span class="material-symbols-rounded np-lyrics-setting-icon">format_align_center</span>
-                  <span data-i18n="np.lyricsCenter">居中排版</span>
-                </div>
-                <label class="np-lyrics-setting-switch">
-                  <input type="checkbox" id="np-lyrics-center-toggle">
-                  <span class="np-lyrics-setting-switch-slider"></span>
-                </label>
-              </div>
-
-              <div class="np-lyrics-setting-row np-lyrics-setting-toggle-row">
-                <div class="np-lyrics-setting-label">
-                  <span class="material-symbols-rounded np-lyrics-setting-icon">language</span>
-                  <span data-i18n="np.lyricsJpFont">日文独立字体</span>
-                </div>
-                <label class="np-lyrics-setting-switch">
-                  <input type="checkbox" id="np-lyrics-jp-font-toggle">
-                  <span class="np-lyrics-setting-switch-slider"></span>
-                </label>
-              </div>
             </div>
           </div>
 
@@ -456,14 +461,18 @@
 
   </div>
 
-  <div class="nav-submenu" id="nav-playlists-submenu" role="menu" aria-label="歌单列表" hidden>
-    <div class="nav-submenu-header">
-      <span class="nav-submenu-title" data-i18n="nav.playlists">歌单</span>
-      <button class="nav-submenu-add" id="nav-playlist-add" data-i18n-title="cm.newPlaylist" data-i18n-aria-label="cm.newPlaylist">
+  <div class="nav-submenu mdx" id="nav-playlists-submenu" role="menu" data-i18n-aria-label="nav.playlists" aria-label="歌单" hidden>
+    <div class="nav-submenu-actions">
+      <button class="nav-submenu-action nav-submenu-action--primary" id="nav-playlist-add" type="button" data-i18n-title="cm.newPlaylist">
         <span class="material-symbols-rounded">add</span>
+        <span class="nav-submenu-action-label" data-i18n="cm.newPlaylist">新建歌单</span>
+      </button>
+      <button class="nav-submenu-action" id="nav-playlist-import" type="button" data-i18n-title="playlist.importFromServer">
+        <span class="material-symbols-rounded">cloud_download</span>
+        <span class="nav-submenu-action-label" data-i18n="nav.importPlaylists">导入</span>
       </button>
     </div>
-    <div class="nav-submenu-list" id="nav-playlists-list"></div>
+    <div class="nav-submenu-body" id="nav-playlists-list"></div>
   </div>
 
   <script src="bridge.js"></script>
@@ -487,6 +496,7 @@
   <script src="pages/music.js"></script>
   <script src="pages/albums.js"></script>
   <script src="pages/artists.js"></script>
+  <script src="icons/osu_mark.js"></script>
   <script src="pages/folders.js"></script>
   <script src="pages/history.js"></script>
   <script src="pages/liked.js"></script>

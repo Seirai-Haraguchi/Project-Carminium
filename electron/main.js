@@ -850,6 +850,7 @@ let settings = null;
 let library = null;
 let player = null;
 let coverServer = null;
+let streamCache = null;
 let bridge = null;
 let smtc = null;
 let discordRpc = null;
@@ -1012,6 +1013,8 @@ async function initializeApp() {
     const { MusicLibrary } = require('./library');
     const { MusicPlayer } = require('./player');
     const { CoverHTTPServer } = require('./cover-server');
+    const { StreamCache } = require('./stream_cache');
+    const { resolveCacheDir } = require('./cache_dir');
     const { Bridge } = require('./bridge');
     const { SmtcController } = require('./smtc');
     const { DiscordRpcController } = require('./discord_rpc');
@@ -1039,7 +1042,8 @@ async function initializeApp() {
     }
 
     player = new MusicPlayer(settings, library, wasapi);
-    coverServer = new CoverHTTPServer(library);
+    streamCache = new StreamCache(settings, resolveCacheDir(settings));
+    coverServer = new CoverHTTPServer(library, streamCache);
     await coverServer.start();
 
     player.setMediaBaseUrl(coverServer.baseUrl);
@@ -1149,6 +1153,9 @@ function shutdown() {
   } catch {  }
   try {
     if (coverServer) coverServer.stop();
+  } catch {  }
+  try {
+    if (streamCache) streamCache.close();
   } catch {  }
   try {
     if (library) library.close();

@@ -1220,25 +1220,39 @@
     _lyricsScrollRafs.delete(wrapEl);
   };
 
+  // 逐行「上浮 5px」改用 WAAPI 直接驱动 transform：
+  // 旧写法是 class 摘除 → void offsetWidth 强制回流 → 重新加 class 重启 CSS 关键帧，
+  // 每个转句要逼出 7 次同步布局；WAAPI 只在合成层上跑 transform，不参与布局。
+  // fill 用 backwards（延迟期保持首帧）而不是 both —— 终帧不再残留 translateY(0)，
+  // 行元素才不会长期变成 fixed 后代的包含块。
+  var LIFT_FRAMES = [{ transform: 'translateY(5px)' }, { transform: 'translateY(0)' }];
+  var LIFT_EASING = 'cubic-bezier(0.2, 0, 0, 1)';
+
   utils.cascadeLyricLines = function (lines, activeIdx, prevIdx) {
     if (!lines || !lines.length) return;
-    var i, line, d;
-    for (i = 0; i < lines.length; i++) {
-      line = lines[i];
+    var canAnimate = typeof Element !== 'undefined' &&
+      typeof Element.prototype.animate === 'function';
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
       if (line.classList.contains('np-lyrics-static')) continue;
-      d = Math.abs(i - activeIdx);
+      var d = Math.abs(i - activeIdx);
       var delay = Math.min(d * 18, 90);
       if (line._cascDelay !== delay) {
         line._cascDelay = delay;
         line.style.transitionDelay = delay + 'ms';
-        line.style.setProperty('--lyrics-lift-delay', delay + 'ms');
       }
-
-      line.classList.remove('np-lyrics-lift');
-      if (d <= 3) {
-        void line.offsetWidth;
-        line.classList.add('np-lyrics-lift');
+      if (d > 3) {
+        if (line._liftAnim) { line._liftAnim.cancel(); line._liftAnim = null; }
+        continue;
       }
+      if (!canAnimate) continue;
+      if (line._liftAnim) line._liftAnim.cancel();
+      line._liftAnim = line.animate(LIFT_FRAMES, {
+        duration: 180,
+        delay: delay,
+        easing: LIFT_EASING,
+        fill: 'backwards'
+      });
     }
   };
 

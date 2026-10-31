@@ -12,6 +12,7 @@
     title: document.getElementById('np-title'),
     artist: document.getElementById('np-artist'),
     album: document.getElementById('np-album'),
+    btnMore: document.getElementById('np-more-btn'),
     btnPlay: document.getElementById('btn-play-pause'),
     iconPlay: document.getElementById('play-icon'),
     btnPrev: document.getElementById('btn-prev'),
@@ -85,7 +86,6 @@
     lyricsSearchResults: document.getElementById('np-lyrics-search-results'),
     lyricsSettingsBtn: document.getElementById('np-lyrics-settings-btn'),
     lyricsSettingsPopup: document.getElementById('np-lyrics-settings-popup'),
-    lyricsSettingsClose: document.getElementById('np-lyrics-settings-close'),
     lyricsOffsetDec: document.getElementById('np-lyrics-offset-dec'),
     lyricsOffsetInc: document.getElementById('np-lyrics-offset-inc'),
     lyricsOffsetValue: document.getElementById('np-lyrics-offset-value'),
@@ -101,6 +101,18 @@
     lyricsSourceOptions: document.querySelectorAll('.np-lyrics-source-option'),
     secondaryControls: document.getElementById('np-secondary-controls'),
   };
+
+  // 歌词字号滑块：把当前值换算成轨道填充比例（复用设置页 .settings-slider 的 --slider-val）
+  function _syncFontSizeSlider() {
+    var slider = els.lyricsFontSizeSlider;
+    if (!slider) return;
+    var min = parseFloat(slider.min) || 12;
+    var max = parseFloat(slider.max) || 28;
+    var val = parseFloat(slider.value);
+    if (isNaN(val)) val = min;
+    var pct = max > min ? ((val - min) / (max - min)) * 100 : 0;
+    slider.style.setProperty('--slider-val', pct + '%');
+  }
 
   function _setTitle(el, text) {
     if (!el) return;
@@ -210,6 +222,9 @@ let _lyricLineEls = null;
   let _interludeExitEl = null;
   let _interludeExitHeight = 0;
   let _interludeExitLineTop = null;
+  // 退出间奏时"紧接着的那一行"的下标：只有它自己才该用间奏塌缩后的临时行高，
+  // 拖动进度条越过间奏时激活的是更靠后的行，不能再套这个旧值。
+  let _interludeExitNextIdx = -1;
   let _interludeScrollTimer = 0;
   let _ilRafId = 0;
   let lyricFontSettings = {
@@ -437,6 +452,7 @@ let _lyricLineEls = null;
         if (els.lyricsCenterToggle) els.lyricsCenterToggle.checked = lyricsCentered;
         if (els.lyricsJpFontToggle) els.lyricsJpFontToggle.checked = lyricFontSettings.lyrics_jp_use_distinct !== false;
         if (els.lyricsFontSizeSlider) els.lyricsFontSizeSlider.value = lyricsFontSize;
+        _syncFontSizeSlider();
         if (els.lyricsFontSizeValue) els.lyricsFontSizeValue.textContent = lyricsFontSize + 'px';
         if (App.state && App.state.currentTrack) {
           _renderLyrics(App.state.currentTrack);
@@ -599,6 +615,22 @@ let _lyricLineEls = null;
     _showRateBadge(next);
   }
 
+  // 倍速的唯一写入口：封面滚轮/双击、更多菜单的倍速子菜单都走这里
+  function _applyPlaybackRate(rate) {
+    var next = Math.max(0.5, Math.min(2.0, Math.round((parseFloat(rate) || 1) * 100) / 100));
+    var changed = Math.abs(next - _coverRate) >= 0.001;
+    _coverRate = next;
+    var engine = App.audioEngine;
+    if (engine) engine.setUserRate(next);
+    App.backend.set_rate(next);
+    if (changed) _showRateBadge(next);
+    return next;
+  }
+
+  np.getPlaybackRate = function () { return _coverRate; };
+  np.setPlaybackRate = function (rate) { return _applyPlaybackRate(rate); };
+  np.isLiked = function () { return !!_isLiked; };
+
   function _initCoverRateControl() {
     var cover = els.cover;
     if (!cover) return;
@@ -625,13 +657,7 @@ let _lyricLineEls = null;
     }, { passive: false });
 
     cover.addEventListener('dblclick', function () {
-      if (_coverRate !== 1.0) {
-        _coverRate = 1.0;
-        var engine = App.audioEngine;
-        if (engine) engine.setUserRate(1.0);
-        App.backend.set_rate(1.0);
-        _showRateBadge(1.0);
-      }
+      if (_coverRate !== 1.0) _applyPlaybackRate(1.0);
     });
   }
 
@@ -670,6 +696,25 @@ let _lyricLineEls = null;
     _bindSecondaryControls();
     np.renderSecondaryActions(_secondaryActionIds);
 
+    if (els.btnMore) {
+      els.btnMore.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var track = App.state && App.state.currentTrack;
+        if (!track) {
+          App.utils.toast(App.i18n.t('np.noTrackPlaying'));
+          return;
+        }
+        if (!App.contextMenu || !App.contextMenu.showNowPlaying) return;
+        var r = els.btnMore.getBoundingClientRect();
+        els.btnMore.setAttribute('aria-expanded', 'true');
+        App.contextMenu.showNowPlaying(
+          { left: r.left, right: r.right, top: r.top, bottom: r.bottom }, track);
+      });
+      document.addEventListener('context-menu-closed', function () {
+        els.btnMore.setAttribute('aria-expanded', 'false');
+      });
+    }
+
     els.pivotTabs.forEach(function (tab) {
       tab.addEventListener('click', function () {
         var target = tab.getAttribute('data-tab');
@@ -679,7 +724,15 @@ let _lyricLineEls = null;
     requestAnimationFrame(function () {
       updatePivotIndicator();
     });
-    window.addEventListener('resize', updatePivotIndicator);
+    var _npResizeRaf = 0;
+    window.addEventListener('resize', function () {
+      if (_npResizeRaf) return;
+      _npResizeRaf = requestAnimationFrame(function () {
+        _npResizeRaf = 0;
+        updatePivotIndicator();
+        _resyncLyricsScroll();
+      });
+    });
 
     els.contentSegs.forEach(function (seg) {
       seg.addEventListener('click', function () {
@@ -849,11 +902,6 @@ let _lyricLineEls = null;
         }
       });
     }
-    if (els.lyricsSettingsClose) {
-      els.lyricsSettingsClose.addEventListener('click', function () {
-        _closeLyricsSettings();
-      });
-    }
     if (els.lyricsOffsetDec) {
       els.lyricsOffsetDec.addEventListener('click', function () {
         lyricsTimeOffset -= 200;
@@ -872,6 +920,7 @@ let _lyricLineEls = null;
       els.lyricsFontSizeSlider.addEventListener('input', function () {
         var val = parseInt(els.lyricsFontSizeSlider.value, 10);
         lyricsFontSize = val;
+        _syncFontSizeSlider();
         if (els.lyricsFontSizeValue) els.lyricsFontSizeValue.textContent = val + 'px';
         _applyLyricsLayout();
         App.utils.call('save_settings', JSON.stringify({ lyrics_font_size: val }));
@@ -943,6 +992,7 @@ let _lyricLineEls = null;
       els.lyricsSettingsPopup.classList.remove('closing');
       els.lyricsSettingsPopup.style.display = '';
       if (els.lyricsFontSizeSlider) els.lyricsFontSizeSlider.value = lyricsFontSize;
+      _syncFontSizeSlider();
       if (els.lyricsFontSizeValue) els.lyricsFontSizeValue.textContent = lyricsFontSize + 'px';
       if (els.lyricsBlurToggle) els.lyricsBlurToggle.checked = !!progressiveBlurEnabled;
       if (els.lyricsCenterToggle) els.lyricsCenterToggle.checked = !!lyricsCentered;
@@ -1268,6 +1318,7 @@ let _lyricLineEls = null;
     _interludeExitEl = null;
     _interludeExitHeight = 0;
     _interludeExitLineTop = null;
+    _interludeExitNextIdx = -1;
     if (_interludeScrollTimer) { clearTimeout(_interludeScrollTimer); _interludeScrollTimer = 0; }
     _stopInterludeRaf();
     _clearWordAnim();
@@ -2087,6 +2138,25 @@ let _lyricLineEls = null;
     if (d === 3) return 4.5;
     return 6;
   }
+
+  // 词级 active/past 的判定每帧都要跑一次（updatePosition 是逐帧的）。
+  // 旧写法每帧都 querySelectorAll + 无脑 remove/add class：即使状态没变也会让
+  // 整组词的样式失效重算，和逐字 RAF 的 inline 写入互相打断。
+  // 这里把词元素、时间戳、当前状态都缓存在行元素上，只在状态真的翻转时才写 class。
+  function _lineWordEls(lineEl) {
+    var words = lineEl._wordEls;
+    if (!words) {
+      words = lineEl.querySelectorAll('.np-lyrics-word');
+      for (var i = 0; i < words.length; i++) {
+        var w = words[i];
+        w._wStart = parseInt(w.dataset.time, 10) || 0;
+        w._wEnd = parseInt(w.dataset.end, 10) || 0;
+        w._wState = -1;
+      }
+      lineEl._wordEls = words;
+    }
+    return words;
+  }
   function _applyProgressiveBlurToLines(activeIdx) {
     if (!progressiveBlurEnabled) return;
     var lines = _getLyricLineEls();
@@ -2361,9 +2431,11 @@ let _lyricLineEls = null;
     var el = _interludeExitEl;
     if (!el) { _doActivationScroll(lineEl, lineIdx, prevIdx); return; }
 
-    var finalLineTop = typeof _interludeExitLineTop === 'number'
-      ? _interludeExitLineTop - _interludeExitHeight
-      : null;
+    // 只有"间奏后紧邻的那一行"才知道塌缩后的真实行位置；其它行（比如 seek 跳远）
+    // 必须用元素当前 offsetTop，否则会把歌词滚到间奏附近、当前行跑到视口外。
+    var useCollapsedTop = lineIdx === _interludeExitNextIdx &&
+      typeof _interludeExitLineTop === 'number';
+    var finalLineTop = useCollapsedTop ? _interludeExitLineTop - _interludeExitHeight : undefined;
     _doActivationScroll(lineEl, lineIdx, prevIdx, finalLineTop);
 
     var done = false;
@@ -2375,6 +2447,7 @@ let _lyricLineEls = null;
       _interludeExitEl = null;
       _interludeExitHeight = 0;
       _interludeExitLineTop = null;
+      _interludeExitNextIdx = -1;
     };
     el.addEventListener('transitionend', function (e) {
       if (e.target === el && e.propertyName === 'grid-template-rows') run();
@@ -2416,6 +2489,7 @@ let _lyricLineEls = null;
       _interludeExitEl = _activeInterlude.el;
       _interludeExitHeight = _interludeExitEl.offsetHeight;
       var _nextLineIdx = _activeInterlude.lineIdx + 1;
+      _interludeExitNextIdx = _nextLineIdx;
       _interludeExitLineTop = (_nextLineIdx >= 0 && _nextLineIdx < lines.length && lines[_nextLineIdx])
         ? lines[_nextLineIdx].offsetTop : null;
       _exitInterlude(_activeInterlude);
@@ -2467,17 +2541,15 @@ let _lyricLineEls = null;
     for (var agi = 0; agi < activeGroup.length; agi++) {
       var agLine = lines[activeGroup[agi]];
       if (!agLine) continue;
-      var agWords = agLine.querySelectorAll('.np-lyrics-word');
+      var agWords = _lineWordEls(agLine);
       for (var aw = 0; aw < agWords.length; aw++) {
         var aWord = agWords[aw];
-        var aStart = parseInt(aWord.dataset.time, 10);
-        var aEnd = parseInt(aWord.dataset.end, 10);
-        aWord.classList.remove('active', 'past');
-        if (adjustedPos >= aEnd) {
-          aWord.classList.add('past');
-        } else if (adjustedPos >= aStart) {
-          aWord.classList.add('active');
-        }
+        var st = adjustedPos >= aWord._wEnd ? 2
+          : (adjustedPos >= aWord._wStart ? 1 : 0);
+        if (aWord._wState === st) continue;
+        aWord._wState = st;
+        aWord.classList.toggle('past', st === 2);
+        aWord.classList.toggle('active', st === 1);
       }
     }
 
@@ -2485,7 +2557,7 @@ let _lyricLineEls = null;
     var wantLines = [];
     for (var wgi = 0; wgi < activeGroup.length; wgi++) {
       var wgLine = lines[activeGroup[wgi]];
-      if (wgLine && wgLine.querySelector('.np-lyrics-word')) wantLines.push(wgLine);
+      if (wgLine && _lineWordEls(wgLine).length) wantLines.push(wgLine);
     }
     for (var oi = _wordAnimLines.length - 1; oi >= 0; oi--) {
       if (wantLines.indexOf(_wordAnimLines[oi]) < 0) {
@@ -2580,17 +2652,47 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
 };
 
 
-  np.setTrackInfoHidden = function (hidden) {
-    if (hidden && !_trackInfoHidden) {
-      _trackInfoHidden = true;
-      _animateGlitch(true);
-      _setMysteryVisuals(true);
-    } else if (!hidden && _trackInfoHidden) {
+  // 过渡态隐藏（切歌 glitch / 交叉淡化）是成对发生的：start 时藏、complete 时收。
+  // 一旦引擎侧没有发 complete（seek、stop、next 被丢弃），恢复事件就永远不来，
+  // 歌词会一直停在 opacity .15 + blur(8px)、封面 opacity 0 —— 看起来就是"板块空白"。
+  // 所以每次隐藏都挂一个兜底计时器，超时强制收回。
+  var _trackInfoHideTimer = 0;
+
+  function _clearTrackInfoHideTimer() {
+    if (_trackInfoHideTimer) {
+      clearTimeout(_trackInfoHideTimer);
+      _trackInfoHideTimer = 0;
+    }
+  }
+
+  np.setTrackInfoHidden = function (hidden, opts) {
+    if (hidden) {
+      var guardMs = (opts && opts.guardMs > 0) ? opts.guardMs : 2000;
+      _clearTrackInfoHideTimer();
+      _trackInfoHideTimer = setTimeout(function () {
+        _trackInfoHideTimer = 0;
+        if (_trackInfoHidden) np.setTrackInfoHidden(false);
+      }, guardMs);
+      if (!_trackInfoHidden) {
+        _trackInfoHidden = true;
+        _animateGlitch(true);
+        _setMysteryVisuals(true);
+      }
+      return;
+    }
+
+    _clearTrackInfoHideTimer();
+    if (_trackInfoHidden) {
       _trackInfoHidden = false;
       _needsGlitchRestore = true;
       if (App.state.currentTrack) {
         _preserveHiddenState = true;
         np.updateTrack(App.state.currentTrack);
+      } else {
+        // 没有曲目可重绘时也要把蒙层收掉，否则会留在空白态
+        _needsGlitchRestore = false;
+        _animateGlitch(false);
+        _setMysteryVisuals(false);
       }
     }
   };
@@ -3247,7 +3349,7 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
   }
 
   function _openDropdown() {
-    els.dropdownMenu.style.display = 'block';
+    els.dropdownMenu.style.display = 'flex';
     els.btnMoreDropdown.classList.add('active');
   }
 
@@ -3303,6 +3405,7 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
         els.panels.forEach(function (p) { if (p.classList.contains('active')) anyActive = true; });
         if (!anyActive) switchTab('info', false);
       }
+      _resyncLyricsScroll();
     }, 320);
   }
 
@@ -3452,6 +3555,7 @@ if (_videoBg) _videoBg.onFullscreenChange();
       _expandTimers.push(setTimeout(function () {
         document.body.classList.remove('player-expanding');
         pane.classList.remove('expanding');
+        _resyncLyricsScroll();
       }, 340));
     } else {
       document.body.classList.add('player-collapsing');
@@ -3553,6 +3657,19 @@ if (_videoBg) _videoBg.onFullscreenChange();
     }
   }
 
+  // 面板从隐藏（display:none，clientHeight=0）重新显示时，之前所有 scrollTop 写入都被丢弃，
+  // 高亮行会跑到视口外、看起来像"歌词没显示"。这里按当前播放位置重新对齐一次。
+  function _resyncLyricsScroll() {
+    var wrap = els.lyricsWrap;
+    if (!wrap || !lyricsData.length || !wrap.clientHeight) return;
+    var panel = wrap.closest('.np-panel--lyrics');
+    if (panel && window.getComputedStyle(panel).display === 'none') return;
+    lastLyricsIdx = -1;
+    lastGroupIdx = -1;
+    if (_activeInterlude) _activeInterlude = null;  // 强制重排间奏滚动
+    _updateLyrics(_lastKnownPositionMs > 0 ? _lastKnownPositionMs : 0);
+  }
+
   function switchTab(tabName, forceFullscreen) {
     els.pivotTabs.forEach(function (tab) {
       var isActive = tab.getAttribute('data-tab') === tabName;
@@ -3573,6 +3690,7 @@ if (_videoBg) _videoBg.onFullscreenChange();
       }
     }
     updatePivotIndicator();
+    requestAnimationFrame(_resyncLyricsScroll);
   }
 
   function updatePivotIndicator() {

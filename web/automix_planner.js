@@ -30,8 +30,9 @@
     // 流式 worklet 没有 playbackRate/resample；下一首是流媒体时不能执行
     // 采样率变速。由 app.js 按 audioEngine._nextIsStreaming 传入。
     nextStreaming: false,
-    // 同专辑、按碟/轨顺序紧邻。是否真的连续由 profile.edges 决定：
-    // 两侧边界都没有数字静音，说明原文件本来就是无缝衔接的。
+    // 同专辑、按碟/轨顺序紧邻 → 直接判定为专辑连续曲（无缝，不做重叠）。
+    // 不看 profile.edges：作者做好的过渡经常带 ambient 尾巴或淡入，
+    // 按"边界有没有静音"判断会漏判。continuousEdgeMs 仅用于诊断记录。
     albumSequence: false,
     continuousEdgeMs: 120,
   };
@@ -803,14 +804,15 @@
   }
 
   /* ---------------- 专辑连续曲 ----------------
-   * 同专辑按原顺序播放时，只要 A 的尾部、B 的头部都没有留白，
-   * 就说明这两段是作者设计好的连续过渡。此时任何重叠、EQ、变速
-   * 都在改写作品本身，必须让位。档案缺 edges（旧缓存/分析失败）时
-   * 仍按保守处理：宁可不淡化，也不毁掉原过渡。
+   * 判定规则只有一条：专辑同名 + 碟/轨连号（见 isAlbumSequence）。
+   * 命中就直接让位——不做重叠、不做 EQ、不变速，交给播放层的自然结束无缝切换。
    *
-   * edges.*Known（v5）显式标记证据有效性：分析被 20 分钟上限截断时
-   * 尾部量到的是截断点而非文件结尾，tailSilenceMs 为 null、tailKnown=false，
-   * 同样按未知走保守路径——不能把"截断点恰好没留白"当成连续证据。
+   * 之前还要求 A 尾部 / B 头部都没有留白（edges.*SilenceMs ≤ 120ms），
+   * 但那要求"作者设计的过渡必须是零静音"：带一段 ambient、掌声、淡入
+   * 或者 1~3 秒呼吸的过渡全都漏判，被当成普通两首歌做了交叉淡化，
+   * 直接抹掉作品本身的连接。误判代价不对称——把"其实有留白"的连号曲
+   * 做成无缝，最差也就是少一次淡化；反过来则是毁掉原过渡。
+   * 所以这里只认结构信息，edges 仅作为诊断记录写进 reason，不参与决策。
    */
   function isAlbumSequence(cur, next) {
     if (!cur || !next) return false;
@@ -830,30 +832,30 @@
     return discB === discA + 1 && trackB === 1;
   }
 
-  function albumContinuity(a, b, opts) {
-    var ea = a && a.edges;
-    var eb = b && b.edges;
-    var tailOk = !!ea && isFinite(ea.tailSilenceMs) && ea.tailKnown !== false;
-    var headOk = !!eb && isFinite(eb.headSilenceMs) && eb.headKnown !== false;
-    if (!tailOk || !headOk) {
-      var why = 'album_sequence_edges_unknown';
-      if (ea && ea.tailKnown === false) why = 'album_sequence_tail_truncated';
-      return { continuous: true, known: false, why: why };
-    }
-    var tail = num(ea.tailSilenceMs, 0);
-    var head = num(eb.headSilenceMs, 0);
-    var continuous = tail <= opts.continuousEdgeMs && head <= opts.continuousEdgeMs;
-    return {
-      continuous: continuous,
-      known: true,
-      tailSilenceMs: tail,
-      headSilenceMs: head,
-      why: continuous ? 'same_album_no_boundary_silence' : 'same_album_but_boundary_silence',
+  /* 仅用于 reason 里的诊断，不影响是否 seamless。 */
+  function albumEdgesInfo(a, b, opts) {
+    var ea = a && a.edges, eb = b && b.edges;
+    var tailKnown = !!ea && isFinite(ea.tailSilenceMs) && ea.tailKnown !== false;
+    var headKnown = !!eb && isFinite(eb.headSilenceMs) && eb.headKnown !== false;
+    var info = {
+      rule: 'same_album_consecutive_track_order',
+      why: 'same_album_consecutive_track',
+      edgesKnown: tailKnown && headKnown,
+      tailSilenceMs: tailKnown ? num(ea.tailSilenceMs, 0) : null,
+      headSilenceMs: headKnown ? num(eb.headSilenceMs, 0) : null,
+      boundarySilence: null,
     };
+    if (tailKnown && headKnown) {
+      info.boundarySilence =
+        num(ea.tailSilenceMs, 0) <= opts.continuousEdgeMs &&
+        num(eb.headSilenceMs, 0) <= opts.continuousEdgeMs;
+      if (!info.boundarySilence) info.why = 'same_album_consecutive_track_despite_boundary_silence';
+    }
+    return info;
   }
 
   function albumSequencePlan(a, b, opts, info) {
-    var confidence = info.known ? 1 : 0.6;
+    var confidence = 1;
     return {
       v: VERSION, engine: 'carminium-automix', strategy: 'album-sequence',
       // seamless 与 gaplessFallback 语义不同：
@@ -885,10 +887,7 @@
     // 正式播放能力没有 WSOLA；即使调用方传 true，也仍使用原生 ±3% 速率上限。
     opts.wsola = false;
     opts.maxStretch = Math.min(0.03, Math.max(0, num(opts.maxStretch, 0.03)));
-    if (opts.albumSequence) {
-      var continuity = albumContinuity(a, b, opts);
-      if (continuity.continuous) return albumSequencePlan(a, b, opts, continuity);
-    }
+    if (opts.albumSequence) return albumSequencePlan(a, b, opts, albumEdgesInfo(a, b, opts));
     if (!a || !b) return fallbackPlan(opts, a ? 'missing_next_profile' : 'missing_current_profile');
 
     var built = buildCandidates(a, b, opts);

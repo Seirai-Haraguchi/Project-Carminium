@@ -33,7 +33,7 @@
               <span class="md-select-label">${App.i18n.t(SORT_OPTIONS.find(o => o.key === sortMode).labelKey || '') || SORT_OPTIONS.find(o => o.key === sortMode).label}</span>
               <span class="material-symbols-rounded md-select-arrow">arrow_drop_down</span>
             </div>
-            <div class="md-select-menu" role="listbox">
+            <div class="md-select-menu mdx md-seglist" role="listbox">
               ${SORT_OPTIONS.map(opt => `
                 <div class="md-select-option ${opt.key === sortMode ? 'selected' : ''}" role="option" data-value="${opt.key}" aria-selected="${opt.key === sortMode}">
                   <span class="material-symbols-rounded md-select-option-icon">${opt.icon}</span>

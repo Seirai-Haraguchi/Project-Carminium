@@ -82,8 +82,17 @@ class LibraryWatcher {
     if (!fs.existsSync(folderPath)) return;
     const watchers = [];
     const onEvent = (_eventType, filename) => this._onFsEvent(folderPath, filename);
+
+    // osu! 曲库动辄几千个谱面集目录，递归 watcher 的句柄与事件量都不划算，
+    // 只盯根目录（新增/删除谱面集仍能感知，谱面集内部的改动靠手动重扫）
+    let recursive = true;
     try {
-      const w = fs.watch(folderPath, { recursive: true }, onEvent);
+      const info = this._lib.getFolders().find((f) => f.path === folderPath);
+      if (info && info.kind === 'osu') recursive = false;
+    } catch {  }
+
+    try {
+      const w = fs.watch(folderPath, recursive ? { recursive: true } : {}, onEvent);
       w.on('error', (e) => {
         console.warn(`[auto-refresh] watcher 错误，停止监控: ${folderPath}:`, e.message);
         this._unwatch(folderPath);
@@ -91,12 +100,20 @@ class LibraryWatcher {
       watchers.push(w);
     } catch (e) {
       console.warn(`[auto-refresh] recursive watch 不可用，退化为逐目录监控: ${folderPath}:`, e.message);
-      for (const dir of this._collectDirs(folderPath)) {
+      if (!recursive) {
         try {
-          const w = fs.watch(dir, onEvent);
+          const w = fs.watch(folderPath, onEvent);
           w.on('error', () => {  });
           watchers.push(w);
         } catch {  }
+      } else {
+        for (const dir of this._collectDirs(folderPath)) {
+          try {
+            const w = fs.watch(dir, onEvent);
+            w.on('error', () => {  });
+            watchers.push(w);
+          } catch {  }
+        }
       }
     }
     if (watchers.length > 0) {

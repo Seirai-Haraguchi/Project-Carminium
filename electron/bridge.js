@@ -5,6 +5,7 @@ const { ipcMain, dialog, app, shell, BrowserWindow, net, nativeImage } = require
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 let LoudnessAnalyzer = null;
 try {
@@ -219,6 +220,66 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
 
   setMainWindow(win) {
     this._mainWindow = win;
+  }
+
+  /**
+   * 把用户选的图片收敛成一张稳定的覆盖头像：优先 sharp 统一转 jpeg（顺带纠正 EXIF 方向、
+   * 限到 1200px），sharp 不可用时按魔数猜扩展名原样写盘。文件落在 userData/artist-overrides，
+   * 不在缓存目录里，避免「清缓存」把用户自己的图删掉。
+   */
+  async _storeArtistImage(name, srcPath) {
+    let buffer = null;
+    try {
+      buffer = fs.readFileSync(srcPath);
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+    return this._storeArtistImageBuffer(name, buffer, path.extname(srcPath));
+  }
+
+  async _storeArtistImageBuffer(name, buffer, extHint) {
+    if (!buffer || !buffer.length) return { ok: false, error: 'empty image' };
+    const dir = path.join(this._settings.dataDir, 'artist-overrides');
+    fs.mkdirSync(dir, { recursive: true });
+    const key = crypto.createHash('sha1').update(String(name || '').toLowerCase()).digest('hex').slice(0, 16);
+    const prev = this._lib.getArtistOverride(name);
+    const prevPath = prev && prev.image_path;
+
+    let dest = null;
+    try {
+      const sharp = require('sharp');
+      const target = path.join(dir, key + '.jpg');
+      const tmp = target + '.tmp';
+      await sharp(buffer, { failOn: 'none' })
+        .rotate()
+        .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 90, mozjpeg: true })
+        .toFile(tmp);
+      fs.renameSync(tmp, target);
+      dest = target;
+    } catch (e) {
+      try {
+        // 猜错扩展名会让 Content-Type 对不上，按魔数来
+        let ext = (extHint || '').toLowerCase();
+        if (!/^\.(jpg|jpeg|png|webp|gif|avif|bmp)$/.test(ext)) ext = '';
+        if (!ext) {
+          if (buffer[0] === 0x89 && buffer[1] === 0x50) ext = '.png';
+          else if (buffer[0] === 0xff && buffer[1] === 0xd8) ext = '.jpg';
+          else if (buffer.slice(0, 4).toString('ascii') === 'RIFF') ext = '.webp';
+          else if (buffer.slice(0, 3).toString('ascii') === 'GIF') ext = '.gif';
+          else ext = '.jpg';
+        }
+        dest = path.join(dir, key + '.src' + ext);
+        fs.writeFileSync(dest, buffer);
+      } catch (e2) {
+        return { ok: false, error: String((e2 && e2.message) || e2) };
+      }
+    }
+
+    this._lib.setArtistOverride(name, { image_path: dest });
+    if (prevPath && prevPath !== dest) { try { fs.unlinkSync(prevPath); } catch {  } }
+    if (this._coverServer) this._coverServer.invalidateArtist(name);
+    return { ok: true, image_path: dest, version: Date.now() };
   }
 
   _LIBRARY_UPDATED_DEBOUNCE_MS = 500;
@@ -540,6 +601,26 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       return this._setCacheDir(newPath);
     });
 
+    ipcMain.handle('stream_cache_stats', async () => {
+      const cache = this._coverServer && this._coverServer.streamCache;
+      if (!cache) return _dump({ error: 'unavailable' });
+      try {
+        return _dump(await cache.stats());
+      } catch (e) {
+        return _dump({ error: String((e && e.message) || e) });
+      }
+    });
+
+    ipcMain.handle('clear_stream_cache', async () => {
+      const cache = this._coverServer && this._coverServer.streamCache;
+      if (!cache) return _dump({ error: 'unavailable' });
+      try {
+        return _dump(await cache.clear());
+      } catch (e) {
+        return _dump({ error: String((e && e.message) || e) });
+      }
+    });
+
     ipcMain.handle('add_folder', (_e, folderPath) => {
       if (!folderPath) return _dump({ error: 'no path' });
       const folder = this._lib.addFolder(folderPath);
@@ -841,6 +922,71 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
         return { queued: 0, error: 'cover server unavailable' };
       } catch (e) {
         return { queued: 0, error: e && e.message };
+      }
+    });
+
+    // ── 艺人信息人工修正（别名 / 介绍 / 头像） ───────────────────────
+    ipcMain.handle('get_artist_override', (_e, name) => {
+      const ov = this._lib.getArtistOverride(name);
+      return _dump(ov || { name: String(name || ''), aliases: null, bio: null, image_path: '', updated_at: 0 });
+    });
+
+    ipcMain.handle('save_artist_override', (_e, name, patchJson) => {
+      try {
+        const patch = JSON.parse(patchJson || '{}');
+        const clean = {};
+        if ('aliases' in patch) {
+          clean.aliases = Array.isArray(patch.aliases)
+            ? patch.aliases.map((s) => String(s).trim()).filter(Boolean).slice(0, 30)
+            : null;
+        }
+        if ('bio' in patch) {
+          clean.bio = (typeof patch.bio === 'string') ? patch.bio.trim().slice(0, 20000) : null;
+        }
+        const ov = this._lib.setArtistOverride(name, clean);
+        if (this._coverServer) this._coverServer.invalidateArtist(name);
+        return _dump({ ok: true, override: ov, version: Date.now() });
+      } catch (e) {
+        return _dump({ ok: false, error: String((e && e.message) || e) });
+      }
+    });
+
+    ipcMain.handle('pick_artist_image', async (_e, name) => {
+      const picked = dialog.showOpenDialogSync(this._mainWindow, {
+        title: '选择艺人图片',
+        buttonLabel: '使用',
+        properties: ['openFile'],
+        filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'avif', 'gif'] }],
+      });
+      if (!picked || picked.length === 0) return _dump({ ok: false, canceled: true });
+      try {
+        return _dump(await this._storeArtistImage(name, picked[0]));
+      } catch (e) {
+        return _dump({ ok: false, error: String((e && e.message) || e) });
+      }
+    });
+
+    ipcMain.handle('apply_artist_image_candidate', async (_e, name, id) => {
+      try {
+        const srv = this._coverServer;
+        const cand = (srv && typeof srv.getCandidateImage === 'function') ? srv.getCandidateImage(id) : null;
+        if (!cand) return _dump({ ok: false, error: 'candidate_expired' });
+        return _dump(await this._storeArtistImageBuffer(name, cand.buffer, ''));
+      } catch (e) {
+        return _dump({ ok: false, error: String((e && e.message) || e) });
+      }
+    });
+
+    ipcMain.handle('clear_artist_image', (_e, name) => {
+      try {
+        const ov = this._lib.getArtistOverride(name);
+        const prevImage = ov && ov.image_path;
+        this._lib.clearArtistOverrideField(name, 'image_path');
+        if (prevImage) { try { fs.unlinkSync(prevImage); } catch {  } }
+        if (this._coverServer) this._coverServer.invalidateArtist(name);
+        return _dump({ ok: true, version: Date.now() });
+      } catch (e) {
+        return _dump({ ok: false, error: String((e && e.message) || e) });
       }
     });
 
@@ -1371,6 +1517,12 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
         'subsonic_auto_sync', 'subsonic_sync_interval_minutes',
       ];
       if (AUTO_REFRESH_KEYS.some((k) => k in data)) this.startAutoRefresh();
+
+      // 上限调小或刚启用时立即按新水位淘汰，避免占用滞后于设置。
+      if ('stream_cache_limit_mb' in data || 'stream_cache_enabled' in data) {
+        const cache = this._coverServer && this._coverServer.streamCache;
+        if (cache && cache.enabled) cache.enforceLimit();
+      }
     });
 
     ipcMain.handle('set_wasapi_exclusive', async (_e, enabled) => {

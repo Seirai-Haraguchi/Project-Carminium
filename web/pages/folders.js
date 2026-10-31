@@ -18,11 +18,8 @@ container.innerHTML = `
             <p class="page-subtitle" id="library-count" data-i18n="folders.hint">添加本地音乐文件夹以构建您的媒体库。</p>
           </div>
           <div class="page-actions">
-            <button class="btn-filled" id="btn-add-folder">
-              <span class="material-symbols-rounded">create_new_folder</span><span data-i18n="folders.addLocal">添加本地文件夹</span>
-            </button>
-            <button class="btn-outlined" id="btn-add-subsonic">
-              <span class="material-symbols-rounded">cloud</span><span data-i18n="folders.addSubsonic">添加流媒体库</span>
+            <button class="btn-filled" id="btn-add-library">
+              <span class="material-symbols-rounded">add</span><span data-i18n="folders.addLibrary">添加媒体库</span>
             </button>
           </div>
         </div>
@@ -47,25 +44,8 @@ container.innerHTML = `
       }, 180);
     });
 
-    document.getElementById('btn-add-folder').addEventListener('click', function () {
-      App.utils.call('open_folder_dialog').then(function (path) {
-        if (path) {
-          document.getElementById('folder-list').innerHTML = `
-            <div class="empty-state">
-              <span class="material-symbols-rounded empty-icon" style="animation: pulse 2s infinite;">sync</span>
-              <h2 class="empty-title" data-i18n="folders.scanning">扫描中</h2>
-              <p class="empty-sub">${App.i18n.t('folders.scanningPath')} ${App.utils.esc(path)}</p>
-            </div>
-          `;
-          App.utils.call('add_folder', path).catch(function (err) {
-            _loadFolders();
-          });
-        }
-      });
-    });
-
-    document.getElementById('btn-add-subsonic').addEventListener('click', function () {
-      _promptAddStreaming();
+    document.getElementById('btn-add-library').addEventListener('click', function () {
+      _promptAddLibrary();
     });
 
     _loadFolders();
@@ -73,8 +53,41 @@ container.innerHTML = `
   };
 
   page.promptAddSubsonic = function () {
-    _promptAddStreaming();
+    _promptAddLibrary('streaming');
   };
+
+  page.promptAddLibrary = function (tab) {
+    _promptAddLibrary(tab);
+  };
+
+  /**
+   * 选本地文件夹：先关对话框，再弹系统目录选择，选中后直接进入扫描。
+   * expectKind：选了不符合预期的目录时提示（osu! 入口选了普通音乐目录等）。
+   */
+  function _pickLocalFolder(opts) {
+    opts = opts || {};
+    App.utils.call('open_folder_dialog').then(function (path) {
+      if (!path) return;
+      if (opts.onPicked) opts.onPicked();
+      document.getElementById('folder-list').innerHTML = `
+        <div class="empty-state">
+          <span class="material-symbols-rounded empty-icon" style="animation: pulse 2s infinite;">sync</span>
+          <h2 class="empty-title" data-i18n="folders.scanning">扫描中</h2>
+          <p class="empty-sub">${App.i18n.t('folders.scanningPath')} ${App.utils.esc(path)}</p>
+        </div>
+      `;
+      App.utils.call('add_folder', path).then(function (res) {
+        if (!opts.expectKind) return;
+        var info = null;
+        try { info = JSON.parse(res); } catch (e) {  }
+        if (info && info.kind !== opts.expectKind) {
+          App.utils.toast(App.i18n.t('folders.osuNotFound'));
+        }
+      }).catch(function (err) {
+        _loadFolders();
+      });
+    });
+  }
 
   function _loadFolders() {
     allFolders = (App.state && App.state.allFolders) ? App.state.allFolders : [];
@@ -134,14 +147,21 @@ container.innerHTML = `
 
   function _buildFolderRow(folder) {
     const row = document.createElement('div');
-    row.className = 'folder-row';
+    const isOsu = folder.kind === 'osu';
+    row.className = 'folder-row' + (isOsu ? ' folder-row--osu' : '');
 
     const scanDate = App.utils.formatDate(folder.last_scan);
+    const osuChip = isOsu
+      ? `<span class="folder-chip folder-chip--osu">${App.i18n.t('folders.osuLibrary')}</span>`
+      : '';
     row.innerHTML = `
-      <span class="folder-icon-badge"><span class="material-symbols-rounded folder-icon">folder</span></span>
+      <span class="folder-icon-badge${isOsu ? ' folder-icon-badge--osu' : ''}">${isOsu
+        ? (App.osuMarkSvg || '')
+        : '<span class="material-symbols-rounded folder-icon">folder</span>'}</span>
       <div class="folder-info">
         <p class="folder-path" title="${App.utils.esc(folder.path)}">${App.utils.esc(folder.path)}</p>
         <div class="folder-meta">
+          ${osuChip}
           <span class="folder-chip"><span class="material-symbols-rounded">music_note</span>${App.i18n.t('music.trackCount', { count: folder.track_count })}</span>
           <span class="folder-chip"><span class="material-symbols-rounded">schedule</span>${App.i18n.t('folders.lastScan', { date: scanDate })}</span>
         </div>
@@ -522,18 +542,47 @@ container.innerHTML = `
     });
   }
 
-  function _promptAddStreaming() {
+  /* 统一入口：本地文件夹 / 流媒体库 两个主标签，流媒体库内再分子标签（Subsonic / WebDAV / SMB） */
+  function _promptAddLibrary(initialMainTab) {
     const overlay = document.createElement('div');
     overlay.className = 'cmd-dialog-overlay';
     const dlg = document.createElement('div');
-    dlg.className = 'cmd-dialog subsonic-add-dialog streaming-add-dialog';
+    dlg.className = 'cmd-dialog subsonic-add-dialog streaming-add-dialog add-library-dialog';
     dlg.innerHTML = `
-      <div class="cmd-dialog-title">${App.i18n.t('folders.addServerTitle')}</div>
-      <div class="streaming-pivot np-pivot" style="padding:4px 0 8px;">
-        <button class="np-pivot-tab active" data-tab="subsonic">Subsonic</button>
-        <button class="np-pivot-tab" data-tab="webdav">WebDAV</button>
-        <button class="np-pivot-tab" data-tab="smb">NAS / SMB</button>
+      <div class="cmd-dialog-title">${App.i18n.t('folders.addLibraryTitle')}</div>
+      <div class="add-lib-seg" role="tablist">
+        <button class="add-lib-seg-btn" data-main="local" role="tab" aria-selected="true">
+          <span class="material-symbols-rounded">folder</span><span>${App.i18n.t('folders.tabLocal')}</span>
+        </button>
+        <button class="add-lib-seg-btn" data-main="streaming" role="tab" aria-selected="false">
+          <span class="material-symbols-rounded">cloud</span><span>${App.i18n.t('folders.tabStreaming')}</span>
+        </button>
       </div>
+
+      <!-- 本地文件夹面板 -->
+      <div class="cmd-dialog-body add-lib-panel active" data-main-panel="local">
+        <p class="add-lib-hint">${App.i18n.t('folders.localHint')}</p>
+        <div class="md-seglist">
+          <button type="button" class="settings-row add-lib-row" id="add-osu-library">
+            ${App.osuMarkSvg || ''}
+            <span class="settings-row-body">
+              <span class="settings-row-label">${App.i18n.t('folders.osuEntryTitle')}</span>
+              <span class="settings-row-sub">${App.i18n.t('folders.osuEntryHint')}</span>
+            </span>
+            <span class="settings-row-trailing">
+              <span class="material-symbols-rounded">chevron_right</span>
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 流媒体库面板 -->
+      <div class="add-lib-panel" data-main-panel="streaming" style="display:none;">
+        <div class="streaming-pivot np-pivot">
+          <button class="np-pivot-tab active" data-tab="subsonic">Subsonic</button>
+          <button class="np-pivot-tab" data-tab="webdav">WebDAV</button>
+          <button class="np-pivot-tab" data-tab="smb">NAS / SMB</button>
+        </div>
 
       <!-- Subsonic 面板 -->
       <div class="cmd-dialog-body streaming-panel active" data-panel="subsonic">
@@ -564,13 +613,13 @@ container.innerHTML = `
 
       <!-- WebDAV 面板 -->
       <div class="cmd-dialog-body streaming-panel" data-panel="webdav" style="display:none;">
-        <p style="color:var(--md-on-surface-variant);font-size:13px;margin:-4px 0 12px;">${App.i18n.t('folders.webdavHint')}</p>
+        <p class="add-lib-hint">${App.i18n.t('folders.webdavHint')}</p>
         <div class="cmd-text-field" style="margin-bottom:12px;">
           <input type="text" id="wd-name" class="cmd-text-field__input" placeholder=" " autocomplete="off">
           <label class="cmd-text-field__label">${App.i18n.t('folders.serverName')}</label>
         </div>
         <div class="cmd-text-field" style="margin-bottom:12px;">
-          <input type="text" id="wd-url" class="cmd-text-field__input" placeholder="https://nas.local:5006/Music" autocomplete="off">
+          <input type="text" id="wd-url" class="cmd-text-field__input" placeholder=" " autocomplete="off">
           <label class="cmd-text-field__label">${App.i18n.t('folders.serverUrl')}</label>
         </div>
         <div class="cmd-text-field" style="margin-bottom:12px;">
@@ -585,17 +634,17 @@ container.innerHTML = `
 
       <!-- NAS / SMB 面板 -->
       <div class="cmd-dialog-body streaming-panel" data-panel="smb" style="display:none;">
-        <p style="color:var(--md-on-surface-variant);font-size:13px;margin:-4px 0 12px;">${App.i18n.t('folders.smbHint')}</p>
+        <p class="add-lib-hint">${App.i18n.t('folders.smbHint')}</p>
         <div class="cmd-text-field" style="margin-bottom:12px;">
           <input type="text" id="smb-name" class="cmd-text-field__input" placeholder=" " autocomplete="off">
           <label class="cmd-text-field__label">${App.i18n.t('folders.serverName')}</label>
         </div>
         <div class="cmd-text-field" style="margin-bottom:12px;">
-          <input type="text" id="smb-host" class="cmd-text-field__input" placeholder="192.168.1.100" autocomplete="off">
+          <input type="text" id="smb-host" class="cmd-text-field__input" placeholder=" " autocomplete="off">
           <label class="cmd-text-field__label">${App.i18n.t('folders.host')}</label>
         </div>
         <div class="cmd-text-field" style="margin-bottom:12px;">
-          <input type="text" id="smb-share" class="cmd-text-field__input" placeholder="Music" autocomplete="off">
+          <input type="text" id="smb-share" class="cmd-text-field__input" placeholder=" " autocomplete="off">
           <label class="cmd-text-field__label">${App.i18n.t('folders.shareName')}</label>
         </div>
         <div class="cmd-text-field" style="margin-bottom:12px;">
@@ -611,20 +660,53 @@ container.innerHTML = `
           <label class="cmd-text-field__label">${App.i18n.t('folders.domainOptional')}</label>
         </div>
       </div>
+      </div>
 
       <div class="cmd-dialog-actions">
         <button class="cmd-dialog-btn cmd-dialog-btn--cancel">${App.i18n.t('common.cancel')}</button>
         <button class="cmd-dialog-btn" id="stream-btn-test">${App.i18n.t('folders.test')}</button>
-        <button class="cmd-dialog-btn cmd-dialog-btn--confirm">${App.i18n.t('folders.add')}</button>
+        <button class="cmd-dialog-btn cmd-dialog-btn--confirm">${App.i18n.t('folders.chooseFolder')}</button>
       </div>
     `;
     overlay.appendChild(dlg);
     document.body.appendChild(overlay);
     requestAnimationFrame(() => overlay.classList.add('open'));
 
+    let mainTab = (initialMainTab === 'streaming') ? 'streaming' : 'local';
     let currentTab = 'subsonic';
+    const mainTabs = dlg.querySelectorAll('.add-lib-seg-btn');
+    const mainPanels = dlg.querySelectorAll('.add-lib-panel');
     const tabs = dlg.querySelectorAll('.np-pivot-tab');
     const panels = dlg.querySelectorAll('.streaming-panel');
+    const testBtn = dlg.querySelector('#stream-btn-test');
+    const confirmBtn = dlg.querySelector('.cmd-dialog-btn--confirm');
+
+    function applyMainTab(tab) {
+      mainTab = tab;
+      mainTabs.forEach(t => {
+        t.setAttribute('aria-selected', t.dataset.main === tab ? 'true' : 'false');
+      });
+      mainPanels.forEach(p => {
+        const on = p.dataset.mainPanel === tab;
+        p.style.display = on ? '' : 'none';
+        p.classList.toggle('active', on);
+      });
+      const isLocal = tab === 'local';
+      testBtn.style.display = isLocal ? 'none' : '';
+      confirmBtn.textContent = App.i18n.t(isLocal ? 'folders.chooseFolder' : 'folders.add');
+    }
+
+    mainTabs.forEach(t => {
+      t.addEventListener('click', function () {
+        if (mainTab === this.dataset.main) return;
+        applyMainTab(this.dataset.main);
+        if (this.dataset.main === 'streaming') {
+          const activePanel = dlg.querySelector('.streaming-panel.active');
+          const inp = activePanel && activePanel.querySelector('input, select');
+          if (inp) setTimeout(() => inp.focus(), 30);
+        }
+      });
+    });
 
     function switchTab(tab) {
       currentTab = tab;
@@ -634,7 +716,6 @@ container.innerHTML = `
         p.style.display = match ? '' : 'none';
         p.classList.toggle('active', match);
       });
-      const firstInput = panels.namedItem ? null : null;
       const activePanel = dlg.querySelector('.streaming-panel.active');
       if (activePanel) {
         const inp = activePanel.querySelector('input, select');
@@ -645,17 +726,28 @@ container.innerHTML = `
       t.addEventListener('click', function () { switchTab(this.dataset.tab); });
     });
 
+    applyMainTab(mainTab);
     const ssName = dlg.querySelector('#ss-name');
-    setTimeout(() => ssName.focus(), 50);
+    setTimeout(() => {
+      if (mainTab === 'streaming') ssName.focus();
+      else confirmBtn.focus();
+    }, 50);
 
     let done = false;
     let adding = false;
     function close() {
       if (done) return;
       done = true;
+      document.removeEventListener('keydown', onDocKey, true);
       overlay.classList.remove('open');
       setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 180);
     }
+
+    /* 本地文件夹面板没有输入框，Esc 得靠 document 兜住 */
+    function onDocKey(e) {
+      if (e.key === 'Escape') { e.stopPropagation(); close(); }
+    }
+    document.addEventListener('keydown', onDocKey, true);
 
     function collectSubsonic() {
       return {
@@ -805,13 +897,32 @@ container.innerHTML = `
       });
     }
 
+    function doLocal() {
+      close();
+      _pickLocalFolder();
+    }
+
+    // osu! 曲库：走同一个「本地文件夹」流程，后端按目录结构自动识别成 osu 库
+    const osuBtn = dlg.querySelector('#add-osu-library');
+    if (osuBtn) {
+      osuBtn.addEventListener('click', function () {
+        close();
+        _pickLocalFolder({ expectKind: 'osu' });
+      });
+    }
+
+    function primaryAction() {
+      if (mainTab === 'local') doLocal();
+      else add();
+    }
+
     dlg.querySelector('.cmd-dialog-btn--cancel').addEventListener('click', close);
-    dlg.querySelector('.cmd-dialog-btn--confirm').addEventListener('click', add);
-    dlg.querySelector('#stream-btn-test').addEventListener('click', test);
+    confirmBtn.addEventListener('click', primaryAction);
+    testBtn.addEventListener('click', test);
 
     dlg.querySelectorAll('.streaming-panel input, .streaming-panel select').forEach(function (inp) {
       inp.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') add();
+        if (e.key === 'Enter') primaryAction();
         else if (e.key === 'Escape') close();
       });
     });

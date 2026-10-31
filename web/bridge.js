@@ -30,9 +30,16 @@
     return url;
   };
 
-  window.artistImageUrl = function (name) {
+  // 用户自定义头像后的版本号：改名/换图时递增，用来破 HTTP 缓存
+  // （cover-server 对 artist-image 给了 max-age，不带版本会继续看到旧图）。
+  window.__artistImageVersions = window.__artistImageVersions || Object.create(null);
+
+  window.artistImageUrl = function (name, version) {
     if (!name) return '';
-    return window.__coverBase + '/artist-image/' + encodeURIComponent(name);
+    var url = window.__coverBase + '/artist-image/' + encodeURIComponent(name);
+    var v = version || window.__artistImageVersions[name] || '';
+    if (v) url += '?v=' + encodeURIComponent(String(v));
+    return url;
   };
 
   const SIGNAL_NAMES = new Set([

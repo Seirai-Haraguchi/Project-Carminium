@@ -75,11 +75,11 @@
     overlayEl.style.display = 'none';
 
     menuContainer = document.createElement('div');
-    menuContainer.className = 'context-menu-container';
+    menuContainer.className = 'context-menu-container mdx';
     overlayEl.appendChild(menuContainer);
 
     submenuEl = document.createElement('div');
-    submenuEl.className = 'context-submenu';
+    submenuEl.className = 'context-submenu mdx';
     submenuEl.style.display = 'none';
     overlayEl.appendChild(submenuEl);
 
@@ -128,11 +128,16 @@
     submenuEl.addEventListener('mouseleave', function () {
       _armSubmenuHide();
     });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && overlayEl.classList.contains('open')) hide();
+    });
   }
 
   function hide() {
     overlayEl.classList.remove('open');
     _hideSubmenu();
+    document.dispatchEvent(new CustomEvent('context-menu-closed'));
     setTimeout(function () {
       if (!overlayEl.classList.contains('open')) {
         overlayEl.style.display = 'none';
@@ -149,17 +154,165 @@
     }
   }
 
+  // ── 菜单取色：从封面抽主色 → 写 --mdx-tint，供 .mdx 光晕混色 ──
+  var _tintCache = new Map();
+  var _tintPending = new Map();
+
+  function _tintHsl(rgb) {
+    var r = rgb[0] / 255, g = rgb[1] / 255, b = rgb[2] / 255;
+    var max = Math.max(r, g, b), min = Math.min(r, g, b);
+    var l = (max + min) / 2;
+    var h = 0, s = 0;
+    if (max !== min) {
+      var d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60;
+    }
+    s = Math.max(42, Math.min(Math.round(s * 100), 80));
+    l = Math.max(46, Math.min(Math.round(l * 100), 66));
+    return 'hsl(' + Math.round(h) + ', ' + s + '%, ' + l + '%)';
+  }
+
+  function _menuTint(el, url) {
+    if (!el) return;
+    if (el._tintUrl === url) return;
+    el._tintUrl = url;
+    el.style.removeProperty('--mdx-tint');
+    if (!url) return;
+    if (_tintCache.has(url)) {
+      var cached = _tintCache.get(url);
+      if (cached) el.style.setProperty('--mdx-tint', cached);
+      return;
+    }
+    if (_tintPending.has(url)) { _tintPending.get(url).push(el); return; }
+    _tintPending.set(url, [el]);
+    var img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.decoding = 'async';
+    img.onload = function () {
+      var rgb = null;
+      try { rgb = App.utils.extractDominantColor(img); } catch (e) { rgb = null; }
+      var hsl = rgb ? _tintHsl(rgb) : '';
+      _tintCache.set(url, hsl);
+      (_tintPending.get(url) || []).forEach(function (node) {
+        if (node && hsl) node.style.setProperty('--mdx-tint', hsl);
+      });
+      _tintPending.delete(url);
+    };
+    img.onerror = function () {
+      _tintCache.set(url, '');
+      _tintPending.delete(url);
+    };
+    img.src = url;
+  }
+
+  // ── 选项型子菜单（倍速 / 播放顺序）：单选，当前项带勾 ──
+  function _positionSubmenu(itemEl) {
+    // 🔴 用 offset 尺寸而不是 getBoundingClientRect：子菜单入场是 scale(0.96) 动画，
+    //    rect 拿到的是缩放后的值，会让贴边判断差几个像素。
+    var rect = menuContainer.getBoundingClientRect();
+    var subW = submenuEl.offsetWidth;
+    var subH = submenuEl.offsetHeight;
+    var posX = rect.right + 4;
+    var posY = (itemEl ? itemEl.getBoundingClientRect().top : rect.top) - 6;
+    if (posX + subW > window.innerWidth - 8) {
+      posX = rect.left - subW - 4;
+    }
+    if (posX < 8) posX = 8;
+    if (posY + subH > window.innerHeight - 8) {
+      posY = window.innerHeight - subH - 8;
+    }
+    if (posY < 8) posY = 8;
+    submenuEl.style.left = posX + 'px';
+    submenuEl.style.top = posY + 'px';
+    // 子菜单入场缩放的 origin 跟随它在主菜单的哪一侧
+    submenuEl.style.transformOrigin = (posX >= rect.right) ? '0 0' : '100% 0';
+  }
+
+  function _showChoiceSubmenu(itemEl, config) {
+    _hideSubmenu();
+    ++submenuGeneration;
+
+    var list = document.createElement('div');
+    list.className = 'md-seglist context-submenu-list';
+
+    (config.options || []).forEach(function (opt) {
+      var checked = opt.value === config.current;
+      var item = document.createElement('div');
+      item.className = 'context-submenu-item' + (checked ? ' is-checked' : '');
+      item.innerHTML =
+        '<span class="material-symbols-rounded context-submenu-item-icon">' + opt.icon + '</span>' +
+        '<span class="context-submenu-item-name">' + App.utils.esc(opt.label) + '</span>' +
+        (checked ? '<span class="material-symbols-rounded context-submenu-item-check">check</span>' : '');
+      item.addEventListener('click', function () {
+        hide();
+        config.onSelect(opt.value);
+      });
+      list.appendChild(item);
+    });
+
+    submenuEl.innerHTML = '';
+    submenuEl.appendChild(list);
+    submenuEl.style.display = 'flex';
+    _cancelSubmenuHide();
+    _positionSubmenu(itemEl);
+  }
+
+  var NP_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+
+  function _formatRate(rate) {
+    var v = Math.round((parseFloat(rate) || 1) * 100) / 100;
+    return (v % 1 === 0 ? v.toFixed(1) : String(v)) + '×';
+  }
+
+  function _repeatLabel(mode) {
+    if (mode === 'one') return App.i18n.t('cm.orderOne');
+    if (mode === 'all') return App.i18n.t('cm.orderAll');
+    return App.i18n.t('cm.orderOff');
+  }
+
+  function _showSpeedSubmenu(itemEl) {
+    var cur = (App.nowPlaying && App.nowPlaying.getPlaybackRate)
+      ? App.nowPlaying.getPlaybackRate() : 1;
+    _showChoiceSubmenu(itemEl, {
+      current: Math.round(cur * 100) / 100,
+      options: NP_RATES.map(function (r) {
+        return { value: r, label: _formatRate(r), icon: 'speed' };
+      }),
+      onSelect: function (rate) {
+        if (App.nowPlaying && App.nowPlaying.setPlaybackRate) {
+          App.nowPlaying.setPlaybackRate(rate);
+        }
+      },
+    });
+  }
+
+  function _showOrderSubmenu(itemEl) {
+    _showChoiceSubmenu(itemEl, {
+      current: (App.state && App.state.repeat) || 'off',
+      options: [
+        { value: 'off', label: App.i18n.t('cm.orderOff'), icon: 'format_list_numbered' },
+        { value: 'all', label: App.i18n.t('cm.orderAll'), icon: 'repeat' },
+        { value: 'one', label: App.i18n.t('cm.orderOne'), icon: 'repeat_one' },
+      ],
+      onSelect: function (mode) { App.backend.set_repeat(mode); },
+    });
+  }
+
   function _showArtistSubmenu(artists, itemEl) {
     _hideSubmenu();
     var gen = ++submenuGeneration;
     if (!artists || artists.length === 0) return;
 
-    var frag = document.createDocumentFragment();
-
     var header = document.createElement('div');
     header.className = 'context-submenu-header';
     header.textContent = App.i18n.t('cm.chooseArtist');
-    frag.appendChild(header);
+
+    var list = document.createElement('div');
+    list.className = 'md-seglist context-submenu-list';
 
     artists.forEach(function (name) {
       var item = document.createElement('div');
@@ -173,28 +326,15 @@
           App.navigate('artists', { artist: name });
         }
       });
-      frag.appendChild(item);
+      list.appendChild(item);
     });
 
     submenuEl.innerHTML = '';
-    submenuEl.appendChild(frag);
-    submenuEl.style.display = 'block';
+    submenuEl.appendChild(header);
+    submenuEl.appendChild(list);
+    submenuEl.style.display = 'flex';
     _cancelSubmenuHide();
-
-    var rect = menuContainer.getBoundingClientRect();
-    var subRect = submenuEl.getBoundingClientRect();
-    var posX = rect.right + 4;
-    var posY = (itemEl ? itemEl.getBoundingClientRect().top : rect.top) - 6;
-    if (posX + subRect.width > window.innerWidth - 8) {
-      posX = rect.left - subRect.width - 4;
-    }
-    if (posX < 8) posX = 8;
-    if (posY + subRect.height > window.innerHeight - 8) {
-      posY = window.innerHeight - subRect.height - 8;
-    }
-    if (posY < 8) posY = 8;
-    submenuEl.style.left = posX + 'px';
-    submenuEl.style.top = posY + 'px';
+    _positionSubmenu(itemEl);
   }
 
   function _showPlaylistSubmenu(tracks, itemEl) {
@@ -204,13 +344,14 @@
     App.utils.call('get_playlists').then(function (res) {
       if (gen !== submenuGeneration) return;
       var playlists = JSON.parse(res);
-      var frag = document.createDocumentFragment();
+      var list = document.createElement('div');
+      list.className = 'md-seglist context-submenu-list';
 
       if (playlists.length === 0) {
         var empty = document.createElement('div');
         empty.className = 'context-submenu-empty';
         empty.textContent = App.i18n.t('cm.noPlaylists');
-        frag.appendChild(empty);
+        list.appendChild(empty);
       } else {
         playlists.forEach(function (pl) {
           var item = document.createElement('div');
@@ -239,13 +380,9 @@
             });
             hide();
           });
-          frag.appendChild(item);
+          list.appendChild(item);
         });
       }
-
-      var divider = document.createElement('div');
-      divider.className = 'context-submenu-divider';
-      frag.appendChild(divider);
 
       var createItem = document.createElement('div');
       createItem.className = 'context-submenu-item context-submenu-create';
@@ -256,27 +393,13 @@
         hide();
         _promptCreatePlaylistAndAdd(tracks);
       });
-      frag.appendChild(createItem);
+      list.appendChild(createItem);
 
       submenuEl.innerHTML = '';
-      submenuEl.appendChild(frag);
-      submenuEl.style.display = 'block';
+      submenuEl.appendChild(list);
+      submenuEl.style.display = 'flex';
       if (submenuTickTimer) _cancelSubmenuHide();
-
-      var rect = menuContainer.getBoundingClientRect();
-      var subRect = submenuEl.getBoundingClientRect();
-      var posX = rect.right + 4;
-      var posY = (itemEl ? itemEl.getBoundingClientRect().top : rect.top) - 6;
-      if (posX + subRect.width > window.innerWidth - 8) {
-        posX = rect.left - subRect.width - 4;
-      }
-      if (posX < 8) posX = 8;
-      if (posY + subRect.height > window.innerHeight - 8) {
-        posY = window.innerHeight - subRect.height - 8;
-      }
-      if (posY < 8) posY = 8;
-      submenuEl.style.left = posX + 'px';
-      submenuEl.style.top = posY + 'px';
+      _positionSubmenu(itemEl);
     });
   }
 
@@ -348,12 +471,14 @@
     });
   }
 
-  function show(x, y, track) {
+  function show(x, y, track, opts) {
+    opts = opts || {};
+    var isNp = opts.mode === 'nowPlaying';
     menuContainer.innerHTML = '';
     _hideSubmenu();
 
     var selectedTracks = [];
-    if (App.selection && App.selection.isSelected(track.id)) {
+    if (!isNp && App.selection && App.selection.isSelected(track.id)) {
       selectedTracks = App.selection.getSelectedTracks();
     }
     if (selectedTracks.length === 0) {
@@ -411,7 +536,7 @@
     });
 
     const list = document.createElement('div');
-    list.className = 'context-menu-list';
+    list.className = 'context-menu-list md-seglist';
 
     var trackArtists = (!isMulti && track.artists) ? track.artists : null;
     if (!trackArtists && !isMulti && track.artist) {
@@ -421,11 +546,41 @@
 
     var hasExternal = selectedTracks.some(function (t) { return !!(t && t.external); });
 
-    const items = [
-      { id: 'play', icon: 'play_arrow', text: isMulti ? App.i18n.t('cm.playSelected') : App.i18n.t('cm.play'), color: 'var(--md-primary)' },
-      { id: 'play_next', icon: 'queue_play_next', text: isMulti ? App.i18n.t('cm.playNextSelected') : App.i18n.t('cm.playNext') },
-      { id: 'add_queue', icon: 'playlist_play', text: isMulti ? App.i18n.t('cm.addToQueueSelected') : App.i18n.t('cm.addToQueue') },
-    ];
+    const items = [];
+
+    // 正在播放页的「更多」菜单：曲目信息/播放/插播/加队列一律不出现在这里
+    // （这些操作在该页已有常驻控件），改为播放控制类条目。
+    if (isNp) {
+      var npRate = (App.nowPlaying && App.nowPlaying.getPlaybackRate)
+        ? App.nowPlaying.getPlaybackRate() : 1;
+      items.push({
+        id: 'playback_speed', icon: 'speed',
+        text: App.i18n.t('cm.playbackSpeed'),
+        value: _formatRate(npRate),
+        hasSubmenu: true, submenuType: 'speed',
+      });
+      items.push({
+        id: 'play_order', icon: 'repeat',
+        text: App.i18n.t('cm.playOrder'),
+        value: _repeatLabel(App.state ? App.state.repeat : 'off'),
+        hasSubmenu: true, submenuType: 'order',
+      });
+      items.push({
+        id: 'shuffle', icon: 'shuffle', text: App.i18n.t('np.shuffle'),
+        checked: !!(App.state && App.state.shuffle),
+      });
+      items.push({
+        id: 'like', icon: 'favorite', text: App.i18n.t('np.like'),
+        checked: !!(App.nowPlaying && App.nowPlaying.isLiked && App.nowPlaying.isLiked()),
+      });
+    } else {
+      items.push(
+        { id: 'play', icon: 'play_arrow', text: isMulti ? App.i18n.t('cm.playSelected') : App.i18n.t('cm.play'), color: 'var(--md-primary)' },
+        { id: 'play_next', icon: 'queue_play_next', text: isMulti ? App.i18n.t('cm.playNextSelected') : App.i18n.t('cm.playNext') },
+        { id: 'add_queue', icon: 'playlist_play', text: isMulti ? App.i18n.t('cm.addToQueueSelected') : App.i18n.t('cm.addToQueue') },
+      );
+    }
+
     if (!hasExternal) {
       items.push({ id: 'add_to_playlist', icon: 'playlist_add', text: App.i18n.t('cm.addToPlaylist'), hasSubmenu: true });
     }
@@ -451,23 +606,121 @@
     if (App.state && App.state.tagEditorPath) {
       items.push({ id: 'tag_editor', icon: 'edit_note', text: App.i18n.t('cm.editTags') });
     }
-    items.push({ id: 'info', icon: 'info', text: App.i18n.t('cm.fileInfo'), color: 'var(--md-tertiary)' });
+    if (!isNp) {
+      items.push({ id: 'info', icon: 'info', text: App.i18n.t('cm.fileInfo'), color: 'var(--md-tertiary)' });
+    }
 
-    items.forEach(item => {
+    function runItem(item) {
+      if (item.hasSubmenu) return;
+      hide();
+
+    if (item.id === 'shuffle') {
+      App.backend.set_shuffle(!(App.state && App.state.shuffle));
+    } else if (item.id === 'like') {
+      App.backend.toggle_liked();
+    } else if (item.id === 'play') {
+      App.backend.play_from_list(JSON.stringify(selectedTracks), 0);
+    } else if (item.id === 'play_next') {
+      selectedTracks.forEach(function (t) {
+        App.backend.add_next(JSON.stringify(t));
+      });
+    } else if (item.id === 'add_queue') {
+      selectedTracks.forEach(function (t) {
+        App.backend.append_queue(JSON.stringify(t));
+      });
+    } else if (item.id === 'open_album') {
+      if (App.navigate) {
+        App.navigate('albums', { album: track.album, album_artist: track.album_artist || track.artist || '' });
+      }
+    } else if (item.id === 'open_artist') {
+      if (App.navigate && trackArtists && trackArtists.length === 1) {
+        App.navigate('artists', { artist: trackArtists[0] });
+      }
+    } else if (item.id === 'copy_path') {
+      if (isMulti) {
+        var paths = selectedTracks.map(function (t) { return t.path; });
+        navigator.clipboard.writeText(paths.join('\n'));
+      } else {
+        navigator.clipboard.writeText(track.path);
+      }
+    } else if (item.id === 'explorer') {
+      App.backend.show_in_explorer(track.path);
+    } else if (item.id === 'tag_editor') {
+      var filePaths = selectedTracks.map(function (t) { return t.path; }).filter(Boolean);
+      App.utils.call('open_in_tag_editor', filePaths).then(function (res) {
+        try {
+          var r = JSON.parse(res);
+          if (r && r.error) {
+            App.utils.toast(App.i18n.t('cm.tagEditorFailed'));
+          }
+        } catch (e) {  }
+      });
+    } else if (item.id === 'info') {
+      if (isMulti) {
+        var info = App.i18n.t('cm.infoSelectedTitle') + '\n' +
+                   App.i18n.t('cm.infoCount', { count: selectedTracks.length }) + '\n' +
+                   App.i18n.t('cm.infoTotalDuration', { duration: App.utils.formatDuration(selectedTracks.reduce(function (s, t) { return s + (t.duration_ms || 0); }, 0)) });
+        alert(info);
+      } else {
+        var _t = App.i18n.t;
+        var unknown = _t('common.unknown');
+        var sizeMB = track.file_size ? (track.file_size / (1024 * 1024)).toFixed(2) + ' MB' : unknown;
+        var bitrateStr = track.bitrate ? Math.round(track.bitrate/1000) + ' kbps' : unknown;
+        var info = _t('cm.infoTitle') + '\n' +
+                   _t('cm.infoFieldTitle', { value: track.title || unknown }) + '\n' +
+                   _t('cm.infoFieldArtist', { value: track.artist || unknown }) + '\n' +
+                   _t('cm.infoFieldAlbum', { value: track.album || unknown }) + '\n' +
+                   _t('cm.infoFieldBitrate', { value: bitrateStr }) + '\n' +
+                   _t('cm.infoFieldSize', { value: sizeMB }) + '\n' +
+                   _t('cm.infoFieldPath', { value: track.path });
+        alert(info);
+      }
+    }
+    }
+
+    // 立即播放 / 下一首播放 / 添加到队列 → 方形平铺一组
+    var QUICK_IDS = { play: 1, play_next: 1, add_queue: 1 };
+    var quick = document.createElement('div');
+    quick.className = 'context-menu-quick';
+    items.forEach(function (item) {
+      if (!QUICK_IDS[item.id]) return;
+      var tile = document.createElement('button');
+      tile.type = 'button';
+      tile.className = 'context-menu-quick-item' + (item.color ? ' is-primary' : '');
+      tile.title = item.text;
+      tile.innerHTML =
+        '<span class="material-symbols-rounded">' + item.icon + '</span>' +
+        '<span class="context-menu-quick-label">' + App.utils.esc(item.text) + '</span>';
+      tile.addEventListener('click', function () { runItem(item); });
+      quick.appendChild(tile);
+    });
+    if (quick.childElementCount > 0) list.appendChild(quick);
+
+    items.forEach(function (item) {
+      if (QUICK_IDS[item.id]) return;
       const el = document.createElement('div');
       el.className = 'context-menu-item';
       if (item.hasSubmenu) el.classList.add('has-submenu');
 
-      const iconColorStyle = item.color ? `style="color:${item.color}"` : '';
       const arrowHtml = item.hasSubmenu
         ? '<span class="material-symbols-rounded context-submenu-arrow">chevron_right</span>'
         : '';
 
-      el.innerHTML = `
-        <span class="material-symbols-rounded" ${iconColorStyle}>${item.icon}</span>
-        <span class="context-menu-text">${App.utils.esc(item.text)}</span>
-        ${arrowHtml}
-      `;
+      const valueHtml = item.value != null
+        ? '<span class="context-menu-value">' + App.utils.esc(item.value) + '</span>'
+        : '';
+
+      // 开关类条目（随机播放 / 收藏）用尾随勾选表示当前状态
+      const checkHtml = (!item.hasSubmenu && item.checked)
+        ? '<span class="material-symbols-rounded context-menu-check">check</span>'
+        : '';
+
+      el.innerHTML =
+        '<span class="material-symbols-rounded">' + item.icon + '</span>' +
+        '<span class="context-menu-text">' + App.utils.esc(item.text) + '</span>' +
+        valueHtml +
+        checkHtml +
+        arrowHtml;
 
       if (item.hasSubmenu) {
         el.addEventListener('mouseenter', function () {
@@ -475,6 +728,10 @@
           requestAnimationFrame(function () {
             if (item.submenuType === 'artist') {
               _showArtistSubmenu(trackArtists, el);
+            } else if (item.submenuType === 'speed') {
+              _showSpeedSubmenu(el);
+            } else if (item.submenuType === 'order') {
+              _showOrderSubmenu(el);
             } else {
               _showPlaylistSubmenu(selectedTracks, el);
             }
@@ -489,73 +746,14 @@
         });
       }
 
-      el.addEventListener('click', () => {
-        if (item.hasSubmenu) return;
-        hide();
-        if (item.id === 'play') {
-          App.backend.play_from_list(JSON.stringify(selectedTracks), 0);
-        } else if (item.id === 'play_next') {
-          selectedTracks.forEach(function (t) {
-            App.backend.add_next(JSON.stringify(t));
-          });
-        } else if (item.id === 'add_queue') {
-          selectedTracks.forEach(function (t) {
-            App.backend.append_queue(JSON.stringify(t));
-          });
-        } else if (item.id === 'open_album') {
-          if (App.navigate) {
-            App.navigate('albums', { album: track.album, album_artist: track.album_artist || track.artist || '' });
-          }
-        } else if (item.id === 'open_artist') {
-          if (App.navigate && trackArtists && trackArtists.length === 1) {
-            App.navigate('artists', { artist: trackArtists[0] });
-          }
-        } else if (item.id === 'copy_path') {
-          if (isMulti) {
-            var paths = selectedTracks.map(function (t) { return t.path; });
-            navigator.clipboard.writeText(paths.join('\n'));
-          } else {
-            navigator.clipboard.writeText(track.path);
-          }
-        } else if (item.id === 'explorer') {
-          App.backend.show_in_explorer(track.path);
-        } else if (item.id === 'tag_editor') {
-          var filePaths = selectedTracks.map(function (t) { return t.path; }).filter(Boolean);
-          App.utils.call('open_in_tag_editor', filePaths).then(function (res) {
-            try {
-              var r = JSON.parse(res);
-              if (r && r.error) {
-                App.utils.toast(App.i18n.t('cm.tagEditorFailed'));
-              }
-            } catch (e) {  }
-          });
-        } else if (item.id === 'info') {
-          if (isMulti) {
-            var info = App.i18n.t('cm.infoSelectedTitle') + '\n' +
-                       App.i18n.t('cm.infoCount', { count: selectedTracks.length }) + '\n' +
-                       App.i18n.t('cm.infoTotalDuration', { duration: App.utils.formatDuration(selectedTracks.reduce(function (s, t) { return s + (t.duration_ms || 0); }, 0)) });
-            alert(info);
-          } else {
-            var _t = App.i18n.t;
-            var unknown = _t('common.unknown');
-            var sizeMB = track.file_size ? (track.file_size / (1024 * 1024)).toFixed(2) + ' MB' : unknown;
-            var bitrateStr = track.bitrate ? Math.round(track.bitrate/1000) + ' kbps' : unknown;
-            var info = _t('cm.infoTitle') + '\n' +
-                       _t('cm.infoFieldTitle', { value: track.title || unknown }) + '\n' +
-                       _t('cm.infoFieldArtist', { value: track.artist || unknown }) + '\n' +
-                       _t('cm.infoFieldAlbum', { value: track.album || unknown }) + '\n' +
-                       _t('cm.infoFieldBitrate', { value: bitrateStr }) + '\n' +
-                       _t('cm.infoFieldSize', { value: sizeMB }) + '\n' +
-                       _t('cm.infoFieldPath', { value: track.path });
-            alert(info);
-          }
-        }
-      });
+      el.addEventListener('click', function () { runItem(item); });
       list.appendChild(el);
     });
 
-    menuContainer.appendChild(header);
+    // 正在播放页的入口就在曲目信息旁，再放一遍封面/标题纯属重复
+    if (!isNp) list.insertBefore(header, list.firstChild);
     menuContainer.appendChild(list);
+    _menuTint(menuContainer, track.has_cover ? window.coverUrl(track.id, 128) : '');
 
     overlayEl.style.display = 'block';
     requestAnimationFrame(function () {
@@ -565,13 +763,41 @@
     });
 
     const rect = menuContainer.getBoundingClientRect();
+    // 🔴 定位必须用 offset 尺寸：容器入场是 scale(0.96) → 1 的动画，
+    //    getBoundingClientRect 量到的是缩放后的尺寸，贴底时会溢出几像素。
+    const posW = menuContainer.offsetWidth || rect.width;
+    const posH = menuContainer.offsetHeight || rect.height;
     let posX = x;
     let posY = y;
-    if (posX + rect.width > window.innerWidth) posX = window.innerWidth - rect.width - 16;
-    if (posY + rect.height > window.innerHeight) posY = window.innerHeight - rect.height - 16;
+
+    if (opts.anchorRect) {
+      // 以按钮为锚：贴右边缘、向上展开（按钮在页面下半部）
+      posX = opts.anchorRect.right - posW;
+      posY = opts.anchorRect.top - posH - 8;
+      if (posY < 12) posY = opts.anchorRect.bottom + 8;
+      if (posX < 12) posX = 12;
+    }
+
+    if (posX + posW > window.innerWidth - 12) posX = window.innerWidth - posW - 12;
+    if (posY + posH > window.innerHeight - 12) posY = window.innerHeight - posH - 12;
+    if (posY < 12) posY = 12;
 
     menuContainer.style.left = posX + 'px';
     menuContainer.style.top = posY + 'px';
+
+    // 入场缩放从「触发点 / 按钮」这一侧长出来（M3 菜单的 origin 跟随锚点）
+    var originX = opts.anchorRect
+      ? (opts.anchorRect.left + opts.anchorRect.right) / 2
+      : x;
+    var originY = opts.anchorRect ? opts.anchorRect.bottom : y;
+    _setMenuOrigin(posX, posY, posW, posH, originX, originY);
+  }
+
+  // 把 transform-origin 换算成容器内的像素坐标（越界时贴边）
+  function _setMenuOrigin(posX, posY, w, h, ax, ay) {
+    var ox = Math.max(0, Math.min(w, ax - posX));
+    var oy = Math.max(0, Math.min(h, ay - posY));
+    menuContainer.style.transformOrigin = ox + 'px ' + oy + 'px';
   }
 
   function _getAlbumTracks(album) {
@@ -615,7 +841,7 @@
       '</div>';
 
     var list = document.createElement('div');
-    list.className = 'context-menu-list';
+    list.className = 'context-menu-list md-seglist';
 
     var items = [
       { id: 'album_play', icon: 'play_arrow', text: App.i18n.t('cm.playAlbum'), color: 'var(--md-primary)' },
@@ -670,8 +896,9 @@
       list.appendChild(el);
     });
 
-    menuContainer.appendChild(header);
+    list.insertBefore(header, list.firstChild);
     menuContainer.appendChild(list);
+    _menuTint(menuContainer, album.cover_track_id ? window.coverUrl(album.cover_track_id, 128) : '');
 
     overlayEl.style.display = 'block';
     requestAnimationFrame(function () {
@@ -683,13 +910,14 @@
     var rect = menuContainer.getBoundingClientRect();
     var posX = x;
     var posY = y;
-    if (posX + rect.width > window.innerWidth) posX = window.innerWidth - rect.width - 16;
-    if (posY + rect.height > window.innerHeight) posY = window.innerHeight - rect.height - 16;
-    if (posX < 8) posX = 8;
-    if (posY < 8) posY = 8;
+    if (posX + rect.width > window.innerWidth - 12) posX = window.innerWidth - rect.width - 12;
+    if (posY + rect.height > window.innerHeight - 12) posY = window.innerHeight - rect.height - 12;
+    if (posX < 12) posX = 12;
+    if (posY < 12) posY = 12;
 
     menuContainer.style.left = posX + 'px';
     menuContainer.style.top = posY + 'px';
+    _setMenuOrigin(posX, posY, menuContainer.offsetWidth, menuContainer.offsetHeight, x, y);
   }
 
   function showCover(x, y, track) {
@@ -699,7 +927,7 @@
     var coverUrl = window.coverUrl(track.id, 800);
 
     var list = document.createElement('div');
-    list.className = 'context-menu-list';
+    list.className = 'context-menu-list md-seglist';
 
     var items = [
       { id: 'copy_cover', icon: 'content_copy', text: App.i18n.t('cm.copyCover') },
@@ -731,6 +959,7 @@
     });
 
     menuContainer.appendChild(list);
+    _menuTint(menuContainer, window.coverUrl(track.id, 128));
 
     overlayEl.style.display = 'block';
     requestAnimationFrame(function () {
@@ -749,6 +978,7 @@
 
     menuContainer.style.left = posX + 'px';
     menuContainer.style.top = posY + 'px';
+    _setMenuOrigin(posX, posY, menuContainer.offsetWidth, menuContainer.offsetHeight, x, y);
   }
 
   function _copyCoverToClipboard(url) {
@@ -780,6 +1010,11 @@
   cm.init = init;
   cm.hide = hide;
   cm.showAlbum = showAlbum;
+  // 正在播放页「更多」入口：去掉播放类条目，换成播放控制类
+  cm.showNowPlaying = function (anchorRect, track) {
+    if (!track) return;
+    show(0, 0, track, { mode: 'nowPlaying', anchorRect: anchorRect });
+  };
   document.addEventListener('DOMContentLoaded', init);
 
 })();

@@ -654,6 +654,32 @@
               placeholder: _t('settings.cacheDir.placeholder'),
               pickLabel: _t('settings.cacheDir.pick'),
             },
+            {
+              type: 'toggle',
+              bind: 'stream_cache_enabled',
+              label: _t('settings.streamCache.enabled.label'),
+              sub: _t('settings.streamCache.enabled.sub'),
+              onChange: function (on) {
+                var el = page.container && page.container.querySelector('#stream-cache-usage');
+                if (on && el) el.textContent = _t('settings.streamCache.computing');
+                setTimeout(_refreshStreamCacheUsage, 200);
+              },
+            },
+            {
+              type: 'slider',
+              bind: 'stream_cache_limit_mb',
+              label: _t('settings.streamCache.limit.label'),
+              sub: _t('settings.streamCache.limit.sub'),
+              min: 128,
+              max: 20480,
+              step: 128,
+              unit: ' MB',
+            },
+            {
+              type: 'stream_cache',
+              bind: '_stream_cache',
+              label: _t('settings.streamCache.usage.label'),
+            },
           ],
         },
       ],
@@ -1269,7 +1295,7 @@
                 <span class="md-dropdown-value">—</span>
                 <span class="material-symbols-rounded md-dropdown-arrow">arrow_drop_down</span>
               </button>
-              <div class="md-dropdown-menu" role="menu">${optsHtml}</div>
+              <div class="md-dropdown-menu mdx md-seglist" role="menu">${optsHtml}</div>
             </div>
           </div>
         </div>
@@ -1333,6 +1359,23 @@
         </div>
       `;
     }
+    if (row.type === 'stream_cache') {
+      return `
+        <div class="settings-row settings-row-action settings-row-stream-cache" data-bind="${row.bind}">
+          ${_rowIconHtml(row)}
+          <div class="settings-row-body">
+            <p class="settings-row-label">${row.label}</p>
+            <p class="settings-row-sub" id="stream-cache-usage">${_t('settings.streamCache.computing')}</p>
+          </div>
+          <div class="settings-row-trailing">
+            <button class="btn-outlined settings-action-btn" type="button" id="stream-cache-clear-btn">
+              <span class="material-symbols-rounded">delete</span>
+              <span>${_t('settings.streamCache.clear.action')}</span>
+            </button>
+          </div>
+        </div>
+      `;
+    }
     if (row.type === 'device_select') {
       const defaultLabel = App.utils.esc(row.placeholder || _t('settings.outputDevice.default'));
       return `
@@ -1345,7 +1388,7 @@
                 <span class="md-dropdown-value" data-default="${defaultLabel}">${defaultLabel}</span>
                 <span class="material-symbols-rounded md-dropdown-arrow">arrow_drop_down</span>
               </button>
-              <div class="md-dropdown-menu" role="menu"></div>
+              <div class="md-dropdown-menu mdx md-seglist" role="menu"></div>
             </div>
           </div>
         </div>
@@ -1512,6 +1555,8 @@
         _bindFilePickerRow(row, settings[row.bind] || '');
       } else if (row.type === 'cache_dir') {
         _bindCacheDirRow(row, settings[row.bind] || '');
+      } else if (row.type === 'stream_cache') {
+        _bindStreamCacheRow();
       } else if (row.type === 'device_select') {
         _bindDeviceSelectRow(row, settings[row.bind] || '');
       } else if (row.type === 'shortcut') {
@@ -2033,6 +2078,68 @@
       });
     };
     pickBtn.addEventListener('click', pickBtn._cachePickHandler);
+  }
+
+  function _formatBytes(bytes) {
+    var n = Number(bytes) || 0;
+    if (n <= 0) return '0 B';
+    var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    var i = 0;
+    while (n >= 1024 && i < units.length - 1) {
+      n /= 1024;
+      i++;
+    }
+    return (i === 0 ? String(Math.round(n)) : n.toFixed(n >= 100 ? 0 : 1)) + ' ' + units[i];
+  }
+
+  function _refreshStreamCacheUsage() {
+    if (!page.container) return;
+    var el = page.container.querySelector('#stream-cache-usage');
+    if (!el) return;
+    App.utils.call('stream_cache_stats').then(function (res) {
+      var s;
+      try { s = JSON.parse(res); } catch (e) { s = null; }
+      if (!el || !el.isConnected) return;
+      if (!s || s.error) {
+        el.textContent = _t('settings.streamCache.usage.unavailable');
+        return;
+      }
+      if (!s.enabled) {
+        el.textContent = _t('settings.streamCache.usage.off');
+        return;
+      }
+      el.textContent = _t('settings.streamCache.usage.value')
+        .replace('{used}', _formatBytes(s.used_bytes))
+        .replace('{limit}', _formatBytes(s.limit_bytes))
+        .replace('{count}', String(s.count || 0));
+    }).catch(function () {  });
+  }
+
+  function _bindStreamCacheRow() {
+    _refreshStreamCacheUsage();
+    var btn = page.container && page.container.querySelector('#stream-cache-clear-btn');
+    if (!btn) return;
+    btn._streamCacheClearHandler = function () {
+      App.utils.confirmDialog({
+        title: _t('settings.streamCache.clear.confirmTitle'),
+        body: _t('settings.streamCache.clear.confirmBody'),
+        confirmText: _t('common.confirm'),
+        cancelText: _t('common.cancel'),
+      }).then(function (ok) {
+        if (!ok) return;
+        App.utils.call('clear_stream_cache').then(function (res) {
+          var r;
+          try { r = JSON.parse(res); } catch (e) { r = null; }
+          App.utils.toast((r && !r.error)
+            ? _t('settings.streamCache.clear.done')
+            : _t('settings.streamCache.clear.failed'));
+          _refreshStreamCacheUsage();
+        }).catch(function () {
+          App.utils.toast(_t('settings.streamCache.clear.failed'));
+        });
+      });
+    };
+    btn.addEventListener('click', btn._streamCacheClearHandler);
   }
 
   function _bindDeviceSelectRow(row, currentValue) {

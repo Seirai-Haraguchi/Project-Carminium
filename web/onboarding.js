@@ -614,7 +614,7 @@
                 '<span class="md-dropdown-value">—</span>' +
                 '<span class="material-symbols-rounded md-dropdown-arrow">arrow_drop_down</span>' +
               '</button>' +
-              '<div class="md-dropdown-menu" role="menu">' + themeOptsHtml + '</div>' +
+              '<div class="md-dropdown-menu mdx md-seglist" role="menu">' + themeOptsHtml + '</div>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -627,7 +627,7 @@
                 '<span class="md-dropdown-value">—</span>' +
                 '<span class="material-symbols-rounded md-dropdown-arrow">arrow_drop_down</span>' +
               '</button>' +
-              '<div class="md-dropdown-menu" role="menu">' + schemeOptsHtml + '</div>' +
+              '<div class="md-dropdown-menu mdx md-seglist" role="menu">' + schemeOptsHtml + '</div>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -640,7 +640,7 @@
                 '<span class="md-dropdown-value">—</span>' +
                 '<span class="material-symbols-rounded md-dropdown-arrow">arrow_drop_down</span>' +
               '</button>' +
-              '<div class="md-dropdown-menu" role="menu">' + specOptsHtml + '</div>' +
+              '<div class="md-dropdown-menu mdx md-seglist" role="menu">' + specOptsHtml + '</div>' +
             '</div>' +
           '</div>' +
         '</div>' +

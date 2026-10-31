@@ -21,6 +21,10 @@ const AUDIO_MIME_OVERRIDES = {
   '.aif': 'audio/aiff',
 };
 
+// 艺人别名/简介是「可能被用户手改」的元数据，体积很小但随时会变：
+// 一旦被 Chromium 按 max-age=86400 缓存，改完要等一天才生效，所以一律 no-store。
+const META_NO_STORE = 'no-store';
+
 const VIDEO_MIME_OVERRIDES = {
   '.mp4':  'video/mp4',
   '.m4v':  'video/mp4',
@@ -109,10 +113,19 @@ async function _resizeCover(buffer, keyId, sizeStr) {
 }
 
 class CoverHTTPServer {
-  constructor(library) {
+  constructor(library, streamCache) {
     this._library = library;
+    this._streamCache = streamCache || null;
     this._server = null;
     this._port = 0;
+  }
+
+  get streamCache() {
+    return this._streamCache;
+  }
+
+  setStreamCache(cache) {
+    this._streamCache = cache || null;
   }
 
   start() {
@@ -183,6 +196,12 @@ class CoverHTTPServer {
       } else if (pathname.startsWith('/artist-aliases/')) {
         const name = decodeURIComponent(pathname.slice('/artist-aliases/'.length));
         this._handleArtistAliases(req, res, name, method);
+      } else if (pathname.startsWith('/artist-candidates/')) {
+        const name = decodeURIComponent(pathname.slice('/artist-candidates/'.length));
+        this._handleArtistCandidates(req, res, name, method);
+      } else if (pathname.startsWith('/artist-candidate-image/')) {
+        const id = pathname.slice('/artist-candidate-image/'.length);
+        this._handleArtistCandidateImage(req, res, id, method);
       } else {
         this._sendError(res, 404);
       }
@@ -737,12 +756,79 @@ class CoverHTTPServer {
       this._sendError(res, 404);
       return;
     }
-    const [serverId, subsonicId] = parsed;
+    this._serveSubsonicStream(parsed[0], parsed[1], req, res, method).catch(() => {
+      try { this._sendError(res, 500); } catch (e) {  }
+    });
+  }
 
-    const cfg = this._library.getSubsonicServer(serverId);
+  // 远端流媒体缓存命中时直接从磁盘发送，支持 Range，供 audio 元素定位。
+  _sendCachedAudio(req, res, hit, method) {
+    const total = hit.size;
+    const mime = hit.mime || 'audio/mpeg';
+    let start = 0;
+    let end = total - 1;
+    let partial = false;
+
+    const range = req.headers['range'];
+    if (range && total > 0) {
+      const m = /^bytes=(\d*)-(\d*)$/.exec(String(range).trim());
+      if (m && (m[1] || m[2])) {
+        let s = 0;
+        let e = total - 1;
+        if (m[1]) {
+          s = parseInt(m[1], 10);
+          if (m[2]) e = Math.min(parseInt(m[2], 10), total - 1);
+        } else {
+          const suffix = parseInt(m[2], 10);
+          s = Math.max(0, total - suffix);
+        }
+        if (Number.isFinite(s) && Number.isFinite(e) && s <= e && s < total) {
+          start = s;
+          end = e;
+          partial = true;
+        }
+      }
+    }
+
+    const headers = {
+      'Content-Type': mime,
+      'Content-Length': String(end - start + 1),
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Access-Control-Allow-Origin': '*',
+    };
+    if (partial) headers['Content-Range'] = `bytes ${start}-${end}/${total}`;
+
+    this._sendHeaders(res, partial ? 206 : 200, headers);
+    if (method === 'HEAD') return;
+
+    const fileStream = fs.createReadStream(hit.filePath, { start, end });
+    fileStream.on('error', () => {
+      try { res.end(); } catch (e) {  }
+    });
+    res.on('close', () => {
+      try { fileStream.destroy(); } catch (e) {  }
+    });
+    fileStream.pipe(res);
+  }
+
+  async _serveSubsonicStream(serverId, subsonicId, req, res, method) {
+    const sid = /^\d+$/.test(String(serverId)) ? parseInt(serverId, 10) : serverId;
+    const cfg = this._library.getSubsonicServer(sid);
     if (!cfg) {
       this._sendError(res, 404);
       return;
+    }
+
+    const cache = this._streamCache;
+    if (cache) {
+      try {
+        const hit = await cache.lookup(sid, subsonicId);
+        if (hit) {
+          this._sendCachedAudio(req, res, hit, method);
+          return;
+        }
+      } catch (e) {  }
     }
 
     const { SubsonicClient } = require('./subsonic');
@@ -751,6 +837,9 @@ class CoverHTTPServer {
       cfg.protocol_mode || 'subsonic', 120.0
     );
     const streamUrl = client._buildUrl('stream', { id: subsonicId, maxBitRate: 0 });
+
+    let writer = null;
+    let completed = false;
 
     const lib = streamUrl.startsWith('https:') ? require('https') : require('http');
     const proxyReq = lib.request(streamUrl, {
@@ -782,20 +871,36 @@ class CoverHTTPServer {
         return;
       }
 
+      // 边转发边落盘：只有完整收到上游数据才会转正，中断则丢弃分片。
+      if (cache) {
+        writer = cache.startWrite(sid, subsonicId, contentType, contentLength);
+      }
+
       this._sendHeaders(res, 200, headers);
       upstream.on('data', (chunk) => {
+        if (writer) writer.write(chunk);
         if (!res.write(chunk)) {
           upstream.pause();
           res.once('drain', () => upstream.resume());
         }
       });
-      upstream.on('end', () => res.end());
+      upstream.on('end', () => {
+        completed = true;
+        if (writer) writer.finish();
+        res.end();
+      });
       upstream.on('error', () => {
+        if (writer) writer.abort();
         try { res.end(); } catch {  }
       });
     });
 
+    res.on('close', () => {
+      if (!completed && writer) writer.abort();
+    });
+
     proxyReq.on('error', () => {
+      if (writer) writer.abort();
       try { this._sendError(res, 502, 'Subsonic stream failed'); } catch {  }
     });
     proxyReq.setTimeout(120000, () => {
@@ -804,79 +909,17 @@ class CoverHTTPServer {
     proxyReq.end();
   }
 
-  async _proxySubsonicStreamForTrack(req, res, track, method) {
+  _proxySubsonicStreamForTrack(req, res, track, method) {
     const serverId = track.server_id;
     const subsonicId = track.subsonic_id;
     if (serverId === null || serverId === undefined || !subsonicId) {
       this._sendError(res, 404);
       return;
     }
-
-    const cfg = this._library.getSubsonicServer(parseInt(serverId, 10));
-    if (!cfg) {
-      this._sendError(res, 404);
-      return;
-    }
-
-    const { SubsonicClient } = require('./subsonic');
-    const client = new SubsonicClient(
-      cfg.server_url, cfg.username, cfg.password,
-      cfg.protocol_mode || 'subsonic', 120.0
-    );
-    const streamUrl = client._buildUrl('stream', { id: subsonicId, maxBitRate: 0 });
-
-    const lib = streamUrl.startsWith('https:') ? require('https') : require('http');
-    const proxyReq = lib.request(streamUrl, {
-      headers: {
-        'User-Agent': 'Carminium/1.0',
-        'Accept-Encoding': 'identity',
-        'Connection': 'close',
-      },
-    }, (upstream) => {
-      const contentType = upstream.headers['content-type'] || 'audio/mpeg';
-      const contentLength = upstream.headers['content-length'];
-
-      const headers = {
-        'Content-Type': contentType,
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Access-Control-Allow-Origin': '*',
-      };
-      if (contentLength) headers['Content-Length'] = contentLength;
-
-      if (method === 'HEAD') {
-        this._sendHeaders(res, upstream.statusCode >= 400 ? 502 : 200, headers);
-        upstream.destroy();
-        return;
-      }
-
-      if (upstream.statusCode >= 400) {
-        this._sendError(res, 502, 'Subsonic stream failed');
-        upstream.destroy();
-        return;
-      }
-
-      this._sendHeaders(res, 200, headers);
-      upstream.on('data', (chunk) => {
-        if (!res.write(chunk)) {
-          upstream.pause();
-          res.once('drain', () => upstream.resume());
-        }
-      });
-      upstream.on('end', () => res.end());
-      upstream.on('error', () => {
-        try { res.end(); } catch {  }
-      });
+    this._serveSubsonicStream(serverId, subsonicId, req, res, method).catch(() => {
+      try { this._sendError(res, 500); } catch (e) {  }
     });
-
-    proxyReq.on('error', () => {
-      try { this._sendError(res, 502, 'Subsonic stream failed'); } catch {  }
-    });
-    proxyReq.setTimeout(120000, () => {
-      proxyReq.destroy(new Error('timeout'));
-    });
-    proxyReq.end();
   }
-
 
   _handleWebDAVStream(req, res, raw, method) {
     const slashIdx = raw.indexOf('/');
@@ -1034,6 +1077,43 @@ class CoverHTTPServer {
     const dir = path.join(path.resolve(newBase), 'carminium-artist-images');
     try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {  }
     this._artistImgCacheDir = dir;
+    if (this._streamCache) this._streamCache.setBaseDir(newBase);
+  }
+
+  // ── 艺人信息人工修正层 ───────────────────────────────────────────
+  // 用户手改过的别名/简介/头像优先于自动抓取结果；这里只做读取，
+  // 写入走 bridge → library.setArtistOverride，改完由 bridge 调 invalidateArtist。
+  _artistOverride(name) {
+    try {
+      if (this._library && typeof this._library.getArtistOverride === 'function') {
+        return this._library.getArtistOverride(name) || null;
+      }
+    } catch (e) {  }
+    return null;
+  }
+
+  _artistImageMime(filePath) {
+    const ext = path.extname(filePath || '').toLowerCase();
+    if (ext === '.png') return 'image/png';
+    if (ext === '.webp') return 'image/webp';
+    if (ext === '.gif') return 'image/gif';
+    if (ext === '.avif') return 'image/avif';
+    return 'image/jpeg';
+  }
+
+  /** 覆盖层变更后清掉该艺人的抓取缓存，让「恢复自动」能立刻重新抓。 */
+  invalidateArtist(name) {
+    const norm = (name || '').trim();
+    if (!norm) return;
+    const key = crypto.createHash('md5').update(norm.toLowerCase()).digest('hex');
+    const dir = this._getArtistImageCacheDir();
+    const suffixes = ['.jpg', '.wide.jpg', '.v4.bio.txt', '.alias.json'];
+    for (const suffix of suffixes) {
+      const f = path.join(dir, key + suffix);
+      try { fs.unlinkSync(f); } catch (e) {  }
+      try { fs.unlinkSync(f + '.miss'); } catch (e) {  }
+    }
+    this._aliasIndex = null;
   }
 
   _artistMissFresh(cacheFile, ttlMs = 7 * 24 * 3600 * 1000) {
@@ -1065,6 +1145,15 @@ class CoverHTTPServer {
   async _handleArtistBio(req, res, name, method) {
     const norm = (name || '').trim();
     if (!norm) { this._sendError(res, 400); return; }
+
+    // 覆盖层：用户写过就只认用户的（空串视为「没有简介」，不发请求也不缓存）
+    const ov = this._artistOverride(norm);
+    if (ov && typeof ov.bio === 'string') {
+      const text = ov.bio.trim();
+      if (text) this._sendImage(res, Buffer.from(text, 'utf-8'), method, 'text/plain; charset=utf-8', META_NO_STORE);
+      else this._sendError(res, 404);
+      return;
+    }
 
     const key = crypto.createHash('md5').update(norm.toLowerCase()).digest('hex');
     // v4：v3 缓存可能仍是百度百科预览片段（酷狗源加入前生成），换后缀使其失效。
@@ -1126,6 +1215,19 @@ class CoverHTTPServer {
     const norm = (name || '').trim();
     if (!norm) { this._sendError(res, 400); return; }
 
+    // 用户设过的头像直接读文件，跳过缓存与网络。同一张图也用于横幅端点
+    // （前端横幅会按 naturalWidth>=naturalHeight 自行判断是否可用）。
+    const ov = this._artistOverride(norm);
+    if (ov && ov.image_path) {
+      try {
+        const data = fs.readFileSync(ov.image_path);
+        this._sendImage(res, data, method, this._artistImageMime(ov.image_path));
+        return;
+      } catch (e) {
+        // 文件被删/移走：退回自动抓取，不要让艺人页整块空白
+      }
+    }
+
     const key = crypto.createHash('md5').update(norm.toLowerCase()).digest('hex');
     const dir = this._getArtistImageCacheDir();
     const cacheFile = path.join(dir, key + ext);
@@ -1176,13 +1278,33 @@ class CoverHTTPServer {
     this._sendError(res, 404);
   }
 
+  // 搜索接口的第一条经常是「翻唱团 / 同名不同人 / 合作者」，
+  // 直接取 [0] 正是艺人信息张冠李戴的主因。有同名项时优先同名。
+  _normArtistName(v) {
+    return String(v || '')
+      .normalize('NFKC')
+      .toLowerCase()
+      .replace(/\s+/g, '')
+      .trim();
+  }
+
+  _pickArtistHit(name, items, nameOf) {
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) return null;
+    const target = this._normArtistName(name);
+    const exact = list.find((it) => {
+      try { return this._normArtistName(nameOf(it)) === target; } catch (e) { return false; }
+    });
+    return exact || list[0];
+  }
+
   async _fetchArtistImage(name, timeoutMs = 6000, opts = {}) {
     const q = encodeURIComponent(name);
 
     const fromNetease = async () => {
       const ne = await this._httpPostFormJson(
         'https://music.163.com/api/search/get/web',
-        { s: name, type: 100, offset: 0, total: 'true', limit: 1 },
+        { s: name, type: 100, offset: 0, total: 'true', limit: 6 },
         {
           'Referer': 'https://music.163.com/',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Carminium/1.0',
@@ -1190,7 +1312,7 @@ class CoverHTTPServer {
         timeoutMs
       );
       if (!ne || ne.code !== 200) throw new Error('netease code ' + (ne && ne.code));
-      const a = ne.result && ne.result.artists && ne.result.artists[0];
+      const a = this._pickArtistHit(name, (ne.result && ne.result.artists) || [], (x) => x && x.name);
       let art = a && (a.img || a.img1v1Url || a.picUrl);
       if (art) {
         if (/([?&])param=\d+y\d+/.test(art)) {
@@ -1206,11 +1328,12 @@ class CoverHTTPServer {
 
     const fromItunes = async () => {
       const search = await this._httpJson(
-        'https://itunes.apple.com/search?entity=musicArtist&limit=1&term=' + q,
+        'https://itunes.apple.com/search?entity=musicArtist&limit=5&term=' + q,
         null, timeoutMs
       );
-      if (search && search.results && search.results[0] && search.results[0].artworkUrl100) {
-        const art = search.results[0].artworkUrl100.replace(/100x100bb(\.\w+)?$/, '600x600bb$1');
+      const hit = this._pickArtistHit(name, (search && search.results) || [], (x) => x && x.artistName);
+      if (hit && hit.artworkUrl100) {
+        const art = hit.artworkUrl100.replace(/100x100bb(\.\w+)?$/, '600x600bb$1');
         const img = await this._httpGet(art, 0, timeoutMs);
         if (img && img.contentType && img.contentType.startsWith('image/')) return img;
       }
@@ -1218,8 +1341,9 @@ class CoverHTTPServer {
     };
 
     const fromDeezer = async () => {
-      const dz = await this._httpJson('https://api.deezer.com/search/artist/?q=' + q + '&limit=1', null, timeoutMs);
-      const art = dz && dz.data && dz.data[0] && (dz.data[0].picture_big || dz.data[0].picture_xl);
+      const dz = await this._httpJson('https://api.deezer.com/search/artist/?q=' + q + '&limit=5', null, timeoutMs);
+      const hit = this._pickArtistHit(name, (dz && dz.data) || [], (x) => x && x.name);
+      const art = hit && (hit.picture_big || hit.picture_xl);
       if (art) {
         const img = await this._httpGet(art, 0, timeoutMs);
         if (img && img.contentType && img.contentType.startsWith('image/')) return img;
@@ -1314,7 +1438,7 @@ class CoverHTTPServer {
     try {
       const ne = await this._httpPostFormJson(
         'https://music.163.com/api/search/get/web',
-        { s: name, type: 100, offset: 0, total: 'true', limit: 1 },
+        { s: name, type: 100, offset: 0, total: 'true', limit: 6 },
         {
           'Referer': 'https://music.163.com/',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Carminium/1.0',
@@ -1322,7 +1446,7 @@ class CoverHTTPServer {
         timeoutMs
       );
       if (!ne || ne.code !== 200) throw new Error('netease code ' + (ne && ne.code));
-      const a = ne.result && ne.result.artists && ne.result.artists[0];
+      const a = this._pickArtistHit(name, (ne.result && ne.result.artists) || [], (x) => x && x.name);
       const id = a && a.id;
       if (id) {
         const desc = await this._httpJson('https://music.163.com/api/artist/desc/' + id, null, timeoutMs);
@@ -1435,6 +1559,282 @@ class CoverHTTPServer {
   }
 
 
+  // ── 网络候选（让用户自己挑，而不是只认「自动抓到的第一个」） ──────────
+  // 自动抓取是「逐层试探，命中即止」，一旦首选来源张冠李戴就全错；
+  // 这里把各来源的多个候选一并摊开，前端在编辑弹窗里给用户点选。
+  _candImagePut(id, buffer, contentType) {
+    if (!this._candImages) this._candImages = new Map();
+    this._candImages.set(id, { buffer, contentType, at: Date.now() });
+    let bytes = 0;
+    for (const v of this._candImages.values()) bytes += v.buffer.length;
+    // 候选图只在弹窗里看几眼，给个硬上限防止常驻内存膨胀
+    while (this._candImages.size > 48 || bytes > 24 * 1024 * 1024) {
+      const firstKey = this._candImages.keys().next().value;
+      const v = this._candImages.get(firstKey);
+      if (!v || this._candImages.size <= 1) break;
+      bytes -= v.buffer.length;
+      this._candImages.delete(firstKey);
+    }
+  }
+
+  _handleArtistCandidateImage(req, res, id, method) {
+    const hit = this._candImages && this._candImages.get(id);
+    if (!hit) { this._sendError(res, 404); return; }
+    this._sendImage(res, hit.buffer, method, hit.contentType, 'private, max-age=600');
+  }
+
+  /** 供 bridge 把用户选中的候选图落盘（内存里的候选只在这里存在几秒）。 */
+  getCandidateImage(id) {
+    const hit = this._candImages && this._candImages.get(String(id || ''));
+    return hit ? { buffer: hit.buffer, contentType: hit.contentType } : null;
+  }
+
+  async _collectArtistCandidates(name) {
+    const norm = String(name || '').trim();
+    const out = { name: norm, images: [], bios: [], aliasGroups: [], failed: [] };
+    if (!norm) return out;
+
+    const q = encodeURIComponent(norm);
+    const TIMEOUT = 4000;
+    const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Carminium/1.0';
+    const seenImg = new Set();
+    const imgBuckets = [];
+
+    const addImg = (bucket, source, artistName, img) => {
+      if (!img || !img.buffer || !String(img.contentType || '').startsWith('image/')) return;
+      const id = crypto.createHash('sha1').update(img.buffer).digest('hex').slice(0, 16);
+      if (seenImg.has(id)) return;
+      seenImg.add(id);
+      this._candImagePut(id, img.buffer, img.contentType);
+      bucket.push({ id, source, artistName: String(artistName || '') });
+    };
+    const addBio = (source, text) => {
+      const t = this._cleanBioText(text || '');
+      if (!t || t.length < 20) return;
+      if (out.bios.some((b) => b.text === t)) return;
+      out.bios.push({ source, text: t.length > 4000 ? t.slice(0, 4000) + '…' : t, chars: t.length });
+    };
+    const addAliases = (source, arr) => {
+      const list = this._cleanAliases(norm, arr);
+      if (!list.length) return;
+      const key = list.slice().sort().join('\u0000');
+      if (out.aliasGroups.some((g) => g.key === key)) return;
+      out.aliasGroups.push({ source, key, aliases: list });
+    };
+
+    // 单个来源整体限时：内部可能串了「搜索 → 详情 → 下图」三步，
+    // 只靠单请求超时会把总时长叠成好几倍（实测有过 10s）。
+    const SOURCE_BUDGET = 6000;
+    const runSource = async (source, fn) => {
+      let timer = null;
+      try {
+        await Promise.race([
+          fn(),
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('source timeout')), SOURCE_BUDGET);
+          }),
+        ]);
+      } catch (e) {
+        out.failed.push(source);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+
+    // 来源顺序＝展示顺序
+    const builders = [
+      ['netease', async () => {
+        const bucket = [];
+        const ne = await this._httpPostFormJson(
+          'https://music.163.com/api/search/get/web',
+          { s: norm, type: 100, offset: 0, total: 'true', limit: 6 },
+          { Referer: 'https://music.163.com/', 'User-Agent': UA },
+          TIMEOUT
+        );
+        const list = (ne && ne.code === 200 && ne.result && Array.isArray(ne.result.artists))
+          ? ne.result.artists.slice(0, 4) : [];
+        if (!list.length) throw new Error('no hit');
+        const first = list[0];
+        addAliases('netease', first.alias || []);
+        const jobs = list.map(async (a) => {
+          let art = a && (a.img1v1Url || a.img || a.picUrl);
+          if (!art) return;
+          art = /([?&])param=\d+y\d+/.test(art)
+            ? art.replace(/([?&])param=\d+y\d+/, '$1param=500y500')
+            : art + '?param=500y500';
+          const img = await this._httpGet(art, 0, TIMEOUT);
+          addImg(bucket, 'netease', a.name, img);
+        });
+        if (first && first.id) {
+          jobs.push((async () => {
+            const d = await this._httpJson('https://music.163.com/api/artist/desc/' + first.id, null, TIMEOUT);
+            if (!d || (d.code && d.code !== 200)) return;
+            let txt = typeof d.briefDesc === 'string' ? d.briefDesc : '';
+            if (!txt && Array.isArray(d.introduction)) {
+              txt = d.introduction.map((x) => (x && x.txt) || '').filter(Boolean).join('\n\n');
+            }
+            addBio('netease', txt);
+          })());
+        }
+        await Promise.allSettled(jobs);
+        imgBuckets.push(['netease', bucket]);
+      }],
+
+      ['itunes', async () => {
+        const bucket = [];
+        const s = await this._httpJson(
+          'https://itunes.apple.com/search?entity=musicArtist&limit=4&term=' + q, null, TIMEOUT
+        );
+        const results = (s && Array.isArray(s.results)) ? s.results.slice(0, 4) : [];
+        if (!results.length) throw new Error('no hit');
+        await Promise.allSettled(results.map(async (r) => {
+          const art = r && r.artworkUrl100;
+          if (!art) return;
+          const big = art.replace(/100x100bb(\.\w+)?$/, '600x600bb$1');
+          const img = await this._httpGet(big, 0, TIMEOUT);
+          addImg(bucket, 'itunes', r.artistName, img);
+        }));
+        imgBuckets.push(['itunes', bucket]);
+      }],
+
+      ['deezer', async () => {
+        const bucket = [];
+        const dz = await this._httpJson('https://api.deezer.com/search/artist/?q=' + q + '&limit=4', null, TIMEOUT);
+        const list = (dz && Array.isArray(dz.data)) ? dz.data.slice(0, 4) : [];
+        if (!list.length) throw new Error('no hit');
+        await Promise.allSettled(list.map(async (a) => {
+          const art = a && (a.picture_xl || a.picture_big);
+          if (!art) return;
+          const img = await this._httpGet(art, 0, TIMEOUT);
+          addImg(bucket, 'deezer', a.name, img);
+        }));
+        imgBuckets.push(['deezer', bucket]);
+      }],
+
+      ['audiodb', async () => {
+        const bucket = [];
+        const adb = await this._httpJson('https://www.theaudiodb.com/api/v1/json/123/search.php?s=' + q, null, TIMEOUT);
+        const a = adb && adb.artists && adb.artists[0];
+        if (!a) throw new Error('no hit');
+        addAliases('audiodb', typeof a.strArtistAlias === 'string' ? a.strArtistAlias.split(/[,;、|]+/) : []);
+        const bioKeys = Object.keys(a)
+          .filter((k) => /^strBiography/.test(k) && typeof a[k] === 'string' && a[k].trim().length > 40)
+          .sort((x, y) => {
+            const pref = ['CN', 'ZH', 'EN'];
+            const sx = pref.indexOf(x.slice('strBiography'.length).toUpperCase());
+            const sy = pref.indexOf(y.slice('strBiography'.length).toUpperCase());
+            return (sx === -1 ? 9 : sx) - (sy === -1 ? 9 : sy);
+          });
+        if (bioKeys.length) addBio('audiodb', a[bioKeys[0]]);
+        const art = a.strArtistThumb || a.strArtistFanart || a.strArtistBanner;
+        if (art) {
+          const img = await this._httpGet(art, 0, TIMEOUT);
+          addImg(bucket, 'audiodb', a.strArtist, img);
+        }
+        imgBuckets.push(['audiodb', bucket]);
+      }],
+
+      ['musicbrainz', async () => {
+        const MB = { 'User-Agent': 'Carminium/1.0 (desktop music player)' };
+        const s = await this._httpJson(
+          'https://musicbrainz.org/ws/2/artist/?query=' + encodeURIComponent(norm) + '&fmt=json&limit=1', MB, TIMEOUT
+        );
+        const id = s && s.artists && s.artists[0] && s.artists[0].id;
+        if (!id) throw new Error('no hit');
+        const d = await this._httpJson(
+          'https://musicbrainz.org/ws/2/artist/' + id + '?inc=aliases&fmt=json', MB, TIMEOUT
+        );
+        addAliases('musicbrainz', (d && Array.isArray(d.aliases)) ? d.aliases.map((x) => x && x.name) : []);
+      }],
+
+      ['wikipedia', async () => {
+        const bucket = [];
+        await Promise.allSettled(['zh', 'en'].map(async (lang) => {
+          const sum = await this._httpJson(
+            'https://' + lang + '.wikipedia.org/api/rest_v1/page/summary/' + q, null, TIMEOUT
+          );
+          if (!sum || sum.type !== 'standard') return;
+          if (sum.extract && sum.extract.trim().length > 40) addBio('wikipedia', sum.extract);
+          if (sum.thumbnail && sum.thumbnail.source) {
+            const img = await this._httpGet(sum.thumbnail.source, 0, TIMEOUT);
+            addImg(bucket, 'wikipedia', sum.title, img);
+          }
+        }));
+        imgBuckets.push(['wikipedia', bucket]);
+      }],
+
+      ['kugou', async () => {
+        const ks = await this._httpJson(
+          'https://mobiles.kugou.com/api/v3/search/singer?keyword=' + q + '&page=1&pagesize=5', null, TIMEOUT
+        );
+        const list = (ks && ks.status === 1 && Array.isArray(ks.data)) ? ks.data : [];
+        const lower = norm.toLowerCase();
+        const hit = list.find((x) => x && String(x.singername || '').trim().toLowerCase() === lower)
+          || (list.length === 1 ? list[0] : null);
+        if (!hit || !hit.singerid) throw new Error('no hit');
+        const ki = await this._httpJson(
+          'https://mobiles.kugou.com/api/v5/singer/info?singerid=' + hit.singerid, null, TIMEOUT
+        );
+        addBio('kugou', (ki && ki.data && ki.data.profile) || '');
+      }],
+
+      ['baike', async () => {
+        const bk = await this._httpJson(
+          'https://baike.baidu.com/api/openapi/BaikeLemmaCardApi?scope=103&format=json&appid=379020&bk_length=600&bk_key=' + q,
+          { 'User-Agent': UA }, TIMEOUT
+        );
+        if (!bk || bk.errCode) throw new Error('no hit');
+        addBio('baike', bk.abstract || bk.desc || '');
+      }],
+    ];
+
+    await Promise.all(builders.map(([key, fn]) => runSource(key, fn)));
+
+    // 图片按来源顺序摊平，且同一来源内保持抓取顺序
+    const order = ['netease', 'itunes', 'deezer', 'audiodb', 'wikipedia'];
+    for (const src of order) {
+      const hit = imgBuckets.find(([k]) => k === src);
+      if (hit) out.images.push(...hit[1]);
+    }
+    out.images = out.images.slice(0, 10);
+    out.bios = out.bios.slice(0, 6);
+    out.aliasGroups = out.aliasGroups.slice(0, 4);
+    return out;
+  }
+
+  async _handleArtistCandidates(req, res, name, method) {
+    const norm = (name || '').trim();
+    if (!norm) { this._sendError(res, 400); return; }
+    if (!this._candInflight) this._candInflight = new Map();
+    const key = norm.toLowerCase();
+    let job = this._candInflight.get(key);
+    if (!job) {
+      job = this._collectArtistCandidates(norm).finally(() => this._candInflight.delete(key));
+      this._candInflight.set(key, job);
+    }
+    try {
+      const data = await job;
+      const payload = {
+        name: data.name,
+        images: data.images.map((x) => ({
+          id: x.id,
+          source: x.source,
+          artistName: x.artistName,
+          url: '/artist-candidate-image/' + x.id,
+        })),
+        bios: data.bios,
+        aliasGroups: data.aliasGroups,
+        failed: data.failed,
+      };
+      this._sendImage(
+        res, Buffer.from(JSON.stringify(payload), 'utf-8'),
+        method, 'application/json; charset=utf-8', META_NO_STORE
+      );
+    } catch (e) {
+      this._sendError(res, 502);
+    }
+  }
+
   async _fetchArtistAliases(name, timeoutMs = 7000) {
     let sawError = false;
     let raw = [];
@@ -1460,7 +1860,7 @@ class CoverHTTPServer {
     try {
       const ne = await this._httpPostFormJson(
         'https://music.163.com/api/search/get/web',
-        { s: name, type: 100, offset: 0, total: 'true', limit: 1 },
+        { s: name, type: 100, offset: 0, total: 'true', limit: 6 },
         {
           'Referer': 'https://music.163.com/',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Carminium/1.0',
@@ -1468,7 +1868,7 @@ class CoverHTTPServer {
         timeoutMs
       );
       if (!ne || ne.code !== 200) throw new Error('netease code ' + (ne && ne.code));
-      const a = ne.result && ne.result.artists && ne.result.artists[0];
+      const a = this._pickArtistHit(name, (ne.result && ne.result.artists) || [], (x) => x && x.name);
       if (a && Array.isArray(a.alias)) raw = raw.concat(a.alias);
     } catch (e) {  }
 
@@ -1526,6 +1926,22 @@ class CoverHTTPServer {
         } catch (e) {  }
       }
     } catch (e) {  }
+
+    // 覆盖层里的别名也要能被搜索到（用户手写的别名往往正是他自己认得的叫法）
+    try {
+      const ovs = (this._library && typeof this._library.getArtistOverrides === 'function')
+        ? this._library.getArtistOverrides() : [];
+      for (const ov of ovs) {
+        if (!ov || !ov.name || !Array.isArray(ov.aliases)) continue;
+        for (const al of ov.aliases) {
+          const k = String(al).trim().toLowerCase();
+          if (!k) continue;
+          if (!idx.has(k)) idx.set(k, new Set());
+          idx.get(k).add(ov.name);
+        }
+      }
+    } catch (e) {  }
+
     this._aliasIndex = idx;
     return idx;
   }
@@ -1554,11 +1970,19 @@ class CoverHTTPServer {
     const norm = (name || '').trim();
     if (!norm) { this._sendError(res, 400); return; }
 
+    const sendJson = (obj) => this._sendImage(
+      res, Buffer.from(JSON.stringify(obj), 'utf-8'), method, 'application/json; charset=utf-8', META_NO_STORE
+    );
+
+    // 覆盖层优先：用户列出什么就显示什么（空数组 = 明确表示「这位没有别名」）
+    const ov = this._artistOverride(norm);
+    if (ov && Array.isArray(ov.aliases)) {
+      sendJson({ name: norm, aliases: ov.aliases, custom: true });
+      return;
+    }
+
     const key = crypto.createHash('md5').update(norm.toLowerCase()).digest('hex');
     const cacheFile = path.join(this._getArtistImageCacheDir(), key + '.alias.json');
-    const sendJson = (obj) => this._sendImage(
-      res, Buffer.from(JSON.stringify(obj), 'utf-8'), method, 'application/json; charset=utf-8'
-    );
 
     if (!this._artistInflight) this._artistInflight = {};
 
@@ -1797,11 +2221,11 @@ class CoverHTTPServer {
     });
   }
 
-  _sendImage(res, buffer, method, contentType = 'image/jpeg') {
+  _sendImage(res, buffer, method, contentType = 'image/jpeg', cacheControl = 'public, max-age=86400') {
     const headers = {
       'Content-Type': contentType,
       'Content-Length': buffer.length,
-      'Cache-Control': 'public, max-age=86400',
+      'Cache-Control': cacheControl,
       'Access-Control-Allow-Origin': '*',
     };
     this._sendHeaders(res, 200, headers);

@@ -6,6 +6,7 @@ const fsp = fs.promises;
 const path = require('path');
 const { makeSortKey, makeFirstLetter } = require('./sortkey');
 const { resolveCacheDir } = require('./cache_dir');
+const osuLibrary = require('./osu_library');
 
 const SCAN_PARSE_PARALLEL = 4;
 const SCAN_FLUSH_SIZE = 200;
@@ -55,7 +56,8 @@ CREATE TABLE IF NOT EXISTS folders (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     path      TEXT UNIQUE NOT NULL,
     added_at  REAL NOT NULL,
-    last_scan REAL
+    last_scan REAL,
+    kind      TEXT DEFAULT 'folder'
 );
 
 CREATE TABLE IF NOT EXISTS tracks (
@@ -139,6 +141,17 @@ CREATE TABLE IF NOT EXISTS smb_sources (
 CREATE TABLE IF NOT EXISTS cover_colors (
     track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
     colors   TEXT NOT NULL
+);
+
+-- 艺人信息的人工修正层。艺人是从 tracks 里聚合出来的虚拟实体（没有自己的表），
+-- 自动抓取的别名/简介/头像经常张冠李戴，这里按「库内艺人名」存一份覆盖值：
+-- 字段为 NULL = 该字段没被覆盖，继续走自动抓取；空数组/空串 = 用户主动清空。
+CREATE TABLE IF NOT EXISTS artist_overrides (
+    name        TEXT PRIMARY KEY,
+    aliases     TEXT,
+    bio         TEXT,
+    image_path  TEXT,
+    updated_at  REAL NOT NULL
 );
 
 -- 拖入窗口播放的外部文件（不在 media library 内）。
@@ -226,6 +239,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     tryAlter('ALTER TABLE playlists ADD COLUMN owner_email TEXT');
 
     tryAlter('ALTER TABLE tracks ADD COLUMN webdav_path TEXT');
+    tryAlter("ALTER TABLE folders ADD COLUMN kind TEXT DEFAULT 'folder'");
 
 
     const orphanFolderIds = this._db.prepare(
@@ -274,13 +288,37 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
   }
 
 
-  addFolder(folderPath) {
+  addFolder(folderPath, kind) {
     const p = path.resolve(folderPath);
     const now = Date.now() / 1000;
+    const resolvedKind = this._resolveFolderKind(p, kind);
     this._db.prepare(
-      'INSERT OR IGNORE INTO folders (path, added_at) VALUES (?,?)'
-    ).run(p, now);
+      'INSERT OR IGNORE INTO folders (path, added_at, kind) VALUES (?,?,?)'
+    ).run(p, now, resolvedKind);
+    // 已存在的目录重新添加时以最新探测结果为准（例如后来才放进 Songs）
+    this._db.prepare('UPDATE folders SET kind=? WHERE path=? AND (kind IS NULL OR kind<>?)')
+      .run(resolvedKind, p, resolvedKind);
     return this._folderInfo(p) || {};
+  }
+
+  /** osu! 曲库目录自动识别：有 Songs 且含谱面集就算 */
+  _resolveFolderKind(folderPath, hint) {
+    if (hint === 'osu' || hint === 'folder') return hint;
+    try {
+      return osuLibrary.looksLikeOsu(folderPath) ? 'osu' : 'folder';
+    } catch {
+      return 'folder';
+    }
+  }
+
+  _folderKind(folderPath) {
+    const p = path.resolve(folderPath);
+    try {
+      const row = this._db.prepare('SELECT kind FROM folders WHERE path=?').get(p);
+      return (row && row.kind) ? row.kind : 'folder';
+    } catch {
+      return 'folder';
+    }
   }
 
   removeFolder(folderPath) {
@@ -304,7 +342,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
   getFolders() {
     const rows = this._db.prepare(
-      `SELECT f.path, f.added_at, f.last_scan,
+      `SELECT f.path, f.added_at, f.last_scan, COALESCE(f.kind,'folder') AS kind,
        (SELECT COUNT(*) FROM tracks t WHERE t.folder_id=f.id) AS track_count
        FROM folders f ORDER BY f.added_at`
     ).all();
@@ -320,7 +358,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
   _folderInfo(folderPath) {
     const p = path.resolve(folderPath);
     const row = this._db.prepare(
-      `SELECT f.path, f.added_at, f.last_scan,
+      `SELECT f.path, f.added_at, f.last_scan, COALESCE(f.kind,'folder') AS kind,
        (SELECT COUNT(*) FROM tracks t WHERE t.folder_id=f.id) AS track_count
        FROM folders f WHERE f.path=?`
     ).get(p);
@@ -335,7 +373,9 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     if (!fs.statSync(folderPath).isDirectory()) return;
     const now = Date.now() / 1000;
 
-    const filesToInsert = this._walkAudioPaths(folderPath);
+    // osu! 曲库走谱面清单（只取 .osu 引用的音频，避免把 hitsounds 当曲目）
+    const osuMap = await this._collectOsuMap(folderPath, fid);
+    const filesToInsert = osuMap ? Array.from(osuMap.keys()) : this._walkAudioPaths(folderPath);
 
     let inserted = 0;
     let alreadyCount = 0;
@@ -359,10 +399,25 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
     const pendingRows = [];
     const pendingLinks = [];
-    const insertTx = this._db.transaction((rows, links) => {
+    const pendingOsuUpdates = [];
+    const updateOsuStmt = this._db.prepare(
+      `UPDATE tracks SET title=?, artist=?, album=?, album_artist=?,
+       genre=?, alias_title=?, has_cover=? WHERE id=?`
+    );
+    const insertTx = this._db.transaction((rows, links, updates) => {
       for (const p of links) linkFidStmt.run(p[0], p[1]);
       for (const r of rows) insertStmt.run(...r);
+      for (const u of updates) updateOsuStmt.run(...u);
     });
+    // osu 库重扫时把先前按普通文件夹入库的记录改写成谱面元数据
+    const osuExisting = osuMap ? new Map() : null;
+    if (osuExisting) {
+      try {
+        for (const r of this._db.prepare('SELECT id, path, genre FROM tracks WHERE folder_id=?').all(fid)) {
+          osuExisting.set(r.path, r);
+        }
+      } catch {  }
+    }
 
     let parseIndex = 0;
     const worker = async () => {
@@ -373,10 +428,23 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
         if (knownPaths.has(filePath)) {
           alreadyCount++;
           if (nullFidPaths.has(filePath)) pendingLinks.push([fid, filePath]);
+          if (osuExisting) {
+            const prev = osuExisting.get(filePath);
+            const osuMeta = osuMap.get(filePath);
+            if (prev && osuMeta && prev.genre !== 'osu!') {
+              pendingOsuUpdates.push([
+                osuMeta.title || null, osuMeta.artist || null, osuMeta.album || null,
+                osuMeta.album_artist || null, 'osu!', osuMeta.alias_title || null,
+                osuMeta.coverPath ? 1 : 0, prev.id,
+              ]);
+            }
+          }
           continue;
         }
         try {
           const meta = await this._parseMetadata(filePath);
+          const osuMeta = osuMap ? osuMap.get(filePath) : null;
+          if (osuMeta) this._applyOsuMeta(meta, osuMeta);
           let size = 0;
           try { size = (await fsp.stat(filePath)).size; } catch {  }
           pendingRows.push([
@@ -398,7 +466,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
           ]);
           inserted++;
           if (pendingRows.length >= SCAN_FLUSH_SIZE) {
-            insertTx(pendingRows.splice(0), pendingLinks.splice(0));
+            insertTx(pendingRows.splice(0), pendingLinks.splice(0), pendingOsuUpdates.splice(0));
           }
         } catch (e) {
           console.error(`[MusicLibrary] Failed to insert track: ${filePath}`, e.message || e);
@@ -412,13 +480,39 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
     };
     await Promise.all(Array.from({ length: SCAN_PARSE_PARALLEL }, worker));
-    if (pendingRows.length > 0 || pendingLinks.length > 0) {
-      insertTx(pendingRows.splice(0), pendingLinks.splice(0));
+    if (pendingRows.length > 0 || pendingLinks.length > 0 || pendingOsuUpdates.length > 0) {
+      insertTx(pendingRows.splice(0), pendingLinks.splice(0), pendingOsuUpdates.splice(0));
     }
 
     this._db.prepare('UPDATE folders SET last_scan=? WHERE id=?').run(now, fid);
     this._invalidateDedupCache();
     return { inserted, already: alreadyCount, total: filesToInsert.length };
+  }
+
+  /**
+   * 目录是 osu! 曲库时返回 音频路径 → 谱面元数据 的 Map；否则 null。
+   * 识别成功会把 kind 写回，历史数据下次扫描自动升级。
+   */
+  async _collectOsuMap(folderPath, fid) {
+    let kind = this._folderKind(folderPath);
+    if (kind !== 'osu') {
+      if (!osuLibrary.looksLikeOsu(folderPath)) return null;
+      try { this._db.prepare('UPDATE folders SET kind=? WHERE id=?').run('osu', fid); } catch {  }
+    }
+    return osuLibrary.collectTracks(folderPath);
+  }
+
+  /** 用谱面元数据覆盖音频内嵌标签（osu 的 audio.mp3 基本没有标签） */
+  _applyOsuMeta(meta, o) {
+    if (!meta || !o) return meta;
+    if (o.title) meta.title = o.title;
+    if (o.artist) meta.artist = o.artist;
+    if (o.album) meta.album = o.album;
+    if (o.album_artist) meta.album_artist = o.album_artist;
+    if (o.alias_title && o.alias_title !== meta.title) meta.alias_title = o.alias_title;
+    if (o.genre) meta.genre = o.genre;
+    if (o.coverPath) meta.has_cover = true;
+    return meta;
   }
 
 
@@ -456,9 +550,10 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     }
     const now = Date.now() / 1000;
 
-    const diskPaths = this._walkAudioPaths(p);
+    const osuMap = await this._collectOsuMap(p, fid);
+    const diskPaths = osuMap ? Array.from(osuMap.keys()) : this._walkAudioPaths(p);
     const dbRows = this._db.prepare(
-      'SELECT id, path, file_size FROM tracks WHERE folder_id=?'
+      'SELECT id, path, file_size, genre FROM tracks WHERE folder_id=?'
     ).all(fid);
 
     if (diskPaths.length === 0 && dbRows.length > 0) {
@@ -494,9 +589,39 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
     }
 
-    if (toRemoveIds.length === 0 && toAdd.length === 0 && toUpdate.length === 0) {
+    // 历史上按普通文件夹入库的 osu 曲目，这次同步要改写成谱面元数据
+    const needsOsuUpgrade = !!(osuMap && commonRows.some(
+      (row) => row.genre !== 'osu!' && osuMap.has(row.path)
+    ));
+
+    if (toRemoveIds.length === 0 && toAdd.length === 0 && toUpdate.length === 0 && !needsOsuUpgrade) {
       this._db.prepare('UPDATE folders SET last_scan=? WHERE id=?').run(now, fid);
       return { added: 0, removed: 0, updated: 0, total: diskPaths.length, changed: false };
+    }
+
+    let osuUpgraded = 0;
+    if (needsOsuUpgrade) {
+      const updStmt = this._db.prepare(
+        `UPDATE tracks SET title=?, artist=?, album=?, album_artist=?,
+         genre=?, alias_title=?, has_cover=? WHERE id=?`
+      );
+      const updTx = this._db.transaction((rows) => {
+        for (const r of rows) updStmt.run(...r);
+      });
+      const payload = [];
+      for (const row of commonRows) {
+        if (row.genre === 'osu!') continue;
+        const o = osuMap.get(row.path);
+        if (!o) continue;
+        payload.push([
+          o.title || null, o.artist || null, o.album || null, o.album_artist || null,
+          'osu!', o.alias_title || null, o.coverPath ? 1 : 0, row.id,
+        ]);
+      }
+      if (payload.length > 0) {
+        updTx(payload);
+        osuUpgraded = payload.length;
+      }
     }
 
     const CHUNK = 400;
@@ -530,6 +655,8 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
           const filePath = toAdd[i];
           try {
             const meta = await this._parseMetadata(filePath);
+            const osuMeta = osuMap ? osuMap.get(filePath) : null;
+            if (osuMeta) this._applyOsuMeta(meta, osuMeta);
             let size = 0;
             try { size = (await fsp.stat(filePath)).size; } catch {  }
             pendingRows.push([
@@ -581,6 +708,8 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       for (const u of toUpdate) {
         try {
           const meta = await this._parseMetadata(u.path);
+          const osuMeta = osuMap ? osuMap.get(u.path) : null;
+          if (osuMeta) this._applyOsuMeta(meta, osuMeta);
           pendingRows.push([
             meta.title || path.basename(u.path, path.extname(u.path)),
             meta.artist || null,
@@ -608,7 +737,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     this._db.prepare('UPDATE folders SET last_scan=? WHERE id=?').run(now, fid);
     this._invalidateDedupCache();
     return {
-      added, removed: toRemoveIds.length, updated,
+      added, removed: toRemoveIds.length, updated: updated + osuUpgraded,
       total: diskPaths.length, changed: true,
     };
   }
@@ -900,7 +1029,7 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       const supported = ext === '.mp3' || ext === '.flac' ||
         ext === '.m4a' || ext === '.aac' || ext === '.mp4' ||
         ext === '.ogg' || ext === '.opus';
-      if (!supported) return null;
+      if (!supported) return this._readSiblingCover(filePath);
 
       const extract = (buf) => {
         if (ext === '.mp3') return _extractMp3Cover(buf);
@@ -925,12 +1054,48 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       if (found) return found;
 
       if (stat.size > headSize) {
-        return extract(fs.readFileSync(filePath));
+        const full = extract(fs.readFileSync(filePath));
+        if (full) return full;
       }
-      return null;
+      return this._readSiblingCover(filePath);
     } catch {
     }
     return null;
+  }
+
+  /**
+   * 音频没有内嵌封面时的退路：同目录图片。
+   * osu! 谱面集目录里那张背景图就是封面；普通音乐文件夹的 cover/folder.jpg 同理。
+   */
+  _readSiblingCover(filePath) {
+    const dir = path.dirname(filePath);
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return null;
+    }
+    const images = [];
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const ext = path.extname(entry.name).toLowerCase();
+      if (ext === '.jpg' || ext === '.jpeg' || ext === '.png' || ext === '.webp') {
+        images.push(entry.name);
+      }
+    }
+    if (images.length === 0) return null;
+    const prio = /^(bg|background|cover|jacket|folder|front|album)/i;
+    images.sort((a, b) => (prio.test(a) ? 0 : 1) - (prio.test(b) ? 0 : 1));
+    // 多张图又没有约定文件名时不猜，免得挂错图
+    if (images.length > 1 && !prio.test(images[0])) return null;
+    try {
+      const abs = path.join(dir, images[0]);
+      const st = fs.statSync(abs);
+      if (!st.isFile() || st.size < 2048 || st.size > 16 * 1024 * 1024) return null;
+      return fs.readFileSync(abs);
+    } catch {
+      return null;
+    }
   }
 
   async _extractCoverAsync(filePath) {
@@ -967,12 +1132,14 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
 
       if (stat.size > headSize) {
         const full = await fsp.readFile(filePath);
-        return extract(full);
+        const fromFull = extract(full);
+        if (fromFull) return fromFull;
       }
-      return null;
+      return this._readSiblingCover(filePath);
     }
 
-    return this._extractCoverViaMetadata(filePath);
+    const viaMeta = await this._extractCoverViaMetadata(filePath);
+    return viaMeta || this._readSiblingCover(filePath);
   }
 
   async _extractCoverViaMetadata(filePath) {
@@ -1279,13 +1446,25 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       }
     }
     const artists = [];
+    // 带自定义头像的艺人把覆盖时间戳一并带出去：前端用它当图片 URL 的版本号，
+    // 否则重启后同样的 URL 会命中 24 小时前的自动头像缓存。
+    let customImgAt = new Map();
+    try {
+      const rows2 = this._db.prepare(
+        "SELECT name, updated_at FROM artist_overrides WHERE image_path IS NOT NULL AND image_path <> ''"
+      ).all();
+      customImgAt = new Map(rows2.map((r) => [r.name, r.updated_at]));
+    } catch {  }
     for (const [name, info] of Object.entries(artistMap)) {
-      artists.push({
+      const item = {
         name,
         album_count: info._albums.size,
         track_count: info.track_count,
         cover_track_id: info._cover_id,
-      });
+      };
+      const at = customImgAt.get(name);
+      if (at) item.override_at = at;
+      artists.push(item);
     }
     for (const a of artists) {
       a.sort_key = makeSortKey(a.name);
@@ -1295,6 +1474,84 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       a.sort_letter = makeFirstLetter(a.name);
     }
     return artists;
+  }
+
+  _parseArtistOverride(row) {
+    if (!row) return null;
+    let aliases = null;
+    if (row.aliases != null) {
+      try {
+        const arr = JSON.parse(row.aliases);
+        if (Array.isArray(arr)) {
+          aliases = arr.map((s) => String(s).trim()).filter(Boolean);
+        }
+      } catch {
+        aliases = null;
+      }
+    }
+    return {
+      name: row.name,
+      aliases,
+      bio: typeof row.bio === 'string' ? row.bio : null,
+      image_path: row.image_path || '',
+      updated_at: row.updated_at || 0,
+    };
+  }
+
+  /** 单个艺人的覆盖层；无覆盖返回 null。 */
+  getArtistOverride(name) {
+    const n = String(name || '').trim();
+    if (!n) return null;
+    const row = this._db.prepare('SELECT * FROM artist_overrides WHERE name=?').get(n);
+    return this._parseArtistOverride(row);
+  }
+
+  /** 全部覆盖层（供别名搜索索引合并用）。 */
+  getArtistOverrides() {
+    return this._db
+      .prepare('SELECT * FROM artist_overrides')
+      .all()
+      .map((r) => this._parseArtistOverride(r))
+      .filter(Boolean);
+  }
+
+  /**
+   * 写入/更新覆盖层。patch 里出现的键才会被改写：
+   * aliases: string[] | null(恢复自动)   bio: string | null(恢复自动)   image_path: string | null
+   */
+  setArtistOverride(name, patch) {
+    const n = String(name || '').trim();
+    if (!n) throw new Error('artist name required');
+    const cur = this.getArtistOverride(n) || { aliases: null, bio: null, image_path: '' };
+    const next = Object.assign({}, cur, patch || {});
+    const aliasesJson = Array.isArray(next.aliases) ? JSON.stringify(next.aliases) : null;
+    const bio = typeof next.bio === 'string' ? next.bio : null;
+    const imagePath = next.image_path ? String(next.image_path) : null;
+    const now = Date.now() / 1000;
+    this._db.prepare(
+      `INSERT INTO artist_overrides (name, aliases, bio, image_path, updated_at)
+       VALUES (?,?,?,?,?)
+       ON CONFLICT(name) DO UPDATE SET
+         aliases=excluded.aliases, bio=excluded.bio,
+         image_path=excluded.image_path, updated_at=excluded.updated_at`
+    ).run(n, aliasesJson, bio, imagePath, now);
+    return this.getArtistOverride(n);
+  }
+
+  /** 清空某个字段的覆盖（value=null 即恢复自动）。 */
+  clearArtistOverrideField(name, field) {
+    if (!['aliases', 'bio', 'image_path'].includes(field)) return null;
+    const n = String(name || '').trim();
+    if (!n) return null;
+    const patch = {};
+    patch[field] = null;
+    return this.setArtistOverride(n, patch);
+  }
+
+  deleteArtistOverride(name) {
+    const n = String(name || '').trim();
+    if (!n) return;
+    this._db.prepare('DELETE FROM artist_overrides WHERE name=?').run(n);
   }
 
   getAlbumTracks(album, albumArtist = null) {
