@@ -12,6 +12,27 @@
 
   let _vl = null;
 
+  // 详情页的心形按钮：事件回来时按 App.state 重绘，避免乐观更新与实际状态分叉。
+  let _likeBtnEl = null;
+  let _currentAlbum = null;
+
+  function _paintAlbumLikeBtn(btn, liked) {
+    if (!btn) return;
+    btn.classList.toggle('liked', !!liked);
+    btn.setAttribute('aria-pressed', String(!!liked));
+    var label = App.i18n.t(liked ? 'liked.unlikeAlbum' : 'liked.likeAlbum');
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+    var icon = btn.querySelector('.material-symbols-rounded');
+    if (icon) icon.textContent = liked ? 'favorite' : 'favorite_border';
+  }
+
+  page.onLikedAlbumsChanged = function () {
+    if (_likeBtnEl && _currentAlbum) {
+      _paintAlbumLikeBtn(_likeBtnEl, App.isAlbumLiked(_currentAlbum.album, _currentAlbum.album_artist));
+    }
+  };
+
   const SORT_OPTIONS = [
     { key: 'az', label: 'A-Z', icon: 'sort_by_alpha' },
     { key: 'za', label: 'Z-A', icon: 'sort_by_alpha' },
@@ -20,6 +41,8 @@
   ];
 
   page.render = function (container, params) {
+    _likeBtnEl = null;
+    _currentAlbum = null;
     container.innerHTML = `
       <div class="page-sticky-header">
         <div class="page-header">
@@ -351,6 +374,9 @@
             <button class="detail-play-btn" id="btn-play-album">
               <span class="material-symbols-rounded">play_arrow</span><span data-i18n="albums.play">播放</span>
             </button>
+            <button class="detail-icon-btn" id="btn-like-album" aria-pressed="false">
+              <span class="material-symbols-rounded">favorite_border</span>
+            </button>
           </div>
         </div>
       </div>
@@ -405,6 +431,19 @@
     document.getElementById('btn-play-album').addEventListener('click', () => {
       App.backend.play_from_list(JSON.stringify(tracks), 0);
     });
+
+    const likeBtn = document.getElementById('btn-like-album');
+    _likeBtnEl = likeBtn;
+    _currentAlbum = { album: album.album, album_artist: album.album_artist };
+    _paintAlbumLikeBtn(likeBtn, App.isAlbumLiked(album.album, album.album_artist));
+    if (likeBtn) {
+      likeBtn.addEventListener('click', () => {
+        // 乐观更新：liked_albums_changed 事件回来后再校准一次。
+        const next = !likeBtn.classList.contains('liked');
+        _paintAlbumLikeBtn(likeBtn, next);
+        App.backend.toggle_liked_album(album.album, album.album_artist);
+      });
+    }
   }
 
   page.updatePlayState = function () {

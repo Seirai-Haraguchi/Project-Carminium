@@ -18,6 +18,8 @@
     allFolders: [],
     allSubsonicServers: [],
     allRemoteServers: [],
+    likedArtists: [],
+    likedAlbums: [],
     colorScheme: 'tonal_spot',
     colorSpec: '2021',
     monetSource: 'album_cover',
@@ -74,7 +76,9 @@
       requestAnimationFrame(step);
     }
 
-    return { save: save, restore: restore, scheduleRestore: scheduleRestore };
+    function forget(pageId) { delete _memory[pageId]; }
+
+    return { save: save, restore: restore, scheduleRestore: scheduleRestore, forget: forget };
   })();
 
   App.refreshLibraryCache = function () {
@@ -86,6 +90,8 @@
       App.utils.call('get_folders').then(function (raw) { return JSON.parse(raw); }),
       App.utils.call('get_subsonic_servers').then(function (raw) { return JSON.parse(raw); }),
       App.utils.call('get_remote_servers').then(function (raw) { return JSON.parse(raw); }).catch(function () { return []; }),
+      App.utils.call('get_liked_artists').then(function (raw) { return JSON.parse(raw); }).catch(function () { return []; }),
+      App.utils.call('get_liked_albums').then(function (raw) { return JSON.parse(raw); }).catch(function () { return []; }),
     ]).then(function (results) {
       function replaceArrayInPlace(key, next) {
         var current = App.state[key];
@@ -110,8 +116,38 @@
         var subsonicOnly = results[5].filter(function (s) { return s.type === 'subsonic'; });
         replaceArrayInPlace('allSubsonicServers', subsonicOnly);
       }
+      if (results[6]) replaceArrayInPlace('likedArtists', results[6]);
+      if (results[7]) replaceArrayInPlace('likedAlbums', results[7]);
       return App.state;
     });
+  };
+
+  // 喜爱艺人 / 专辑的本地判定（同步，供详情页按钮首帧就用正确状态）。
+  // 后端事件把 App.state 刷新后这些判定自然跟着变。
+  function _setLikedArray(key, next) {
+    var cur = App.state[key];
+    if (!Array.isArray(cur) || !Array.isArray(next)) { App.state[key] = next; return; }
+    cur.length = 0;
+    for (var i = 0; i < next.length; i++) cur.push(next[i]);
+  }
+
+  App.isArtistLiked = function (name) {
+    var list = App.state.likedArtists || [];
+    var n = String(name || '');
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].name === n) return true;
+    }
+    return false;
+  };
+
+  App.isAlbumLiked = function (album, albumArtist) {
+    var list = App.state.likedAlbums || [];
+    var a = String(album || '');
+    var ar = String(albumArtist || '');
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].album === a && String(list[i].album_artist || '') === ar) return true;
+    }
+    return false;
   };
 
   App.prefetchArtistImages = function () {
@@ -184,6 +220,30 @@
         uiSync.on('liked_tracks_changed', function (json) {
           if (App.state.currentPage === 'liked' && App.pages.liked && App.pages.liked.onLikedTracksChanged) {
             App.pages.liked.onLikedTracksChanged(json);
+          }
+        });
+
+        uiSync.on('liked_artists_changed', function (json) {
+          var next;
+          try { next = JSON.parse(json); } catch (e) { return; }
+          _setLikedArray('likedArtists', next);
+          if (App.state.currentPage === 'liked' && App.pages.liked && App.pages.liked.onLikedArtistsChanged) {
+            App.pages.liked.onLikedArtistsChanged();
+          }
+          if (App.state.currentPage === 'artists' && App.pages.artists && App.pages.artists.onLikedArtistsChanged) {
+            App.pages.artists.onLikedArtistsChanged();
+          }
+        });
+
+        uiSync.on('liked_albums_changed', function (json) {
+          var next;
+          try { next = JSON.parse(json); } catch (e) { return; }
+          _setLikedArray('likedAlbums', next);
+          if (App.state.currentPage === 'liked' && App.pages.liked && App.pages.liked.onLikedAlbumsChanged) {
+            App.pages.liked.onLikedAlbumsChanged();
+          }
+          if (App.state.currentPage === 'albums' && App.pages.albums && App.pages.albums.onLikedAlbumsChanged) {
+            App.pages.albums.onLikedAlbumsChanged();
           }
         });
 
@@ -395,6 +455,8 @@
         _wireSignal('playlists_changed');
         _wireSignal('history_changed');
         _wireSignal('liked_tracks_changed');
+        _wireSignal('liked_artists_changed');
+        _wireSignal('liked_albums_changed');
         _wireSignal('subsonic_servers_changed');
         _wireSignal('remote_servers_changed');
         _wireSignal('library_updated');
@@ -649,6 +711,9 @@
   function _updateListPlayState() {
     if (App.state.currentPage === 'your_mix' && App.pages.your_mix.updatePlayState) {
       App.pages.your_mix.updatePlayState();
+    }
+    if (App.state.currentPage === 'search' && App.pages.search.updatePlayState) {
+      App.pages.search.updatePlayState();
     }
     if (App.state.currentPage === 'music' && App.pages.music.updatePlayState) {
       App.pages.music.updatePlayState();

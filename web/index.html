@@ -124,8 +124,11 @@
             <div class="np-bg-cover-surge"></div>
           </div>
         </div>
+        <div class="np-bg-scrim" aria-hidden="true"></div>
         <div class="np-bg-noise"></div>
         <div class="np-bg-mask"></div>
+        <div class="np-bg-fluid" aria-hidden="true"><canvas class="np-bg-fluid-canvas" id="np-bg-fluid-canvas"></canvas></div>
+        <div class="np-bg-grade" aria-hidden="true"></div>
       </div>
 
       <div class="np-top-bar">
@@ -365,18 +368,6 @@
             </div>
           </div>
 
-          <div class="np-lyrics-search-overlay" id="np-lyrics-search-overlay" style="display:none">
-            <div class="np-lyrics-search-panel">
-              <div class="np-lyrics-search-header">
-                <span class="material-symbols-rounded np-lyrics-search-icon">search</span>
-                <input type="text" id="np-lyrics-search-input" data-i18n-placeholder="np.searchPlaceholder" placeholder="搜索歌曲、歌手…" autocomplete="off">
-                <button class="np-lyrics-search-close" id="np-lyrics-search-close" data-i18n-aria-label="common.close">
-                  <span class="material-symbols-rounded">close</span>
-                </button>
-              </div>
-              <div class="np-lyrics-search-results" id="np-lyrics-search-results"></div>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -493,6 +484,7 @@
   <script src="pages/context_menu.js"></script>
   <script src="pages/now_playing.js"></script>
   <script src="pages/your_mix.js"></script>
+  <script src="pages/search.js"></script>
   <script src="pages/music.js"></script>
   <script src="pages/albums.js"></script>
   <script src="pages/artists.js"></script>

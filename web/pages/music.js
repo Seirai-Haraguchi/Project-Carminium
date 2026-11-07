@@ -180,7 +180,15 @@
     if (btn) btn.classList.toggle('active', _hasExclusions());
   }
 
-  page.render = function (container) {
+  page.render = function (container, params) {
+    /* 从主页搜索进来时带 params.search：查询直接落到本页搜索框上，
+       并丢弃上次的滚动位置 —— 新查询应该从第一条看起。 */
+    if (params && typeof params.search === 'string') {
+      searchText = params.search;
+      filterStr = searchText.trim().toLowerCase();
+      if (App.scrollMemory && App.scrollMemory.forget) App.scrollMemory.forget('music');
+    }
+
     container.innerHTML = `
       <div class="page-sticky-header">
         <div class="page-header">

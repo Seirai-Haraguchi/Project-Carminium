@@ -72,6 +72,8 @@
   ];
 
   page.render = function (container, params) {
+    _likeBtnEl = null;
+    _currentArtistName = '';
     container.innerHTML = `
       <div class="page-sticky-header">
         <div class="page-header">
@@ -476,6 +478,24 @@
   let _allArtistAlbums = [];
   let _allArtistTracks = [];
   let _currentArtistName = '';
+  let _likeBtnEl = null;
+
+  function _paintArtistLikeBtn(btn, liked) {
+    if (!btn) return;
+    btn.classList.toggle('liked', !!liked);
+    btn.setAttribute('aria-pressed', String(!!liked));
+    var label = App.i18n.t(liked ? 'liked.unlikeArtist' : 'liked.likeArtist');
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+    var icon = btn.querySelector('.material-symbols-rounded');
+    if (icon) icon.textContent = liked ? 'favorite' : 'favorite_border';
+  }
+
+  page.onLikedArtistsChanged = function () {
+    if (_likeBtnEl && _currentArtistName) {
+      _paintArtistLikeBtn(_likeBtnEl, App.isArtistLiked(_currentArtistName));
+    }
+  };
 
   function _renderDetail(container, artist) {
 
@@ -496,11 +516,14 @@
           <p class="detail-sub">${App.i18n.t('artists.albumCount', { count: artist.album_count })} · ${App.i18n.t('music.trackCount', { count: artist.track_count })}</p>
           <p class="detail-alias" id="detail-alias" hidden></p>
           <div class="detail-actions">
+            <button class="detail-icon-btn" id="btn-edit-artist" data-i18n-title="artists.editInfo" data-i18n-aria-label="artists.editInfo">
+              <span class="material-symbols-rounded">edit</span>
+            </button>
             <button class="detail-play-btn" id="btn-play-artist">
               <span class="material-symbols-rounded">play_arrow</span><span data-i18n="artists.playAll">播放全部</span>
             </button>
-            <button class="detail-play-btn tonal" id="btn-edit-artist">
-              <span class="material-symbols-rounded">edit</span><span data-i18n="artists.editInfo">编辑信息</span>
+            <button class="detail-icon-btn" id="btn-like-artist" aria-pressed="false">
+              <span class="material-symbols-rounded">favorite_border</span>
             </button>
           </div>
         </div>
@@ -581,6 +604,18 @@
     });
     var editBtn = document.getElementById('btn-edit-artist');
     if (editBtn) editBtn.addEventListener('click', function () { _openEditDialog(artist); });
+
+    var likeBtn = document.getElementById('btn-like-artist');
+    _likeBtnEl = likeBtn;
+    _paintArtistLikeBtn(likeBtn, App.isArtistLiked(artist.name));
+    if (likeBtn) {
+      likeBtn.addEventListener('click', function () {
+        // 乐观更新：IPC 回来后 liked_artists_changed 事件会再校准一次状态。
+        var next = !likeBtn.classList.contains('liked');
+        _paintArtistLikeBtn(likeBtn, next);
+        App.backend.toggle_liked_artist(artist.name);
+      });
+    }
 
     var heroApplied = false;
     var applyHero = function (url) {
@@ -894,7 +929,7 @@
               <button type="button" class="ae-text-btn" id="ae-alias-reset">${t('artists.editResetAuto')}</button>
             </div>
             <div class="ae-chips" id="ae-chips"></div>
-            <input type="text" id="ae-alias-input" class="settings-font-input ae-input"
+            <input type="text" id="ae-alias-input" class="md-text-input"
                    placeholder="${t('artists.editAliasPlaceholder')}">
             <p class="artist-edit-hint" id="ae-alias-hint"></p>
           </div>
@@ -908,7 +943,7 @@
               <span class="artist-edit-label">${t('artists.editTabBio')}</span>
               <button type="button" class="ae-text-btn" id="ae-bio-reset">${t('artists.editResetAuto')}</button>
             </div>
-            <textarea id="ae-bio" class="ae-textarea" rows="8"
+            <textarea id="ae-bio" class="md-textarea" rows="8"
                       placeholder="${t('artists.editBioPlaceholder')}"></textarea>
             <p class="artist-edit-hint" id="ae-bio-hint"></p>
           </div>

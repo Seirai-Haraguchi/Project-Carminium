@@ -50,6 +50,7 @@
     'floating_window_closed', 'bpm_analyzed',
     'lyrics_changed', 'playlists_changed', 'history_changed',
     'liked_tracks_changed', 'subsonic_servers_changed',
+    'liked_artists_changed', 'liked_albums_changed',
     'remote_servers_changed', 'library_scan_status',
     'playback_error'
   ]);

@@ -84,6 +84,21 @@ CREATE TABLE IF NOT EXISTS liked_tracks (
     liked_at   REAL NOT NULL
 );
 
+-- 艺人与专辑没有自己的实体表（都是 tracks 聚合出来的虚拟实体），所以「喜爱」按
+-- 自然键记录：艺人用库内艺人名，专辑用 (album, album_artist)。
+-- 不加外键：曲目被删/重扫时记录留着，等同样的专辑/艺人再入出现就自动接上。
+CREATE TABLE IF NOT EXISTS liked_artists (
+    name       TEXT PRIMARY KEY,
+    liked_at   REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS liked_albums (
+    album        TEXT NOT NULL,
+    album_artist TEXT NOT NULL DEFAULT '',
+    liked_at     REAL NOT NULL,
+    PRIMARY KEY (album, album_artist)
+);
+
 CREATE TABLE IF NOT EXISTS play_history (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     track_id   TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
@@ -1712,6 +1727,105 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
       t.artists = this._splitArtists(t.artist);
     }
     return deduped;
+  }
+
+  // ── 喜爱的艺人 ───────────────────────────────────────────────
+  // 艺人是从 tracks 聚合出来的虚拟实体，只能按名字识别；库里已经没有曲目的艺人
+  // 不展示（记录保留，重新入库后会自己回来）。
+
+  getLikedArtistNames() {
+    const rows = this._db.prepare('SELECT name FROM liked_artists').all();
+    return new Set(rows.map((r) => r.name));
+  }
+
+  isArtistLiked(name) {
+    const n = String(name || '').trim();
+    if (!n) return false;
+    return this._db.prepare('SELECT 1 FROM liked_artists WHERE name=?').get(n) !== undefined;
+  }
+
+  setLikedArtist(name, liked) {
+    const n = String(name || '').trim();
+    if (!n) return false;
+    if (liked) {
+      this._db.prepare(
+        'INSERT OR IGNORE INTO liked_artists (name, liked_at) VALUES (?,?)'
+      ).run(n, Date.now() / 1000);
+    } else {
+      this._db.prepare('DELETE FROM liked_artists WHERE name=?').run(n);
+    }
+    return !!liked;
+  }
+
+  /** 按喜爱时间倒序返回完整的艺人对象（含 album_count / track_count / cover_track_id）。 */
+  getLikedArtists() {
+    const rows = this._db.prepare(
+      'SELECT name, liked_at FROM liked_artists ORDER BY liked_at DESC'
+    ).all();
+    if (rows.length === 0) return [];
+    const byName = new Map();
+    for (const a of this.getArtists()) byName.set(a.name, a);
+    const out = [];
+    for (const r of rows) {
+      const a = byName.get(r.name);
+      if (!a) continue;
+      out.push(Object.assign({}, a, { liked_at: r.liked_at }));
+    }
+    return out;
+  }
+
+  // ── 喜爱的专辑 ───────────────────────────────────────────────
+
+  _likedAlbumKey(album, albumArtist) {
+    const a = String(album || '').trim();
+    if (!a) return null;
+    return { album: a, album_artist: String(albumArtist || '').trim() };
+  }
+
+  getLikedAlbumKeys() {
+    return this._db.prepare(
+      'SELECT album, album_artist, liked_at FROM liked_albums ORDER BY liked_at DESC'
+    ).all();
+  }
+
+  isAlbumLiked(album, albumArtist) {
+    const k = this._likedAlbumKey(album, albumArtist);
+    if (!k) return false;
+    return this._db.prepare(
+      'SELECT 1 FROM liked_albums WHERE album=? AND album_artist=?'
+    ).get(k.album, k.album_artist) !== undefined;
+  }
+
+  setLikedAlbum(album, albumArtist, liked) {
+    const k = this._likedAlbumKey(album, albumArtist);
+    if (!k) return false;
+    if (liked) {
+      this._db.prepare(
+        'INSERT OR IGNORE INTO liked_albums (album, album_artist, liked_at) VALUES (?,?,?)'
+      ).run(k.album, k.album_artist, Date.now() / 1000);
+    } else {
+      this._db.prepare(
+        'DELETE FROM liked_albums WHERE album=? AND album_artist=?'
+      ).run(k.album, k.album_artist);
+    }
+    return !!liked;
+  }
+
+  /** 按喜爱时间倒序返回完整的专辑对象（含 cover_track_id / track_count / sort_key）。 */
+  getLikedAlbums() {
+    const keys = this.getLikedAlbumKeys();
+    if (keys.length === 0) return [];
+    const byKey = new Map();
+    for (const a of this.getAlbums()) {
+      byKey.set(`${a.album}\u0000${a.album_artist}`, a);
+    }
+    const out = [];
+    for (const k of keys) {
+      const a = byKey.get(`${k.album}\u0000${k.album_artist}`);
+      if (!a) continue;
+      out.push(Object.assign({}, a, { liked_at: k.liked_at || 0 }));
+    }
+    return out;
   }
 
 

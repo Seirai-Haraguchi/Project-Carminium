@@ -2962,6 +2962,9 @@
       try { node.disconnect(); } catch (_) {}
     }
 
+    // 三段能量的原始平均（0..1，**不做饱和**）——由消费方决定怎么放大。
+    // 之前这里直接乘 2.5/3.0 并 clamp：低频只要有一点量就顶死在 1.0，
+    // 下游再拿去做可视化就永远是常数（背景"看着不动"的真正原因）。
     getBeatData() {
       if (!this._analyser || !this._freqData) return null;
       this._analyser.getByteFrequencyData(this._freqData);
@@ -2976,12 +2979,11 @@
       for (var i = bassCount; i < bassCount + midCount && i < n; i++) midSum += data[i];
       for (var i = bassCount + midCount; i < bassCount + midCount + trebleCount && i < n; i++) trebleSum += data[i];
 
-      var bass = Math.min(1, (bassSum / (255 * bassCount)) * 2.5);
-      var mid = Math.min(1, (midSum / (255 * midCount)) * 2.5);
-      var treble = Math.min(1, (trebleSum / (255 * trebleCount)) * 3.0);
-      var level = Math.min(1, (bass + mid + treble) / 3);
+      var bass = bassSum / (255 * bassCount);
+      var mid = midSum / (255 * midCount);
+      var treble = trebleSum / (255 * trebleCount);
 
-      return { bass: bass, mid: mid, treble: treble, level: level };
+      return { bass: bass, mid: mid, treble: treble, level: (bass + mid + treble) / 3 };
     }
   }
 

@@ -1747,6 +1747,47 @@ body.is-resizing *::after {
 .artist-meta { font-size: 13px; color: var(--md-on-surface-variant); }
 .artist-chevron { color: var(--md-on-surface-variant); font-size: 20px; }
 
+/* 喜爱页：曲目 / 专辑 / 艺术家三个分类（覆盖 .np-pivot 的居中） */
+/* 左右 28px 与 .page-header / .search-bar 对齐（胶囊左缘＝标题左缘）；
+   上方 16px 来自 .page-header 的 padding-bottom，下方补 16px 让上下留白对称，
+   否则标签会紧贴搜索框。 */
+.np-pivot.liked-pivot {
+  justify-content: flex-start;
+  padding: 0 28px 16px;
+}
+.liked-panel[hidden] { display: none; }
+.liked-remove-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background-color var(--motion-short) var(--ease-standard),
+              color var(--motion-short) var(--ease-standard);
+}
+.liked-remove-btn:hover { background: var(--md-state-hover); color: var(--md-error); }
+.liked-remove-btn .material-symbols-rounded {
+  font-size: 20px;
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+}
+.album-cover .liked-remove-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: color-mix(in srgb, var(--md-surface) 72%, transparent);
+  color: var(--md-error);
+}
+.album-cover .liked-remove-btn:hover {
+  background: color-mix(in srgb, var(--md-surface) 88%, transparent);
+}
+
 .section-heading {
   display: flex;
   align-items: center;
@@ -2255,21 +2296,73 @@ body.is-resizing *::after {
   animation-play-state: paused;
 }
 
+/* 压暗层：封面如果是蓝天白云/白底图这类高明度图，直接当背景会是一片白雾，
+   流体染上去也只是浅色。AMLL 同样先把封面压成深色氛围再上色。
+   颜色跟着封面主色走，保证压暗后仍是同一色系。 */
+.np-bg-scrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* 颜色/强度都由 JS 按明暗主题算：暗色＝主色深版压暗，亮色＝主色浅版提亮 */
+  background: var(--bg-scrim-color, #0c0e12);
+  opacity: var(--bg-scrim-opacity, 0.62);
+}
+
 .np-bg-noise {
   position: absolute;
   inset: 0;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   background-repeat: repeat;
-  opacity: 0.05;
-  mix-blend-mode: overlay;
+  opacity: 0.045;
+  /* 不用 mix-blend-mode：混合层必须回读下方像素，滚动时背景组每帧都要整屏重混合
+     （全窗口视图歌词滚动掉帧的主因）。5% 噪声下 overlay 与正常叠加的差异肉眼不可辨。 */
 }
 
 .np-bg-mask {
 position: absolute;
 inset: 0;
+/* 上透明 → 下实色，实色取封面主色压暗（--bg-mask-color），
+   而不是固定的 surface 色：否则背景色和封面/流体各走各的，看着发闷。 */
 background: linear-gradient(180deg,
-color-mix(in srgb, var(--md-surface-container-low) 58%, transparent) 0%,
-var(--md-surface-container-low) 88%);
+  transparent 0%,
+  color-mix(in srgb, var(--bg-mask-color, var(--md-surface-container-low)) 40%, transparent) 34%,
+  var(--bg-mask-color, var(--md-surface-container-low)) 86%);
+}
+
+/* 律动层：.np-bg-mask 把封面盖掉了大半（88% 以下完全不透明），在 covers 上做 scale /
+   opacity 变化平均下来整屏差不到 1.4/255，等于看不见。这一层在 mask 之上。
+   做法参考 AMLL（applemusic-like-lyrics）的 bg-render：多主色场 + 音量推拉 + 暗角，
+   只是把 WebGL mesh 换成 120×72 的 canvas 每帧重绘（浏览器放大即天然模糊），
+   因此是"色团真的在游动"，不是整张图平移。 */
+.np-bg-fluid {
+  position: absolute;
+  inset: -4%;
+  pointer-events: none;
+  /* 常驻 + 能量叠加：纯靠 --beat-glow 会让颜色只在鼓点闪一下，
+     流体本身应该一直在流，音乐只在它上面加一层强弱。 */
+  opacity: calc(var(--fluid-base, 0.16) + var(--beat-glow, 0) * var(--fluid-gain, 0.62));
+  transform: scale(1.04);
+  will-change: opacity;
+}
+/* 统一色 + 底部压暗：两层背景合成在一个元素里（少一个合成层）。
+   压暗色不是中性黑，而是封面主色的深版（--bg-deep-a/b），否则底部会发灰、
+   和上面对不上；偏色层是主色低透明度实色，整片统一到同一色相。 */
+.np-bg-grade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(180deg,
+      transparent 44%,
+      var(--bg-deep-a, rgba(4, 5, 8, 0.42)) 72%,
+      var(--bg-deep-b, rgba(4, 5, 8, 0.74)) 100%),
+    linear-gradient(var(--bg-tint, transparent), var(--bg-tint, transparent));
+}
+
+.np-bg-fluid-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .now-playing-pane.fullscreen .np-bg {
@@ -2314,7 +2407,12 @@ z-index: 1;
 .np-bg.video-active .np-bg-video { opacity: 1; }
 .np-bg.video-active .np-bg-video-overlay { opacity: 1; }
 .np-bg.video-active .np-bg-covers { opacity: 0; }
-.np-bg.video-active .np-bg-mask { opacity: 0; }
+/* 视频模式下这几层必须让开：它们是为"封面取色氛围"做的，叠在视频上就是压暗 + 串色。
+   只有在视频未激活时才参与合成。 */
+.np-bg.video-active .np-bg-mask,
+.np-bg.video-active .np-bg-scrim,
+.np-bg.video-active .np-bg-fluid,
+.np-bg.video-active .np-bg-grade { opacity: 0; }
 
 .now-playing-pane.fullscreen:has(.np-bg.video-active) {
 
@@ -2948,11 +3046,12 @@ body.player-collapsing .app-shell {
   transition: background-color var(--motion-medium) var(--ease-standard);
 }
 
+/* 展开/收起时不要再清 margin / border-radius / clip-path：
+   那会让面板在动画期间先按"贴满格"的尺寸出现（宽 +16px、高 +12px，且没有圆角与间隙），
+   动画结束后类被移除、尺寸又缩回静止态，表现为"进来先大一圈、然后闪一下变小一圈"。
+   这里只保留动画本身，尺寸/圆角全程与静止态一致。 */
 .now-playing-pane.expanding {
   animation: np-slide-in 200ms var(--ease-decel) both;
-  margin: 0;
-  border-radius: 0;
-  clip-path: none;
 }
 @keyframes np-slide-in {
   from { transform: translateX(100%); opacity: 0; filter: blur(10px); }
@@ -2962,10 +3061,6 @@ body.player-collapsing .app-shell {
 
 .now-playing-pane.collapsing {
   animation: np-slide-out 120ms var(--ease-accel) both;
-
-  margin: 0;
-  border-radius: 0;
-  clip-path: none;
 }
 @keyframes np-slide-out {
   from { transform: translateX(0);    opacity: 1; filter: blur(0); }
@@ -4062,182 +4157,83 @@ padding: 0;
   --md-comp-slider-handle-height: 18px;
 }
 
-.np-lyrics-search-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0);
-  transition: background 0.2s cubic-bezier(0.2, 0, 0, 1);
-  pointer-events: none;
-}
-.np-lyrics-search-overlay.open {
-  background: rgba(0, 0, 0, 0.15);
-  pointer-events: auto;
-}
-
-.np-lyrics-search-panel {
-  width: 100%;
-  max-height: 80%;
+/* ── 歌词搜索 dialog：cmd-dialog 骨架（同新建歌单/艺人编辑）+ .md-seglist 列表 ── */
+.cmd-dialog.np-lyrics-search-dialog {
+  max-width: 480px;
+  max-height: calc(100vh - 96px);
   display: flex;
   flex-direction: column;
-  background: var(--md-surface-container);
-  border-radius: 16px 16px 0 0;
-  border: 1px solid var(--md-outline-variant);
-  border-bottom: none;
   overflow: hidden;
-  transform: translateY(100%);
-  transition: transform 0.25s cubic-bezier(0.2, 0, 0, 1);
-  box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.08);
 }
-.np-lyrics-search-overlay.open .np-lyrics-search-panel {
-  transform: translateY(0);
+.np-lyrics-search-dialog .cmd-dialog-title {
+  flex-shrink: 0;
 }
-
-.np-lyrics-search-header {
+/* .mf-dialog-search 自带 24px 外边距，在 cmd-dialog 的 24px padding 里会缩进两次 */
+.np-lyrics-search-dialog .mf-dialog-search {
+  margin: 0 0 12px;
+  flex-shrink: 0;
+}
+.np-lyrics-search-dialog .cmd-dialog-actions {
+  flex-shrink: 0;
+}
+/* 行容器默认是 container-low，和这张 dialog 的底同色会糊成一片；
+   inset 归零，让行与标题/搜索框左对齐 */
+.np-lyrics-search-dialog .md-seglist {
+  margin-inline: 0;
+  --md-comp-seglist-item-container: var(--md-surface-container);
+}
+.np-lyrics-search-list {
+  flex: 1 1 auto;
+  /* 高度跟内容走（和新建歌单那种自适应 dialog 一致），
+     但 loading/空态不塌，结果多时封顶滚动 */
+  min-height: 208px;
+  max-height: min(360px, 46vh);
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--md-outline-variant);
-  flex-shrink: 0;
-}
-.np-lyrics-search-icon {
-  font-size: 20px;
-  color: var(--md-on-surface-variant);
-  flex-shrink: 0;
-}
-.np-lyrics-search-header input {
-  flex: 1;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-size: 14px;
-  color: var(--md-on-surface);
-  font-family: inherit;
-}
-.np-lyrics-search-header input::placeholder {
-  color: var(--md-on-surface-variant);
-}
-.np-lyrics-search-close {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--md-on-surface-variant);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background 0.15s;
-}
-.np-lyrics-search-close:hover {
-  background: var(--md-surface-container-highest);
-}
-.np-lyrics-search-close .material-symbols-rounded {
-  font-size: 18px;
-}
-
-.np-lyrics-search-results {
-  flex: 1;
+  flex-direction: column;
   overflow-y: auto;
-  padding: 4px 0;
+  overscroll-behavior: contain;
 }
-.np-lyrics-search-results::-webkit-scrollbar {
+/* 结果行单行省略，长曲名不许把行撑成两行 */
+.np-lyrics-search-dialog .settings-row-label,
+.np-lyrics-search-dialog .settings-row-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 关掉 flex-shrink：结果多时该滚动，而不是把每行压扁 */
+.np-lyrics-search-list > .md-seglist {
+  flex-shrink: 0;
+}
+.np-lyrics-search-list::-webkit-scrollbar {
   width: 6px;
 }
-.np-lyrics-search-results::-webkit-scrollbar-thumb {
+.np-lyrics-search-list::-webkit-scrollbar-thumb {
   background: var(--md-outline-variant);
   border-radius: 3px;
 }
 
-.np-lyrics-result {
+.np-lyrics-search-state {
+  flex: 1;
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  cursor: pointer;
-  transition: background 0.15s cubic-bezier(0.2, 0, 0, 1);
-  border: none;
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  color: inherit;
-  font-family: inherit;
-}
-.np-lyrics-result:hover {
-  background: var(--md-surface-container-high);
-}
-.np-lyrics-result:active {
-  background: var(--md-surface-container-highest);
-}
-.np-lyrics-result-icon {
-  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  background: var(--md-surface-container-high);
-  color: var(--md-on-surface-variant);
-  flex-shrink: 0;
-}
-.np-lyrics-result-icon .material-symbols-rounded {
-  font-size: 20px;
-}
-.np-lyrics-result-info {
-  flex: 1;
-  min-width: 0;
-}
-.np-lyrics-result-name {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--md-on-surface);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.np-lyrics-result-meta {
-  font-size: 12px;
-  color: var(--md-on-surface-variant);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-top: 2px;
-}
-.np-lyrics-result-arrow {
-  color: var(--md-on-surface-variant);
-  flex-shrink: 0;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-.np-lyrics-result:hover .np-lyrics-result-arrow {
-  opacity: 0.6;
-}
-.np-lyrics-result-arrow .material-symbols-rounded {
-  font-size: 18px;
-}
-
-.np-lyrics-search-status {
-  padding: 24px 16px;
+  gap: 10px;
+  padding: 32px 24px;
   text-align: center;
   color: var(--md-on-surface-variant);
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.4;
 }
-.np-lyrics-search-status .material-symbols-rounded {
-  display: block;
-  font-size: 36px;
-  margin-bottom: 8px;
-  opacity: 0.4;
+.np-lyrics-search-state .material-symbols-rounded {
+  font-size: 32px;
+  opacity: 0.5;
 }
-.np-lyrics-search-status.error {
-  color: var(--md-error, #ba1a1a);
+.np-lyrics-search-state.error {
+  color: var(--md-error);
 }
-.np-lyrics-search-status.loading .material-symbols-rounded {
+.np-lyrics-search-state.loading .material-symbols-rounded {
+  opacity: 0.85;
   animation: np-search-spin 0.8s linear infinite;
 }
 @keyframes np-search-spin {
@@ -5247,6 +5243,87 @@ padding: 0;
 select.cmd-text-field__input + .cmd-text-field__label {
   top: 0;
   transform: translateY(-50%) scale(0.75);
+}
+
+/* ── M3 filled 文本字段（单行 / 多行 / 选择器统一） ──────────────────
+   container-highest 底 + top-only 4px 圆角 + 底部指示线（静止 1px 38% on-surface
+   → hover on-surface → 激活 2px primary）。.settings-font-input 与 .md-dropdown-trigger
+   也吃这套，设置页的文本框、选择下拉框才和别的字段是同一族。
+   指示线用 border-bottom 而不是 ::after：伪元素对 input/textarea（replaced）不渲染。 */
+.md-text-input,
+.md-textarea,
+.settings-font-input,
+.md-dropdown-trigger {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--md-on-surface) 38%, transparent);
+  border-radius: var(--shape-xs) var(--shape-xs) 0 0;
+  background: var(--md-comp-field-container-color);
+  color: var(--md-on-surface);
+  font-family: inherit;
+  font-size: var(--md-sys-typescale-body-medium-size);
+  line-height: var(--md-sys-typescale-body-medium-line);
+  letter-spacing: 0;
+  outline: none;
+  transition: border-color var(--motion-effects-fast),
+              background-color var(--motion-effects-fast);
+}
+.md-text-input:hover,
+.md-textarea:hover,
+.settings-font-input:hover,
+.md-dropdown-trigger:hover {
+  border-bottom-color: var(--md-on-surface);
+  background-color: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity),
+                              var(--md-comp-field-container-color));
+}
+/* M3 filled 的激活标识＝底部指示线换成 primary 并加粗到 2px */
+.md-text-input:focus,
+.md-textarea:focus,
+.settings-font-input:focus,
+.md-dropdown-trigger:focus-visible,
+.md-dropdown-trigger[aria-expanded="true"] {
+  border-bottom-width: 2px;
+  border-bottom-color: var(--md-primary);
+}
+.md-text-input::placeholder,
+.md-textarea::placeholder,
+.settings-font-input::placeholder {
+  color: var(--md-on-surface-variant);
+}
+.md-text-input::selection,
+.md-textarea::selection,
+.settings-font-input::selection {
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+}
+
+.md-text-input,
+.settings-font-input,
+.md-dropdown-trigger {
+  height: var(--md-comp-field-height);
+  padding: 0 var(--md-comp-field-padding-inline);
+}
+
+.md-textarea {
+  min-height: 176px;
+  padding: 12px var(--md-comp-field-padding-inline);
+  resize: none;
+  overflow: auto;
+}
+/* 等宽变体：诊断信息这类纯文本块 */
+.md-textarea--mono {
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  line-height: 20px;
+}
+.md-textarea::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.md-textarea::-webkit-scrollbar-thumb {
+  background: var(--md-outline-variant);
+  border-radius: 4px;
 }
 
 .np-volume {
@@ -6261,59 +6338,14 @@ select.cmd-text-field__input + .cmd-text-field__label {
   position: relative;
   display: inline-block;
 }
-.md-dropdown-trigger,
-.settings-font-input {
-  position: relative;
-  height: var(--md-comp-field-height);
-  padding: 0 var(--md-comp-field-padding-inline);
-  background: var(--md-comp-field-container-color);
-  border: none;
-  border-radius: var(--md-comp-field-shape);
-  font-family: inherit;
-  font-size: var(--md-comp-field-font-size);
-  line-height: var(--md-comp-field-font-line);
-  letter-spacing: var(--md-comp-field-font-tracking);
-  color: var(--md-on-surface);
-  cursor: pointer;
-  outline: none;
-  text-align: left;
-  transition: background-color var(--md-sys-motion-spring-fast-effects);
-}
-.md-dropdown-trigger::after,
-.settings-font-input::after {
-  content: '';
-  position: absolute;
-  left: var(--md-comp-field-indicator-inset);
-  right: var(--md-comp-field-indicator-inset);
-  bottom: 0;
-  height: var(--md-comp-field-indicator-height);
-  border-radius: var(--md-sys-shape-corner-full);
-  background: var(--md-comp-field-indicator-color);
-  pointer-events: none;
-  transition: height var(--md-sys-motion-spring-fast-spatial),
-              background-color var(--md-sys-motion-spring-fast-effects);
-}
-.md-dropdown-trigger:hover,
-.settings-font-input:hover {
-  background-color: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity),
-                              var(--md-comp-field-container-color));
-}
-.md-dropdown-trigger:hover::after,
-.settings-font-input:hover::after {
-  background: var(--md-comp-field-hover-indicator-color);
-}
-.md-dropdown-trigger:focus-visible::after,
-.md-dropdown-trigger[aria-expanded="true"]::after,
-.settings-font-input:focus::after {
-  height: var(--md-comp-field-focus-indicator-height);
-  background: var(--md-comp-field-focus-indicator-color);
-}
+/* 触发器的外观走上面的 M3 filled 字段族（.md-text-input / .settings-font-input 同一套） */
 .md-dropdown-trigger {
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  width: 100%;
+  cursor: pointer;
+  text-align: left;
 }
 .md-select-dropdown {
   width: var(--md-comp-field-max-width);
@@ -6659,6 +6691,58 @@ select.cmd-text-field__input + .cmd-text-field__label {
   margin-left: auto;
 }
 
+/* 检查更新：状态文案挂在行副标题上，发现新版本时用 primary 提示 */
+.about-update-sub.is-available {
+  color: var(--md-primary);
+}
+/* 副标题隐藏时退回单行高度（:has(.settings-row-sub) 会无条件撑成 2 行） */
+.about-action-row:has(> .settings-row-body > .about-update-sub[hidden]) {
+  min-height: var(--md-comp-list-min-height);
+}
+.about-action-row.is-busy {
+  pointer-events: none;
+}
+.about-action-row.is-busy .settings-row-label,
+.about-action-row.is-busy .about-chevron {
+  opacity: 0.55;
+}
+
+.about-update-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.about-update-meta-label {
+  flex-shrink: 0;
+  min-width: 68px;
+  color: var(--md-on-surface-variant);
+  opacity: 0.8;
+}
+.about-update-meta-value {
+  color: var(--md-on-surface);
+  font-weight: 500;
+  word-break: break-word;
+}
+.about-update-notes {
+  margin-top: 12px;
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--md-on-surface-variant);
+  background: var(--md-surface-container-high);
+  border-radius: var(--md-sys-shape-corner-large);
+  padding: 12px 14px;
+}
+.about-update-notes.is-empty {
+  font-style: italic;
+  opacity: 0.7;
+}
+
 .detail-header {
   position: relative;
   display: flex;
@@ -6794,6 +6878,34 @@ select.cmd-text-field__input + .cmd-text-field__label {
 .detail-play-btn .material-symbols-rounded {
   font-size: 22px;
   font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 22;
+}
+
+/* 详情页的圆形图标按钮（艺人 / 专辑的「喜爱」） */
+.detail-icon-btn {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color var(--motion-short) var(--ease-standard),
+              filter var(--motion-short) var(--ease-standard),
+              transform var(--motion-short) var(--ease-standard);
+}
+.detail-icon-btn:hover { filter: brightness(1.05); }
+.detail-icon-btn:active { transform: scale(0.94); }
+.detail-icon-btn.liked { color: var(--md-error); }
+.detail-icon-btn .material-symbols-rounded {
+  font-size: 22px;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+.detail-icon-btn.liked .material-symbols-rounded {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
 
 .detail-header.hero {
@@ -7105,38 +7217,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   background-color: color-mix(in srgb, currentColor 14%, transparent);
 }
 .ae-chip-x .material-symbols-rounded { font-size: 15px; }
-
-.ae-input {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.ae-textarea {
-  display: block;
-  width: 100%;
-  min-height: 150px;
-  box-sizing: border-box;
-  padding: 14px var(--md-comp-field-padding-inline);
-  border: none;
-  border-radius: var(--md-comp-field-shape);
-  background-color: var(--md-comp-field-container-color);
-  color: var(--md-on-surface);
-  font-family: inherit;
-  font-size: var(--md-comp-field-font-size);
-  line-height: 1.55;
-  resize: vertical;
-  outline: none;
-  transition: background-color var(--motion-effects-fast);
-}
-.ae-textarea::placeholder {
-  color: var(--md-on-surface-variant);
-  opacity: 0.6;
-}
-.ae-textarea:focus {
-  outline: 2px solid var(--md-primary);
-  outline-offset: -2px;
-}
 
 /* 说明 / 空态 / 行内按钮 */
 .artist-edit-hint {
@@ -8261,6 +8341,88 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   --ym-card-radius: var(--md-sys-shape-corner-large);
   padding: 0 0 40px;
 }
+
+/* ===== 搜索页 =====
+   独立页，不复用主页的 .ym-* 。三段结构：页头 + 搜索框 + 范围 chips，
+   全部塞进 .page-sticky-header 里吸顶；结果区按 scope 渲染。 */
+.search-page {
+  padding: 0 0 40px;
+}
+.search-bar--hero {
+  height: 52px;
+  margin: 0 28px 14px;
+}
+.search-bar--hero input {
+  font-size: 15px;
+}
+.search-clear {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: none;
+}
+.search-scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 28px 14px;
+}
+.search-scope-chip {
+  background: transparent;
+  font-family: inherit;
+  line-height: 1;
+}
+.search-section {
+  margin-bottom: 8px;
+}
+.search-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.search-see-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: var(--shape-sm);
+  background: transparent;
+  color: var(--md-primary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--motion-effects-fast);
+}
+.search-see-all:hover { background: var(--md-state-hover); }
+.search-see-all .material-symbols-rounded { font-size: 16px; }
+.search-track-list { padding: 0 12px 8px; }
+.search-artist-list { padding: 0 16px 8px; }
+.search-cover-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.search-cover-fallback .material-symbols-rounded {
+  font-size: 40px;
+  color: rgba(255, 255, 255, 0.85);
+}
+.search-avatar-initial {
+  font-size: 17px;
+  font-weight: 700;
+  color: #fff;
+}
+.search-note {
+  padding: 4px 28px 20px;
+  font-size: 12px;
+  color: var(--md-on-surface-variant);
+}
+.search-empty { margin-top: 72px; }
+
 #page-container {
   container-type: inline-size;
   container-name: ympage;

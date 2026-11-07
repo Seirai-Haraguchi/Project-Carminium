@@ -38,10 +38,12 @@
     btnLike: null,
     btnAudioMode: null,
     queueList: document.getElementById('np-queue-list'),
-    pivotTabs: document.querySelectorAll('.np-pivot-tab'),
+    // 必须限定在 #now-playing-pane 内：艺人详情页、添加流媒体库对话框也用 .np-pivot-tab，
+    // 全文档查询会把它们的标签一起纳入 toggle 列表（互踩 active），见 _activePivotTab 的注释。
+    pivotTabs: document.querySelectorAll('#now-playing-pane .np-pivot-tab'),
     pivotIndicator: document.getElementById('np-pivot-indicator'),
     contentSegs: document.querySelectorAll('.np-content-seg'),
-    panels: document.querySelectorAll('.np-panels .np-panel'),
+    panels: document.querySelectorAll('#now-playing-pane .np-panels .np-panel'),
     miniInfo: document.getElementById('np-mini-info'),
     miniInfoCover: document.getElementById('np-mini-cover'),
     miniInfoCoverImg: document.getElementById('np-mini-cover-img'),
@@ -80,10 +82,6 @@
     lyricsSearchBtn: document.getElementById('np-lyrics-search-btn'),
     lyricsTransBtn: document.getElementById('np-lyrics-trans-btn'),
     lyricsRomajiBtn: document.getElementById('np-lyrics-romaji-btn'),
-    lyricsSearchOverlay: document.getElementById('np-lyrics-search-overlay'),
-    lyricsSearchInput: document.getElementById('np-lyrics-search-input'),
-    lyricsSearchClose: document.getElementById('np-lyrics-search-close'),
-    lyricsSearchResults: document.getElementById('np-lyrics-search-results'),
     lyricsSettingsBtn: document.getElementById('np-lyrics-settings-btn'),
     lyricsSettingsPopup: document.getElementById('np-lyrics-settings-popup'),
     lyricsOffsetDec: document.getElementById('np-lyrics-offset-dec'),
@@ -280,15 +278,27 @@ let _lyricLineEls = null;
   var _videoBgGen = 0;
 
   var _beatRafId = 0;
-  var _beatBpm = 0;
-  var _beatIntervalMs = 500;
-  var _beatLastPos = -1;
   var _beatPulse = 0;
   var _beatSpecBass = 0;
   var _beatSpecMid = 0;
   var _beatSpecTreble = 0;
   var _beatLocalBaseTime = 0;
   var _beatLocalBasePos = 0;
+  var _beatLastTickT = 0;
+  var _beatIdleMs = 0;
+  var _beatBaseBass = 0;
+
+  // 背景律动＝频谱包络（可视化式），不是按 BPM 相位打拍子。
+  // 低频推整体缩放，中高频推光泽层；两段都走"快起慢落"的时间基包络，
+  // 时间基保证 60/120Hz 下同一段音乐的起伏完全一致（不随帧率变快变慢）。
+  var BEAT_ATTACK_MS = 40;
+  var BEAT_RELEASE_MS = 120;   // 释放太快会闪、太慢会糊成一片；120ms 跟得上鼓点又不会抖
+  var BEAT_IDLE_MS = 1200;   // 连续这么久没拿到频谱 → 退化为极缓呼吸，别让背景彻底死掉
+
+  function _beatEnv(cur, target, dt, attackMs, releaseMs) {
+    var tau = target > cur ? attackMs : releaseMs;
+    return cur + (target - cur) * (1 - Math.exp(-dt / tau));
+  }
 
   function _beatUpdatePosition(ms) {
     var engine = App.audioEngine;
@@ -314,14 +324,57 @@ let _lyricLineEls = null;
 
   np.getPrecisePosition = _beatGetPrecisePosition;
 
+  // 背景律动的两个自定义属性只作用在 .np-bg-covers 及其内部（scale / opacity）。
+  // 之前写在 #now-playing-pane 上：自定义属性会被整个子树继承，等于每帧让歌词、
+  // 队列、控件那几千个节点全部样式失效重算，并且把背景组每帧拖进一次全屏重合成。
+  // 现在写到真正消费它的那个元素上，再限制到 30Hz + 变化阈值，避免无意义的重合成。
+  var _beatBgEl = null;
+  var _beatLastWriteT = 0;
+  var _beatLastScale = -1;
+  var _beatLastSurge = -1;
+  var _beatLastGlow = -1;
+
+  var _beatGlowEl = null;
+
+  function _beatTargetEl() {
+    if (!_beatBgEl || !_beatBgEl.isConnected) _beatBgEl = document.querySelector('.np-bg-covers');
+    if (!_beatGlowEl || !_beatGlowEl.isConnected) _beatGlowEl = document.querySelector('.np-bg');
+    return _beatBgEl;
+  }
+
+  function _beatWritePulse(scale, surge, glow) {
+    var el = _beatTargetEl();
+    if (!el) return;
+    var t = performance.now();
+    if (t - _beatLastWriteT < 33) return;                       // 30Hz 上限
+    if (Math.abs(scale - _beatLastScale) < 0.002 &&
+        Math.abs(surge - _beatLastSurge) < 0.004 &&
+        Math.abs(glow - _beatLastGlow) < 0.004) return;          // 无可见变化就不写
+    _beatLastWriteT = t;
+    _beatLastScale = scale;
+    _beatLastSurge = surge;
+    _beatLastGlow = glow;
+    el.style.setProperty('--beat-scale', scale.toFixed(4));
+    el.style.setProperty('--beat-surge', surge.toFixed(3));
+    // 柔光层挂在 .np-bg 上（mask 的兄弟/上层），不进 covers 子树
+    if (_beatGlowEl) _beatGlowEl.style.setProperty('--beat-glow', glow.toFixed(3));
+  }
+
   function _startBeatLoop() {
     if (_beatRafId) return;
-    _beatBpm = 0;
-    _beatLastPos = -1;
     _beatPulse = 0;
     _beatSpecBass = 0;
     _beatSpecMid = 0;
     _beatSpecTreble = 0;
+    _beatLastTickT = 0;
+    _beatIdleMs = 0;
+    _beatLastWriteT = 0;
+    _beatLastScale = -1;
+    _beatLastSurge = -1;
+    _beatLastGlow = -1;
+    _beatBgEl = null;
+    _beatGlowEl = null;
+    if (!_fluidPalette) _applyFluidColors(null);   // 无封面曲目也要有流体（主题色兜底）
     _beatRafId = requestAnimationFrame(_beatLoopTick);
   }
 
@@ -335,7 +388,17 @@ let _lyricLineEls = null;
       pane.style.removeProperty('--beat-scale');
       pane.style.removeProperty('--beat-surge');
     }
-    _beatBpm = 0;
+    if (_beatBgEl) {
+      _beatBgEl.style.removeProperty('--beat-scale');
+      _beatBgEl.style.removeProperty('--beat-surge');
+    }
+    if (_beatGlowEl) _beatGlowEl.style.removeProperty('--beat-glow');
+    _beatLastScale = -1;
+    _beatLastSurge = -1;
+    _beatLastGlow = -1;
+    _beatLastTickT = 0;
+    _beatIdleMs = 0;
+    _beatBaseBass = 0;
     _beatPulse = 0;
     _beatSpecBass = 0;
     _beatSpecMid = 0;
@@ -361,61 +424,62 @@ let _lyricLineEls = null;
       return;
     }
 
-    var profiles = App.automix && App.automix.profiles ? App.automix.profiles() : null;
-    var currentProfile = profiles && profiles.current;
-    var bpm = currentProfile && currentProfile.tempo ? currentProfile.tempo.primary : 0;
-    if (bpm !== _beatBpm) {
-      _beatBpm = bpm;
-      _beatIntervalMs = bpm > 0 ? (60000 / bpm) : 500;
-    }
-
-    var pos = _beatGetPrecisePosition();
-    if (_beatLastPos >= 0 && (_beatLastPos > pos + 100 || pos - _beatLastPos > 5000)) {
-      _beatPulse = 0;
-    }
-    _beatLastPos = pos;
-
-    var bpmPulse;
-    if (bpm > 0) {
-      var beatPhase = (pos % _beatIntervalMs) / _beatIntervalMs;
-      bpmPulse = Math.max(0, Math.cos(beatPhase * Math.PI));
-      bpmPulse = Math.pow(bpmPulse, 0.6);
-    } else {
-      var breathPhase = (Date.now() % 3000) / 3000;
-      bpmPulse = 0.3 + (Math.sin(breathPhase * Math.PI * 2) + 1) * 0.15;
-    }
+    // 帧间隔按真实时间取：丢帧或高刷都不会改变包络的时间常数
+    var nowT = performance.now();
+    var dt = _beatLastTickT ? (nowT - _beatLastTickT) : 16.7;
+    if (dt > 64) dt = 64;             // 长时间挂起后不要一步跳到底
+    _beatLastTickT = nowT;
 
     var engine = App.audioEngine;
-    var beat = engine ? engine.getBeatData() : null;
-    var specBass = 0, specMid = 0, specTreble = 0;
-    if (beat) {
-      var aR = 0.42, rR = 0.04;
-      _beatSpecBass = _beatSpecBass + (beat.bass - _beatSpecBass) * (beat.bass > _beatSpecBass ? aR : rR);
-      _beatSpecMid = _beatSpecMid + (beat.mid - _beatSpecMid) * (beat.mid > _beatSpecMid ? aR * 0.8 : rR * 1.5);
-      _beatSpecTreble = _beatSpecTreble + (beat.treble - _beatSpecTreble) * (beat.treble > _beatSpecTreble ? aR * 0.6 : rR * 2.0);
-      specBass = _beatSpecBass;
-      specMid = _beatSpecMid;
-      specTreble = _beatSpecTreble;
-    }
+    var st = App.state.playbackState;
+    var playing = (st === 'playing' || st === 'loading');
+    var beat = (engine && playing) ? engine.getBeatData() : null;
+    var hasData = !!(beat && beat.level > 0.004);
+    _beatIdleMs = hasData ? 0 : (_beatIdleMs + dt);
 
-    var combinedPulse;
-    if (beat && beat.level > 0.01) {
-      var specEnergy = specBass * 0.7 + specMid * 0.2 + specTreble * 0.1;
-      var specContribution = specEnergy * 0.55;
-      var beatContribution = bpmPulse * (0.3 + specEnergy * 0.5) * 0.45;
-      combinedPulse = Math.min(1, specContribution + beatContribution);
+    var tBass, tMid, tTreb;
+    if (hasData) {
+      tBass = beat.bass;
+      tMid = beat.mid;
+      tTreb = beat.treble;
+    } else if (playing && _beatIdleMs > BEAT_IDLE_MS) {
+      // 在播但拿不到频谱时留一点呼吸，免得背景彻底变成一张静止图；
+      // 暂停/停止则老老实实回到 1.0（relBass 走不到这里就是 0）。
+      tBass = 0.30;
+      tMid = 0.10;
+      tTreb = 0.06;
     } else {
-      combinedPulse = bpmPulse * 0.5;
+      tBass = 0; tMid = 0; tTreb = 0;
     }
 
-    var smoothRate = combinedPulse > _beatPulse ? 0.5 : 0.05;
-    _beatPulse = _beatPulse + (combinedPulse - _beatPulse) * smoothRate;
+    // 三段各自包络：越往上越"轻"，起得更快、落得更慢，接近频谱条的手感
+    _beatSpecBass = _beatEnv(_beatSpecBass, tBass, dt, BEAT_ATTACK_MS, BEAT_RELEASE_MS);
+    _beatSpecMid = _beatEnv(_beatSpecMid, tMid, dt, BEAT_ATTACK_MS * 0.8, BEAT_RELEASE_MS * 1.3);
+    _beatSpecTreble = _beatEnv(_beatSpecTreble, tTreb, dt, BEAT_ATTACK_MS * 0.9, BEAT_RELEASE_MS * 1.7);
 
-    var scale = 1 + _beatPulse * 0.07;
-    var surge = Math.min(0.9, specMid * 0.75 + specTreble * 0.45 + _beatPulse * 0.25);
+    var midN = Math.min(1, Math.max(0, (_beatSpecMid - 0.02) / 0.35));
+    var trebN = Math.min(1, Math.max(0, _beatSpecTreble / 0.35));
 
-    pane.style.setProperty('--beat-scale', scale.toFixed(4));
-    pane.style.setProperty('--beat-surge', surge.toFixed(3));
+    // 用"比自己的慢基线高出多少"驱动，而不是绝对能量：
+    // 低频绝对值的起伏只有 0.5~0.75，直接映射到透明度只摆动 0.09，肉眼看不出来；
+    // 相对突出量能把每个鼓点拉到满量程，像可视化里柱子相对静音线的高度。
+    var relBass = 0;
+    if (hasData) {
+      _beatBaseBass = _beatEnv(_beatBaseBass, _beatSpecBass, dt, 1100, 1100);
+      relBass = Math.min(1, Math.max(0, (_beatSpecBass - _beatBaseBass * 0.95) / 0.30));
+    } else if (playing && _beatIdleMs > BEAT_IDLE_MS) {
+      var breath = 0.5 + 0.5 * Math.sin(nowT / 1400);
+      relBass = 0.15 + breath * 0.18;
+    }
+
+    _beatPulse = _beatEnv(_beatPulse, relBass, dt, 24, 55);
+
+    var scale = 1 + _beatPulse * 0.11;
+    var surge = Math.min(0.6, midN * 0.32 + trebN * 0.42);
+    var glow = _beatPulse * 0.36;
+
+    _beatWritePulse(scale, surge, glow);
+    _drawFluid(nowT, _beatPulse);
 
     _beatRafId = requestAnimationFrame(_beatLoopTick);
   }
@@ -472,6 +536,370 @@ let _lyricLineEls = null;
     _bgBlurSourceCache.clear();
   }
 
+  // ── 背景流体的运行时状态与循环（参考 AMLL 的 bg-render 思路）────────────
+  // AMLL 用 WebGL：调色板 + mesh 控制点位移 + 音量推拉 + 周边暗角。这里等价地用
+  // 一块 120×72 的 canvas 每帧重绘几个色团（放大到全屏即天然模糊），
+  // 好处是色团真的在游动，而不是整张静态图平移/旋转。
+  var FLUID_W = 120, FLUID_H = 72;
+  var _fluidCanvasEl = null;
+  var _fluidCtx = null;
+  var _fluidPalette = null;
+  var _fluidRaw = null;        // 封面原始取色（未按主题映射），切主题时用它重算
+  var _fluidBlobs = [];
+  var _fluidLastDraw = 0;
+  var _fluidRafId = 0;
+  var _fluidHostEl = null;     // .np-bg（判断是否处于视频背景模式）
+
+  // 流体不依赖律动循环的启停（那个只在全窗口 + 播放时跑）。
+  // 单独一条 rAF：只有全窗口才真正绘制，退出就自动停。
+  function _startFluidLoop() {
+    if (_fluidRafId) return;
+    var loop = function () {
+      _fluidRafId = 0;
+      var pane = document.getElementById('now-playing-pane');
+      if (!pane || !pane.classList.contains('fullscreen')) return;
+      // 视频背景期间不画流体（画了也被 CSS 隐藏，白烧 CPU；视频解码本来就吃资源）
+      if (!_fluidHostEl || !_fluidHostEl.isConnected) _fluidHostEl = pane.querySelector('.np-bg');
+      if (!(_fluidHostEl && _fluidHostEl.classList.contains('video-active'))) {
+        _drawFluid(performance.now(), _beatPulse);
+      }
+      _fluidRafId = requestAnimationFrame(loop);
+    };
+    _fluidRafId = requestAnimationFrame(loop);
+  }
+
+  function _fluidInitCanvas() {
+    if (_fluidCanvasEl && _fluidCanvasEl.isConnected) return;
+    _fluidCanvasEl = document.getElementById('np-bg-fluid-canvas');
+    if (!_fluidCanvasEl) { _fluidCtx = null; return; }
+    _fluidCanvasEl.width = FLUID_W;
+    _fluidCanvasEl.height = FLUID_H;
+    _fluidCtx = _fluidCanvasEl.getContext('2d');
+  }
+
+  // 没有封面时用主题色兜底：无封面曲目也该有律动，而不是一片死背景
+  function _defaultFluidPalette() {
+    try {
+      var cs = getComputedStyle(document.documentElement);
+      var pick = function (k, fb) { var v = cs.getPropertyValue(k).trim(); return v || fb; };
+      return [pick('--md-primary', '#7c6fb0'), pick('--md-tertiary', '#4a6b8a'),
+              pick('--md-secondary', '#8a5f6e'), pick('--md-primary-container', '#8f83c0'),
+              pick('--md-surface-tint', '#5a6b7a')];
+    } catch (e) {
+      return ['#7c6fb0', '#4a6b8a', '#8a5f6e', '#8f83c0', '#5a6b7a'];
+    }
+  }
+
+  // ── 封面取色（同色相家族）──────────────────────────────────────────
+  // 早期版本按「面积 × 饱和度」直接挑 5 个差异大的色。真实封面上这会挑进肤色之类的
+  // 边缘色：亮青蓝的封面配出一大片粉红，蓝+粉在 lighter 叠加下发灰，整片背景发脏。
+  // 现在先算面积加权的主色相，只保留 ±50° 内的同族色，不足的名额用主色明暗变体补，
+  // 保证背景和封面是同一个色系里出来的。
+  function _toHsv(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    var mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn, h = 0;
+    if (d > 0.0001) {
+      if (mx === r) h = ((g - b) / d) % 6;
+      else if (mx === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60;
+      if (h < 0) h += 360;
+    }
+    return [h, mx > 0 ? d / mx : 0, mx];
+  }
+
+  function _toRgb(h, s, v) {
+    var c = v * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = v - c;
+    var r = 0, g = 0, b = 0;
+    if (h < 60) { r = c; g = x; }
+    else if (h < 120) { r = x; g = c; }
+    else if (h < 180) { g = c; b = x; }
+    else if (h < 240) { g = x; b = c; }
+    else if (h < 300) { r = x; b = c; }
+    else { r = c; b = x; }
+    return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+  }
+
+  function _extractFluidColors(img) {
+    try {
+      var N = 24;
+      var c = document.createElement('canvas');
+      c.width = N; c.height = N;
+      var ctx = c.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(img, 0, 0, N, N);
+      var d = ctx.getImageData(0, 0, N, N).data;
+      var map = {}, key, i;
+      var lumSum = 0, lumN = 0;
+      for (i = 0; i < d.length; i += 4) {
+        if (d[i + 3] < 160) continue;
+        lumSum += (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
+        lumN++;
+        var r = d[i], g = d[i + 1], b = d[i + 2];
+        var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+        if (mx < 18 || mn > 242) continue;        // 纯黑/纯白不做色块
+        key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+        var e = map[key];
+        if (!e) e = map[key] = { r: 0, g: 0, b: 0, n: 0 };
+        e.r += r; e.g += g; e.b += b; e.n++;
+      }
+
+      var buckets = [];
+      for (key in map) {
+        var e2 = map[key];
+        var rr = e2.r / e2.n, gg = e2.g / e2.n, bb = e2.b / e2.n;
+        var hsv = _toHsv(rr, gg, bb);
+        buckets.push({ r: rr, g: gg, b: bb, n: e2.n, h: hsv[0], s: hsv[1], v: hsv[2] });
+      }
+      // 封面整体亮度：白底/蓝天封面在暗色主题下会整片透亮，压暗厚度要跟着它走
+      _coverLum = lumN ? Math.min(1, lumSum / lumN) : 0.5;
+      if (!buckets.length) return null;
+
+      // 面积加权的主色相（用 sin/cos 平均，避开 0/360 环绕）
+      var hx = 0, hy = 0, wsum = 0;
+      for (i = 0; i < buckets.length; i++) {
+        var bk = buckets[i];
+        if (bk.s < 0.1) continue;                 // 近灰的色相没有意义
+        var w = bk.n * (0.25 + bk.s);
+        var rad = bk.h * Math.PI / 180;
+        hx += Math.cos(rad) * w;
+        hy += Math.sin(rad) * w;
+        wsum += w;
+      }
+      var baseH = wsum > 0 ? (Math.atan2(hy, hx) * 180 / Math.PI + 360) % 360 : 215;
+
+      buckets.sort(function (a, b) { return b.n - a.n; });
+      var picked = [];
+      for (i = 0; i < buckets.length && picked.length < 3; i++) {
+        var c1 = buckets[i];
+        if (c1.s < 0.08) continue;                // 灰白只用于明暗，不单独成团
+        var dh = Math.abs(c1.h - baseH);
+        if (dh > 180) dh = 360 - dh;
+        if (dh > 50) continue;                    // 只在主色相 ±50° 内取色
+        var dup = false;
+        for (var m = 0; m < picked.length; m++) {
+          var dr = c1.r - picked[m].r, dg = c1.g - picked[m].g, db = c1.b - picked[m].b;
+          if (dr * dr + dg * dg + db * db < 1200) { dup = true; break; }
+        }
+        if (!dup) picked.push(c1);
+      }
+
+      // 主色的明暗变体补齐（同色相，只动明度/饱和度）
+      var hs = _toHsv(
+        picked.length ? picked[0].r : buckets[0].r,
+        picked.length ? picked[0].g : buckets[0].g,
+        picked.length ? picked[0].b : buckets[0].b
+      );
+      var variants = [[0.0, 1.15], [-0.10, 1.45], [0.08, 0.75], [-0.16, 0.95]];
+      for (i = 0; i < variants.length && picked.length < 5; i++) {
+        var vv = Math.min(1, Math.max(0.12, hs[2] + variants[i][0]));
+        var ss = Math.min(1, Math.max(0.18, hs[1] * variants[i][1]));
+        var rgb3 = _toRgb(hs[0], ss, vv);
+        picked.push({ r: rgb3[0], g: rgb3[1], b: rgb3[2], n: 1 });
+      }
+
+      // 这里只输出封面原始色，明度/饱和度按主题映射放到 _refreshBgColors：
+      // 暗色要压暗、亮色要提亮，取色阶段做死了就没法跟着主题变。
+      return picked.slice(0, 5).map(function (c2) {
+        return 'rgb(' + Math.round(c2.r) + ',' + Math.round(c2.g) + ',' + Math.round(c2.b) + ')';
+      });
+    } catch (e3) {
+      return null;
+    }
+  }
+
+  // ── 背景明/暗参数 ──────────────────────────────────────────────────
+  // 这几层（scrim / mask / 流体 / grade）原先一律按暗色写死：全部压暗、明度压到中灰。
+  // 亮色模式下那会是一整块深色板；而暗色模式下中灰底又偏亮。所以统一按主题取参数：
+  //   暗色：色团明度 0.20~0.34（深）、scrim 0.64 压得住、底实色极深；
+  //   亮色：色团明度 0.78~0.90 且低饱和（白底上的淡彩雾）、scrim 换白纱、底实色近白。
+  function _bgIsDark() {
+    return document.documentElement.getAttribute('data-theme') !== 'light';
+  }
+
+  function _bgParams() {
+    if (_bgIsDark()) {
+      var lum = (_coverLum === null ? 0.5 : _coverLum);
+      return {
+        fluidVHigh: 0.34, fluidVLow: 0.20, fluidSMin: 0.44, fluidSGain: 1.1, fluidAlpha: 0.40,
+        // 白底封面本身接近 230，固定 alpha 压不住 → 亮度越高压得越实
+        scrimOpacity: 0.56 + lum * 0.34,
+        maskMix: 0.55, maskAdd: 0,
+        tintAlpha: 0.12,
+        deepMix: 0.34, deepAdd: 0, deepAlphaA: 0.62, deepAlphaB: 0.90,
+        fluidBase: 0.14, fluidGain: 0.60,
+        vigMid: 'rgb(176,176,184)', vigEdge: 'rgb(64,64,72)',
+      };
+    }
+    var lumL = (_coverLum === null ? 0.5 : _coverLum);
+    return {
+      fluidVHigh: 0.90, fluidVLow: 0.78, fluidSMin: 0.24, fluidSGain: 0.85, fluidAlpha: 0.48,
+      scrimOpacity: 0.60 + lumL * 0.24,
+      maskMix: 0.30, maskAdd: 176,
+      tintAlpha: 0.10,
+      deepMix: 0.28, deepAdd: 180, deepAlphaA: 0.46, deepAlphaB: 0.70,
+      fluidBase: 0.26, fluidGain: 0.46,
+      // 亮色下暗角不能压暗：它乘在白底上会直接变成灰雾，所以两端都接近白
+      vigMid: 'rgb(248,248,250)', vigEdge: 'rgb(236,238,241)',
+    };
+  }
+
+  var _bgFluidAlpha = 0.4;
+  var _coverLum = null;        // 封面平均亮度 0..1（scrim 厚度自适应用）
+  var _bgVigMid = 'rgb(176,176,184)';
+  var _bgVigEdge = 'rgb(64,64,72)';
+
+  function _parseRgb(str) {
+    var m = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(str || '');
+    return m ? [+m[1], +m[2], +m[3]] : null;
+  }
+
+  // 把封面主色按主题压/提成底色，并写好各层需要的变量
+  function _applyBgTone(primary) {
+    var host = document.querySelector('.np-bg');
+    if (!host) return;
+    var p = _bgParams();
+    var c = _parseRgb(primary);
+    if (!c) {
+      ['--bg-mask-color', '--bg-tint', '--bg-deep-a', '--bg-deep-b', '--bg-scrim-color']
+        .forEach(function (k) { host.style.removeProperty(k); });
+      return;
+    }
+    var mix = function (k, add) {
+      return 'rgb(' + Math.round(c[0] * k + add) + ',' + Math.round(c[1] * k + add) + ',' +
+                      Math.round(c[2] * k + add) + ')';
+    };
+    var base = mix(p.maskMix, p.maskAdd);
+    host.style.setProperty('--bg-mask-color', base);
+    host.style.setProperty('--bg-scrim-color', base);
+    host.style.setProperty('--bg-scrim-opacity', String(p.scrimOpacity));
+    host.style.setProperty('--bg-tint', 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + p.tintAlpha + ')');
+    // 控制区实色：暗色取主色深版，亮色取主色浅版 —— 都是"取色的结果"，不是固定灰
+    var deep = mix(p.deepMix, p.deepAdd);
+    host.style.setProperty('--bg-deep-a', deep.replace('rgb(', 'rgba(').replace(')', ',' + p.deepAlphaA + ')'));
+    host.style.setProperty('--bg-deep-b', deep.replace('rgb(', 'rgba(').replace(')', ',' + p.deepAlphaB + ')'));
+    host.style.setProperty('--fluid-base', String(p.fluidBase));
+    host.style.setProperty('--fluid-gain', String(p.fluidGain));
+    _bgFluidAlpha = p.fluidAlpha;
+    _bgVigMid = p.vigMid;
+    _bgVigEdge = p.vigEdge;
+  }
+
+  // 按当前主题把"原始取色 → 实际用色"重算一遍（换歌、切主题都走这里）
+  function _refreshBgColors() {
+    var p = _bgParams();
+    var raw = (_fluidRaw && _fluidRaw.length) ? _fluidRaw : _defaultFluidPalette();
+    _fluidPalette = raw.slice(0, 5).map(function (str, k) {
+      var c = _parseRgb(str);
+      if (!c) return str;
+      var hv = _toHsv(c[0], c[1], c[2]);
+      // 明度沿索引递减，色团之间才有深浅层次，不会糊成一坨
+      var vv = p.fluidVHigh - (p.fluidVHigh - p.fluidVLow) * Math.min(k, 4) / 4;
+      var ss = Math.min(0.92, Math.max(p.fluidSMin, hv[1] * p.fluidSGain));
+      var out = _toRgb(hv[0], ss, vv);
+      return 'rgb(' + out[0] + ',' + out[1] + ',' + out[2] + ')';
+    });
+    for (var i = 0; i < _fluidBlobs.length; i++) {
+      if (_fluidPalette[i]) _fluidBlobs[i].color = _fluidPalette[i];
+    }
+    _applyBgTone(_fluidPalette[0]);
+    _fluidLastDraw = 0;   // 强制下一帧重绘，切主题不用等
+  }
+
+  function _applyFluidColors(colors) {
+    _fluidInitCanvas();
+    if (!_fluidCtx) return;
+    _fluidRaw = (colors && colors.length) ? colors.slice(0, 5) : null;
+    if (!_fluidRaw) _coverLum = null;   // 无封面：不沿用上一首的亮度
+    _fluidBlobs = [];
+    _refreshBgColors();
+    // 固定的初始布局与相位（换歌只换颜色，不换构图，避免每次布局乱跳）
+    var seeds = [
+      [0.22, 0.24, 0.62, 0.00], [0.80, 0.28, 0.58, 1.7],
+      [0.42, 0.82, 0.60, 3.1], [0.62, 0.52, 0.46, 4.4],
+      [0.10, 0.72, 0.42, 5.6]
+    ];
+    for (var i = 0; i < _fluidPalette.length; i++) {
+      var sd = seeds[i % seeds.length];
+      _fluidBlobs.push({
+        color: _fluidPalette[i],
+        x0: sd[0], y0: sd[1], r0: sd[2],
+        p0: sd[3],
+        p1: sd[3] * 1.7 + 0.6,
+        p2: sd[3] * 0.6 + 2.2,
+      });
+    }
+    _fluidLastDraw = 0;
+    _startFluidLoop();
+  }
+
+  // 切主题时重算配色（封面没变，只是映射参数变了）
+  function _watchBgTheme() {
+    if (typeof MutationObserver === 'undefined') return;
+    var last = document.documentElement.getAttribute('data-theme');
+    var ob = new MutationObserver(function () {
+      var t = document.documentElement.getAttribute('data-theme');
+      if (t === last) return;
+      last = t;
+      try { _refreshBgColors(); } catch (e) { /* 取色不可用时保持原样 */ }
+    });
+    ob.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  }
+
+  function _clearFluid() {
+    _fluidPalette = null;
+    _fluidRaw = null;
+    _fluidBlobs = [];
+    if (_fluidCtx) _fluidCtx.clearRect(0, 0, FLUID_W, FLUID_H);
+  }
+
+  // energy: 0..1（低频相对强度）。AMLL 用 u_volume 缩放整体 UV，这里让半径跟着涨。
+  function _drawFluid(t, energy) {
+    if (!_fluidCtx || !_fluidBlobs.length) return;
+    if (t - _fluidLastDraw < 33) return;          // 30Hz 足够，省 CPU
+    _fluidLastDraw = t;
+
+    var w = FLUID_W, h = FLUID_H;
+    var ctx = _fluidCtx;
+    ctx.clearRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'source-over';
+
+    var s = t / 1000;
+    for (var i = 0; i < _fluidBlobs.length; i++) {
+      var b = _fluidBlobs[i];
+      var x = w * (b.x0 + Math.sin(s / 7.3 + b.p0) * 0.14 + Math.sin(s / 3.1 + b.p1) * 0.05);
+      var y = h * (b.y0 + Math.cos(s / 8.9 + b.p1) * 0.13 + Math.sin(s / 4.2 + b.p2) * 0.05);
+      var r = Math.max(w, h) * b.r0 * (1 + Math.sin(s / 6.1 + b.p2) * 0.12 + energy * 0.22);
+      var g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, b.color);
+      g.addColorStop(0.55, b.color);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.globalAlpha = _bgFluidAlpha;
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+    ctx.globalAlpha = 1;
+
+    // 周边压暗（AMLL mesh.frag 里的 vignette），让颜色往中心聚
+    ctx.globalCompositeOperation = 'multiply';
+    var vg = ctx.createRadialGradient(w * 0.5, h * 0.45, 0, w * 0.5, h * 0.45, Math.max(w, h) * 0.72);
+    vg.addColorStop(0, 'rgb(255,255,255)');
+    vg.addColorStop(0.5, _bgVigMid);
+    vg.addColorStop(1, _bgVigEdge);
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, w, h);
+
+    // 下半部淡出：让 .np-bg-mask 的实色露出来，下部保持"固定遮罩"的稳定观感
+    ctx.globalCompositeOperation = 'destination-out';
+    var fade = ctx.createLinearGradient(0, h * 0.42, 0, h);
+    fade.addColorStop(0, 'rgba(0,0,0,0)');
+    fade.addColorStop(1, 'rgba(0,0,0,0.9)');
+    ctx.fillStyle = fade;
+    ctx.fillRect(0, h * 0.42, w, h * 0.58);
+
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
   function _buildBgBlurSource(url) {
     var cached = _bgBlurSourceCache.get(url);
     if (cached) return Promise.resolve(cached);
@@ -483,7 +911,8 @@ let _lyricLineEls = null;
         try {
           var nw = img.naturalWidth || img.width;
           var nh = img.naturalHeight || img.height;
-          if (!nw || !nh) { resolve({ base: url, surge: url }); return; }
+          var pal = _extractFluidColors(img);
+          if (!nw || !nh) { resolve({ base: url, surge: url, colors: pal }); return; }
           var scale = Math.min(1, BG_BLUR_SOURCE_MAX / Math.max(nw, nh));
           var w = Math.max(1, Math.round(nw * scale));
           var h = Math.max(1, Math.round(nh * scale));
@@ -491,7 +920,7 @@ let _lyricLineEls = null;
           src.width = w;
           src.height = h;
           var sctx = src.getContext('2d');
-          if (!sctx) { resolve({ base: url, surge: url }); return; }
+          if (!sctx) { resolve({ base: url, surge: url, colors: pal }); return; }
           sctx.imageSmoothingEnabled = true;
           sctx.imageSmoothingQuality = 'low';
           sctx.drawImage(img, 0, 0, w, h);
@@ -508,14 +937,16 @@ let _lyricLineEls = null;
           }
           var base = bake('blur(' + BG_BAKE_BLUR + 'px) saturate(1.6) brightness(1.05)');
           var surge = bake('blur(' + BG_BAKE_BLUR + 'px) saturate(2.5) brightness(1.28)');
-          var result = (base && surge) ? { base: base, surge: surge } : { base: url, surge: url };
+          var result = (base && surge)
+            ? { base: base, surge: surge, colors: pal }
+            : { base: url, surge: url, colors: pal };
           if (_bgBlurSourceCache.size >= BG_BLUR_CACHE_LIMIT) {
             _bgBlurSourceCache.delete(_bgBlurSourceCache.keys().next().value);
           }
           _bgBlurSourceCache.set(url, result);
           resolve(result);
         } catch (e) {
-          resolve({ base: url, surge: url });
+          resolve({ base: url, surge: url, colors: null });
         }
       };
       img.onerror = function () { resolve(null); };
@@ -557,6 +988,7 @@ let _lyricLineEls = null;
       _buildBgBlurSource(url).then(function (bgUrls) {
         if (gen !== _bgGen) return;
         if (bgUrls) {
+          if (bgUrls.colors) _applyFluidColors(bgUrls.colors);
           next.style.setProperty('--cover-image-base', 'url("' + bgUrls.base + '")');
           next.style.setProperty('--cover-image-surge', 'url("' + bgUrls.surge + '")');
           next.style.removeProperty('--cover-color');
@@ -564,6 +996,7 @@ let _lyricLineEls = null;
           next.style.removeProperty('--cover-image-base');
           next.style.removeProperty('--cover-image-surge');
           next.style.setProperty('--cover-color', fallbackColor || 'var(--md-surface-container-low)');
+          _applyFluidColors(null);   // 无封面：流体退回主题色，不留上一首的颜色
         }
         reveal();
       });
@@ -862,37 +1295,11 @@ let _lyricLineEls = null;
       els.lyricsWrap.addEventListener('mousedown', _onLyricsPress);
       els.lyricsWrap.addEventListener('touchstart', _onLyricsPress, { passive: true });
       els.lyricsWrap.addEventListener('click', _onLyricsClick);
+      // 用户自己想滚动（滚轮 / 触摸拖动）时立刻停掉自动滚动，否则 raf 每帧覆写
+      // scrollTop，手感和位置都会被抢回去。
+      els.lyricsWrap.addEventListener('wheel', _cancelLyricsScrollAnim, { passive: true });
+      els.lyricsWrap.addEventListener('touchmove', _cancelLyricsScrollAnim, { passive: true });
     }
-    if (els.lyricsSearchClose) {
-      els.lyricsSearchClose.addEventListener('click', function () {
-        _closeLyricsSearch();
-      });
-    }
-    if (els.lyricsSearchOverlay) {
-      els.lyricsSearchOverlay.addEventListener('click', function (e) {
-        if (e.target === els.lyricsSearchOverlay) {
-          _closeLyricsSearch();
-        }
-      });
-    }
-    if (els.lyricsSearchInput) {
-      els.lyricsSearchInput.addEventListener('input', function () {
-        if (lyricsSearchDebounce) clearTimeout(lyricsSearchDebounce);
-        lyricsSearchDebounce = setTimeout(function () {
-          _performLyricsSearch(els.lyricsSearchInput.value.trim());
-        }, 400);
-      });
-      els.lyricsSearchInput.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          if (lyricsSearchDebounce) clearTimeout(lyricsSearchDebounce);
-          _performLyricsSearch(els.lyricsSearchInput.value.trim());
-        } else if (e.key === 'Escape') {
-          _closeLyricsSearch();
-        }
-      });
-    }
-
     if (els.lyricsSettingsBtn) {
       els.lyricsSettingsBtn.addEventListener('click', function () {
         if (els.lyricsSettingsPopup && els.lyricsSettingsPopup.style.display !== 'none') {
@@ -2333,7 +2740,7 @@ let _lyricLineEls = null;
     var pane = document.getElementById('now-playing-pane');
     var factor = (pane && pane.classList.contains('fullscreen')) ? 0.23 : 0.22;
     var target = il.el.offsetTop - els.lyricsWrap.clientHeight * factor + il.el.clientHeight / 2;
-    App.utils.animateLyricsScroll(els.lyricsWrap, target, il.nextStart - il.start);
+    App.utils.animateLyricsScroll(els.lyricsWrap, target, { instant: _lyricsIsDiscontinuousJump(target) });
   }
 
   function _ilEaseOutExpo(p) {
@@ -2416,15 +2823,18 @@ let _lyricLineEls = null;
     var pane = document.getElementById('now-playing-pane');
     var factor = (pane && pane.classList.contains('fullscreen')) ? 0.23 : 0.22;
     var lineTop = typeof lineTopOverride === 'number' ? lineTopOverride : lineEl.offsetTop;
+    // 目标位置取真实布局（offsetTop），不是"索引 × 固定行高" —— 换行/多行/不同间距都算得准。
+    // 每次切换只测一次，动画期间目标固定不变，不会因重新测量而抖动。
     var target = lineTop - els.lyricsWrap.clientHeight * factor + lineEl.clientHeight / 2;
-    var lineGapMs = null;
-    if (lineIdx >= 0 && lyricsData[lineIdx]) {
-      var fromIdx = prevIdx >= 0 && lyricsData[prevIdx] ? prevIdx : lineIdx - 1;
-      if (fromIdx >= 0 && lyricsData[fromIdx]) {
-        lineGapMs = Math.abs(lyricsData[lineIdx].time - lyricsData[fromIdx].time);
-      }
-    }
-    App.utils.animateLyricsScroll(els.lyricsWrap, target, lineGapMs);
+    App.utils.animateLyricsScroll(els.lyricsWrap, target, { instant: _lyricsIsDiscontinuousJump(target) });
+  }
+
+  // Seek / 跳转 / 手动滚远后重新对齐：位移超过一屏就属于"非连续定位"，
+  // 直接落点，不套普通换行动画（否则会变成一段扫过几十行的长距离滚动）。
+  function _lyricsIsDiscontinuousJump(target) {
+    var h = els.lyricsWrap.clientHeight;
+    if (!h) return false;
+    return Math.abs(target - els.lyricsWrap.scrollTop) > h * 1.2;
   }
 
   function _schedulePostCollapseScroll(lineEl, lineIdx, prevIdx) {
@@ -3034,7 +3444,12 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
   }
 
   let _lyricPress = null;
+  function _cancelLyricsScrollAnim() {
+    if (els.lyricsWrap) App.utils.cancelLyricsScroll(els.lyricsWrap);
+  }
   function _onLyricsPress(e) {
+    // 按下即冻结：否则待点击的那一行会在动画里继续移动，click 落点会漂到别的行上。
+    _cancelLyricsScrollAnim();
     _lyricPress = { x: e.clientX, y: e.clientY };
   }
   function _formatSeekTarget(lyricMs) {
@@ -3384,7 +3799,7 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
         _applyContentModePanels(true);
       });
     } else {
-      const activeTab = document.querySelector('.np-pivot-tab.active');
+      const activeTab = _activePivotTab();
       switchTab(activeTab ? activeTab.getAttribute('data-tab') : 'info', false);
       _stopBeatLoop();
       requestAnimationFrame(function () {
@@ -3483,6 +3898,24 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
     _expandTimers = [];
   }
 
+  // 动画真正跑完再撤动画类：固定 delay 在主线程忙/掉帧时会中途掐断动画，
+  // transform/opacity 从中间值直接跳到终态，看起来就是"闪一下"。
+  // 用 animationend 收尾，另留兜底 timeout（prefers-reduced-motion 下动画被关掉，不派发事件）。
+  function _afterPaneAnimation(pane, name, fallbackMs, done) {
+    var finished = false;
+    function finish() {
+      if (finished) return;
+      finished = true;
+      pane.removeEventListener('animationend', onEnd);
+      done();
+    }
+    function onEnd(e) {
+      if (e.target === pane && e.animationName === name) finish();
+    }
+    pane.addEventListener('animationend', onEnd);
+    _expandTimers.push(setTimeout(finish, fallbackMs));
+  }
+
   function _toggleCollapse() {
     const pane = document.getElementById('now-playing-pane');
     if (!pane) return;
@@ -3499,7 +3932,7 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
 if (pane.classList.contains('fullscreen')) {
 pane.classList.remove('fullscreen');
 document.body.classList.remove('np-fullscreen');
-const activeTab = document.querySelector('.np-pivot-tab.active');
+const activeTab = _activePivotTab();
 switchTab(activeTab ? activeTab.getAttribute('data-tab') : 'info', false);
 if (_videoBg) _videoBg.onFullscreenChange();
 }
@@ -3550,13 +3983,13 @@ if (_videoBg) _videoBg.onFullscreenChange();
         if (mp && mp.classList.contains('mini-leaving')) {
           mp.classList.remove('mini-leaving');
         }
-      }, 120));
 
-      _expandTimers.push(setTimeout(function () {
-        document.body.classList.remove('player-expanding');
-        pane.classList.remove('expanding');
-        _resyncLyricsScroll();
-      }, 340));
+        _afterPaneAnimation(pane, 'np-slide-in', 700, function () {
+          document.body.classList.remove('player-expanding');
+          pane.classList.remove('expanding');
+          _resyncLyricsScroll();
+        });
+      }, 120));
     } else {
       document.body.classList.add('player-collapsing');
       pane.classList.add('collapsing');
@@ -3670,7 +4103,25 @@ if (_videoBg) _videoBg.onFullscreenChange();
     _updateLyrics(_lastKnownPositionMs > 0 ? _lastKnownPositionMs : 0);
   }
 
+  // 🔴 不能用 document.querySelector('.np-pivot-tab.active')：#content-pane 在 DOM 里排在
+  // #now-playing-pane 之前，艺人页 / 添加流媒体库对话框里的 .np-pivot-tab 会先被命中。
+  // 于是进全屏时读到的是艺人页的 data-tab="songs"，switchTab 找不到同名标签 →
+  // 本组标签全部掉 active、三个面板全部掉 active —— 表现为「右栏一片空白 + 标签都没选中」。
+  function _activePivotTab() {
+    for (var i = 0; i < els.pivotTabs.length; i++) {
+      if (els.pivotTabs[i].classList.contains('active')) return els.pivotTabs[i];
+    }
+    return null;
+  }
+
   function switchTab(tabName, forceFullscreen) {
+    // 只接受本组真实存在的标签，其余（脏值 / 别处标签名）一律回落到音乐信息，
+    // 保证任何一条路径都不会把三块面板全部关掉。
+    var known = false;
+    els.pivotTabs.forEach(function (tab) {
+      if (tab.getAttribute('data-tab') === tabName) known = true;
+    });
+    if (!known) tabName = 'info';
     els.pivotTabs.forEach(function (tab) {
       var isActive = tab.getAttribute('data-tab') === tabName;
       tab.classList.toggle('active', isActive);
@@ -3695,7 +4146,7 @@ if (_videoBg) _videoBg.onFullscreenChange();
 
   function updatePivotIndicator() {
     if (!els.pivotIndicator) return;
-    var activeTab = document.querySelector('.np-pivot-tab.active');
+    var activeTab = _activePivotTab();
     if (!activeTab) return;
     var parentRect = activeTab.parentElement.getBoundingClientRect();
     var tabRect = activeTab.getBoundingClientRect();
@@ -3787,7 +4238,7 @@ if (_videoBg) _videoBg.onFullscreenChange();
     } else if (_npContentMode === 'lyrics') {
       switchTab('lyrics', true);
     } else {
-      var activeTab = document.querySelector('.np-pivot-tab.active');
+      var activeTab = _activePivotTab();
       var tabName = activeTab ? activeTab.getAttribute('data-tab') : 'lyrics';
       switchTab(tabName === 'info' ? 'lyrics' : tabName, true);
     }
@@ -3929,55 +4380,124 @@ function _updateLyricsSourceBadge() {
     }
   }
 
+  // ── 歌词搜索：独立 dialog（挂 body，不进播放面板） ──────────────
+  // 播放面板是 overflow:hidden + clip-path 的容器，浮层留在里面会被裁掉；
+  // 结果列表统一走其它场景那套 .md-seglist + .settings-row 的 M3E 列表。
+  var _lyricsSearchEls = null;   // { overlay, input, list, onKeydown }
+
+  function _buildLyricsSearchDialog() {
+    var t = function (k) { return App.i18n.t(k); };
+    var esc = function (v) { return App.utils.esc(String(v == null ? '' : v)); };
+
+    var overlay = document.createElement('div');
+    overlay.className = 'cmd-dialog-overlay np-lyrics-search-overlay';
+    overlay.id = 'np-lyrics-search-overlay';
+    overlay.innerHTML =
+      '<div class="cmd-dialog np-lyrics-search-dialog" role="dialog" aria-modal="true">' +
+        '<div class="cmd-dialog-title">' + esc(t('np.searchLyrics')) + '</div>' +
+        '<div class="mf-dialog-search">' +
+          '<span class="material-symbols-rounded">search</span>' +
+          '<input type="text" id="np-lyrics-search-input" autocomplete="off" spellcheck="false"' +
+                 ' placeholder="' + esc(t('np.searchPlaceholder')) + '">' +
+        '</div>' +
+        '<div class="np-lyrics-search-list" id="np-lyrics-search-results"></div>' +
+        '<div class="cmd-dialog-actions">' +
+          '<button type="button" class="cmd-dialog-btn" id="np-lyrics-search-cancel">' + esc(t('common.close')) + '</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
   function _openLyricsSearch() {
-    if (!els.lyricsSearchOverlay) return;
+    if (_lyricsSearchEls) return;
     if (els.lyricsSettingsPopup && els.lyricsSettingsPopup.style.display !== 'none') {
       _closeLyricsSettings();
     }
-    els.lyricsSearchOverlay.style.display = '';
-    requestAnimationFrame(function () {
-      els.lyricsSearchOverlay.classList.add('open');
+
+    var overlay = _buildLyricsSearchDialog();
+    var input = overlay.querySelector('#np-lyrics-search-input');
+    var list = overlay.querySelector('#np-lyrics-search-results');
+
+    function close() { _closeLyricsSearch(); }
+
+    overlay.querySelector('#np-lyrics-search-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) close();
     });
+
+    input.addEventListener('input', function () {
+      if (lyricsSearchDebounce) clearTimeout(lyricsSearchDebounce);
+      lyricsSearchDebounce = setTimeout(function () {
+        _performLyricsSearch(input.value.trim());
+      }, 400);
+    });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (lyricsSearchDebounce) clearTimeout(lyricsSearchDebounce);
+        _performLyricsSearch(input.value.trim());
+      } else if (e.key === 'Escape') {
+        e.stopPropagation();
+        close();
+      }
+    });
+
+    // 捕获阶段拦 ESC：全局那份会顺手退出剧场模式，别让它跟着响应
+    var onKeydown = function (e) {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        close();
+      }
+    };
+    document.addEventListener('keydown', onKeydown, true);
+
+    _lyricsSearchEls = { overlay: overlay, input: input, list: list, onKeydown: onKeydown };
+
+    requestAnimationFrame(function () { overlay.classList.add('open'); });
+
     var track = App.state.currentTrack;
-    if (track) {
-      var query = (track.title || '') + ' ' + (track.artist || '');
-      els.lyricsSearchInput.value = query.trim();
-    } else {
-      els.lyricsSearchInput.value = '';
-    }
-    els.lyricsSearchInput.focus();
-    els.lyricsSearchInput.select();
-    if (els.lyricsSearchInput.value) {
-      _performLyricsSearch(els.lyricsSearchInput.value.trim());
-    }
+    var query = track ? ((track.title || '') + ' ' + (track.artist || '')).trim() : '';
+    input.value = query;
+    // 等开窗动效起帧再聚焦，否则 select() 会被 scale 过渡吃掉
+    setTimeout(function () {
+      if (!_lyricsSearchEls) return;
+      input.focus();
+      input.select();
+    }, 80);
+    if (query) _performLyricsSearch(query);
   }
 
   function _closeLyricsSearch() {
-    if (!els.lyricsSearchOverlay) return;
-    els.lyricsSearchOverlay.classList.remove('open');
-    setTimeout(function () {
-      els.lyricsSearchOverlay.style.display = 'none';
-      if (els.lyricsSearchResults) els.lyricsSearchResults.innerHTML = '';
-      if (els.lyricsSearchInput) els.lyricsSearchInput.value = '';
-    }, 250);
+    if (!_lyricsSearchEls) return;
+    var ref = _lyricsSearchEls;
+    _lyricsSearchEls = null;
     lyricsSearchGen++;
+    if (lyricsSearchDebounce) {
+      clearTimeout(lyricsSearchDebounce);
+      lyricsSearchDebounce = null;
+    }
+    if (ref.onKeydown) document.removeEventListener('keydown', ref.onKeydown, true);
+    ref.overlay.classList.remove('open');
+    setTimeout(function () { ref.overlay.remove(); }, 200);
   }
 
   function _showSearchStatus(type, message) {
-    if (!els.lyricsSearchResults) return;
+    if (!_lyricsSearchEls) return;
     var icon = type === 'loading' ? 'progress_activity' :
                type === 'error' ? 'error' :
                type === 'empty' ? 'search_off' : 'info';
-    els.lyricsSearchResults.innerHTML =
-      '<div class="np-lyrics-search-status ' + type + '">' +
+    _lyricsSearchEls.list.innerHTML =
+      '<div class="np-lyrics-search-state ' + type + '">' +
         '<span class="material-symbols-rounded">' + icon + '</span>' +
-        '<p>' + App.utils.esc(message) + '</p>' +
+        '<span>' + App.utils.esc(message) + '</span>' +
       '</div>';
   }
 
   function _performLyricsSearch(query) {
+    if (!_lyricsSearchEls) return;
     if (!query) {
-      if (els.lyricsSearchResults) els.lyricsSearchResults.innerHTML = '';
+      _lyricsSearchEls.list.innerHTML = '';
       return;
     }
     var gen = ++lyricsSearchGen;
@@ -4003,32 +4523,36 @@ function _updateLyricsSourceBadge() {
   }
 
   function _renderSearchResults(songs) {
-    var frag = document.createDocumentFragment();
+    if (!_lyricsSearchEls) return;
+    var listEl = document.createElement('div');
+    listEl.className = 'md-seglist';
+
     for (var i = 0; i < songs.length; i++) {
       var song = songs[i];
-      var btn = document.createElement('button');
-      btn.className = 'np-lyrics-result';
-      btn.innerHTML =
-        '<div class="np-lyrics-result-icon">' +
-          '<span class="material-symbols-rounded">music_note</span>' +
-        '</div>' +
-        '<div class="np-lyrics-result-info">' +
-          '<div class="np-lyrics-result-name">' + App.utils.esc(song.name || '') + '</div>' +
-          '<div class="np-lyrics-result-meta">' + App.utils.esc(song.artist || '') +
-            (song.album ? ' · ' + App.utils.esc(song.album) : '') + '</div>' +
-        '</div>' +
-        '<div class="np-lyrics-result-arrow">' +
-          '<span class="material-symbols-rounded">arrow_forward</span>' +
-        '</div>';
+      var sub = App.utils.esc(song.artist || '');
+      if (song.album) sub += (sub ? ' · ' : '') + App.utils.esc(song.album);
+
+      var row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'settings-row md-row-btn';
+      row.innerHTML =
+        '<span class="settings-row-body">' +
+          '<span class="settings-row-label">' + App.utils.esc(song.name || '') + '</span>' +
+          (sub ? '<span class="settings-row-sub">' + sub + '</span>' : '') +
+        '</span>' +
+        '<span class="settings-row-trailing">' +
+          '<span class="material-symbols-rounded">chevron_right</span>' +
+        '</span>';
       (function (songId) {
-        btn.addEventListener('click', function () {
+        row.addEventListener('click', function () {
           _fetchAndApplyLyrics(songId);
         });
       })(song.id);
-      frag.appendChild(btn);
+      listEl.appendChild(row);
     }
-    els.lyricsSearchResults.innerHTML = '';
-    els.lyricsSearchResults.appendChild(frag);
+
+    _lyricsSearchEls.list.innerHTML = '';
+    _lyricsSearchEls.list.appendChild(listEl);
   }
 
   function _fetchAndApplyLyrics(songId) {
@@ -4260,4 +4784,13 @@ function _updateLyricsSourceBadge() {
     }
   };
 
+
+  // 启动即初始化一次流体（不依赖播放流程；有封面时随后会被真实取色覆盖）
+  setTimeout(function () {
+    try {
+      if (!_fluidPalette) _applyFluidColors(null);
+      _startFluidLoop();
+      _watchBgTheme();   // 切明/暗主题时重算整套背景配色
+    } catch (e) { /* 取色/绘制不可用时静默降级为纯底色 */ }
+  }, 0);
 })();

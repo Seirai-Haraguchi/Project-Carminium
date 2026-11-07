@@ -125,6 +125,8 @@
 
     container.innerHTML = `
       <div class="ym-page">
+        <!-- 问候回到全局顶栏配方：.page-sticky-header（sticky + 半透明底色 + blur）。
+             搜索框留在它外面，跟着内容一起滚，不占吸顶高度。 -->
         <div class="page-sticky-header">
           <div class="page-header">
             <div class="page-header-left">
@@ -132,6 +134,17 @@
               <p class="page-subtitle" id="ym-subtitle"></p>
             </div>
           </div>
+        </div>
+
+        <!-- 搜索直接复用全局 .search-bar（与所有音乐页同一套配方，自带 28px 横向 margin）。
+             回车进入搜索页并把查询带过去，见 _initSearch()。 -->
+        <div class="search-bar">
+          <span class="material-symbols-rounded">search</span>
+          <input type="text" id="ym-search" autocomplete="off" spellcheck="false"
+                 enterkeyhint="search"
+                 data-i18n-placeholder="search.placeholder"
+                 placeholder="搜索音乐、专辑、艺术家或歌单…"
+                 data-i18n-aria-label="common.search" aria-label="搜索">
         </div>
 
         <!-- 区块标题**不复用任何私有样式** —— 直接用全局
@@ -199,6 +212,7 @@
     ['ym-mix-rail', 'ym-explore-rail', 'ym-recommend-rail'].forEach(_initRail);
 
     _renderGreeting();
+    _initSearch();
     _loadData();
   };
 
@@ -234,6 +248,21 @@
 
     if (_greetingBound) return;
     _greetingBound = true;
+  }
+
+  /* 主页搜索 = 全局搜索入口：回车跳到独立搜索页（search.render(params.q)），
+     在那一页里再分音乐 / 专辑 / 艺术家 / 歌单。主页不做内联结果，
+     免得再长出一套列表。 */
+  function _initSearch() {
+    var input = document.getElementById('ym-search');
+    if (!input) return;
+    input.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      var q = input.value.trim();
+      if (!q) return;
+      input.blur();
+      App.navigate('search', { q: q });
+    });
   }
 
   function _railHTML(railId) {

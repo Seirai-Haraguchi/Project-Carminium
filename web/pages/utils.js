@@ -1179,45 +1179,136 @@
   };
 
 
-  var _lyricsScrollRafs = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
+  // ══ 歌词纵向滚动控制器 ══════════════════════════════════════════════
+  // 一个容器同一时刻只允许一条 rAF 写 scrollTop（WeakMap 里存的那条）。
+  //
+  // 曲线族（三次 Hermite，端点速度 = alpha·D/T 与 0）：
+  //     p(t) = (3-2t)t² + alpha·t(1-t)²
+  //     v(t) = [6t(1-t) + alpha(1-t)(1-3t)]·D/T
+  //   · alpha = 3 → p(t) = 1-(1-t)³，即 easeOutCubic：起手即峰值速度、单调减速、终点速度 0。
+  //   · alpha = 2 → p(t) = 2t-t²，初速为峰值的 2/3，仍是纯减速。
+  //   · alpha ∈ [2,3] 全族都严格单调、无过冲（f' 在 (0,1) 无极值点），所以永远不会回弹。
+  //   冷启动一律 alpha = 3；只有"打断一次正在跑的动画"才降到 [2,3)，用来把初速度接上。
+  //
+  // 时长只看"还要走多远"：T = clamp(Tmin + k·|D|, Tmin, Tmax)。
+  // 不用歌词时间差定速 —— 那会让所有换行共享同一个速度，长跳转被压成暴力甩动。
+  //
+  // 打断：新目标到来时读"当前渲染位置"当起点，t0 接在上一帧的时刻上（不丢一帧位移），
+  // 并根据旧动画此刻的速度决定 alpha / T，使位置与速度都连续。
+  //
+  // 帧循环内零布局读取（只写 scrollTop，走合成器滚动偏移），不触碰任何其它歌词状态。
+  var LYRICS_SCROLL_MIN_MS = 220;      // 冷启动最短时长：短距离不拖沓
+  var LYRICS_SCROLL_MAX_MS = 480;      // 最长时长：超长位移不失控
+  var LYRICS_SCROLL_MS_PER_PX = 0.18;  // 距离系数（ms/dp，此处 dp = CSS px）
+  var LYRICS_SCROLL_CARRY_MIN_MS = 90; // 带惯性接续时允许短于此前的下限（否则必然速度陡降）
 
-  utils.animateLyricsScroll = function (wrapEl, targetTop, lineGapMs) {
+  var _lyricsScroll = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
+
+  function _lyricsCurve(t, alpha) {
+    var u = 1 - t, t2 = t * t;
+    return (3 - 2 * t) * t2 + alpha * t * u * u;
+  }
+
+  // dp/dt（未乘 D/T），用于时刻反查"当前速度"
+  function _lyricsSlope(t, alpha) {
+    var u = 1 - t;
+    return 6 * t * u + alpha * u * (1 - 3 * t);
+  }
+
+  function _lyricsBaseDuration(absDist) {
+    var d = LYRICS_SCROLL_MIN_MS + absDist * LYRICS_SCROLL_MS_PER_PX;
+    return Math.max(LYRICS_SCROLL_MIN_MS, Math.min(LYRICS_SCROLL_MAX_MS, d));
+  }
+
+  // 上一次动画在"上次渲染帧"那一刻的瞬时速度（px/ms，带符号）。曲线是解析的，不存帧历史。
+  function _lyricsLiveVelocity(st) {
+    if (!st || !st.lastT) return 0;
+    var t = (st.lastT - st.t0) / st.dur;
+    if (t >= 1) return 0;
+    if (t <= 0) return st.dist * st.alpha / st.dur;
+    return st.dist * _lyricsSlope(t, st.alpha) / st.dur;
+  }
+
+  // opts.instant === true 时直接定位（Seek / 非连续跳转用），不参与动画。
+  utils.animateLyricsScroll = function (wrapEl, targetTop, opts) {
     if (!wrapEl) return;
-    utils.cancelLyricsScroll(wrapEl);
 
+    var now = performance.now();
+    var prev = _lyricsScroll ? _lyricsScroll.get(wrapEl) : null;
+    var carryV = _lyricsLiveVelocity(prev);        // 旧动画上次渲染时的速度
+
+    // 起点＝上一次真正写进 DOM 的位置；t0 也接在那一帧的时刻上，
+    // 这样"上一帧 → 现在"的空档会被算进新动画，不丢位移、不产生步进感。
     var start = wrapEl.scrollTop;
-    var dist = targetTop - start;
-    if (Math.abs(dist) < 2) { wrapEl.scrollTop = targetTop; return; }
-
-    var absDist = Math.abs(dist);
-    var dur = Math.max(50, Math.min(175, 50 + absDist * 0.25));
-    if (typeof lineGapMs === 'number' && isFinite(lineGapMs)) {
-      dur = Math.max(50, Math.min(175, 50 + Math.max(0, lineGapMs) * 0.1));
+    var t0 = now;
+    if (prev && prev.lastT && now - prev.lastT >= 0 && now - prev.lastT <= 40) {
+      t0 = prev.lastT;
     }
-    var c1 = absDist > 300 ? 0.60 : 0.78;
-    var c3 = c1 + 1;
-    var t0 = performance.now();
 
-    var frame = function (now) {
-      var t = Math.min((now - t0) / dur, 1);
-      var e = 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
-      wrapEl.scrollTop = start + dist * e;
-      if (t < 1) {
-        var raf = requestAnimationFrame(frame);
-        if (_lyricsScrollRafs) _lyricsScrollRafs.set(wrapEl, raf);
-      } else if (_lyricsScrollRafs) {
-        _lyricsScrollRafs.delete(wrapEl);
+    utils.cancelLyricsScroll(wrapEl);              // 旧动画交出写入权
+
+    var dist = targetTop - start;
+    var absDist = Math.abs(dist);
+    var reduced = window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (absDist < 2 || reduced || (opts && opts.instant)) {
+      wrapEl.scrollTop = targetTop;
+      return;
+    }
+
+    var dur = _lyricsBaseDuration(absDist);
+    var alpha = 3;
+
+    // 同向惯性接续：让新曲线的初速度等于旧动画此刻的速度。
+    //   raw = T·v / D 就是"若保持 T 不变时的归一化初速"。
+    //   raw ≥ 3：来速太高 → 缩短 T 把初速压到峰值（alpha 仍为 3，形状最像 easeOutCubic）。
+    //   2 ≤ raw < 3：直接用 alpha = raw，速度完全接上。
+    //   raw < 2：来速太低 → alpha 取 2，只接一部分（再低就必须拉长时长，会变成拖沓/追不上新目标）。
+    if (carryV * dist > 0 && Math.abs(carryV) > 0.001) {
+      var raw = dur * Math.abs(carryV) / absDist;
+      if (raw >= 3) {
+        var matchDur = 3 * absDist / Math.abs(carryV);
+        dur = Math.max(LYRICS_SCROLL_CARRY_MIN_MS, matchDur);
+      } else {
+        alpha = Math.max(2, raw);
       }
+    }
+
+    var st = { t0: t0, dur: dur, start: start, dist: dist, target: targetTop,
+               alpha: alpha, raf: 0, lastT: 0 };
+
+    var frame = function (nowFrame) {
+      var t = (nowFrame - st.t0) / st.dur;   // 真实时间驱动，与刷新率无关
+      st.lastT = nowFrame;
+      if (t >= 1) {
+        // 终态显式落点：取整/掉帧误差都被这一步吃掉，结束后不需要任何二次校正。
+        wrapEl.scrollTop = st.target;
+        if (_lyricsScroll) _lyricsScroll.delete(wrapEl);
+        return;
+      }
+      if (t < 0) t = 0;                      // rAF 时间戳可能早于调度时刻
+      wrapEl.scrollTop = st.start + st.dist * _lyricsCurve(t, st.alpha);
+      st.raf = requestAnimationFrame(frame);
     };
-    var first = requestAnimationFrame(frame);
-    if (_lyricsScrollRafs) _lyricsScrollRafs.set(wrapEl, first);
+    st.raf = requestAnimationFrame(frame);
+    if (_lyricsScroll) _lyricsScroll.set(wrapEl, st);
   };
 
   utils.cancelLyricsScroll = function (wrapEl) {
-    if (!wrapEl || !_lyricsScrollRafs) return;
-    var prev = _lyricsScrollRafs.get(wrapEl);
-    if (prev) cancelAnimationFrame(prev);
-    _lyricsScrollRafs.delete(wrapEl);
+    if (!wrapEl || !_lyricsScroll) return;
+    var st = _lyricsScroll.get(wrapEl);
+    if (!st) return;
+    if (st.raf) cancelAnimationFrame(st.raf);
+    _lyricsScroll.delete(wrapEl);
+  };
+
+  // 探针/自检用：读出当前动画的曲线参数（不在动画里时返回 null）
+  utils.lyricsScrollState = function (wrapEl) {
+    var st = _lyricsScroll && wrapEl ? _lyricsScroll.get(wrapEl) : null;
+    if (!st) return null;
+    return { t0: st.t0, dur: st.dur, alpha: st.alpha, start: st.start,
+             dist: st.dist, target: st.target, lastT: st.lastT };
   };
 
   // 逐行「上浮 5px」改用 WAAPI 直接驱动 transform：

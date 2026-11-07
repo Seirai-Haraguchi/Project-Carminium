@@ -281,8 +281,11 @@ owner_email: params.owner_email || null,
     dlg.className = 'cmd-dialog';
     dlg.innerHTML = `
       <div class="cmd-dialog-title">${App.i18n.t('playlist.renameTitle')}</div>
-      <div class="cmd-dialog-body" style="padding:0 24px 12px;">
-        <input type="text" id="rename-input" class="settings-font-input" style="width:100%;" value="${App.utils.esc(playlist.name)}">
+      <div class="cmd-dialog-body">
+        <div class="cmd-text-field">
+          <input type="text" id="rename-input" class="cmd-text-field__input" placeholder=" " autocomplete="off" value="${App.utils.esc(playlist.name)}">
+          <label class="cmd-text-field__label">${App.i18n.t('cm.playlistName')}</label>
+        </div>
       </div>
       <div class="cmd-dialog-actions">
         <button class="cmd-dialog-btn cmd-dialog-btn--cancel">${App.i18n.t('common.cancel')}</button>
@@ -294,8 +297,8 @@ owner_email: params.owner_email || null,
     requestAnimationFrame(() => overlay.classList.add('open'));
 
     const input = dlg.querySelector('#rename-input');
-    input.focus();
-    input.select();
+    // 等开窗起帧再聚焦，否则浮动 label 的位移会跟着 focus 一起抖
+    setTimeout(() => { input.focus(); input.select(); }, 50);
 
     let done = false;
     function close() {

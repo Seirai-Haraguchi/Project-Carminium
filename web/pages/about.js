@@ -88,6 +88,13 @@
       '<div class="settings-group">' +
         '<div class="settings-group-header" data-i18n="about.actions">操作</div>' +
         '<div class="md-seglist">' +
+          '<div class="settings-row about-action-row" id="about-check-update">' +
+            '<div class="settings-row-body">' +
+              '<p class="settings-row-label" data-i18n="about.checkUpdate">检查更新</p>' +
+              '<p class="settings-row-sub about-update-sub" id="about-update-sub" hidden></p>' +
+            '</div>' +
+            '<div class="settings-row-trailing">' + CHEVRON_SVG + '</div>' +
+          '</div>' +
           '<div class="settings-row about-action-row" id="about-release">' +
             '<div class="settings-row-body"><p class="settings-row-label" data-i18n="about.viewRelease">查看 Release</p></div>' +
             '<div class="settings-row-trailing">' + CHEVRON_SVG + '</div>' +
@@ -135,6 +142,8 @@
       });
     }
 
+    _bindUpdateRow(container);
+
     var feedback = container.querySelector('#about-feedback');
     if (feedback) {
       feedback.addEventListener('click', function () {
@@ -168,6 +177,8 @@
         window.open(GITHUB_RELEASES, '_blank');
       });
     }
+
+    _bindUpdateRow(container);
 
     var feedback = container.querySelector('#about-feedback');
     if (feedback) {
@@ -205,6 +216,221 @@
     });
   }
 
+  // ── 检查更新 ────────────────────────────────────────────────
+  var _updateChecking = false;
+  var _lastUpdateResult = null;
+
+  function _t(key, params) {
+    if (App.i18n && App.i18n.t) {
+      var s = App.i18n.t(key, params);
+      if (s != null) return s;
+    }
+    return key;
+  }
+
+  function _setUpdateStatus(sub, text, isAvailable) {
+    if (!sub) return;
+    if (!text) {
+      sub.hidden = true;
+      sub.textContent = '';
+      sub.classList.remove('is-available');
+      return;
+    }
+    sub.hidden = false;
+    sub.textContent = text;
+    sub.classList.toggle('is-available', !!isAvailable);
+  }
+
+  function _paintUpdateStatus(sub) {
+    var res = _lastUpdateResult;
+    if (!res || !sub) return;
+    if (res.hasUpdate) {
+      _setUpdateStatus(sub, _t('about.update.available', { version: res.latest }), true);
+    } else if (res.ok) {
+      _setUpdateStatus(sub, _t('about.update.upToDate'), false);
+    }
+  }
+
+  function _bindUpdateRow(container) {
+    var row = container.querySelector('#about-check-update');
+    if (!row) return;
+    var sub = container.querySelector('#about-update-sub');
+
+    // 从设置页切来切去时保留上次结果，别让状态凭空消失
+    if (_updateChecking) {
+      _setUpdateStatus(sub, _t('about.update.checking'), false);
+      row.classList.add('is-busy');
+    } else {
+      _paintUpdateStatus(sub);
+    }
+
+    row.addEventListener('click', function () {
+      _runUpdateCheck(row, sub);
+    });
+  }
+
+  function _runUpdateCheck(row, sub) {
+    if (_updateChecking) return;
+    if (!App.utils || !App.utils.call) return;
+
+    _updateChecking = true;
+    row.classList.add('is-busy');
+    _setUpdateStatus(sub, _t('about.update.checking'), false);
+
+    App.utils.call('check_for_update').then(function (raw) {
+      var res = null;
+      try { res = JSON.parse(raw); } catch (e) { res = null; }
+      if (!res || typeof res !== 'object') res = { ok: false, error: 'parse' };
+      return res;
+    }, function () {
+      return { ok: false, error: 'network' };
+    }).then(function (res) {
+      _updateChecking = false;
+
+      // 检查期间可能已经重新渲染过（切页/切语言），这里一律认当前挂着的那个节点，
+      // 别把结果画到已经被替换掉的旧 sub 上。
+      var liveRow = document.getElementById('about-check-update');
+      var liveSub = document.getElementById('about-update-sub');
+      if (liveRow) liveRow.classList.remove('is-busy');
+
+      if (res.ok) {
+        _lastUpdateResult = res;
+        if (res.hasUpdate) {
+          _setUpdateStatus(liveSub, _t('about.update.available', { version: res.latest }), true);
+          if (liveSub && liveSub.isConnected) _showUpdateDialog(res);
+        } else {
+          _setUpdateStatus(liveSub, _t('about.update.upToDate'), false);
+          if (liveSub && liveSub.isConnected && App.utils && App.utils.toast) {
+            App.utils.toast(_t('about.update.upToDateToast', { version: res.current }));
+          }
+        }
+        return;
+      }
+
+      if (res.error === 'no_release') {
+        _setUpdateStatus(liveSub, _t('about.update.noRelease'), false);
+        return;
+      }
+      _setUpdateStatus(liveSub, _t('about.update.failed'), false);
+      if (liveSub && liveSub.isConnected && App.utils && App.utils.toast) {
+        App.utils.toast(_t('about.update.failedToast'));
+      }
+    });
+  }
+
+  function _formatUpdateDate(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    try {
+      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    } catch (e) {
+      return d.toISOString().slice(0, 10);
+    }
+  }
+
+  function _metaLine(label, value) {
+    var row = document.createElement('div');
+    row.className = 'about-update-meta';
+    var l = document.createElement('span');
+    l.className = 'about-update-meta-label';
+    l.textContent = label;
+    var v = document.createElement('span');
+    v.className = 'about-update-meta-value';
+    v.textContent = value;
+    row.appendChild(l);
+    row.appendChild(v);
+    return row;
+  }
+
+  function _showUpdateDialog(info) {
+    var dlg = document.createElement('div');
+    dlg.className = 'cmd-dialog';
+    dlg.style.maxWidth = '560px';
+
+    var titleEl = document.createElement('div');
+    titleEl.className = 'cmd-dialog-title';
+    titleEl.textContent = _t('about.update.dialogTitle');
+
+    var body = document.createElement('div');
+    body.className = 'cmd-dialog-body';
+    body.appendChild(_metaLine(_t('about.update.dialogCurrent'), info.current || '—'));
+    body.appendChild(_metaLine(_t('about.update.dialogLatest'), info.latest || '—'));
+    if (info.name && info.name !== info.latest) {
+      body.appendChild(_metaLine(_t('about.update.dialogName'), info.name));
+    }
+    var published = _formatUpdateDate(info.publishedAt);
+    if (published) {
+      body.appendChild(_metaLine(_t('about.update.dialogPublished'), published));
+    }
+
+    var notes = document.createElement('div');
+    notes.className = 'about-update-notes';
+    var text = (info.notes || '').trim();
+    if (text) {
+      notes.textContent = text;
+    } else {
+      notes.textContent = _t('about.update.notesEmpty');
+      notes.classList.add('is-empty');
+    }
+    body.appendChild(notes);
+
+    var actions = document.createElement('div');
+    actions.className = 'cmd-dialog-actions';
+    var laterBtn = document.createElement('button');
+    laterBtn.className = 'cmd-dialog-btn cmd-dialog-btn--cancel';
+    laterBtn.textContent = _t('about.update.later');
+    var openBtn = document.createElement('button');
+    openBtn.className = 'cmd-dialog-btn cmd-dialog-btn--confirm';
+    openBtn.textContent = _t('about.update.download');
+    actions.appendChild(laterBtn);
+    actions.appendChild(openBtn);
+
+    dlg.appendChild(titleEl);
+    dlg.appendChild(body);
+    dlg.appendChild(actions);
+
+    var close = _mountDialog(dlg);
+    laterBtn.addEventListener('click', close);
+    openBtn.addEventListener('click', function () {
+      window.open(info.downloadUrl || info.url || GITHUB_RELEASES, '_blank');
+      close();
+    });
+  }
+
+  // 统一挂载：遮罩 + 开合动画 + Esc/点遮罩关闭 + 焦点进对话框
+  function _mountDialog(dlg) {
+    var overlay = document.createElement('div');
+    overlay.className = 'cmd-dialog-overlay';
+    overlay.appendChild(dlg);
+    document.body.appendChild(overlay);
+    requestAnimationFrame(function () { overlay.classList.add('open'); });
+
+    var done = false;
+    function close() {
+      if (done) return;
+      done = true;
+      overlay.classList.remove('open');
+      document.removeEventListener('keydown', onKey);
+      setTimeout(function () {
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      }, 180);
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') close();
+    }
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) close();
+    });
+    document.addEventListener('keydown', onKey);
+    // 焦点进对话框即可，别落在按钮上：只读文本块不需要那个 focus ring 抢视线
+    // （全局 `[tabindex]:focus-visible` 会给容器画圈，这里显式关掉）
+    dlg.setAttribute('tabindex', '-1');
+    dlg.style.outline = 'none';
+    setTimeout(function () { dlg.focus(); }, 50);
+    return close;
+  }
+
   function _showDiagnosticDialog() {
     if (!App.utils || !App.utils.call) return;
     App.utils.call('get_diagnostic_info').then(function (res) {
@@ -221,8 +447,6 @@
       }
       var text = lines.join('\n');
 
-      var overlay = document.createElement('div');
-      overlay.className = 'cmd-dialog-overlay';
       var dlg = document.createElement('div');
       dlg.className = 'cmd-dialog';
       dlg.style.maxWidth = '560px';
@@ -232,24 +456,14 @@
       titleEl.textContent = App.i18n ? App.i18n.t('about.diagnostic') : '诊断信息';
 
       var bodyWrap = document.createElement('div');
-      bodyWrap.style.padding = '0 24px';
+      bodyWrap.className = 'cmd-dialog-body';
 
       var textarea = document.createElement('textarea');
+      textarea.className = 'md-textarea md-textarea--mono';
       textarea.readOnly = true;
-      textarea.value = text;
-      textarea.style.width = '100%';
-      textarea.style.minHeight = '240px';
-      textarea.style.padding = '12px';
-      textarea.style.border = '1px solid var(--md-outline-variant)';
-      textarea.style.borderRadius = '8px';
-      textarea.style.background = 'var(--md-surface-container-high)';
-      textarea.style.color = 'var(--md-on-surface)';
-      textarea.style.fontFamily = 'monospace';
-      textarea.style.fontSize = '13px';
-      textarea.style.lineHeight = '1.6';
-      textarea.style.resize = 'vertical';
-      textarea.style.userSelect = 'text';
       textarea.spellcheck = false;
+      textarea.rows = 9;
+      textarea.value = text;
 
       bodyWrap.appendChild(textarea);
 
@@ -263,29 +477,9 @@
       dlg.appendChild(titleEl);
       dlg.appendChild(bodyWrap);
       dlg.appendChild(actions);
-      overlay.appendChild(dlg);
-      document.body.appendChild(overlay);
-      requestAnimationFrame(function () { overlay.classList.add('open'); });
 
-      var done = false;
-      function close() {
-        if (done) return;
-        done = true;
-        overlay.classList.remove('open');
-        document.removeEventListener('keydown', onKey);
-        setTimeout(function () {
-          if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-        }, 180);
-      }
-      function onKey(e) {
-        if (e.key === 'Escape') close();
-      }
+      var close = _mountDialog(dlg);
       closeBtn.addEventListener('click', close);
-      overlay.addEventListener('click', function (e) {
-        if (e.target === overlay) close();
-      });
-      document.addEventListener('keydown', onKey);
-      setTimeout(function () { closeBtn.focus(); }, 50);
     });
   }
 

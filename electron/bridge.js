@@ -50,6 +50,229 @@ function _dump(obj) {
   return JSON.stringify(obj, null, undefined);
 }
 
+// ── 版本信息 / 检查更新 ──────────────────────────────────────────
+// 两个远端都问一遍：GitHub 是 origin，GitLab 是 homepage，国内网络下常常只有一个通。
+// GitHub 无 release 时退到 tags，GitLab 同理；最后取版本号最大的那个候选。
+const UPDATE_GH_SLUG = 'Seirai-Haraguchi/Project-Carminium';
+const UPDATE_GH_API = 'https://api.github.com/repos/' + UPDATE_GH_SLUG;
+const UPDATE_GH_WEB = 'https://github.com/' + UPDATE_GH_SLUG;
+const UPDATE_GL_PROJECT = 'Seirai-Haraguchi%2Fcarminium';
+const UPDATE_GL_API = 'https://gitlab.com/api/v4/projects/' + UPDATE_GL_PROJECT;
+const UPDATE_GL_WEB = 'https://gitlab.com/Seirai-Haraguchi/carminium';
+
+function _readVersionInfo() {
+  try {
+    const versionPath = path.join(app.getAppPath(), 'version.json');
+    if (fs.existsSync(versionPath)) {
+      const data = JSON.parse(fs.readFileSync(versionPath, 'utf-8'));
+      return {
+        version: data.version || '0.0.0',
+        build: data.build || 0,
+        codename: data.codename || '',
+      };
+    }
+  } catch {  }
+  return { version: '0.0.0', build: 0, codename: '' };
+}
+
+// 只取数字段：'v1.2.30.0' → [1,2,30,0]；预发布后缀（-beta.1）会被切成额外段，
+// 但更新判定只关心主版本，够用。
+function _versionParts(v) {
+  return String(v == null ? '' : v)
+    .replace(/^[vV]/, '')
+    .split(/[^0-9]+/)
+    .filter((s) => s !== '')
+    .map((s) => parseInt(s, 10));
+}
+
+function _isNewerVersion(latest, current) {
+  const a = _versionParts(latest);
+  const b = _versionParts(current);
+  if (a.length === 0) return false;
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const x = a[i] || 0;
+    const y = b[i] || 0;
+    if (x > y) return true;
+    if (x < y) return false;
+  }
+  return false;
+}
+
+// 从 assets 里挑当前平台最合适的一个（portable exe / AppImage / deb）
+function _pickUpdateAsset(assets) {
+  if (!Array.isArray(assets) || assets.length === 0) return '';
+  const list = assets.filter((a) => a && a.browser_download_url);
+  if (list.length === 0) return '';
+  const pick = (re) => {
+    const hit = list.find((a) => re.test(a.name || ''));
+    return hit ? hit.browser_download_url : '';
+  };
+  if (process.platform === 'win32') {
+    return pick(/portable.*\.exe$/i) || pick(/\.exe$/i);
+  }
+  if (process.platform === 'darwin') {
+    return pick(/\.dmg$/i);
+  }
+  return pick(/\.AppImage$/i) || pick(/\.deb$/i);
+}
+
+// 带超时/取消的 JSON GET；非 2xx 统一抛错，由调用方吞掉。
+async function _getJson(url, signal, extraHeaders) {
+  const headers = Object.assign(
+    { 'User-Agent': 'Carminium/' + (_readVersionInfo().version || '0.0.0') },
+    extraHeaders || {}
+  );
+  const resp = await net.fetch(url, { headers, signal });
+  if (resp.status === 404) {
+    const e = new Error('not_found');
+    e.notFound = true;
+    throw e;
+  }
+  if (!resp.ok) throw new Error('http_' + resp.status);
+  return resp.json();
+}
+
+async function _githubCandidate(signal) {
+  const jsonHeaders = { Accept: 'application/vnd.github+json' };
+
+  try {
+    const rel = await _getJson(UPDATE_GH_API + '/releases/latest', signal, jsonHeaders);
+    if (rel && rel.tag_name) {
+      return {
+        version: String(rel.tag_name).replace(/^[vV]/, ''),
+        name: String(rel.name || rel.tag_name),
+        notes: String(rel.body || ''),
+        publishedAt: String(rel.published_at || ''),
+        url: String(rel.html_url || (UPDATE_GH_WEB + '/releases')),
+        downloadUrl: _pickUpdateAsset(rel.assets),
+        source: 'github',
+      };
+    }
+  } catch (e) {
+    if (!e.notFound) throw e;
+  }
+
+  // 没有 release（或 404）→ 退到 tags
+  const tags = await _getJson(UPDATE_GH_API + '/tags?per_page=10', signal, jsonHeaders);
+  if (!Array.isArray(tags) || tags.length === 0) return null;
+  const tag = String(tags[0].name || '');
+  if (!tag) return null;
+  return {
+    version: tag.replace(/^[vV]/, ''),
+    name: tag,
+    notes: '',
+    publishedAt: '',
+    url: UPDATE_GH_WEB + '/releases/tag/' + encodeURIComponent(tag),
+    downloadUrl: '',
+    source: 'github',
+  };
+}
+
+async function _gitlabCandidate(signal) {
+  try {
+    const rels = await _getJson(UPDATE_GL_API + '/releases?per_page=10', signal);
+    if (Array.isArray(rels) && rels.length > 0) {
+      const rel = rels[0];
+      const tag = String(rel.tag_name || '');
+      const links = (rel.assets && Array.isArray(rel.assets.links)) ? rel.assets.links : [];
+      const dl = links.map((l) => l && (l.direct_asset_url || l.url)).filter(Boolean);
+      const exe = dl.find((u) => /portable.*\.exe$/i.test(u)) || dl.find((u) => /\.(exe|AppImage|deb|dmg)$/i.test(u));
+      return {
+        version: tag.replace(/^[vV]/, ''),
+        name: String(rel.name || tag),
+        notes: String(rel.description || ''),
+        publishedAt: String(rel.released_at || rel.created_at || ''),
+        url: UPDATE_GL_WEB + '/-/releases/' + encodeURIComponent(tag),
+        downloadUrl: exe || '',
+        source: 'gitlab',
+      };
+    }
+  } catch (e) {
+    if (!e.notFound) throw e;
+  }
+
+  const tags = await _getJson(UPDATE_GL_API + '/repository/tags?per_page=10', signal);
+  if (!Array.isArray(tags) || tags.length === 0) return null;
+  const tag = String(tags[0].name || '');
+  if (!tag) return null;
+  const commit = tags[0].commit || {};
+  return {
+    version: tag.replace(/^[vV]/, ''),
+    name: tag,
+    notes: String(tags[0].message || commit.title || ''),
+    publishedAt: String(commit.created_at || ''),
+    url: UPDATE_GL_WEB + '/-/tags/' + encodeURIComponent(tag),
+    downloadUrl: '',
+    source: 'gitlab',
+  };
+}
+
+// 并行问两边，谁先给出更高版本就用谁；全部失败才算失败。
+// 单源超时 8s：GitHub 在部分网络下是黑洞，不能把整个检查拖到 12s。
+// 失败一次就冷却 10 分钟，避免连点几次都被同一个不可达的源拖着。
+const UPDATE_SOURCE_TIMEOUT_MS = 8000;
+const UPDATE_SOURCE_COOLDOWN_MS = 10 * 60 * 1000;
+const _updateCooldown = { github: 0, gitlab: 0 };
+
+function _childSignal(parent, ms) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  const onAbort = () => ctrl.abort();
+  if (parent) {
+    if (parent.aborted) ctrl.abort();
+    else parent.addEventListener('abort', onAbort, { once: true });
+  }
+  return {
+    signal: ctrl.signal,
+    done() {
+      clearTimeout(timer);
+      if (parent) parent.removeEventListener('abort', onAbort);
+    },
+  };
+}
+
+async function _collectUpdateCandidates(signal) {
+  const now = Date.now();
+  if (_updateCooldown.github > now && _updateCooldown.gitlab > now) {
+    // 两边都在冷却，说明上次全挂了；这次照常重试
+    _updateCooldown.github = 0;
+    _updateCooldown.gitlab = 0;
+  }
+
+  const wrap = (name, fn) => {
+    const link = _childSignal(signal, UPDATE_SOURCE_TIMEOUT_MS);
+    return fn(link.signal).then(
+      (v) => {
+        link.done();
+        _updateCooldown[name] = 0;
+        return v;
+      },
+      (e) => {
+        link.done();
+        _updateCooldown[name] = Date.now() + UPDATE_SOURCE_COOLDOWN_MS;
+        throw e;
+      }
+    );
+  };
+
+  const jobs = [];
+  if (_updateCooldown.github <= now) jobs.push(wrap('github', _githubCandidate));
+  if (_updateCooldown.gitlab <= now) jobs.push(wrap('gitlab', _gitlabCandidate));
+  if (jobs.length === 0) return null;
+
+  const settled = await Promise.allSettled(jobs);
+
+  const found = [];
+  for (const r of settled) {
+    if (r.status === 'fulfilled' && r.value && r.value.version) found.push(r.value);
+  }
+  if (found.length === 0) return null;
+
+  found.sort((a, b) => (_isNewerVersion(a.version, b.version) ? -1 : (_isNewerVersion(b.version, a.version) ? 1 : 0)));
+  return found[0];
+}
+
 const FLOATING_EVENTS = new Set([
   'track_changed',
   'playback_state_changed',
@@ -467,6 +690,18 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     const payload = _dump(this._lib.getLikedTracks());
     this.emit('liked_tracks_changed', payload);
     this._emit('liked_tracks_changed', payload);
+  }
+
+  _emitLikedArtistsChanged() {
+    const payload = _dump(this._lib.getLikedArtists());
+    this.emit('liked_artists_changed', payload);
+    this._emit('liked_artists_changed', payload);
+  }
+
+  _emitLikedAlbumsChanged() {
+    const payload = _dump(this._lib.getLikedAlbums());
+    this.emit('liked_albums_changed', payload);
+    this._emit('liked_albums_changed', payload);
   }
 
   _emitSubsonicServersChanged() {
@@ -1068,6 +1303,25 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     ipcMain.handle('is_track_liked', (_e, trackId) => this._player.isTrackLiked(trackId));
     ipcMain.handle('get_liked_tracks', () => _dump(this._lib.getLikedTracks()));
 
+    // 喜爱艺人 / 专辑：返回切换后的状态，前端据此即时改按钮，随后事件刷新列表。
+    ipcMain.handle('toggle_liked_artist', (_e, name) => {
+      const liked = !this._lib.isArtistLiked(name);
+      this._lib.setLikedArtist(name, liked);
+      this._emitLikedArtistsChanged();
+      return liked;
+    });
+    ipcMain.handle('is_artist_liked', (_e, name) => this._lib.isArtistLiked(name));
+    ipcMain.handle('get_liked_artists', () => _dump(this._lib.getLikedArtists()));
+
+    ipcMain.handle('toggle_liked_album', (_e, album, albumArtist) => {
+      const liked = !this._lib.isAlbumLiked(album, albumArtist);
+      this._lib.setLikedAlbum(album, albumArtist, liked);
+      this._emitLikedAlbumsChanged();
+      return liked;
+    });
+    ipcMain.handle('is_album_liked', (_e, album, albumArtist) => this._lib.isAlbumLiked(album, albumArtist));
+    ipcMain.handle('get_liked_albums', () => _dump(this._lib.getLikedAlbums()));
+
     ipcMain.handle('get_play_history', (_e, limit) => {
       return _dump(this._lib.getPlayHistory(parseInt(limit, 10) || 200));
     });
@@ -1640,20 +1894,12 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     });
 
     ipcMain.handle('get_app_info', () => {
-      let versionData = {};
-      try {
-        const versionPath = path.join(app.getAppPath(), 'version.json');
-        if (fs.existsSync(versionPath)) {
-          versionData = JSON.parse(fs.readFileSync(versionPath, 'utf-8'));
-        }
-      } catch {
-
-      }
+      const versionData = _readVersionInfo();
 
       return _dump({
-        version: versionData.version || '0.0.0',
-        build: versionData.build || 0,
-        codename: versionData.codename || '',
+        version: versionData.version,
+        build: versionData.build,
+        codename: versionData.codename,
         diagnostic: {
           electron_version: process.versions.electron,
           chrome_version: process.versions.chrome,
@@ -1662,6 +1908,50 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
           arch: process.arch,
         },
       });
+    });
+
+    // 检查更新：并行问 GitHub / GitLab，取版本号最大的候选与本地 version.json 比对。
+    // 返回结构固定，前端只认 hasUpdate / url / notes，出错也不抛异常。
+    ipcMain.handle('check_for_update', async () => {
+      const cur = _readVersionInfo();
+      const out = {
+        ok: false,
+        current: cur.version,
+        latest: '',
+        hasUpdate: false,
+        url: UPDATE_GH_WEB + '/releases',
+        downloadUrl: '',
+        name: '',
+        publishedAt: '',
+        notes: '',
+        source: '',
+        error: '',
+      };
+
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 12000);
+      try {
+        const cand = await _collectUpdateCandidates(ctrl.signal);
+        if (!cand) {
+          return _dump(Object.assign(out, { ok: true, error: 'no_release' }));
+        }
+
+        out.ok = true;
+        out.latest = cand.version;
+        out.name = cand.name || '';
+        out.publishedAt = cand.publishedAt || '';
+        out.notes = String(cand.notes || '').slice(0, 6000);
+        out.url = cand.url || out.url;
+        out.downloadUrl = cand.downloadUrl || '';
+        out.source = cand.source || '';
+        out.hasUpdate = _isNewerVersion(cand.version, cur.version);
+        return _dump(out);
+      } catch (e) {
+        const aborted = e && (e.name === 'AbortError' || e.name === 'TimeoutError');
+        return _dump(Object.assign(out, { error: aborted ? 'timeout' : 'network' }));
+      } finally {
+        clearTimeout(timer);
+      }
     });
 
     ipcMain.handle('get_diagnostic_info', () => {
