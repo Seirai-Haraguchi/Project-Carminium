@@ -17,6 +17,11 @@ on:
         required: true
         default: false
         type: boolean
+      assets_only:
+        description: 'Only replace assets of an existing release (keep its name and changelog untouched)'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -110,7 +115,11 @@ jobs:
 
       - name: Build native library (Zig)
         working-directory: native
-        run: zig version && zig build copy copy-legacy -Doptimize=ReleaseFast ${{ matrix.zig-target }}
+        # Pin the CPU baseline: with the default `native` CPU model the DLL is
+        # compiled for whatever CPU the hosted runner happens to have, and can
+        # then die with 0xc000001d (illegal instruction) on user machines as
+        # soon as audio playback touches the native renderer.
+        run: zig version && zig build copy copy-legacy -Doptimize=ReleaseFast -Dcpu=baseline ${{ matrix.zig-target }}
 
       # Guard: prove the DLL is pure aarch64 machine code (PE Machine = 0xAA64),
       # regardless of the compiler binary's own architecture.
@@ -231,6 +240,71 @@ jobs:
           $destination = "dist-electron\Carminium-$version-windows-${{ matrix.arch }}.exe"
           Move-Item $source.FullName $destination -Force
           Write-Host "Created $destination"
+
+      - name: Verify packaged FFmpeg (Windows)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $arch = '${{ matrix.arch }}'
+          $outDir = if ($arch -eq 'arm64') { 'win-arm64-unpacked' } else { 'win-unpacked' }
+          $binDir = "dist-electron\$outDir\resources\app.asar.unpacked\electron\bin\win32"
+          $ffmpeg  = Join-Path $binDir 'ffmpeg.exe'
+          $ffprobe = Join-Path $binDir 'ffprobe.exe'
+
+          # 1. The binaries MUST live outside app.asar: spawn() cannot execute
+          #    a file that only exists inside the archive.
+          foreach ($f in @($ffmpeg, $ffprobe)) {
+            if (-not (Test-Path $f)) { throw "Bundled FFmpeg binary missing outside asar: $f" }
+            $size = (Get-Item $f).Length
+            if ($size -lt 1MB) { throw "Bundled FFmpeg binary looks truncated ($size bytes): $f" }
+            Write-Host "OK: $f ($([math]::Round($size / 1MB, 1)) MB)"
+          }
+
+          # 2. They must actually run AND decode. Startup-only smoke tests pass
+          #    even when the bundled FFmpeg build is broken, because playback is
+          #    the first thing that spawns it.
+          $ffmpegVersion = & $ffmpeg -version 2>&1
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled ffmpeg.exe failed to run' }
+          Write-Host ($ffmpegVersion | Select-Object -First 1)
+          $ffprobeVersion = & $ffprobe -version 2>&1
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled ffprobe.exe failed to run' }
+          Write-Host ($ffprobeVersion | Select-Object -First 1)
+
+          $pcm = Join-Path $env:RUNNER_TEMP 'carminium-ffmpeg-smoke.pcm'
+          Remove-Item $pcm -Force -ErrorAction SilentlyContinue
+          & $ffmpeg -hide_banner -loglevel error -f lavfi -i 'sine=frequency=440:duration=0.2' `
+            -f f32le -ar 44100 -ac 2 -y $pcm
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled ffmpeg.exe failed the PCM decode smoke test' }
+          $pcmLen = (Get-Item $pcm).Length
+          if ($pcmLen -lt 10000) { throw "Bundled ffmpeg.exe produced no PCM audio ($pcmLen bytes)" }
+          Write-Host "Decode smoke OK: $pcmLen bytes of f32le PCM"
+
+          # 3. The final portable exe must contain the very same unpacked
+          #    binaries. GitHub-hosted Windows runners ship 7-Zip; if missing,
+          #    we still validated the exact tree the portable exe is built from.
+          $sevenZip = 'C:\Program Files\7-Zip\7z.exe'
+          $exe = (Get-ChildItem dist-electron\*.exe | Select-Object -First 1).FullName
+          if (-not (Test-Path $sevenZip)) {
+            Write-Host '::warning::7-Zip not found on runner; skipping portable payload check'
+            return
+          }
+          $tmp = Join-Path $env:RUNNER_TEMP 'portable-ffmpeg-check'
+          Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+          & $sevenZip e $exe "-ir!*app-*.7z" "-o$tmp" -y | Out-Null
+          $inner = Get-ChildItem $tmp -Filter 'app-*.7z' | Select-Object -First 1
+          if (-not $inner) { throw "portable exe has no app-*.7z payload: $exe" }
+          $listing = & $sevenZip l $inner.FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to list the portable payload' }
+          foreach ($name in @('ffmpeg.exe', 'ffprobe.exe')) {
+            $pattern = "app\.asar\.unpacked\\electron\\bin\\win32\\$([regex]::Escape($name))"
+            if (-not ($listing -match $pattern)) {
+              throw "$name is NOT present in the portable exe payload ($($inner.Name))"
+            }
+            Write-Host "OK: $name present in $($inner.Name)"
+          }
+          Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+          Remove-Item $pcm -Force -ErrorAction SilentlyContinue
 
       - name: Smoke test (dev mode)
         shell: pwsh
@@ -501,7 +575,7 @@ jobs:
 
       - name: Build native library (Zig)
         working-directory: native
-        run: zig build copy copy-legacy -Doptimize=ReleaseFast
+        run: zig build copy copy-legacy -Doptimize=ReleaseFast -Dcpu=baseline
 
       - name: Verify pre-build artifacts (Linux)
         shell: bash
@@ -576,6 +650,7 @@ jobs:
 
       - name: Fetch random hitokoto
         id: hitokoto
+        if: ${{ !inputs.assets_only }}
         shell: bash
         run: |
           HITOKOTO=$(curl -fsSL --retry 3 --connect-timeout 5 --max-time 15 \
@@ -590,6 +665,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
+        if: ${{ !inputs.assets_only }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag }}
@@ -613,3 +689,19 @@ jobs:
           files: artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Re-release path: swap only the attachments of an existing release so
+      # the handwritten changelog / screenshots / title stay byte-for-byte as
+      # they are. `gh release upload --clobber` never touches release metadata.
+      - name: Replace release assets only (keep changelog)
+        if: ${{ inputs.assets_only }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "Replacing assets on ${{ inputs.tag }} without touching name/body/notes"
+          ls -lh artifacts
+          gh release upload "${{ inputs.tag }}" artifacts/* --clobber --repo "$GITHUB_REPOSITORY"
+          echo "--- assets now on the release ---"
+          gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name'
