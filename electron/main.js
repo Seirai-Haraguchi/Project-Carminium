@@ -1209,6 +1209,10 @@ function shutdown() {
 
 
 app.whenReady().then(async () => {
+  // Portable builds unpack into a temp dir that another instance's NSIS
+  // wrapper may delete. Mirror the decoder binaries into userData early so
+  // playback survives that wipe. Fire-and-forget, never blocks startup.
+  try { require('./bin_mirror').ensureMirror(); } catch { /* best effort */ }
   await initializeApp();
 });
 

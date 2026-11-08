@@ -6,6 +6,7 @@ const { EventEmitter } = require('events');
 const fs = require('fs');
 const path = require('path');
 const { DecoderPool } = require('./decoder_pool');
+const binMirror = require('./bin_mirror');
 
 const SHARE_SHARED = 0;
 const SHARE_EXCLUSIVE = 1;
@@ -105,7 +106,16 @@ function _loadDll() {
 let _ffmpegPath = null, _ffprobePath = null;
 
 function _findFFmpeg() {
-  if (_ffmpegPath !== null) return _ffmpegPath;
+  // Portable NSIS wrappers can delete the shared unpack directory while this
+  // process is still running (a second instance quits on the single-instance
+  // lock). Prefer the userData mirror, and never trust a cached path that has
+  // disappeared since the last lookup.
+  binMirror.ensureMirror();
+  const mirror = binMirror.mirrored(FFMPEG_NAME);
+  if (mirror) { _ffmpegPath = mirror; return mirror; }
+  if (_ffmpegPath && _ffmpegPath !== false && _ffmpegPath !== 'ffmpeg' &&
+      fs.existsSync(_ffmpegPath)) return _ffmpegPath;
+  _ffmpegPath = null;
   const bundled = path.join(__dirname, 'bin', PLATFORM_SUBDIR, FFMPEG_NAME);
   const bundledReal = _resolveRealPath(bundled);
   if (fs.existsSync(bundledReal)) { _ffmpegPath = bundledReal; return _ffmpegPath; }
@@ -141,11 +151,17 @@ function _findFFmpeg() {
     if (fs.existsSync(loc)) { _ffmpegPath = loc; return _ffmpegPath; }
   }
   _ffmpegPath = false;
+  console.error('[wasapi] No usable FFmpeg binary (unpack dir + userData mirror both missing)');
   return _ffmpegPath;
 }
 
 function _findFFprobe() {
-  if (_ffprobePath !== null) return _ffprobePath;
+  binMirror.ensureMirror();
+  const mirror = binMirror.mirrored(FFPROBE_NAME);
+  if (mirror) { _ffprobePath = mirror; return mirror; }
+  if (_ffprobePath && _ffprobePath !== false && _ffprobePath !== 'ffprobe' &&
+      fs.existsSync(_ffprobePath)) return _ffprobePath;
+  _ffprobePath = null;
   const bundled = path.join(__dirname, 'bin', PLATFORM_SUBDIR, FFPROBE_NAME);
   const bundledReal = _resolveRealPath(bundled);
   if (fs.existsSync(bundledReal)) { _ffprobePath = bundledReal; return _ffprobePath; }
@@ -323,7 +339,7 @@ class NativeRenderer extends EventEmitter {
 
     const ff = _findFFmpeg();
     if (ff) {
-      if (!this._decoder) this._decoder = new DecoderPool(ff);
+      if (!this._decoder) this._decoder = new DecoderPool(ff, () => _findFFmpeg());
       this._decoder.configure(this._sampleRate, this._channels);
     }
 
@@ -350,7 +366,7 @@ class NativeRenderer extends EventEmitter {
 
     const ff = _findFFmpeg();
     if (ff) {
-      if (!this._decoder) this._decoder = new DecoderPool(ff);
+      if (!this._decoder) this._decoder = new DecoderPool(ff, () => _findFFmpeg());
       this._decoder.configure(this._sampleRate, this._channels);
     }
 

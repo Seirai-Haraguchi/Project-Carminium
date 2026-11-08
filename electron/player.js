@@ -881,6 +881,15 @@ class MusicPlayer extends EventEmitter {
       this._renderer.play();
       return;
     }
+    // Session restore can leave a queue + current track that nobody ever
+    // started. Pressing play used to be a silent no-op; re-enter the normal
+    // play path so the button always does something observable.
+    if (this._queue && this._queue.length && this._current_index >= 0) {
+      console.log('[player] play(): renderer not initialized, restarting track', this._current_index);
+      this._playAt(this._current_index);
+      return;
+    }
+    console.warn('[player] play(): nothing to play (empty queue)');
   }
 
   pause() {

@@ -306,6 +306,39 @@ jobs:
           Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
           Remove-Item $pcm -Force -ErrorAction SilentlyContinue
 
+      # A startup-only smoke test passes even when pressing play does nothing.
+      # Drive the real renderer through CDP and assert playback actually starts.
+      - name: Playback smoke test (packaged)
+        if: ${{ matrix.arch == 'x64' }}
+        shell: pwsh
+        env:
+          CDP_PORT: '9333'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = "dist-electron\win-unpacked\Project Carminium.exe"
+          if (-not (Test-Path $exe)) { throw "win-unpacked exe not found" }
+          $wav = Join-Path $env:RUNNER_TEMP 'carminium-playback-smoke.wav'
+          & "electron\bin\win32\ffmpeg.exe" -hide_banner -loglevel error `
+            -f lavfi -i 'sine=frequency=440:duration=30' -ar 44100 -ac 2 -y $wav
+          if (-not (Test-Path $wav)) { throw "failed to generate smoke audio" }
+          $env:ELECTRON_ENABLE_LOGGING = '1'
+          $out = "$env:RUNNER_TEMP\pb-stdout.txt"
+          $err = "$env:RUNNER_TEMP\pb-stderr.txt"
+          $proc = Start-Process -FilePath $exe -ArgumentList '--remote-debugging-port=9333' `
+            -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+          try {
+            node scripts/ci-playback-smoke.js $wav
+          } catch {
+            Write-Host "===== packaged playback stderr (tail) ====="
+            if (Test-Path $err) { Get-Content $err -Tail 40 }
+            Write-Host "===== packaged playback stdout (tail) ====="
+            if (Test-Path $out) { Get-Content $out -Tail 40 }
+            throw
+          } finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            Get-Process 'Project Carminium' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          }
+
       - name: Smoke test (dev mode)
         shell: pwsh
         run: |

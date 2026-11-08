@@ -3,8 +3,11 @@
 const { spawn } = require('child_process');
 
 class DecoderPool {
-  constructor(ffmpegPath) {
+  constructor(ffmpegPath, resolvePath) {
     this._ffmpegPath = ffmpegPath;
+    // Re-resolve before every spawn: in portable builds the unpack directory
+    // can be deleted underneath a running instance.
+    this._resolvePath = typeof resolvePath === 'function' ? resolvePath : null;
     this._sampleRate = 44100;
     this._channels = 2;
 
@@ -33,7 +36,18 @@ class DecoderPool {
       'pipe:1'
     );
 
-    const proc = spawn(this._ffmpegPath, args, { windowsHide: true });
+    let bin = this._ffmpegPath;
+    if (this._resolvePath) {
+      try { bin = this._resolvePath() || bin; } catch { /* keep last known path */ }
+    }
+    if (!bin) {
+      // Do not call onFinished(): that would look like a completed track and
+      // silently skip to the next one. Surface a real error instead.
+      console.error('[decoder_pool] FFmpeg binary unavailable — cannot decode', filePath);
+      if (onError) onError(new Error('FFmpeg binary unavailable'));
+      return;
+    }
+    const proc = spawn(bin, args, { windowsHide: true });
     const pendingBuf = { buf: Buffer.alloc(0) };
 
     const onData = (chunk) => {
