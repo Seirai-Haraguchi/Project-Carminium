@@ -1443,8 +1443,18 @@ let _lyricLineEls = null;
   };
 
   var _flyGen = 0;
+  var _flyPendingTrack = null;
+  var _flyOutAnims = [];
   var _FLY_OUT_EASE = 'cubic-bezier(0.3, 0, 0.8, 0.15)';
   var _FLY_IN_EASE = 'cubic-bezier(0.3, 1.25, 0.44, 1)';
+
+  function _cancelFlyOutAnims(list) {
+    var target = list || _flyOutAnims;
+    for (var i = 0; i < target.length; i++) {
+      try { target[i].cancel(); } catch (e) {  }
+    }
+    if (target === _flyOutAnims) _flyOutAnims = [];
+  }
 
   function _flyItems() {
     return [
@@ -1463,6 +1473,9 @@ let _lyricLineEls = null;
 
   function _playTrackFly(track) {
     var myGen = ++_flyGen;
+    // 动画期间可能又换了歌：记下最新那首，收尾时按它重绘，
+    // 避免用发起动画时的旧曲目把界面盖回去。
+    _flyPendingTrack = track;
     var items = _flyItems();
 
     var outAnims = items.map(function (it) {
@@ -1471,10 +1484,18 @@ let _lyricLineEls = null;
         { transform: 'translateY(-32%)', opacity: 0 }
       ], { duration: 170, delay: Math.round(it.delay * 0.4), easing: _FLY_OUT_EASE, fill: 'forwards' });
     });
+    _flyOutAnims = outAnims;
 
     Promise.all(outAnims.map(function (a) { return a.finished.catch(function () {}); })).then(function () {
-      if (myGen !== _flyGen) return;
-      _applyTrack(track);
+      if (myGen !== _flyGen) {
+        // 已经被更新的一次重绘接管：把这段淡出收掉，否则 forwards 会把
+        // 元素永久停在 opacity 0，看着就是一块空白。
+        _cancelFlyOutAnims(outAnims);
+        return;
+      }
+      var target = _flyPendingTrack || track;
+      _flyPendingTrack = null;
+      _applyTrack(target);
       items.forEach(function (it) {
         it.el.getAnimations().forEach(function (a) { a.cancel(); });
         it.el.animate([
@@ -1490,14 +1511,26 @@ let _lyricLineEls = null;
     var isNewTrack = !!track && prevId != null && track.id !== prevId;
     var mystery = _preserveHiddenState || _trackInfoHidden;
     var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (isNewTrack && !mystery && !reduced) {
+    // 页面不可见时没有帧，Web Animations 的 finished 不会 resolve，
+    // 曲目信息就会一直停在旧的那首。后台直接落内容，不做飞入动画。
+    var canAnimate = !document.hidden && !window.__appFrozen;
+    if (isNewTrack && !mystery && !reduced && canAnimate) {
       _playTrackFly(track);
     } else {
       _applyTrack(track);
     }
   };
 
+  // 正在做飞入动画、但还没落到 DOM 上的曲目：回前台对齐时用它避免重复重绘。
+  np.pendingTrackId = function () {
+    return _flyPendingTrack ? _flyPendingTrack.id : null;
+  };
+
   function _applyTrack(track) {
+    // 直接落内容就作废还在路上的飞入动画，否则它的收尾会用旧曲目盖回来。
+    _flyGen++;
+    _flyPendingTrack = null;
+    _cancelFlyOutAnims();
     var wasHidden = _trackInfoHidden;
     if (_preserveHiddenState) {
       _preserveHiddenState = false;

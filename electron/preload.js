@@ -20,6 +20,14 @@ contextBridge.exposeInMainWorld('__electronAPI', {
     return () => ipcRenderer.removeListener('bridge:event', handler);
   },
 
+  onTaskbarLyrics: (callback) => {
+    const handler = (_e, data) => callback(data);
+    ipcRenderer.on('taskbar_lyrics:state', handler);
+    return () => ipcRenderer.removeListener('taskbar_lyrics:state', handler);
+  },
+
+  taskbarLyricsSend: (channel, ...args) => ipcRenderer.send('taskbar_lyrics:' + channel, ...args),
+
   onSmtc: (channel, callback) => {
     const fullChannel = 'smtc:' + channel;
     const handler = (_e, data) => callback(data);

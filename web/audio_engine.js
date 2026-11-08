@@ -208,6 +208,11 @@
       this.onGaplessSwitch = null;
 
       this._positionTimer = null;
+
+      // 加载（初始化/解码）还没落地时用户就点了播放/暂停：先记下来，
+      // 等 playCurrent/playStreaming 完成后再落实，避免这次点击被吞掉。
+      this._loadInFlight = false;
+      this._resumeAfterLoad = false;
     }
 
     async _ensureInit() {
@@ -535,6 +540,8 @@
     }
 
     async playCurrent(filePath, durationMs, seekOffsetMs, startPaused) {
+      this._loadInFlight = true;
+      this._resumeAfterLoad = false;
       await this._ensureInit();
       const savedPcm = this._pendingStreamingPcm;
       this.stop();
@@ -546,6 +553,7 @@
       this._seekOffsetMs = seekOffsetMs || 0;
 
       if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+        this._loadInFlight = false;
         return;
       }
 
@@ -553,17 +561,11 @@
       if (cached) {
         this._currentBuffer = cached;
         this._isPlaying = true;
-        this._isPaused = !!startPaused;
         this._createAndStartSource(cached, seekOffsetMs || 0, gen, true);
-        if (startPaused) {
-
-          if (this._ctx) this._ctx.suspend();
-        } else {
-          this._startPositionTimer();
-          this._resumeContext();
-        }
+        this._applyStartPaused(startPaused);
 
         this._scheduleGaplessSwitch();
+        this._loadInFlight = false;
         return;
       }
 
@@ -574,14 +576,8 @@
         this._currentBuffer = audioBuffer;
         this._cache.set(filePath, audioBuffer);
         this._isPlaying = true;
-        this._isPaused = !!startPaused;
         this._createAndStartSource(audioBuffer, seekOffsetMs || 0, gen, true);
-        if (startPaused) {
-          if (this._ctx) this._ctx.suspend();
-        } else {
-          this._startPositionTimer();
-          this._resumeContext();
-        }
+        this._applyStartPaused(startPaused);
 
         this._scheduleGaplessSwitch();
       } catch (e) {
@@ -589,10 +585,27 @@
         console.error('[AudioEngine] playCurrent: load/decode failed:', filePath, e);
         this._isPlaying = false;
         if (this.onEnded) this.onEnded();
+      } finally {
+        this._loadInFlight = false;
+      }
+    }
+
+    // startPaused 落地的唯一出口：加载期间用户点过播放，就以用户意图为准。
+    _applyStartPaused(startPaused) {
+      var paused = !!startPaused && !this._resumeAfterLoad;
+      this._resumeAfterLoad = false;
+      this._isPaused = paused;
+      if (paused) {
+        if (this._ctx) this._ctx.suspend();
+      } else {
+        this._startPositionTimer();
+        this._resumeContext();
       }
     }
 
     async playStreaming(durationMs, seekOffsetMs, startPaused) {
+      this._loadInFlight = true;
+      this._resumeAfterLoad = false;
       await this._ensureInit();
       const savedPcm = this._pendingStreamingPcm;
       this.stop();
@@ -630,15 +643,9 @@
       }
 
       this._isPlaying = true;
-      this._isPaused = !!startPaused;
       this._sourceStartCtxTime = this._ctx.currentTime;
-      if (startPaused) {
-
-        if (this._ctx) this._ctx.suspend();
-      } else {
-        this._resumeContext();
-        this._startPositionTimer();
-      }
+      this._applyStartPaused(startPaused);
+      this._loadInFlight = false;
     }
 
     _createAndStartSource(buffer, offsetMs, generation, isMain) {
@@ -777,7 +784,10 @@
         this._ctx.suspend();
         this._isPaused = true;
         this._stopPositionTimer();
+        return;
       }
+      // 还在加载（初始化/解码）时收到暂停：加载完成后再落实。
+      if (this._loadInFlight) this._resumeAfterLoad = false;
     }
 
     resume() {
@@ -785,7 +795,9 @@
         this._ctx.resume();
         this._isPaused = false;
         this._startPositionTimer();
+        return;
       }
+      if (this._loadInFlight) this._resumeAfterLoad = true;
     }
 
     async seek(positionMs) {

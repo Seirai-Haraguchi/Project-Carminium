@@ -432,6 +432,10 @@ class MusicPlayer extends EventEmitter {
     this._media_base_url = url || '';
   }
 
+  getMediaBaseUrl() {
+    return this._media_base_url || '';
+  }
+
   _resolvePlayablePath(track) {
     if (track.source === 'subsonic' && this._library) {
       const localTrack = this._library.findLocalTrackForSubsonic(track);
@@ -499,7 +503,7 @@ class MusicPlayer extends EventEmitter {
     this._playNative(track);
   }
 
-  async _playNative(track) {
+  async _playNative(track, startPaused = false, startPositionMs = 0) {
     if (!this._renderer || !track) return;
     const myToken = ++this._nativePlayToken;
     this._cancelScheduledPreload();
@@ -551,7 +555,7 @@ class MusicPlayer extends EventEmitter {
       }
       this._renderer._currentFilePath = filePath;
 
-      this.emit('state_changed', 'loading');
+      if (!startPaused) this.emit('state_changed', 'loading');
       this.emit('track_changed', JSON.stringify(track));
       this.emit('liked_changed', this.isCurrentLiked);
       this._emitQueueChanged();
@@ -577,7 +581,8 @@ class MusicPlayer extends EventEmitter {
         action: 'play',
         filePath: filePath,
         durationMs: durationMs,
-        seekOffsetMs: 0,
+        seekOffsetMs: startPositionMs,
+        paused: !!startPaused,
         trackId: track.id || '',
         title: track.title || '',
         artist: track.artist || track.album_artist || '',
@@ -590,7 +595,9 @@ class MusicPlayer extends EventEmitter {
         source: track.source || 'local',
       }));
 
-      await this._renderer.play();
+      // 恢复上次会话时不自动开播：渲染侧的 AudioEngine 也必须从暂停态起，
+      // 否则它的 AudioContext 时钟照走，进度条会在"没播放"的情况下一直往前爬。
+      if (!startPaused) await this._renderer.play();
       if (myToken !== this._nativePlayToken) return;
       this.emit('audio_control', JSON.stringify({ action: 'set_volume', level: this._fe_volume / 100 }));
 
@@ -598,7 +605,8 @@ class MusicPlayer extends EventEmitter {
         this.emit('audio_control', JSON.stringify({
           action: 'play_streaming',
           durationMs: durationMs,
-          seekOffsetMs: 0,
+          seekOffsetMs: startPositionMs,
+          paused: !!startPaused,
           filePath: filePath,
           trackId: track.id || '',
           title: track.title || '',
@@ -613,7 +621,7 @@ class MusicPlayer extends EventEmitter {
         }));
       }
 
-      if (this._automixEnabled) {
+      if (!startPaused && this._automixEnabled) {
         this._preloadNextTrack();
       }
     } catch (e) {
@@ -1428,7 +1436,7 @@ class MusicPlayer extends EventEmitter {
     this._fe_position = Math.max(0, parseInt(positionMs, 10) || 0);
     this._fe_state = autoPlay ? 'playing' : 'paused';
 
-    this._playNative(track).then(() => {
+    this._playNative(track, !autoPlay, this._fe_position).then(() => {
       if (this._renderer && this._renderer.isInitialized) {
         if (this._fe_position > 0) {
           this._renderer.seek(this._fe_position);
@@ -1440,6 +1448,9 @@ class MusicPlayer extends EventEmitter {
         }
         if (!autoPlay) {
           this._renderer.pause();
+          // 没自动开播时解码线程也不该空转（流式格式会一直往渲染侧灌 PCM）。
+          this._renderer.suspendDecoders();
+          this.emit('state_changed', 'paused');
         }
       }
     });

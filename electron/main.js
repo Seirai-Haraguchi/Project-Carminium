@@ -855,6 +855,7 @@ let bridge = null;
 let smtc = null;
 let discordRpc = null;
 let thumbar = null;
+let taskbarLyrics = null;
 let wasapi = null;
 
 
@@ -918,14 +919,34 @@ function createMainWindow() {
   mainWindow.on('enter-full-screen', () => _pushFullscreenState(true));
   mainWindow.on('leave-full-screen', () => _pushFullscreenState(false));
 
+  // 前台/后台只按变化通知一次：最小化会连着触发 blur + minimize，
+  // 重复下发会让渲染侧多做一次状态对齐。
+  let lastVisibility = 'foreground';
+  function pushVisibility(state) {
+    if (lastVisibility === state) return;
+    lastVisibility = state;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send('bridge:event', 'app:visibility', state);
+  }
+
   mainWindow.on('blur', () => {
     if (wasapi && player && !player.isPlaying) wasapi.suspendDecoders();
-    mainWindow.webContents.send('bridge:event', 'app:visibility', 'background');
+    pushVisibility('background');
   });
   mainWindow.on('focus', () => {
     if (wasapi) wasapi.resumeDecoders();
-    mainWindow.webContents.send('bridge:event', 'app:visibility', 'foreground');
+    pushVisibility('foreground');
   });
+
+  // 最小化/隐藏时窗口不一定失焦（被其他窗口盖住时也不失焦），
+  // 这几条一起兜住，保证后台期间的状态变化能在回前台时被对齐。
+  mainWindow.on('minimize', () => {
+    if (wasapi && player && !player.isPlaying) wasapi.suspendDecoders();
+    pushVisibility('background');
+  });
+  mainWindow.on('restore', () => pushVisibility('foreground'));
+  mainWindow.on('hide', () => pushVisibility('background'));
+  mainWindow.on('show', () => pushVisibility('foreground'));
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (bridge && bridge.isFloatingWindowUrl(url)) {
@@ -1019,6 +1040,7 @@ async function initializeApp() {
     const { SmtcController } = require('./smtc');
     const { DiscordRpcController } = require('./discord_rpc');
     const { ThumbarController } = require('./thumbar');
+    const { TaskbarLyricsController } = require('./taskbar_lyrics');
 
     let NativeRenderer = null;
     try {
@@ -1060,6 +1082,10 @@ async function initializeApp() {
     thumbar = new ThumbarController(player, settings);
     thumbar.setBridge(bridge);
 
+    taskbarLyrics = new TaskbarLyricsController(player, library, settings);
+    taskbarLyrics.setBridge(bridge);
+    taskbarLyrics.start();
+
     discordRpc = new DiscordRpcController(player, settings);
     discordRpc.setBridge(bridge);
     discordRpc.start();
@@ -1068,6 +1094,7 @@ async function initializeApp() {
     bridge.setMainWindow(mainWindow);
     smtc.setMainWindow(mainWindow);
     if (thumbar) thumbar.setWindow(mainWindow);
+    if (taskbarLyrics) taskbarLyrics.setMainWindow(mainWindow);
 
     {
       const APP_TITLE = 'Project Carminium';
@@ -1147,6 +1174,9 @@ function shutdown() {
   } catch {  }
   try {
     if (thumbar) thumbar.dispose();
+  } catch {  }
+  try {
+    if (taskbarLyrics) taskbarLyrics.dispose();
   } catch {  }
   try {
     if (bridge) bridge.close();

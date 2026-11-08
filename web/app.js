@@ -513,6 +513,8 @@
     }
   }
 
+  var _playerStateReady = false;
+
   function _fetchInitialState() {
     return App.utils.call('get_player_state').then(function(res) {
       const state = JSON.parse(res);
@@ -535,15 +537,104 @@
         App.state.currentLiked = liked;
         App.nowPlaying.updateLiked(liked);
 
-        return App.utils.call('get_queue').then(function(qres) {
+        return App.utils.call('get_queue').then(function (qres) {
           const qstate = JSON.parse(qres);
           App.state.queue = qstate.queue || [];
           App.state.currentQueueIndex = qstate.current_index;
           App.nowPlaying.updateQueue(App.state.queue, App.state.currentQueueIndex);
+          _playerStateReady = true;
         });
       });
     });
   }
+
+  var _resyncToken = 0;
+  var _lastResyncAt = 0;
+
+  /**
+   * 回到前台时的权威状态对齐。
+   *
+   * 窗口在后台时 rAF 被挂起、定时器被节流，曲目可能已经自动推进了好几首，
+   * 界面却还停在离开时那一首（甚至被更晚到达的旧事件盖回去）。这里直接向
+   * 主进程要一次快照，把播放器状态与界面强制对齐，顺便收回可能卡住的过渡蒙层。
+   */
+  function _resyncPlaybackState() {
+    if (!App.utils || typeof App.utils.call !== 'function') return;
+    if (!window.__bridgeReady || !_playerStateReady) return;
+
+    // blur/focus 与 visibilitychange 会几乎同时触发，合并成一次请求。
+    var now = Date.now();
+    if (now - _lastResyncAt < 500) return;
+    _lastResyncAt = now;
+
+    var token = ++_resyncToken;
+
+    App.utils.call('get_player_state').then(function (res) {
+      if (token !== _resyncToken) return;
+      var state;
+      try { state = JSON.parse(res); } catch (e) { return; }
+      if (!state) return;
+
+      var track = state.current_track || null;
+      var prev = App.state.currentTrack;
+      var prevState = App.state.playbackState;
+      var changed = (track && track.id) !== (prev && prev.id);
+
+      _cancelPendingTrackApply();
+
+      App.state.currentTrack = track;
+      App.state.playbackState = state.state || 'stopped';
+      App.state.shuffle = !!state.shuffle;
+      App.state.repeat = state.repeat || 'off';
+
+      // 过渡蒙层是成对的（start 藏 / complete 收），后台收不到 complete 就会卡住。
+      if (App.nowPlaying.showTransition) App.nowPlaying.showTransition(false);
+      if (App.nowPlaying.setTrackInfoHidden) App.nowPlaying.setTrackInfoHidden(false);
+
+      // 只在界面确实显示着另一首时才重绘：updateTrack 会重建歌词 DOM，
+      // 每次切回前台都重绘会把当前歌词行和滚动位置打回开头。
+      var targetId = track ? track.id : null;
+      var displayedId = App.nowPlaying._lastTrackId;
+      var pendingId = App.nowPlaying.pendingTrackId ? App.nowPlaying.pendingTrackId() : null;
+      if (targetId !== displayedId && targetId !== pendingId) {
+        App.nowPlaying.updateTrack(track);
+      }
+      App.nowPlaying.updateModes(App.state.shuffle, App.state.repeat);
+      if (App.state.playbackState !== prevState) {
+        App.nowPlaying.updateState(App.state.playbackState);
+      }
+      if (state.duration > 0) App.nowPlaying.updateDuration(state.duration);
+
+      // 播放中的位置由渲染侧每 100ms 上报，主进程那份在后台是滞后的，
+      // 别用它把刚恢复的进度往回拽。
+      if (App.state.playbackState !== 'playing' && App.state.playbackState !== 'loading') {
+        App.nowPlaying.updatePosition(state.position || 0);
+      }
+
+      if (changed) {
+        _syncAutoMixCurrent(track);
+        _updateListPlayState();
+        App.utils.call('is_current_liked').then(function (liked) {
+          if (token !== _resyncToken) return;
+          App.state.currentLiked = liked;
+          App.nowPlaying.updateLiked(liked);
+        }).catch(function () {});
+      }
+
+      return App.utils.call('get_queue').then(function (qres) {
+        if (token !== _resyncToken) return;
+        var qstate;
+        try { qstate = JSON.parse(qres); } catch (e) { return; }
+        App.state.queue = qstate.queue || [];
+        App.state.currentQueueIndex = qstate.current_index;
+        App.nowPlaying.updateQueue(App.state.queue, App.state.currentQueueIndex);
+      });
+    }).catch(function (e) {
+      console.warn('[app] 回前台状态对齐失败:', e);
+    });
+  }
+
+  window.__onAppForeground = _resyncPlaybackState;
 
   function _applyUiFont(val) {
     var root = document.documentElement;
@@ -668,6 +759,43 @@
     return Math.max(2000, ms + 2500);
   }
 
+  var _pendingTrackApply = null;
+  var _pendingTrackApplyRaf = 0;
+
+  function _cancelPendingTrackApply() {
+    if (_pendingTrackApplyRaf) {
+      cancelAnimationFrame(_pendingTrackApplyRaf);
+      _pendingTrackApplyRaf = 0;
+    }
+    _pendingTrackApply = null;
+  }
+
+  function _flushPendingTrackApply() {
+    if (_pendingTrackApplyRaf) {
+      cancelAnimationFrame(_pendingTrackApplyRaf);
+      _pendingTrackApplyRaf = 0;
+    }
+    var track = _pendingTrackApply;
+    _pendingTrackApply = null;
+    if (!track) return;
+    App.nowPlaying.updateTrack(track);
+    _updateListPlayState();
+  }
+
+  // 交叉淡化/无缝推进后的重绘推迟到下一帧，避免和过渡动画抢同一帧。
+  // 但后台没有帧：以前这里直接 rAF，回调会一直挂到回前台才跑，用的还是
+  // 挂起那一刻的旧曲目，正好把已经生效的新曲目盖回去。所以只保留最新一首，
+  // 后台（无帧）则直接同步落。
+  function _applyTrackSoon(track) {
+    _pendingTrackApply = track;
+    if (document.hidden || window.__appFrozen) {
+      _flushPendingTrackApply();
+      return;
+    }
+    if (_pendingTrackApplyRaf) return;
+    _pendingTrackApplyRaf = requestAnimationFrame(_flushPendingTrackApply);
+  }
+
   function _onTrackChanged(trackJson) {
     const track = JSON.parse(trackJson);
     App.state.currentTrack = track;
@@ -685,20 +813,18 @@
       _gaplessSwitchPending = false;
       _crossfadeSwitchPending = false;
       _skipNextTrackGlitch = false;
-      requestAnimationFrame(function () {
-        App.nowPlaying.updateTrack(track);
-
-        _updateListPlayState();
-      });
+      _applyTrackSoon(track);
       return;
     }
 
+    _cancelPendingTrackApply();
     App.nowPlaying.updateTrack(track);
 
     if (_skipNextTrackGlitch) {
       _skipNextTrackGlitch = false;
-    } else if (_audioEngine && _audioEngine._isPlaying) {
-
+    } else if (_audioEngine && _audioEngine._isPlaying && !document.hidden && !window.__appFrozen) {
+      // 后台看不见这层「mystery」过渡，而且它的收回计时器在后台会被节流到
+      // 很晚，回来时界面可能还是空的。后台直接跳过这段动画。
       App.nowPlaying.setTrackInfoHidden(true, { guardMs: 1600 });
       setTimeout(function () {
         App.nowPlaying.setTrackInfoHidden(false);

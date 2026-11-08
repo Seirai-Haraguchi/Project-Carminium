@@ -543,6 +543,133 @@
           ],
         },
         {
+          titleKey: 'settings.group.taskbarLyrics',
+          rows: [
+            {
+              type: 'toggle',
+              bind: 'taskbar_lyrics',
+              label: _t('settings.taskbarLyrics.label'),
+              sub: _t('settings.taskbarLyrics.sub'),
+              onChange: function () { _applyTaskbarLyricsDependents(); },
+            },
+            {
+              type: 'select',
+              bind: 'taskbar_lyrics_position',
+              label: _t('settings.taskbarLyrics.position.label'),
+              sub: _t('settings.taskbarLyrics.position.sub'),
+              options: [
+                { value: 'auto', label: _t('settings.taskbarLyrics.position.auto') },
+                { value: 'left', label: _t('settings.taskbarLyrics.position.left') },
+                { value: 'right', label: _t('settings.taskbarLyrics.position.right') },
+              ],
+            },
+            {
+              type: 'toggle',
+              bind: 'taskbar_lyrics_auto_max_width',
+              label: _t('settings.taskbarLyrics.autoMaxWidth.label'),
+              sub: _t('settings.taskbarLyrics.autoMaxWidth.sub'),
+              onChange: function () { _applyTaskbarLyricsDependents(); },
+            },
+            {
+              type: 'toggle',
+              bind: 'taskbar_lyrics_auto_adjust_occupied_space',
+              label: _t('settings.taskbarLyrics.autoAdjust.label'),
+              sub: _t('settings.taskbarLyrics.autoAdjust.sub'),
+            },
+            {
+              type: 'slider',
+              bind: 'taskbar_lyrics_max_width',
+              label: _t('settings.taskbarLyrics.maxWidth.label'),
+              sub: _t('settings.taskbarLyrics.maxWidth.sub'),
+              min: 200,
+              max: 800,
+              step: 20,
+              unit: 'px',
+            },
+            {
+              type: 'slider',
+              bind: 'taskbar_lyrics_left_margin',
+              label: _t('settings.taskbarLyrics.leftMargin.label'),
+              sub: _t('settings.taskbarLyrics.leftMargin.sub'),
+              min: 0,
+              max: 500,
+              step: 5,
+              unit: 'px',
+            },
+            {
+              type: 'slider',
+              bind: 'taskbar_lyrics_right_margin',
+              label: _t('settings.taskbarLyrics.rightMargin.label'),
+              sub: _t('settings.taskbarLyrics.rightMargin.sub'),
+              min: 0,
+              max: 500,
+              step: 5,
+              unit: 'px',
+            },
+            {
+              type: 'select',
+              bind: 'taskbar_lyrics_color_mode',
+              label: _t('settings.taskbarLyrics.colorMode.label'),
+              sub: _t('settings.taskbarLyrics.colorMode.sub'),
+              options: [
+                { value: 'taskbar', label: _t('settings.taskbarLyrics.colorMode.taskbar') },
+                { value: 'taskbarInverse', label: _t('settings.taskbarLyrics.colorMode.taskbarInverse') },
+                { value: 'light', label: _t('settings.taskbarLyrics.colorMode.light') },
+                { value: 'dark', label: _t('settings.taskbarLyrics.colorMode.dark') },
+              ],
+            },
+            {
+              type: 'toggle',
+              bind: 'taskbar_lyrics_show_background',
+              label: _t('settings.taskbarLyrics.showBackground.label'),
+              sub: _t('settings.taskbarLyrics.showBackground.sub'),
+            },
+            {
+              type: 'slider',
+              bind: 'taskbar_lyrics_font_size',
+              label: _t('settings.taskbarLyrics.fontSize.label'),
+              sub: _t('settings.taskbarLyrics.fontSize.sub'),
+              min: 12,
+              max: 20,
+              step: 1,
+              unit: 'px',
+            },
+            {
+              type: 'slider',
+              bind: 'taskbar_lyrics_font_weight',
+              label: _t('settings.taskbarLyrics.fontWeight.label'),
+              sub: _t('settings.taskbarLyrics.fontWeight.sub'),
+              min: 100,
+              max: 900,
+              step: 100,
+            },
+            {
+              type: 'toggle',
+              bind: 'taskbar_lyrics_show_cover',
+              label: _t('settings.taskbarLyrics.showCover.label'),
+              sub: _t('settings.taskbarLyrics.showCover.sub'),
+            },
+            {
+              type: 'toggle',
+              bind: 'taskbar_lyrics_word_by_word',
+              label: _t('settings.taskbarLyrics.wordByWord.label'),
+              sub: _t('settings.taskbarLyrics.wordByWord.sub'),
+            },
+            {
+              type: 'toggle',
+              bind: 'taskbar_lyrics_double_line',
+              label: _t('settings.taskbarLyrics.doubleLine.label'),
+              sub: _t('settings.taskbarLyrics.doubleLine.sub'),
+            },
+            {
+              type: 'toggle',
+              bind: 'taskbar_lyrics_show_translation',
+              label: _t('settings.taskbarLyrics.showTranslation.label'),
+              sub: _t('settings.taskbarLyrics.showTranslation.sub'),
+            },
+          ],
+        },
+        {
           titleKey: 'settings.group.discordRpc',
           rows: [
             {
@@ -1204,6 +1331,21 @@
     lyrics_credit_filters: 'filter_alt',
 
     smtc_lyrics: 'subtitles',
+    taskbar_lyrics: 'subtitles',
+    taskbar_lyrics_position: 'swap_horiz',
+    taskbar_lyrics_auto_max_width: 'width',
+    taskbar_lyrics_auto_adjust_occupied_space: 'space_bar',
+    taskbar_lyrics_max_width: 'width',
+    taskbar_lyrics_left_margin: 'margin_left',
+    taskbar_lyrics_right_margin: 'margin_right',
+    taskbar_lyrics_color_mode: 'palette',
+    taskbar_lyrics_show_background: 'format_color_fill',
+    taskbar_lyrics_font_size: 'format_size',
+    taskbar_lyrics_font_weight: 'format_bold',
+    taskbar_lyrics_show_cover: 'album',
+    taskbar_lyrics_word_by_word: 'lyrics',
+    taskbar_lyrics_double_line: 'subject',
+    taskbar_lyrics_show_translation: 'translate',
     gamepad_button_layout: 'sports_esports',
     tag_editor_path: 'edit_note',
 
@@ -1582,6 +1724,10 @@
     if (typeof settings.wasapi_exclusive !== 'undefined') {
       _applyWasapiExclusive(!!settings.wasapi_exclusive);
     }
+
+    if (typeof settings.taskbar_lyrics !== 'undefined') {
+      _applyTaskbarLyricsDependents();
+    }
   }
 
   function _renderDiscordStatus(status) {
@@ -1895,6 +2041,42 @@
         }
       }
     });
+  }
+
+  function _applyTaskbarLyricsDependents(enabled) {
+    var master = document.querySelector('input[type="checkbox"][data-bind="taskbar_lyrics"]');
+    var on = typeof enabled === 'boolean' ? enabled : (master ? master.checked : false);
+
+    var autoInput = document.querySelector('input[type="checkbox"][data-bind="taskbar_lyrics_auto_max_width"]');
+    var auto = autoInput ? autoInput.checked : true;
+
+    var binds = [
+      'taskbar_lyrics_position',
+      'taskbar_lyrics_auto_max_width',
+      'taskbar_lyrics_auto_adjust_occupied_space',
+      'taskbar_lyrics_max_width',
+      'taskbar_lyrics_left_margin',
+      'taskbar_lyrics_right_margin',
+      'taskbar_lyrics_color_mode',
+      'taskbar_lyrics_show_background',
+      'taskbar_lyrics_font_size',
+      'taskbar_lyrics_font_weight',
+      'taskbar_lyrics_show_cover',
+      'taskbar_lyrics_word_by_word',
+      'taskbar_lyrics_double_line',
+      'taskbar_lyrics_show_translation',
+    ];
+    binds.forEach(function (b) {
+      var row = document.querySelector('.settings-row[data-bind="' + b + '"]');
+      if (!row) return;
+      row.classList.toggle('settings-row-disabled', !on);
+    });
+
+    var adjustRow = document.querySelector('.settings-row[data-bind="taskbar_lyrics_auto_adjust_occupied_space"]');
+    if (adjustRow) adjustRow.style.display = auto ? '' : 'none';
+
+    var maxRow = document.querySelector('.settings-row[data-bind="taskbar_lyrics_max_width"]');
+    if (maxRow) maxRow.style.display = auto ? 'none' : '';
   }
 
   function _promptRestart(title, body) {

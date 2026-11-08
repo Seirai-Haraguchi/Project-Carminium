@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Taskbar Lyrics</title>
+  <link rel="stylesheet" href="taskbar_lyrics.css">
+</head>
+<body>
+  <div class="wrapper" id="tl-wrapper">
+    <div class="container" id="tl-container" data-align="left" data-theme="dark" data-playing="false">
+      <div class="cover-wrapper" id="tl-cover-wrap">
+        <img class="cover" id="tl-cover" alt="" draggable="false" hidden>
+        <div class="cover-fallback" id="tl-cover-fallback">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 18V5l12-2v13"></path>
+            <circle cx="6" cy="18" r="3"></circle>
+            <circle cx="18" cy="16" r="3"></circle>
+          </svg>
+        </div>
+      </div>
+
+      <div class="controls-wrapper">
+        <div class="controls-inner">
+          <button class="control-btn" type="button" data-cmd="prev" tabindex="-1">
+            <svg class="control-icon" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M18.5 5.2v13.6c0 .8-.9 1.3-1.6.9l-10-6.8a1 1 0 0 1 0-1.7l10-6.8c.7-.5 1.6 0 1.6.8z"></path>
+              <rect x="4" y="5" width="2.2" height="14" rx="1"></rect>
+            </svg>
+          </button>
+          <button class="control-btn" type="button" data-cmd="toggle" tabindex="-1">
+            <svg class="control-icon icon-play" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5.1v13.8c0 .8.9 1.3 1.6.9l10.4-6.9a1 1 0 0 0 0-1.7L9.6 4.2C8.9 3.8 8 4.3 8 5.1z"></path>
+            </svg>
+            <svg class="control-icon icon-pause" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6.5" y="4.5" width="4" height="15" rx="1.4"></rect>
+              <rect x="13.5" y="4.5" width="4" height="15" rx="1.4"></rect>
+            </svg>
+          </button>
+          <button class="control-btn" type="button" data-cmd="next" tabindex="-1">
+            <svg class="control-icon" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M5.5 5.2v13.6c0 .8.9 1.3 1.6.9l10-6.8a1 1 0 0 0 0-1.7l-10-6.8c-.7-.5-1.6 0-1.6.8z"></path>
+              <rect x="17.8" y="5" width="2.2" height="14" rx="1"></rect>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="lyric-area">
+        <div class="lyric-column" id="tl-lyric-column"></div>
+        <div class="song-info">
+          <div class="song-title" id="tl-song-title"></div>
+          <div class="song-artist" id="tl-song-artist"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="pages/taskbar_lyrics.js"></script>
+</body>
+</html>

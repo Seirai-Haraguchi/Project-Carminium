@@ -63,6 +63,17 @@
     };
   }
 
+  // 回到前台：先落一次后台积压的 UI 事件，再交给 App 做权威状态对齐
+  // （后台 rAF 停摆、定时器被节流，只靠事件流很容易停在旧曲目上）。
+  function _onAppForeground() {
+    if (window.uiSync && typeof window.uiSync.flushNow === 'function') {
+      window.uiSync.flushNow();
+    }
+    if (typeof window.__onAppForeground === 'function') {
+      try { window.__onAppForeground(); } catch (e) { console.error('[bridge] foreground resync error:', e); }
+    }
+  }
+
   if (isElectron) {
     window.pywebview = {
       api: new Proxy({}, {
@@ -87,7 +98,16 @@
         if (window.MemoryManager && window.MemoryManager.emergencyCleanup) {
           window.MemoryManager.emergencyCleanup();
         }
+        return;
       }
+      _onAppForeground();
+    });
+
+    // 窗口被别的窗口盖住时主进程收不到 blur/focus，但页面会变成 hidden；
+    // 这里补一条，保证不管从哪条路径回到可见都会对齐一次状态。
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) return;
+      _onAppForeground();
     });
 
     setupMediaSession();

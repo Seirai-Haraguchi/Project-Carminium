@@ -15,6 +15,8 @@
 
       this._rafHandle = 0;
 
+      this._fallbackTimer = 0;
+
       this._flushBound = this._flush.bind(this);
 
       this._flushCount = 0;
@@ -55,6 +57,7 @@
         cancelAnimationFrame(this._rafHandle);
         this._rafScheduled = false;
       }
+      this._clearFallback();
       this._flush();
     }
 
@@ -63,6 +66,7 @@
         cancelAnimationFrame(this._rafHandle);
         this._rafScheduled = false;
       }
+      this._clearFallback();
       this._queue.length = 0;
       this._highFreqSlots.forEach(function (slot) {
         slot.payload = undefined;
@@ -70,15 +74,37 @@
       });
     }
 
+    _clearFallback() {
+      if (this._fallbackTimer) {
+        clearTimeout(this._fallbackTimer);
+        this._fallbackTimer = 0;
+      }
+    }
+
     _scheduleFlush() {
       if (this._rafScheduled) return;
       this._rafScheduled = true;
       this._rafHandle = requestAnimationFrame(this._flushBound);
+
+      // 窗口隐藏时浏览器会完全停掉 rAF，事件就只能一直积压到回前台。
+      // 后台期间曲目可能已经自动推进好几首，光靠回前台那一次 flush 会和
+      // 实际播放脱节（而且还可能被更晚到达的旧事件盖掉），所以再挂一个
+      // 定时器兜底：可见时 250ms 内必然被 rAF 抢先清掉，隐藏时按浏览器
+      // 的节流粒度（最慢约 1 分钟一次）落一次状态。
+      var self = this;
+      this._fallbackTimer = setTimeout(function () {
+        self._fallbackTimer = 0;
+        if (!self._rafScheduled) return;
+        cancelAnimationFrame(self._rafHandle);
+        self._rafHandle = 0;
+        self._flush();
+      }, 250);
     }
 
     _flush() {
       this._rafScheduled = false;
       this._rafHandle = 0;
+      this._clearFallback();
       this._flushCount++;
 
       var queue = this._queue;
