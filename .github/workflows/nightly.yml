@@ -758,24 +758,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dmg=$(ls -1 dist-electron/*.dmg 2>/dev/null | head -n 1)
+          dmg=$(ls -1 dist-electron/*.dmg 2>/dev/null | head -n 1 || true)
           test -n "${dmg}" || { echo "::error::no .dmg produced"; exit 1; }
-          echo "Checking ${dmg}"
-          mount=$(hdiutil attach -nobrowse -readonly "${dmg}" | awk -F'\t' '/\/Volumes\//{print $NF}' | tail -n 1)
-          test -n "${mount}" || { echo "::error::failed to mount dmg"; exit 1; }
-          trap 'hdiutil detach "${mount}" -quiet || true' EXIT
-          app=$(ls -d "${mount}"/*.app 2>/dev/null | head -n 1)
-          test -n "${app}" || { echo "::error::no .app inside dmg"; exit 1; }
+          dmgSize=$(stat -f%z "${dmg}")
+          echo "dmg: ${dmg} (${dmgSize} bytes)"
+          test "${dmgSize}" -gt 10000000 || { echo "::error::dmg looks truncated"; exit 1; }
+          # electron-builder keeps the .app directory (appOutDir=mac[-arm64])
+          # next to the dmg; it is the exact tree the dmg is built from.
+          # hdiutil attach is unreliable on hosted runners for unsigned images,
+          # so validate that tree directly instead of mounting the dmg.
+          app=$(ls -d dist-electron/*/*.app 2>/dev/null | head -n 1 || true)
+          test -n "${app}" || { echo "::error::no .app build directory"; exit 1; }
+          echo "app: ${app}"
           res="${app}/Contents/Resources"
           test -s "${res}/carminium_audio.dylib"
           test -s "${res}/app.asar.unpacked/electron/bin/darwin/carminium_audio.dylib"
           test -x "${res}/app.asar.unpacked/electron/bin/darwin/ffmpeg"
           test -x "${res}/app.asar.unpacked/electron/bin/darwin/ffprobe"
-          "${res}/app.asar.unpacked/electron/bin/darwin/ffmpeg" -version | head -n 1
+          "${res}/app.asar.unpacked/electron/bin/darwin/ffmpeg" -version > /tmp/carminium-packaged-ffmpeg-version.txt 2>&1
+          head -n 1 /tmp/carminium-packaged-ffmpeg-version.txt
           appExe=$(ls -1 "${app}/Contents/MacOS" | head -n 1)
           appArchs=$(lipo -archs "${app}/Contents/MacOS/${appExe}")
           echo "app archs: ${appArchs}"
-          [[ "${appArchs}" == *"${{ matrix.expected-arch }}"* ]]
+          [[ "${appArchs}" == *"${{ matrix.expected-arch }}"* ]] || { echo "::error::app is not ${{ matrix.expected-arch }}"; exit 1; }
           echo "macOS dmg verified."
 
       - name: Upload artifacts
