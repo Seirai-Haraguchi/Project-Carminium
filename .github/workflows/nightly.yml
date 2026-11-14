@@ -771,14 +771,29 @@ jobs:
           test -n "${app}" || { echo "::error::no .app build directory"; exit 1; }
           echo "app: ${app}"
           res="${app}/Contents/Resources"
-          test -s "${res}/carminium_audio.dylib"
-          test -s "${res}/app.asar.unpacked/electron/bin/darwin/carminium_audio.dylib"
-          test -x "${res}/app.asar.unpacked/electron/bin/darwin/ffmpeg"
-          test -x "${res}/app.asar.unpacked/electron/bin/darwin/ffprobe"
-          "${res}/app.asar.unpacked/electron/bin/darwin/ffmpeg" -version > /tmp/carminium-packaged-ffmpeg-version.txt 2>&1
+          test -d "${res}" || { echo "::error::Contents/Resources missing from ${app}"; exit 1; }
+          # Log the real layout once. electron-builder puts extraResources and
+          # asarUnpack payloads at slightly different levels per target, so a
+          # hard-coded path is brittle. Write to a temp file first: piping find
+          # into head under `pipefail` would make find die of SIGPIPE.
+          find "${res}" -maxdepth 4 -print > /tmp/carminium-resources-tree.txt
+          echo "--- Resources tree (first 100 entries) ---"
+          head -n 100 /tmp/carminium-resources-tree.txt
+          echo "--- bundled binaries ---"
+          find "${res}" \( -name 'carminium_audio.dylib' -o -name 'ffmpeg' -o -name 'ffprobe' \) -type f -print
+          for name in carminium_audio.dylib ffmpeg ffprobe; do
+            count=$(find "${res}" -name "${name}" -type f | wc -l | tr -d ' ')
+            echo "${name}: ${count} copy/copies in Resources"
+            test "${count}" -ge 1 || { echo "::error::${name} missing from the .app"; exit 1; }
+          done
+          find "${res}" -name ffmpeg -type f -perm -111 > /tmp/carminium-ffmpeg-paths.txt
+          ffmpegPath=$(head -n 1 /tmp/carminium-ffmpeg-paths.txt || true)
+          test -n "${ffmpegPath}" || { echo "::error::bundled ffmpeg is not executable"; exit 1; }
+          "${ffmpegPath}" -version > /tmp/carminium-packaged-ffmpeg-version.txt 2>&1
           head -n 1 /tmp/carminium-packaged-ffmpeg-version.txt
-          appExe=$(ls -1 "${app}/Contents/MacOS" | head -n 1)
-          appArchs=$(lipo -archs "${app}/Contents/MacOS/${appExe}")
+          appExe=$(find "${app}/Contents/MacOS" -maxdepth 1 -type f -print -quit)
+          test -n "${appExe}" || { echo "::error::app executable missing"; exit 1; }
+          appArchs=$(lipo -archs "${appExe}")
           echo "app archs: ${appArchs}"
           [[ "${appArchs}" == *"${{ matrix.expected-arch }}"* ]] || { echo "::error::app is not ${{ matrix.expected-arch }}"; exit 1; }
           echo "macOS dmg verified."
