@@ -17,34 +17,21 @@
 [![下载量](https://img.shields.io/github/downloads/Seirai-Haraguchi/Project-Carminium/total.svg?label=%E4%B8%8B%E8%BD%BD%E9%87%8F&color=darkgreen&style=for-the-badge)](https://github.com/Seirai-Haraguchi/Project-Carminium/releases)
 </div>
 
-> [!NOTE]
-> 2026.8.19 更新
-> 由于作者未来要和生活对线（实际上是手头没钱要打零工做兼职来填充空余时间了），故 Carminium 更新的频率会放缓，更新只有季节性的大节点才会进行。如有任何贡献者欲做出贡献，欢迎提交 Pull Requests。
-
 ## 概述
 
-Project Carminium 是一款以设计性和使用性为核心的音乐播放器：支持本地音乐库，也支持 Subsonic / OpenSubsonic、WebDAV 与 SMB 远程音乐源；歌词自动从多个在线曲库匹配，并可在正在播放页手动切换来源。
-
-### 聚焦亮点
-
-- **原生音频输出** — WASAPI 独占/共享模式、PulseAudio，支持位完美输出
-- **AutoMix** — 分析节拍、结构与能量自动衔接；无法可靠交叉淡化时按条件无缝切换
-- **自动过渡混音** — 按曲目能量分析自动交叉淡入淡出；BPM 差异较大时上下曲双向对齐节拍再逐渐回落。
-- **智能歌词** — 网易云 / QQ 音乐 / lrclib / AMLLDB 多源搜索，支持逐字高亮、QRC 自动解密与翻译/罗马音
-- **动态主题** — Material Design 3 动态取色（Monet），从专辑封面取主题色
-- **系统集成** — Windows SMTC、任务栏歌词、全局快捷键、游戏手柄映射
+Project Carminium 是一款把设计和好用放在第一位的音乐播放器。本地曲库不用多说，Subsonic / OpenSubsonic、WebDAV 和 SMB 这些远程音源也统统搞得定；歌词会自动从多个在线曲库帮你匹配，要是觉得不对胃口，在正在播放页随便切换来源就行。
 
 ### 下载
 
-- 前往 [Release 页面](https://github.com/Seirai-Haraguchi/Project-Carminium/releases/latest) 下载最新版本：Windows 便携版 `.exe`（解压即用）、Linux `.deb` / `.AppImage`（x64）
-- 想尝鲜可在 [Nightly 构建](https://github.com/Seirai-Haraguchi/Project-Carminium/actions/workflows/nightly.yml) 下载每日自动构建（不稳定）
+- 直接去 [Release 页面](https://github.com/Seirai-Haraguchi/Project-Carminium/releases/latest) 拿最新版：Windows 便携版 `.exe`（解压就能直接用）、Linux `.deb` / `.AppImage`（x64）
+- 急着尝鲜的话可以去 [Nightly 构建](https://github.com/Seirai-Haraguchi/Project-Carminium/actions/workflows/nightly.yml) 蹲每日自动构建（先说好，不太稳定哦）
 
 ### 支持播放的音乐格式
 
-应该是大多数基本上所有。（如果有播不出来的，Issue 谢谢）
+绝大多数、基本上所有格式都能播。（要是真碰上播不出来的，直接提 Issue 吧）
 
 ## 界面截图
-
+_这些截图是 2026 年 8 月 22 日截的，跟最新的 Release 可能有点出入。_
 | 探新界面 | 正在播放界面 |
 |---|---|
 | ![](docs/discover.png) | ![](docs/nowplaying.png) |
@@ -53,13 +40,13 @@ Project Carminium 是一款以设计性和使用性为核心的音乐播放器�
 
 ## 许可证
 
-本项目基于 [LGPL-3.0-or-later](https://www.gnu.org/licenses/lgpl-3.0.html) 许可证开源，在 [LICENSE](LICENSE) 文件了解更多。
+本项目基于 [LGPL-3.0-or-later](https://www.gnu.org/licenses/lgpl-3.0.html) 许可证开源，具体细节去 [LICENSE](LICENSE) 文件里看就好。
 
-### 第三方组件
+### 鸣谢
 
 - [miniaudio](https://github.com/mackron/miniaudio) — MIT / Public Domain
 - [SoundTouch](https://gitlab.com/soundtouch/soundtouch) — LGPL-2.1
-- [FFmpeg](https://ffmpeg.org/) — LGPL-2.1+ / GPL-2.0+（取决于构建配置）
+- [FFmpeg](https://ffmpeg.org/) — LGPL-2.1+ / GPL-2.0+
 - [Material Design 3](https://m3.material.io/) — 设计规范（Apache 2.0）
 
 ## Star 历史
