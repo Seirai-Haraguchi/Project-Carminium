@@ -689,13 +689,11 @@ jobs:
           - arch: x64
             runner: macos-15-intel
             expected-arch: x86_64
-            zig-target: x86_64-macos
             ffmpeg-asset: ffmpeg-darwin-x64
             ffprobe-asset: ffprobe-darwin-x64
           - arch: arm64
             runner: macos-15
             expected-arch: arm64
-            zig-target: aarch64-macos
             ffmpeg-asset: ffmpeg-darwin-arm64
             ffprobe-asset: ffprobe-darwin-arm64
     runs-on: ${{ matrix.runner }}
@@ -751,7 +749,16 @@ jobs:
 
       - name: Build native library (Zig)
         working-directory: native
-        run: zig version && zig build copy copy-legacy -Doptimize=ReleaseFast -Dcpu=baseline -Dtarget=${{ matrix.zig-target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK=$(xcrun --sdk macosx --show-sdk-path)
+          test -d "$SDK" || { echo "::error::macOS SDK not found"; exit 1; }
+          echo "macOS SDK: $SDK"
+          # Do not pass -Dtarget: each runner's native arch is the arch we want,
+          # and Zig only auto-detects SDK paths for a native target. Passing the
+          # SDK explicitly keeps the framework search list non-empty regardless.
+          zig version && zig build copy copy-legacy -Doptimize=ReleaseFast -Dcpu=baseline -Dmacos-sdk="$SDK"
 
       - name: Verify native library (macOS)
         shell: bash

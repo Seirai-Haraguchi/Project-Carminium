@@ -57,6 +57,16 @@ pub fn build(b: *std.Build) void {
         mod.linkFramework("AudioToolbox", .{});
         mod.linkFramework("CoreFoundation", .{});
         mod.linkSystemLibrary("pthread", .{});
+
+        // Hosted CI runners do not always populate Zig's native framework
+        // search paths (the error is "unable to find framework 'CoreAudio'.
+        // searched paths: none"). The workflow passes the SDK explicitly with
+        // -Dmacos-sdk so both the C headers and the linker find the frameworks.
+        if (b.option([]const u8, "macos-sdk", "Path to the macOS SDK")) |sdk| {
+            mod.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk}) });
+            mod.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib", .{sdk}) });
+            mod.addSystemFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sdk}) });
+        }
     }
 
     mod.addCMacro("MA_NO_ENCODING", "");
