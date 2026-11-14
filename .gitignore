@@ -38,3 +38,4 @@ electron/bin/win32/carminium_audio.dll
 electron/bin/linux/carminium_audio.so
 electron/bin/darwin/carminium_audio.dylib
 _preview/
+docs/spatial-audio.md

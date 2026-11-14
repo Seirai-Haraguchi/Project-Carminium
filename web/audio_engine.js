@@ -42,6 +42,17 @@
 
       this._settingsCache = null;
 
+      // ── 多声道空间化 ──────────────────────────────────────────────────
+      // 只有多声道输入才会激活；立体声/单声道走原路径，一个字节都不多处理。
+      this._spatialEnabled = false;
+      this._spatialParams = {};
+      this._spatialLive = [];               // 缓冲区路径上的空间化节点（要跟着 gain 一起释放）
+      this._sourceFormat = {
+        main: { channels: 2, layout: '' },
+        next: { channels: 2, layout: '' },
+      };
+      this._spatialLastFormat = '';
+
       this._eqEnabled = false;
 
       this._bassBoost = null;
@@ -235,9 +246,12 @@
       this._ctx = new AudioContext(ctxOpts);
       this._initPromise = (async () => {
         const workletBase = 'worklets/';
+        // spatial_core 必须先进全局：两个 worklet 都直接引用 SpatialCore
+        await this._ctx.audioWorklet.addModule('spatial_core.js');
         await Promise.all([
           this._ctx.audioWorklet.addModule(workletBase + 'output-capture-processor.js'),
           this._ctx.audioWorklet.addModule(workletBase + 'streaming-pcm-processor.js'),
+          this._ctx.audioWorklet.addModule(workletBase + 'spatial-processor.js'),
           this._ctx.audioWorklet.addModule(workletBase + 'vbe-processor.js'),
         ]);
 
@@ -387,6 +401,13 @@
       this._nullSink = !!enabled;
     }
 
+    // 0..100 的滑杆值 → 0..1（设置里统一是整数百分比）
+    _ratio01(v) {
+      var n = Number(v);
+      if (!isFinite(n)) return 0;
+      return Math.max(0, Math.min(1, n / 100));
+    }
+
     releaseContext() {
       const old = this._ctx;
       const oldOutput = this._outputNode;
@@ -428,7 +449,48 @@
       this._eqBandGains = new Array(16).fill(0);
     }
 
+    // 主进程在解码前会告知真实声道数与布局；节点按这个数建，通道数变了就重建。
+    setSourceFormat(role, channels, layout) {
+      var key = role === 'next' ? 'next' : 'main';
+      var ch = Math.max(1, Math.min(12, (channels | 0) || 2));
+      var lay = layout || '';
+      var prev = this._sourceFormat[key];
+      if (prev.channels === ch && prev.layout === lay) return;
+      this._sourceFormat[key] = { channels: ch, layout: lay };
+
+      var node = key === 'main' ? this._currentStreamingNode : this._nextStreamingNode;
+      // 布局也算格式的一部分：同为 6 声道但 5.1 / 5.1(side) 的角色表不同
+      if (node && node.__format !== this._formatTag(key)) {
+        if (key === 'main') {
+          this._disposeStreamingNode(this._currentStreamingNode, this._currentStreamingGain);
+          this._currentStreamingNode = null;
+          this._currentStreamingGain = null;
+        } else {
+          this._disposeStreamingNode(this._nextStreamingNode, this._nextStreamingGain);
+          this._nextStreamingNode = null;
+          this._nextStreamingGain = null;
+        }
+      }
+      if (ch > 2) {
+        var tag = key + ':' + ch + ':' + lay;
+        if (tag !== this._spatialLastFormat) {
+          this._spatialLastFormat = tag;
+          console.log('[AudioEngine] multichannel source', key, ch + 'ch', lay || '(unknown layout)');
+        }
+      }
+    }
+
+    _formatTag(key) {
+      var f = this._sourceFormat[key] || { channels: 2, layout: '' };
+      return (f.channels || 2) + ':' + (f.layout || '');
+    }
+
     _ensureCurrentStreamingNode() {
+      if (this._currentStreamingNode && this._currentStreamingNode.__format !== this._formatTag('main')) {
+        this._disposeStreamingNode(this._currentStreamingNode, this._currentStreamingGain);
+        this._currentStreamingNode = null;
+        this._currentStreamingGain = null;
+      }
       if (this._currentStreamingNode) return;
 
       this._currentStreamingNode = this._createStreamingWorkletNode('current');
@@ -439,6 +501,11 @@
     }
 
     _ensureNextStreamingNode(opts) {
+      if (this._nextStreamingNode && this._nextStreamingNode.__format !== this._formatTag('next')) {
+        this._disposeStreamingNode(this._nextStreamingNode, this._nextStreamingGain);
+        this._nextStreamingNode = null;
+        this._nextStreamingGain = null;
+      }
       if (this._nextStreamingNode) return;
       opts = opts || {};
 
@@ -475,11 +542,21 @@
     }
 
     _createStreamingWorkletNode(role) {
+      var key = role === 'current' ? 'main' : 'next';
+      var fmt = this._sourceFormat[key] || { channels: 2, layout: '' };
       var node = new AudioWorkletNode(this._ctx, 'streaming-pcm-processor', {
         numberOfInputs: 0,
         numberOfOutputs: 1,
         outputChannelCount: [2],
+        processorOptions: {
+          channels: fmt.channels || 2,
+          layout: fmt.layout || '',
+          params: this._spatialParams,
+          sampleRate: this._ctx.sampleRate,
+        },
       });
+      node.__channels = fmt.channels || 2;
+      node.__format = this._formatTag(key);
 
       var self = this;
       node.port.onmessage = function (e) {
@@ -603,10 +680,13 @@
       }
     }
 
-    async playStreaming(durationMs, seekOffsetMs, startPaused) {
+    async playStreaming(durationMs, seekOffsetMs, startPaused, format) {
       this._loadInFlight = true;
       this._resumeAfterLoad = false;
       await this._ensureInit();
+      if (format && format.channels) {
+        this.setSourceFormat('main', format.channels, format.layout);
+      }
       const savedPcm = this._pendingStreamingPcm;
       this.stop();
 
@@ -648,12 +728,52 @@
       this._loadInFlight = false;
     }
 
+    // 建一个 N 声道进 / 立体声出的空间化节点（仅多声道缓冲用）
+    _makeSpatialNode(channels, layout) {
+      if (!this._ctx || !channels || channels <= 2) return null;
+      try {
+        var node = new AudioWorkletNode(this._ctx, 'spatial-processor', {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          outputChannelCount: [2],
+          channelCountMode: 'max',
+          processorOptions: {
+            sampleRate: this._ctx.sampleRate,
+            channels: channels,
+            layout: layout || '',
+            params: this._spatialParams,
+          },
+        });
+        this._spatialLive.push(node);
+        return node;
+      } catch (e) {
+        console.warn('[AudioEngine] spatial node create failed:', e && e.message);
+        return null;
+      }
+    }
+
+    // 把解码缓冲接到 deck 上；多声道时中间插空间化节点，立体声直连（零开销）
+    _connectDeckSource(source, gain, buffer) {
+      var nch = buffer ? buffer.numberOfChannels : 0;
+      if (nch > 2 && nch <= 12) {
+        var sp = this._makeSpatialNode(nch, this._sourceFormat.main.layout);
+        if (sp) {
+          source.connect(sp);
+          sp.connect(gain);
+          gain.__spatial = sp;
+          return true;
+        }
+      }
+      source.connect(gain);
+      return false;
+    }
+
     _createAndStartSource(buffer, offsetMs, generation, isMain) {
       const source = new AudioBufferSourceNode(this._ctx, { buffer: buffer });
       const gain = this._ctx.createGain();
       gain.gain.value = this._effectiveVolume();
 
-      source.connect(gain);
+      this._connectDeckSource(source, gain, buffer);
       gain.connect(this._effectsInput || this._outputNode);
 
       const offsetSec = (offsetMs || 0) / 1000;
@@ -1159,7 +1279,7 @@
       var nextSrc = new AudioBufferSourceNode(this._ctx, { buffer: this._nextBuffer });
       var nextGain = this._ctx.createGain();
       nextGain.gain.value = 0;
-      nextSrc.connect(nextGain);
+      this._connectDeckSource(nextSrc, nextGain, this._nextBuffer);
 
       if (!this._attachIncomingDeck(nextGain, now, cfSec)) {
         nextGain.connect(this._effectsInput || this._outputNode);
@@ -1230,7 +1350,7 @@
       const nextSrc = new AudioBufferSourceNode(this._ctx, { buffer: this._nextBuffer });
       const nextGain = this._ctx.createGain();
       nextGain.gain.value = 0;
-      nextSrc.connect(nextGain);
+      this._connectDeckSource(nextSrc, nextGain, this._nextBuffer);
 
       if (!this._attachIncomingDeck(nextGain, now, cfSec)) {
         nextGain.connect(this._effectsInput || this._outputNode);
@@ -1782,6 +1902,9 @@
     _promoteNextStreamingToCurrent() {
       this._currentStreamingNode = this._nextStreamingNode;
       this._currentStreamingGain = this._nextStreamingGain;
+      // 节点连同它自己的声道数一起交接，格式记录必须跟着走，否则下一次
+      // set_source_format 会拿错的通道数去判断要不要重建节点。
+      this._sourceFormat.main = this._sourceFormat.next;
       this._streamingConsumedFrames = this._nextStreamingConsumedFrames;
       this._currentStreamingEnded = this._nextStreamingEnded;
       this._sourceStartCtxTime = this._ctx.currentTime;
@@ -1848,7 +1971,7 @@
       var nextSrc = new AudioBufferSourceNode(this._ctx, { buffer: this._nextBuffer });
       var nextGain = this._ctx.createGain();
       nextGain.gain.value = this._effectiveVolume();
-      nextSrc.connect(nextGain);
+      this._connectDeckSource(nextSrc, nextGain, this._nextBuffer);
       nextGain.connect(this._effectsInput || this._outputNode);
 
       nextSrc.start(endTime, 0);
@@ -2221,6 +2344,28 @@
 
       this._guitarEnabled = !!settings.guitar_friendly;
       this._applyGuitarFilters();
+
+      // 多声道空间化：只有空间化开关 + 各滑杆，全部推给正在跑的空间化节点
+      var sp = this._spatialParams;
+      sp.enabled = !!settings.spatial_audio;
+      this._spatialEnabled = sp.enabled;
+      if (settings.spatial_intensity !== undefined)
+        sp.intensity = this._ratio01(settings.spatial_intensity);
+      if (settings.spatial_externalization !== undefined)
+        sp.externalization = this._ratio01(settings.spatial_externalization);
+      if (settings.spatial_width !== undefined) {
+        var w = Number(settings.spatial_width);
+        if (isFinite(w)) sp.width = Math.max(0.5, Math.min(1.5, w / 100));
+      }
+      if (settings.spatial_depth !== undefined)
+        sp.depth = this._ratio01(settings.spatial_depth);
+      if (settings.spatial_room !== undefined)
+        sp.room = this._ratio01(settings.spatial_room);
+      if (settings.spatial_reflections !== undefined)
+        sp.reflections = this._ratio01(settings.spatial_reflections);
+      if (settings.spatial_tail !== undefined)
+        sp.tail = this._ratio01(settings.spatial_tail);
+      this._pushSpatialParams();
 
       this._vbeEnabled = !!settings.vbe_enabled;
       if (settings.vbe_cutoff !== undefined)
@@ -2982,7 +3127,44 @@
 
     _safeDisconnect(node) {
       if (!node) return;
+      var sp = node.__spatial;
+      if (sp) {
+        node.__spatial = null;
+        var idx = this._spatialLive.indexOf(sp);
+        if (idx >= 0) this._spatialLive.splice(idx, 1);
+        try { sp.port.postMessage({ type: 'reset' }); } catch (_) {}
+        try { sp.disconnect(); } catch (_) {}
+      }
       try { node.disconnect(); } catch (_) {}
+    }
+
+    // ── 空间化控制 ────────────────────────────────────────────────────────
+    setSpatialAudio(enabled) {
+      this._spatialEnabled = !!enabled;
+      this._spatialParams.enabled = this._spatialEnabled;
+      this._pushSpatialParams();
+    }
+
+    setSpatialParams(patch) {
+      if (!patch) return;
+      for (var k in patch) {
+        if (Object.prototype.hasOwnProperty.call(patch, k)) {
+          this._spatialParams[k] = patch[k];
+        }
+      }
+      this._pushSpatialParams();
+    }
+
+    _pushSpatialParams() {
+      var msg = { type: 'params', params: this._spatialParams };
+      var nodes = [this._currentStreamingNode, this._nextStreamingNode];
+      for (var i = 0; i < this._spatialLive.length; i++) nodes.push(this._spatialLive[i]);
+      for (var j = 0; j < nodes.length; j++) {
+        var n = nodes[j];
+        if (n && n.port) {
+          try { n.port.postMessage(msg); } catch (_) {}
+        }
+      }
     }
 
     // 三段能量的原始平均（0..1，**不做饱和**）——由消费方决定怎么放大。

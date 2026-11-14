@@ -837,6 +837,7 @@ let bridge = null;
 let smtc = null;
 let discordRpc = null;
 let thumbar = null;
+let trackNotify = null;
 let taskbarLyrics = null;
 let wasapi = null;
 
@@ -1027,6 +1028,7 @@ async function initializeApp() {
     const { SmtcController } = require('./smtc');
     const { DiscordRpcController } = require('./discord_rpc');
     const { ThumbarController } = require('./thumbar');
+    const { TrackNotifyController } = require('./track_notify');
     const { TaskbarLyricsController } = require('./taskbar_lyrics');
 
     let NativeRenderer = null;
@@ -1069,6 +1071,9 @@ async function initializeApp() {
     thumbar = new ThumbarController(player, settings);
     thumbar.setBridge(bridge);
 
+    trackNotify = new TrackNotifyController(player, library, settings, bridge);
+    trackNotify.setBridge(bridge);
+
     taskbarLyrics = new TaskbarLyricsController(player, library, settings);
     taskbarLyrics.setBridge(bridge);
     taskbarLyrics.start();
@@ -1081,6 +1086,7 @@ async function initializeApp() {
     bridge.setMainWindow(mainWindow);
     smtc.setMainWindow(mainWindow);
     if (thumbar) thumbar.setWindow(mainWindow);
+    if (trackNotify) trackNotify.setWindow(mainWindow);
     if (taskbarLyrics) taskbarLyrics.setMainWindow(mainWindow);
 
     {
@@ -1167,6 +1173,9 @@ function shutdown() {
     if (thumbar) thumbar.dispose();
   } catch {  }
   try {
+    if (trackNotify) trackNotify.dispose();
+  } catch {  }
+  try {
     if (player) player.stop();
   } catch {  }
   savePlaybackState();
@@ -1227,6 +1236,7 @@ app.on('activate', () => {
     if (bridge) bridge.setMainWindow(mainWindow);
     if (smtc) smtc.setMainWindow(mainWindow);
     if (thumbar) thumbar.setWindow(mainWindow);
+    if (trackNotify) trackNotify.setWindow(mainWindow);
   }
 });
 

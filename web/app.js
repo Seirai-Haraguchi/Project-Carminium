@@ -1645,6 +1645,11 @@
 
             _audioEngine.setNullSink(!!cmd.nullSink);
             break;
+          case 'set_source_format':
+
+            // 多声道布局：解码侧保留真实声道数后，这边按它建流式节点
+            _audioEngine.setSourceFormat(cmd.channel || 'main', cmd.channels, cmd.layout);
+            break;
           case 'init':
 
             if (typeof cmd.nullSink === 'boolean') _audioEngine.setNullSink(cmd.nullSink);
@@ -1670,7 +1675,8 @@
             break;
           case 'play_streaming':
 
-            _audioEngine.playStreaming(cmd.durationMs, cmd.seekOffsetMs, cmd.paused);
+            _audioEngine.playStreaming(cmd.durationMs, cmd.seekOffsetMs, cmd.paused,
+              cmd.channels ? { channels: cmd.channels, layout: cmd.layout } : null);
 
             _applyTrackLoudness(cmd.filePath, cmd.trackId);
 

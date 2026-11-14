@@ -411,6 +411,92 @@
             },
           ],
         },
+        {
+
+          // 多声道空间化：默认档保守，滑杆只在打开后展开
+          titleKey: 'settings.group.spatialAudio',
+          rows: [
+            {
+              type: 'toggle',
+              bind: 'spatial_audio',
+              label: _t('settings.spatialAudio.label'),
+              sub: _t('settings.spatialAudio.sub'),
+              onChange: function (checked) {
+                var ae = window.__audioEngine;
+                if (ae && ae.setSpatialAudio) ae.setSpatialAudio(checked);
+                _applySpatialDependents(checked);
+              },
+            },
+            {
+              type: 'notice',
+              bind: 'spatial_audio_notice',
+              showWhen: 'spatial_audio',
+              icon: 'graphic_eq',
+              title: _t('settings.spatialNotice.title'),
+              items: [
+                _t('settings.spatialNotice.item1'),
+                _t('settings.spatialNotice.item2'),
+                _t('settings.spatialNotice.item3'),
+              ],
+            },
+            {
+              type: 'slider',
+              bind: 'spatial_intensity',
+              label: _t('settings.spatialIntensity.label'),
+              sub: _t('settings.spatialIntensity.sub'),
+              min: 0, max: 100, step: 5, unit: '%',
+              onChange: function (v) { _applySpatialParam('intensity', v / 100); },
+            },
+            {
+              type: 'slider',
+              bind: 'spatial_externalization',
+              label: _t('settings.spatialExternalization.label'),
+              sub: _t('settings.spatialExternalization.sub'),
+              min: 0, max: 100, step: 5, unit: '%',
+              onChange: function (v) { _applySpatialParam('externalization', v / 100); },
+            },
+            {
+              type: 'slider',
+              bind: 'spatial_width',
+              label: _t('settings.spatialWidth.label'),
+              sub: _t('settings.spatialWidth.sub'),
+              min: 50, max: 150, step: 5, unit: '%',
+              onChange: function (v) { _applySpatialParam('width', v / 100); },
+            },
+            {
+              type: 'slider',
+              bind: 'spatial_depth',
+              label: _t('settings.spatialDepth.label'),
+              sub: _t('settings.spatialDepth.sub'),
+              min: 0, max: 100, step: 5, unit: '%',
+              onChange: function (v) { _applySpatialParam('depth', v / 100); },
+            },
+            {
+              type: 'slider',
+              bind: 'spatial_room',
+              label: _t('settings.spatialRoom.label'),
+              sub: _t('settings.spatialRoom.sub'),
+              min: 0, max: 100, step: 5, unit: '%',
+              onChange: function (v) { _applySpatialParam('room', v / 100); },
+            },
+            {
+              type: 'slider',
+              bind: 'spatial_reflections',
+              label: _t('settings.spatialReflections.label'),
+              sub: _t('settings.spatialReflections.sub'),
+              min: 0, max: 100, step: 5, unit: '%',
+              onChange: function (v) { _applySpatialParam('reflections', v / 100); },
+            },
+            {
+              type: 'slider',
+              bind: 'spatial_tail',
+              label: _t('settings.spatialTail.label'),
+              sub: _t('settings.spatialTail.sub'),
+              min: 0, max: 100, step: 5, unit: '%',
+              onChange: function (v) { _applySpatialParam('tail', v / 100); },
+            },
+          ],
+        },
       ],
     },
     {
@@ -552,6 +638,12 @@
               bind: 'taskbar_thumb_controls',
               label: _t('settings.thumbar.label'),
               sub: _t('settings.thumbar.sub'),
+            },
+            {
+              type: 'toggle',
+              bind: 'track_notify',
+              label: _t('settings.trackNotify.label'),
+              sub: _t('settings.trackNotify.sub'),
             },
           ],
         },
@@ -1738,6 +1830,10 @@
       _applyWasapiExclusive(!!settings.wasapi_exclusive);
     }
 
+    if (typeof settings.spatial_audio !== 'undefined') {
+      _applySpatialDependents(!!settings.spatial_audio);
+    }
+
     if (typeof settings.taskbar_lyrics !== 'undefined') {
       _applyTaskbarLyricsDependents();
     }
@@ -2032,6 +2128,30 @@
       setTimeout(function () { _activateSection(id); }, 200);
     }
   };
+
+  // 空间化滑杆只在开关打开时展开：普通用户看不到 6 个滑杆
+  function _applySpatialDependents(on) {
+    var rows = document.querySelectorAll('.settings-row[data-bind^="spatial_"]');
+    for (var i = 0; i < rows.length; i++) {
+      var bind = rows[i].getAttribute('data-bind') || '';
+      if (bind === 'spatial_audio') continue;
+      var isNotice = rows[i].classList.contains('settings-notice');
+      if (isNotice) {
+        rows[i].style.display = on ? '' : 'none';
+      } else {
+        rows[i].style.display = on ? '' : 'none';
+        rows[i].setAttribute('aria-hidden', on ? 'false' : 'true');
+      }
+    }
+  }
+
+  function _applySpatialParam(key, value) {
+    var ae = window.__audioEngine;
+    if (!ae || !ae.setSpatialParams) return;
+    var patch = {};
+    patch[key] = value;
+    ae.setSpatialParams(patch);
+  }
 
   function _applyWasapiExclusive(checked) {
     var notice = document.querySelector('.settings-notice[data-show-when="wasapi_exclusive"]');

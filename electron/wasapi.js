@@ -200,6 +200,28 @@ function _findFFprobe() {
   return _ffprobePath;
 }
 
+// ffmpeg 认识的声道布局 → 声道数。只接受能直接喂给 aformat 的规范名；
+// 拿不准就按声道数退到默认布局（渲染侧也是同一套兜底）。
+const LAYOUT_CHANNELS = {
+  'mono': 1, 'stereo': 2, '2.1': 3, '3.0': 3, '3.0(back)': 3,
+  '4.0': 4, 'quad': 4,
+  '5.0': 5, '5.0(side)': 5,
+  '5.1': 6, '5.1(side)': 6, '6.0': 6, '6.0(front)': 6,
+  '6.1': 7, '7.0': 7, '7.1': 8,
+  '5.1.2': 8, '5.1.4': 10, '7.1.2': 10, '7.1.4': 12,
+};
+const LAYOUT_BY_COUNT = {
+  1: 'mono', 2: 'stereo', 3: '3.0', 4: 'quad', 5: '5.0',
+  6: '5.1', 7: '6.1', 8: '7.1', 10: '7.1.2', 12: '7.1.4',
+};
+
+function normalizeLayout(name, channels) {
+  const raw = String(name || '').trim().toLowerCase();
+  const count = channels | 0;
+  if (raw && LAYOUT_CHANNELS[raw] === count) return raw;
+  return LAYOUT_BY_COUNT[count] || '';
+}
+
 class NativeRenderer extends EventEmitter {
   constructor() {
     super();
@@ -232,6 +254,14 @@ class NativeRenderer extends EventEmitter {
     this._webAudioEnabled = false;
 
     this._webAudioBrowserDecode = false;
+
+    // ── 多声道空间化 ──────────────────────────────────────────────────
+    // 只有「空间化开关打开 + 真多声道素材」才免掉 ffmpeg 的 -ac 2，
+    // 其余情况解码参数与旧版逐字节一致。
+    this._spatialEnabled = false;
+    this._currentFormat = { channels: 2, layout: '' };
+    this._nextFormat = { channels: 2, layout: '' };
+    this._probeCache = new Map();
 
     this.sendPcmToRenderer = null;
     this.sendFfmpegState = null;
@@ -391,7 +421,9 @@ class NativeRenderer extends EventEmitter {
     this._resumePositionMs = null;
     if (!this._dummyMode) _f.ca_clear_buffer();
 
-    this._durationMs = await this._probeDuration(filePath);
+    const probe = await this.probeAudio(filePath);
+    this._durationMs = probe.durationMs;
+    this._currentFormat = this._formatFor(probe);
 
     const _this = this;
     this._ffmpegDataStarted = false;
@@ -405,7 +437,8 @@ class NativeRenderer extends EventEmitter {
       },
        () => {
         if (_this.sendFfmpegState) _this.sendFfmpegState('main', true);
-      }
+      },
+      this._currentFormat.channels > 2 ? this._currentFormat : null
     );
 
     const maxWaitMs = 2000;
@@ -421,31 +454,21 @@ class NativeRenderer extends EventEmitter {
       check();
     });
 
-    return { durationMs: this._durationMs };
+    return {
+      durationMs: this._durationMs,
+      channels: this._currentFormat.channels,
+      layout: this._currentFormat.layout,
+    };
   }
 
   _spawnFFmpeg(filePath, seekSec) {
 
   }
 
+  // 时长与声道布局一次 ffprobe 拿全（空间化要用布局决定解码参数）
   async _probeDuration(filePath) {
-    const probe = _findFFprobe();
-    if (!probe) return 0;
-    return new Promise((resolve) => {
-      const args = [
-        '-v', 'quiet',
-        '-show_entries', 'format=duration',
-        '-of', 'csv=p=0',
-        filePath,
-      ];
-      const child = execFile(probe, args, { timeout: 10000 }, (err, stdout) => {
-        if (err) { resolve(0); return; }
-        const seconds = parseFloat(stdout.trim());
-        resolve(isNaN(seconds) ? 0 : Math.round(seconds * 1000));
-      });
-
-      setTimeout(() => { try { child.kill(); } catch {} }, 10500);
-    });
+    const p = await this.probeAudio(filePath);
+    return p.durationMs;
   }
 
   _onPcmData(chunk, channel) {
@@ -570,7 +593,8 @@ class NativeRenderer extends EventEmitter {
         if (_this.sendPcmToRenderer) _this.sendPcmToRenderer('main', fa);
       },
       () => { if (_this.sendFfmpegState) _this.sendFfmpegState('main', true); },
-      () => { if (_this.sendFfmpegState) _this.sendFfmpegState('main', true); }
+      () => { if (_this.sendFfmpegState) _this.sendFfmpegState('main', true); },
+      this._currentFormat.channels > 2 ? this._currentFormat : null
     );
   }
 
@@ -651,7 +675,8 @@ class NativeRenderer extends EventEmitter {
           if (_this.sendPcmToRenderer) _this.sendPcmToRenderer('main', fa);
         },
         () => { if (_this.sendFfmpegState) _this.sendFfmpegState('main', true); },
-        () => { if (_this.sendFfmpegState) _this.sendFfmpegState('main', true); }
+        () => { if (_this.sendFfmpegState) _this.sendFfmpegState('main', true); },
+        this._currentFormat.channels > 2 ? this._currentFormat : null
       );
     }
 
@@ -670,6 +695,64 @@ class NativeRenderer extends EventEmitter {
   setWebAudioEnabled(enabled) {
     this._webAudioEnabled = !!enabled;
     console.log('[wasapi] Web Audio mode:', enabled ? 'enabled' : 'disabled');
+  }
+
+  setSpatialEnabled(enabled) {
+    this._spatialEnabled = !!enabled;
+  }
+
+  async probeAudio(filePath) {
+    const hit = this._probeCache.get(filePath);
+    if (hit && Date.now() - hit.t < 60000) return hit.v;
+    const v = await this._runProbe(filePath);
+    this._probeCache.set(filePath, { t: Date.now(), v });
+    if (this._probeCache.size > 16) {
+      const oldest = this._probeCache.keys().next().value;
+      if (oldest !== undefined) this._probeCache.delete(oldest);
+    }
+    return v;
+  }
+
+  _runProbe(filePath) {
+    const probe = _findFFprobe();
+    if (!probe) return Promise.resolve({ durationMs: 0, channels: 0, layout: '' });
+    return new Promise((resolve) => {
+      const args = [
+        '-v', 'quiet',
+        '-select_streams', 'a:0',
+        '-show_entries', 'stream=channels,channel_layout',
+        '-show_entries', 'format=duration',
+        '-of', 'json',
+        filePath,
+      ];
+      const child = execFile(probe, args, { timeout: 10000 }, (err, stdout) => {
+        if (err) { resolve({ durationMs: 0, channels: 0, layout: '' }); return; }
+        try {
+          const j = JSON.parse(stdout);
+          const st = (j.streams && j.streams[0]) || {};
+          const seconds = parseFloat((j.format && j.format.duration) || '0');
+          const channels = parseInt(st.channels || '0', 10) || 0;
+          resolve({
+            durationMs: isNaN(seconds) ? 0 : Math.round(seconds * 1000),
+            channels,
+            layout: normalizeLayout(st.channel_layout, channels),
+          });
+        } catch {
+          resolve({ durationMs: 0, channels: 0, layout: '' });
+        }
+      });
+
+      setTimeout(() => { try { child.kill(); } catch {} }, 10500);
+    });
+  }
+
+  // 该轨实际要用的输出格式：空间化关闭 / 非多声道 → 维持 -ac 2
+  _formatFor(probe) {
+    if (!probe || !probe.channels) return { channels: 2, layout: '' };
+    if (!this._spatialEnabled || probe.channels <= 2 || probe.channels > 12) {
+      return { channels: 2, layout: '' };
+    }
+    return { channels: probe.channels, layout: probe.layout || '' };
   }
 
   async setupForBrowserDecode(filePath) {
@@ -717,24 +800,30 @@ class NativeRenderer extends EventEmitter {
 
     if (skipFFmpeg) {
       console.log('[wasapi] preloadNext (skipFFmpeg):', filePath);
-      return { durationMs: this._nextDurationMs };
+      this._nextFormat = { channels: 2, layout: '' };
+      return { durationMs: this._nextDurationMs, channels: 2, layout: '' };
     }
 
     if (!this._decoder) throw new Error('ffmpeg not found');
 
+    const nextProbe = await this.probeAudio(filePath);
+    const fmt = this._formatFor(nextProbe);
+    this._nextFormat = fmt;
+
     const _this = this;
     this._decoder.start('next', filePath, seekMs / 1000,
        (fa) => {
-        if (_this.sendPcmToRenderer) _this.sendPcmToRenderer('next', fa);
-      },
+         if (_this.sendPcmToRenderer) _this.sendPcmToRenderer('next', fa);
+       },
        () => {
-        _this._nextReady = true;
-        if (_this.sendFfmpegState) _this.sendFfmpegState('next', true);
-      },
+         _this._nextReady = true;
+         if (_this.sendFfmpegState) _this.sendFfmpegState('next', true);
+       },
        () => {
-        _this._nextReady = true;
-        if (_this.sendFfmpegState) _this.sendFfmpegState('next', true);
-      }
+         _this._nextReady = true;
+         if (_this.sendFfmpegState) _this.sendFfmpegState('next', true);
+       },
+       fmt.channels > 2 ? fmt : null
     );
 
     const maxWaitMs = 2000;
@@ -750,7 +839,11 @@ class NativeRenderer extends EventEmitter {
     });
 
     console.log('[wasapi] preloadNext complete:', filePath);
-    return { durationMs: this._nextDurationMs };
+    return {
+      durationMs: this._nextDurationMs,
+      channels: this._nextFormat.channels,
+      layout: this._nextFormat.layout,
+    };
   }
 
   promoteNextToCurrent() {
@@ -762,6 +855,9 @@ class NativeRenderer extends EventEmitter {
     this._currentFilePath = this._nextFilePath;
     this._durationMs = this._nextDurationMs;
     this._seekOffsetMs = this._nextSeekMs || 0;
+    // 解码器槽位整体交接，格式记录必须一起走
+    this._currentFormat = this._nextFormat || { channels: 2, layout: '' };
+    this._nextFormat = { channels: 2, layout: '' };
     this._nextFilePath = null;
     this._nextDurationMs = 0;
     this._nextSeekMs = 0;

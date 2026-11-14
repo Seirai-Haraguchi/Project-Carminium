@@ -6,7 +6,9 @@ const sharp = require('sharp');
 
 const OUT_DIR = path.join(__dirname, '..', 'build', 'thumbar');
 const SIZE = 32;
-const PADDING = 2;
+const VIEWBOX = 24;
+const GLYPH_BOX = 24;
+const RASTER = SIZE * 8;
 
 const GLYPHS = {
   prev: 'M6 6h2v12H6zm3.5 6 8.5 6V6z',
@@ -28,12 +30,57 @@ const VARIANTS = {
 
 function buildSvg(glyph, color) {
   return Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE}" height="${SIZE}" ` +
-    `viewBox="0 0 ${SIZE} ${SIZE}">` +
-    `<g transform="translate(${PADDING} ${PADDING})">` +
-    `<path fill="${color}" d="${glyph}"/>` +
-    `</g></svg>`
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${RASTER}" height="${RASTER}" ` +
+    `viewBox="0 0 ${VIEWBOX} ${VIEWBOX}">` +
+    `<path fill="${color}" d="${glyph}"/></svg>`
   );
+}
+
+function alphaBBox(data, width, height) {
+  let minX = width, minY = height, maxX = -1, maxY = -1;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const a = data[(y * width + x) * 4 + 3];
+      if (a > 16) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return null;
+  return { left: minX, top: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+}
+
+async function renderGlyph(glyph, color) {
+  const { data, info } = await sharp(buildSvg(glyph, color), { density: 288 })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const box = alphaBBox(data, info.width, info.height);
+  if (!box) throw new Error('图标渲染为空');
+
+  const glyphBuf = await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
+    .extract(box)
+    .resize(GLYPH_BOX, GLYPH_BOX, {
+      fit: 'contain',
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+
+  const meta = await sharp(glyphBuf).metadata();
+  const left = Math.round((SIZE - meta.width) / 2);
+  const top = Math.round((SIZE - meta.height) / 2);
+
+  return sharp({
+    create: { width: SIZE, height: SIZE, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+  })
+    .composite([{ input: glyphBuf, left, top }])
+    .png({ compressionLevel: 9 })
+    .toBuffer();
 }
 
 async function main() {
@@ -41,11 +88,9 @@ async function main() {
   for (const [name, glyph] of Object.entries(GLYPHS)) {
     for (const [variant, color] of Object.entries(VARIANTS)) {
       const out = path.join(OUT_DIR, `${name}_${variant}.png`);
-      await sharp(buildSvg(glyph, color), { density: 288 })
-        .resize(SIZE, SIZE)
-        .png({ compressionLevel: 9 })
-        .toFile(out);
-      console.log(`[gen-thumbar] ${path.relative(process.cwd(), out)} (${fs.statSync(out).size}B)`);
+      const buf = await renderGlyph(glyph, color);
+      fs.writeFileSync(out, buf);
+      console.log(`[gen-thumbar] ${path.relative(process.cwd(), out)} (${buf.length}B)`);
     }
   }
 }

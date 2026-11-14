@@ -1780,6 +1780,9 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       ];
       if (AUTO_REFRESH_KEYS.some((k) => k in data)) this.startAutoRefresh();
 
+      // 空间化开关决定解码侧是否保留真实声道数，必须立刻生效
+      if ('spatial_audio' in data) this._player.setSpatialEnabled(!!data.spatial_audio);
+
       // 上限调小或刚启用时立即按新水位淘汰，避免占用滞后于设置。
       if ('stream_cache_limit_mb' in data || 'stream_cache_enabled' in data) {
         const cache = this._coverServer && this._coverServer.streamCache;
@@ -2190,6 +2193,12 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
 
   isFloatingWindowUrl(url) {
     return /(^|[\\/])floating\.html([?#]|$)/.test(String(url || ''));
+  }
+
+  // 给主进程外围控制器（切歌通知等）判断「用户是不是正在这个窗口里」用。
+  floatingWindow() {
+    const w = this._floatingWindow;
+    return (w && !w.isDestroyed()) ? w : null;
   }
 
   floatingWindowOptions() {

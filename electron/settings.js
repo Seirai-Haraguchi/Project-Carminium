@@ -37,6 +37,7 @@ const DEFAULTS = {
   smtc_lyrics: false,
 
   taskbar_thumb_controls: true,
+  track_notify: true,
   taskbar_lyrics: false,
   taskbar_lyrics_position: 'auto',
   taskbar_lyrics_auto_max_width: true,
@@ -78,6 +79,16 @@ const DEFAULTS = {
   onboarding_complete: false,
 
   memory_optimization: 'normal',
+
+  // 多声道空间化（只在 >2 声道素材上生效；立体声/单声道一律旁路）
+  spatial_audio: true,
+  spatial_intensity: 50,
+  spatial_externalization: 45,
+  spatial_width: 120,
+  spatial_depth: 45,
+  spatial_room: 40,
+  spatial_reflections: 62,
+  spatial_tail: 60,
 
   vbe_enabled: false,
   vbe_cutoff: 90,
@@ -126,6 +137,22 @@ function normalizeLegacySettings(data) {
       delete data[legacy];
       migrated = true;
     }
+  }
+
+  // 空间化调过一次音（2026-11-15：宽度改为缩放侧向分量、加入宽频带 ILD 与去相关尾音，
+  // 默认档整体加浓）。旧存档里的 100/50/50 是按旧算法标的，留着会让"默认"永远偏弱，
+  // 所以清一次让新默认生效；用户手动拧过的值也会被重置，只此一次。
+  if (!data.spatial_tuning_v2) {
+    for (const key of Object.keys(DEFAULTS)) {
+      if (key.startsWith('spatial_') && key !== 'spatial_audio') {
+        // 直接回填新默认值，不要 delete：_load 是 Object.assign(DEFAULTS, stored)，
+        // 删掉键不会恢复默认，只会让 UI 拿到 undefined。
+        data[key] = DEFAULTS[key];
+        migrated = true;
+      }
+    }
+    data.spatial_tuning_v2 = 1;
+    migrated = true;
   }
   return migrated;
 }

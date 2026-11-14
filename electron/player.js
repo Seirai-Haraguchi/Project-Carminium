@@ -55,6 +55,9 @@ class MusicPlayer extends EventEmitter {
     }
 
     // AutoMix 是唯一过渡模式；无可执行淡变时由引擎按条件使用无缝切换。
+    // 多声道空间化开关：影响的是解码侧要不要保留真实声道数
+    this._spatialEnabled = settings ? !!settings.get('spatial_audio', true) : true;
+
     this._automixEnabled = settings ? !!settings.get('automix', false) : false;
     this._radicalTransitions = settings ? !!settings.get('radical_transitions', false) : false;
     this._crossfadeDurationMs = settings ? parseInt(settings.get('crossfade_duration', 4000), 10) || 4000 : 4000;
@@ -82,6 +85,14 @@ class MusicPlayer extends EventEmitter {
       this.emit('audio_control', JSON.stringify({ action: 'set_radical_transitions', enabled: this._radicalTransitions }));
       this.emit('audio_control', JSON.stringify({ action: 'set_crossfade_duration', ms: this._crossfadeDurationMs }));
       this.emit('audio_control', JSON.stringify({ action: 'set_output_sink', nullSink: this._exclusive }));
+      this.setSpatialEnabled(this._spatialEnabled);
+    }
+  }
+
+  setSpatialEnabled(enabled) {
+    this._spatialEnabled = !!enabled;
+    if (this._renderer && typeof this._renderer.setSpatialEnabled === 'function') {
+      this._renderer.setSpatialEnabled(this._spatialEnabled);
     }
   }
 
@@ -96,6 +107,17 @@ class MusicPlayer extends EventEmitter {
   _emitAudioControl(action, params) {
     const payload = params ? { action, ...params } : { action };
     this.emit('audio_control', JSON.stringify(payload));
+  }
+
+  // 把真实声道布局告诉渲染侧。**必须每次都发**：上一首是 5.1、这一首是立体声时，
+  // 渲染侧会沿用旧的 6 声道去反交织，整条输出就错位了。
+  _emitSourceFormat(channel, info) {
+    const ch = (info && info.channels) ? info.channels : 2;
+    this._emitAudioControl('set_source_format', {
+      channel: channel,
+      channels: ch,
+      layout: (info && info.layout) || '',
+    });
   }
 
   _invokeAudioControl(action, params) {
@@ -569,6 +591,8 @@ class MusicPlayer extends EventEmitter {
       }
       if (myToken !== this._nativePlayToken) return;
 
+      this._emitSourceFormat('main', info);
+
       const durationMs = this._resolveDuration(info.durationMs, track);
       if (!info.durationMs && durationMs > 0) {
         console.log('[player] Using metadata duration fallback:', durationMs, 'ms for', track.title);
@@ -607,6 +631,8 @@ class MusicPlayer extends EventEmitter {
           durationMs: durationMs,
           seekOffsetMs: startPositionMs,
           paused: !!startPaused,
+          channels: info.channels || 2,
+          layout: info.layout || '',
           filePath: filePath,
           trackId: track.id || '',
           title: track.title || '',
@@ -687,6 +713,18 @@ class MusicPlayer extends EventEmitter {
       'skipFFmpeg:', skipFFmpeg, 'forceStreaming:', forceStreaming);
 
     const metaDurationMs = this._resolveDuration(0, nextTrack);
+    // next 的声道布局必须先于 set_next_info 落地：渲染侧要按它建流式节点，
+    // 建错通道数就得整条重来（还会丢掉已经预滚的 PCM）。
+    // 立体声也要发（2ch），否则会继承上一首多声道的残留格式。
+    let nextFormat = { channels: 2, layout: '' };
+    if (nextNeedsFFmpeg && !skipFFmpeg) {
+      try {
+        nextFormat = await this._renderer.probeAudio(filePath);
+      } catch (e) {
+        console.warn('[player] probe next format failed:', e.message);
+      }
+    }
+    this._emitSourceFormat('next', nextFormat);
     this.emit('audio_control', JSON.stringify({
       action: 'set_next_info',
       filePath: filePath,

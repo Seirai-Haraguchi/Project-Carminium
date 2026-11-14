@@ -22,16 +22,33 @@ class DecoderPool {
   }
 
 
-  start(slot, filePath, seekSec, onPcmData, onFinished, onError) {
+  /**
+   * @param {object} [opts]
+   *   opts.channels  该轨真实声道数（多声道空间化时不再强制 -ac 2）
+   *   opts.layout    ffmpeg 认识的布局名（如 '5.1' / '7.1' / '5.1.2'），
+   *                  用 aformat 强制成规范声道顺序，渲染侧才能按角色解码
+   *
+   * 对齐单位必须跟声道数走：按 4 字节对齐会让多声道帧被劈开，
+   * 反交织之后每个声道都错位。
+   */
+  start(slot, filePath, seekSec, onPcmData, onFinished, onError, opts) {
     this._killSlot(slot);
+
+    const channels = (opts && opts.channels > 0) ? opts.channels : this._channels;
+    const layout = (opts && opts.layout) || '';
 
     const args = [];
     if (seekSec > 0) args.push('-ss', String(seekSec));
+    args.push('-i', filePath);
+    if (layout) {
+      args.push('-af', `aformat=sample_fmts=flt:channel_layouts=${layout}`);
+    } else if (channels !== this._channels) {
+      args.push('-af', 'aformat=sample_fmts=flt');
+    }
     args.push(
-      '-i', filePath,
       '-f', 'f32le',
       '-ar', String(this._sampleRate),
-      '-ac', String(this._channels),
+      '-ac', String(channels),
       '-loglevel', 'quiet',
       'pipe:1'
     );
@@ -49,14 +66,14 @@ class DecoderPool {
     }
     const proc = spawn(bin, args, { windowsHide: true });
     const pendingBuf = { buf: Buffer.alloc(0) };
+    const frameBytes = Math.max(4, channels * 4);
 
     const onData = (chunk) => {
       let buf = chunk;
       if (pendingBuf.buf.length > 0) {
         buf = Buffer.concat([pendingBuf.buf, chunk]);
       }
-      const sampleBytes = 4;
-      const alignedLen = Math.floor(buf.length / sampleBytes) * sampleBytes;
+      const alignedLen = Math.floor(buf.length / frameBytes) * frameBytes;
       pendingBuf.buf = alignedLen < buf.length ? buf.slice(alignedLen) : Buffer.alloc(0);
       if (alignedLen > 0) {
         onPcmData(new Float32Array(buf.buffer, buf.byteOffset, alignedLen / 4));
@@ -80,7 +97,7 @@ class DecoderPool {
       else if (onFinished) onFinished();
     });
 
-    this._slots[slot] = { proc, onData, pendingBuf };
+    this._slots[slot] = { proc, onData, pendingBuf, channels, frameBytes };
     this._activeCount++;
   }
 
@@ -95,14 +112,14 @@ class DecoderPool {
     this._killSlot('main');
 
     const proc = nextSlot.proc;
+    const frameBytes = nextSlot.frameBytes || 4;
     proc.stdout.removeAllListeners('data');
     proc.stdout.on('data', (chunk) => {
       let buf = chunk;
       if (nextSlot.pendingBuf.buf.length > 0) {
         buf = Buffer.concat([nextSlot.pendingBuf.buf, chunk]);
       }
-      const sampleBytes = 4;
-      const alignedLen = Math.floor(buf.length / sampleBytes) * sampleBytes;
+      const alignedLen = Math.floor(buf.length / frameBytes) * frameBytes;
       nextSlot.pendingBuf.buf = alignedLen < buf.length ? buf.slice(alignedLen) : Buffer.alloc(0);
       if (alignedLen > 0) {
         onPcmData(new Float32Array(buf.buffer, buf.byteOffset, alignedLen / 4));
@@ -125,7 +142,7 @@ class DecoderPool {
       else if (onFinished) onFinished();
     });
 
-    this._slots.main = { proc, onData: nextSlot.onData, pendingBuf: nextSlot.pendingBuf };
+    this._slots.main = { proc, onData: nextSlot.onData, pendingBuf: nextSlot.pendingBuf, channels: nextSlot.channels, frameBytes };
     this._slots.next = null;
     return true;
   }
