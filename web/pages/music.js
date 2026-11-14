@@ -22,7 +22,9 @@
   let _vl = null;
   let _flatList = [];
   let _renderedTracks = [];
-  const ROW_HEIGHT = 56;
+  /* 行高与 CSS --track-row-height 必须一致：VirtualList 按它算偏移，
+     A-Z 索引也用 i * ROW_HEIGHT 定位 */
+  const ROW_HEIGHT = 60;
   const HEADER_HEIGHT = 32;
 
   const SORT_OPTIONS = [
@@ -190,7 +192,7 @@
     }
 
     container.innerHTML = `
-      <div class="page-sticky-header">
+      <div class="page-top">
         <div class="page-header">
           <div class="page-header-left">
             <h1 class="page-title" data-i18n="music.title">所有音乐</h1>
@@ -218,6 +220,9 @@
             </button>
           </div>
         </div>
+        <!-- 筛选指示排在搜索框**上面**：滚出标题区后整组浮到底部时，
+             胶囊必须贴底边，chips 只能往上叠（见 page_dock.js）。 -->
+        <div class="music-filter-chips" id="music-filter-chips"></div>
         <div class="search-bar">
           <span class="material-symbols-rounded">search</span>
           <input type="text" id="music-search" data-i18n-placeholder="music.searchPlaceholder" placeholder="搜索本地歌曲、艺术家或专辑…" data-i18n-aria-label="common.search" aria-label="搜索">
@@ -225,7 +230,6 @@
             <span class="material-symbols-rounded">filter_alt</span>
           </button>
         </div>
-        <div class="music-filter-chips" id="music-filter-chips"></div>
       </div>
       <ul class="track-list az-list vl-track-list" id="music-list"></ul>
     `;

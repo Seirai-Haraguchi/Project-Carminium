@@ -22,15 +22,9 @@
     return document.getElementById('content-pane');
   }
 
-  function _stickyHeight(pane) {
-    if (!pane) return 0;
-    var el = pane.querySelector('.page-sticky-header');
-    return el ? el.offsetHeight : 0;
-  }
-
   function _fit(panel, pane) {
     if (!panel || !panel.isConnected) return;
-    var top = pane && panel.offsetParent === pane ? panel.offsetTop : _stickyHeight(pane);
+    var top = pane && panel.offsetParent === pane ? panel.offsetTop : 0;
     var h = (pane ? pane.clientHeight : window.innerHeight) - top;
     panel.style.minHeight = (h > 0 ? h : 0) + 'px';
   }
@@ -246,10 +240,12 @@
     return el.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop;
   }
 
+  /* 标题区不再吸顶（搜索框改浮到底部，见 page_dock.js），
+     跳字母时目标行直接贴内容区顶边，不用再让开一截固定高度。 */
   function scrollTo(top) {
     var pane = _currentPane();
     if (!pane) return;
-    pane.scrollTop = Math.max(0, top - _stickyHeight(pane));
+    pane.scrollTop = Math.max(0, top);
   }
 
   window.App.azIndex = {

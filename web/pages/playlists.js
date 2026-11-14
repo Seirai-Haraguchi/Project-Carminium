@@ -39,6 +39,7 @@ owner_email: params.owner_email || null,
     `;
   }
 
+  // 标题下面那一行＝歌单作者（着色），和专辑页的「艺人」是同一个位置。
   function _renderOwnerInfo(playlist) {
     const isRemote = playlist.source === 'subsonic';
     const owner = playlist.owner;
@@ -54,16 +55,16 @@ owner_email: params.owner_email || null,
     if (email) {
       var hash = _md5(email.toLowerCase().trim());
       var gravatarUrl = 'https://www.gravatar.com/avatar/' + hash + '?d=404&s=48';
-      return '<div class="playlist-owner">' +
-        '<div class="playlist-owner-avatar-wrap">' +
+      return '<p class="detail-byline"><span class="playlist-owner">' +
+        '<span class="playlist-owner-avatar-wrap">' +
         '<img class="playlist-owner-avatar" src="' + gravatarUrl + '" alt="" loading="lazy"' +
         ' onerror="this.parentElement.style.display=\'none\'">' +
-        '</div>' +
+        '</span>' +
         '<span class="playlist-owner-name">' + textHtml + '</span>' +
-        '</div>';
+        '</span></p>';
     }
 
-    return '<p class="detail-sub playlist-owner-text">' + textHtml + '</p>';
+    return '<p class="detail-byline"><span class="detail-byline-text">' + textHtml + '</span></p>';
   }
 
   function _md5(str) {
@@ -142,11 +143,12 @@ owner_email: params.owner_email || null,
           <div class="detail-cover-main" id="pl-cover-main"></div>
         </div>
         <div class="detail-cover-gradient"></div>
-        <div class="detail-meta">
-          <p class="detail-type">${isRemote ? App.i18n.t('playlist.remote') : App.i18n.t('playlist.local')}</p>
+        <div class="detail-meta detail-meta-stacked">
           <h1 class="detail-name">${App.utils.esc(playlist.name)}</h1>
-          <p class="detail-sub" id="playlist-count">${App.i18n.t('common.loading')}</p>
           ${_renderOwnerInfo(playlist)}
+          <p class="detail-meta-line">
+            ${isRemote ? '<span>' + App.i18n.t('playlist.remote') + '</span> &middot; ' : ''}<span id="playlist-count">${App.i18n.t('common.loading')}</span>
+          </p>
           <div class="detail-actions">
             <button class="detail-play-btn" id="btn-play-playlist">
               <span class="material-symbols-rounded">play_arrow</span>${App.i18n.t('playlist.play')}

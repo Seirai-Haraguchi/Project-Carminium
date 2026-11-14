@@ -4,8 +4,8 @@
 
   var COVER_SIZE = 300;
   var COVER_QUALITY = 0.82;
-  var PREFETCH_MARGIN = 6;
-  var COVER_POOL_MAX = 240;
+  var PREFETCH_MARGIN = 4;
+  var COVER_POOL_MAX = 96;
   var COLOR_CACHE_MAX = 200;
   var PREFETCH_CONCURRENCY = 3;
 
@@ -58,7 +58,7 @@
     var cols = Math.max(3, Math.floor(w / 176));
     var rows = Math.ceil(h / 200) + PREFETCH_MARGIN * 2;
     var calculated = cols * rows;
-    _maxPoolSize = Math.min(COVER_POOL_MAX, Math.max(60, calculated * 3));
+    _maxPoolSize = Math.min(COVER_POOL_MAX, Math.max(36, calculated * 2));
   }
 
   function _evict() {

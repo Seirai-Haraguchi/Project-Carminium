@@ -41,12 +41,25 @@
           titleKey: 'settings.group.library',
           rows: [
             {
+              type: 'toggle',
+              bind: 'library_auto_refresh',
+              label: _t('settings.libraryAutoRefresh.label'),
+              sub: _t('settings.libraryAutoRefresh.sub'),
+            },
+            {
               type: 'text',
               bind: 'artist_separators',
               label: _t('settings.artistSeparators.label'),
               sub: _t('settings.artistSeparators.sub'),
               placeholder: ';',
               onApply: function () { App.refreshLibraryCache(); },
+            },
+            {
+              type: 'toggle',
+              bind: 'album_smart_grouping',
+              label: _t('settings.albumSmartGrouping.label'),
+              sub: _t('settings.albumSmartGrouping.sub'),
+              onChange: function () { App.refreshLibraryCache(); },
             },
           ],
         },

@@ -49,6 +49,32 @@ function _getArtistSepRegex(seps) {
   return re;
 }
 
+// 智能专辑分组用的脏标签口径：库里 album_artist 常见 • · ・ / 、 & 这些分隔符。
+const ALBUM_ARTIST_SPLIT_RE = /\s*(?:[;；,\/、•·・&]|\bfeat\.?|\bft\.?|\bvs\.?|\bwith\b|\s+x\s+)\s*/i;
+const UNKNOWN_ARTIST_KEYS = new Set([
+  '未知艺术家', 'unknown artist', '[unknown artist]', '未知アーティスト', 'неизвестный исполнитель',
+]);
+
+/** 专辑名归一化（只用于判定是否同一张，不用于展示）。 */
+function normalizeAlbumTitle(raw) {
+  return String(raw == null ? '' : raw)
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** GROUP_CONCAT(DISTINCT year) 出来的 "2023,null" 之类 → [2023]（0/空值丢掉）。 */
+function parseYearList(csv) {
+  if (!csv) return [];
+  const out = [];
+  for (const part of String(csv).split(',')) {
+    const n = parseInt(part, 10);
+    if (n > 0 && out.indexOf(n) < 0) out.push(n);
+  }
+  return out;
+}
+
 const CREATE_SQL = `
 PRAGMA foreign_keys = ON;
 
@@ -210,6 +236,10 @@ class MusicLibrary {
     const dbPath = path.join(settings.dataDir, 'library.db');
     this._db = require('better-sqlite3')(dbPath);
     this._db.pragma('journal_mode = WAL');
+    // Scans and remote updates have independent connections and may commit at
+    // the same time. Let SQLite wait briefly for the other writer instead of
+    // surfacing a transient SQLITE_BUSY error to either worker.
+    this._db.pragma('busy_timeout = 10000');
     this._db.pragma('foreign_keys = ON');
     this._db.pragma('cache_size = -2000');
     this._db.exec(CREATE_SQL);
@@ -404,7 +434,19 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     );
     const linkFidStmt = this._db.prepare('UPDATE tracks SET folder_id=? WHERE path=?');
 
-    const knownRows = this._db.prepare('SELECT path, folder_id FROM tracks').all();
+    // Only inspect paths that can belong to this scan. Loading every track in
+    // the database made adding a small folder increasingly expensive in both
+    // time and memory as the rest of the library grew.
+    const knownRows = [];
+    const knownPathChunkSize = 900;
+    for (let offset = 0; offset < filesToInsert.length; offset += knownPathChunkSize) {
+      const chunk = filesToInsert.slice(offset, offset + knownPathChunkSize);
+      if (chunk.length === 0) continue;
+      const rows = this._db.prepare(
+        `SELECT path, folder_id FROM tracks WHERE path IN (${chunk.map(() => '?').join(',')})`
+      ).all(...chunk);
+      knownRows.push(...rows);
+    }
     const knownPaths = new Set();
     const nullFidPaths = new Set();
     for (const r of knownRows) {
@@ -1398,41 +1440,141 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
     return out;
   }
 
+  /**
+   * 专辑列表。默认开启「智能分组」：同一张唱片被脏标签拆成多组
+   * （album_artist 写成 Guiano / Guiano • koko / Guiano/花譜…）时合并成一张卡片。
+   * 判定见 _clusterAlbumGroups；关掉设置就退回 (album, album_artist) 的朴素分组。
+   */
   getAlbums() {
     const { clause, params } = this._dedupExcludeClause();
     const rows = this._db.prepare(
       `SELECT album, COALESCE(album_artist, artist, '未知艺术家') AS album_artist,
-       year, COUNT(*) AS track_count
+              COUNT(*) AS track_count,
+              GROUP_CONCAT(DISTINCT year) AS years,
+              MIN(CASE WHEN has_cover=1 THEN id END) AS cover_track_id
        FROM tracks WHERE album IS NOT NULL${clause}
        GROUP BY album, COALESCE(album_artist, artist)`
     ).all(...params);
 
-    const coverRows = this._db.prepare(
-      `SELECT t.album AS album, t.id AS cover_id FROM tracks t
-       JOIN (SELECT album, MIN(rowid) AS rid FROM tracks
-             WHERE album IS NOT NULL AND has_cover=1${clause}
-             GROUP BY album) m
-         ON m.album = t.album AND m.rid = t.rowid`
-    ).all(...params);
-    const coverMap = new Map();
-    for (const c of coverRows) {
-      if (!coverMap.has(c.album)) coverMap.set(c.album, c.cover_id);
-    }
+    const smart = this._settings.get('album_smart_grouping', true) !== false;
+    const clusters = smart ? this._clusterAlbumGroups(rows) : rows.map((r) => [r]);
 
-    const result = [];
-    for (const r of rows) {
-      r.cover_track_id = coverMap.get(r.album) || null;
-      result.push(r);
-    }
-    for (const a of result) {
-      a.sort_key = makeSortKey(a.album);
-      a.album_artist_sort_key = makeSortKey(a.album_artist);
-    }
+    const result = clusters.map((members) => this._buildAlbumEntry(members));
     result.sort((a, b) => a.sort_key.localeCompare(b.sort_key));
     for (const a of result) {
       a.sort_letter = makeFirstLetter(a.album);
     }
     return result;
+  }
+
+  /**
+   * 把 (album, album_artist) 分组按「同一张唱片」聚簇，返回数组的数组。
+   * 只在归一化专辑名相同的桶内比较（跨桶绝不合并），桶内两两合并的证据：
+   *   ① 艺人集合有交集（"Guiano" ⊂ "Guiano • koko • 春猿火"）；
+   *   ② 年份不冲突（两边都有年份且完全不同 → 不合并，避免同名不同版撞车）。
+   * 刻意不用 folder_id 做证据：那是「扫描根目录」不是专辑目录，同一根下全是别的专辑。
+   */
+  _clusterAlbumGroups(rows) {
+    const buckets = new Map();
+    for (const r of rows) {
+      const key = normalizeAlbumTitle(r.album);
+      let bucket = buckets.get(key);
+      if (!bucket) { bucket = []; buckets.set(key, bucket); }
+      bucket.push(r);
+    }
+
+    const out = [];
+    for (const bucket of buckets.values()) {
+      if (bucket.length < 2) { out.push(bucket); continue; }
+
+      const parent = bucket.map((_, i) => i);
+      const find = (i) => {
+        while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; }
+        return i;
+      };
+      const union = (a, b) => {
+        a = find(a); b = find(b);
+        if (a !== b) parent[b] = a;
+      };
+      const tokens = bucket.map((r) => this._albumArtistTokens(r.album_artist));
+      const years = bucket.map((r) => parseYearList(r.years));
+
+      for (let i = 0; i < bucket.length; i++) {
+        for (let j = i + 1; j < bucket.length; j++) {
+          if (years[i].length && years[j].length && !years[i].some((y) => years[j].includes(y))) continue;
+          if (!tokens[i].some((t) => tokens[j].includes(t))) continue;
+          union(i, j);
+        }
+      }
+
+      const byRoot = new Map();
+      for (let i = 0; i < bucket.length; i++) {
+        const root = find(i);
+        let arr = byRoot.get(root);
+        if (!arr) { arr = []; byRoot.set(root, arr); }
+        arr.push(bucket[i]);
+      }
+      for (const arr of byRoot.values()) out.push(arr);
+    }
+    return out;
+  }
+
+  /** 聚簇 → 一张专辑卡片的数据。主艺人/年份取「曲目最多的那一组」，其余成员全部并进 keys。 */
+  _buildAlbumEntry(members) {
+    const sorted = members.slice().sort((a, b) => b.track_count - a.track_count);
+    const primary = sorted[0];
+
+    const artists = [];
+    const keys = [];
+    const yearVotes = new Map();
+    let trackCount = 0;
+    let coverTrackId = null;
+    for (const m of sorted) {
+      trackCount += m.track_count;
+      if (artists.indexOf(m.album_artist) < 0) artists.push(m.album_artist);
+      keys.push({ album: m.album, album_artist: m.album_artist });
+      for (const y of parseYearList(m.years)) {
+        yearVotes.set(y, (yearVotes.get(y) || 0) + m.track_count);
+      }
+      if (!coverTrackId && m.cover_track_id) coverTrackId = m.cover_track_id;
+    }
+
+    const primaryYear = parseYearList(primary.years)[0] || null;
+    let year = primaryYear;
+    if (!year) {
+      let best = 0;
+      for (const [y, n] of yearVotes) {
+        if (n > best) { best = n; year = y; }
+      }
+    }
+
+    const entry = {
+      album: primary.album,
+      album_artist: primary.album_artist,
+      album_artists: artists,
+      album_artists_text: artists.join(' · '),
+      album_keys: keys,
+      artist_count: artists.length,
+      year,
+      track_count: trackCount,
+      cover_track_id: coverTrackId || null,
+    };
+    entry.sort_key = makeSortKey(entry.album);
+    entry.album_artist_sort_key = makeSortKey(entry.album_artist);
+    return entry;
+  }
+
+  /** 只用于「是不是同一张唱片」的艺人拆分，口径比 _splitArtists 宽（脏标签常见 • · ・ / 、 &）。 */
+  _albumArtistTokens(raw) {
+    const text = this._nfkc(raw).toLowerCase().trim();
+    if (!text) return [];
+    const out = [];
+    for (let part of text.split(ALBUM_ARTIST_SPLIT_RE)) {
+      part = part.trim();
+      if (!part || UNKNOWN_ARTIST_KEYS.has(part)) continue;
+      if (out.indexOf(part) < 0) out.push(part);
+    }
+    return out;
   }
 
   getArtists() {
@@ -1815,15 +1957,27 @@ tryAlter('ALTER TABLE tracks ADD COLUMN genre TEXT');
   getLikedAlbums() {
     const keys = this.getLikedAlbumKeys();
     if (keys.length === 0) return [];
+    // 智能分组后一张卡片可能对应多个 (album, album_artist) 自然键，所以反查表按
+    // album_keys 全量铺开；同一张卡片被多个 key 命中只出一次（keys 已按时间倒序，取最近一次）。
     const byKey = new Map();
     for (const a of this.getAlbums()) {
-      byKey.set(`${a.album}\u0000${a.album_artist}`, a);
+      const ks = (a.album_keys && a.album_keys.length)
+        ? a.album_keys
+        : [{ album: a.album, album_artist: a.album_artist }];
+      for (const k of ks) byKey.set(`${k.album}\u0000${k.album_artist}`, a);
     }
     const out = [];
+    const seen = new Set();
     for (const k of keys) {
       const a = byKey.get(`${k.album}\u0000${k.album_artist}`);
-      if (!a) continue;
-      out.push(Object.assign({}, a, { liked_at: k.liked_at || 0 }));
+      if (!a || seen.has(a)) continue;
+      seen.add(a);
+      out.push(Object.assign({}, a, {
+        liked_at: k.liked_at || 0,
+        // 合并卡片是靠哪个自然键被喜爱的：前端「取消喜爱」必须原样回传这个键，
+        // 否则会拿主艺人键去 toggle，等于又插了一条新的喜爱记录。
+        liked_key: { album: k.album, album_artist: k.album_artist },
+      }));
     }
     return out;
   }

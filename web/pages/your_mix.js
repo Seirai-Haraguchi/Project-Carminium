@@ -125,9 +125,8 @@
 
     container.innerHTML = `
       <div class="ym-page">
-        <!-- 问候回到全局顶栏配方：.page-sticky-header（sticky + 半透明底色 + blur）。
-             搜索框留在它外面，跟着内容一起滚，不占吸顶高度。 -->
-        <div class="page-sticky-header">
+        <!-- 问候用全局顶栏容器 .page-top（普通块，不再吸顶，见 page_dock.js）。 -->
+        <div class="page-top">
           <div class="page-header">
             <div class="page-header-left">
               <h1 class="page-title" id="ym-greeting"></h1>

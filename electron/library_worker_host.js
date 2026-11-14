@@ -8,6 +8,7 @@ const { Worker } = require('worker_threads');
 const path = require('path');
 
 let _nextId = 1;
+const IDLE_WORKER_TIMEOUT_MS = 30_000;
 
 class LibraryWorkerHost {
   constructor(settings, onStatus) {
@@ -16,9 +17,31 @@ class LibraryWorkerHost {
     this._worker = null;
     this._pending = new Map();
     this._closed = false;
+    this._idleTimer = null;
+  }
+
+  _cancelIdleShutdown() {
+    if (this._idleTimer) {
+      clearTimeout(this._idleTimer);
+      this._idleTimer = null;
+    }
+  }
+
+  _scheduleIdleShutdown() {
+    this._cancelIdleShutdown();
+    if (!this._worker || this._pending.size || this._closed) return;
+    this._idleTimer = setTimeout(() => {
+      this._idleTimer = null;
+      if (!this._pending.size && this._worker && !this._closed) {
+        try { this._worker.terminate(); } catch { }
+        this._worker = null;
+      }
+    }, IDLE_WORKER_TIMEOUT_MS);
+    if (this._idleTimer.unref) this._idleTimer.unref();
   }
 
   _spawn() {
+    this._cancelIdleShutdown();
     const w = new Worker(path.join(__dirname, 'library_worker.js'), {
       workerData: {
         dataDir: this._settings.dataDir,
@@ -36,15 +59,18 @@ class LibraryWorkerHost {
       this._pending.delete(msg.id);
       if (msg.ok) p.resolve(msg.result);
       else p.reject(new Error(msg.error || 'worker error'));
+      this._scheduleIdleShutdown();
     });
     w.on('error', (e) => {
       console.error('[library-worker] 工作线程错误:', (e && e.message) || e);
       this._failAll(e);
       if (this._worker === w) this._worker = null;
+      this._scheduleIdleShutdown();
     });
     w.on('exit', (code) => {
       if (this._worker === w) this._worker = null;
       this._failAll(new Error('library worker exited: ' + code));
+      this._scheduleIdleShutdown();
     });
     return w;
   }
@@ -61,6 +87,7 @@ class LibraryWorkerHost {
       return Promise.reject(new Error('library worker closed'));
     }
     if (!this._worker) this._spawn();
+    this._cancelIdleShutdown();
     const id = _nextId++;
     return new Promise((resolve, reject) => {
       this._pending.set(id, { resolve, reject });
@@ -98,6 +125,7 @@ class LibraryWorkerHost {
   stop() {
     if (this._closed) return;
     this._closed = true;
+    this._cancelIdleShutdown();
     this._failAll(new Error('library worker stopped'));
     if (this._worker) {
       try { this._worker.terminate(); } catch {  }

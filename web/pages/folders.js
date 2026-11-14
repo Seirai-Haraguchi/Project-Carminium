@@ -11,7 +11,7 @@
 
 page.render = function (container) {
 container.innerHTML = `
-      <div class="page-sticky-header">
+      <div class="page-top">
         <div class="page-header">
           <div class="page-header-left">
             <h1 class="page-title" data-i18n="folders.title">媒体库</h1>
@@ -206,14 +206,17 @@ container.innerHTML = `
     let iconSymbol = 'cloud';
     let typeLabel = 'Subsonic';
     let typeIcon = 'api';
+    /* ⚠️ 图标名必须落在 material-symbols-rounded 的子集里（scripts/subset_fonts.py
+       的图标清单 + 源码可提取项）。dns / nas_storage 不在子集里，会整块渲染成
+       英文字面量并溢出徽章 —— 用 link / computer 代替。 */
     if (serverType === 'webdav') {
-      iconSymbol = 'dns';
+      iconSymbol = 'link';
       typeLabel = App.i18n.t('folders.webdavServer');
-      typeIcon = 'dns';
+      typeIcon = 'link';
     } else if (serverType === 'smb') {
-      iconSymbol = 'nas_storage';
+      iconSymbol = 'computer';
       typeLabel = App.i18n.t('folders.smbServer');
-      typeIcon = 'nas_storage';
+      typeIcon = 'computer';
     } else {
       typeLabel = srv.protocol_mode === 'opensubsonic' ? 'OpenSubsonic' : 'Subsonic';
       typeIcon = 'api';

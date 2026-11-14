@@ -27,7 +27,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, 'web')
 FONTS = os.path.join(WEB, 'fonts')
 
-SYMBOLS_IN = os.path.join(FONTS, 'material-symbols-rounded.woff2')
+# 完整可变字体（新增图标时的输入源）；缺省时退回已子集化的 woff2
+# （⚠️ 此时只能删图标、加不了新图标 —— 想加新图标先补回完整字体文件）
+_FULL_SYMBOLS = os.path.join(ROOT, 'Fonts', 'MaterialSymbolsRounded-VariableFont.ttf')
+SYMBOLS_IN = _FULL_SYMBOLS if os.path.exists(_FULL_SYMBOLS) else os.path.join(FONTS, 'material-symbols-rounded.woff2')
 SYMBOLS_OUT = os.path.join(FONTS, 'material-symbols-rounded.subset.woff2')
 
 # ── 1. 图标名提取 ──────────────────────────────────────────────────────────

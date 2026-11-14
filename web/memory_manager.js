@@ -112,6 +112,15 @@
     var rendererUnderPressure = heapUsedMB >= RENDERER_HEAP_SOFT_MB;
     var rendererHardPressure = heapUsedMB >= RENDERER_HEAP_HARD_MB;
 
+    // Hidden pages can retain decoded cover/background surfaces indefinitely.
+    // Release only unpinned UI resources; playback state and audio buffers are
+    // deliberately left untouched.
+    if (document.hidden && window.CoverCache && window.CoverCache.clear) {
+      try {
+        window.CoverCache.clear();
+      } catch (e) {  }
+    }
+
     if (window.CoverCache && window.CoverCache.cleanupStale) {
       try { results.coverCache = window.CoverCache.cleanupStale(); } catch (e) {  }
     }

@@ -326,11 +326,23 @@
           if (App.pages.music && App.pages.music.releaseLibraryViewMemory) {
             App.pages.music.releaseLibraryViewMemory();
           }
-          App.refreshLibraryCache().then(function () {
-            if (App.pages.folders.onFoldersUpdated) {
-              App.pages.folders.onFoldersUpdated(json);
+          // library_updated is emitted together with folders_updated. The
+          // former refreshes the complete library; doing that again here used
+          // to issue a second set of full-library queries and temporarily
+          // retained two copies of every track in the renderer.
+          try {
+            var nextFolders = typeof json === 'string' ? JSON.parse(json) : json;
+            var currentFolders = App.state.allFolders;
+            if (Array.isArray(currentFolders) && Array.isArray(nextFolders)) {
+              currentFolders.length = 0;
+              for (var fi = 0; fi < nextFolders.length; fi++) currentFolders.push(nextFolders[fi]);
+            } else if (Array.isArray(nextFolders)) {
+              App.state.allFolders = nextFolders;
             }
-          });
+          } catch (e) {  }
+          if (App.pages.folders.onFoldersUpdated) {
+            App.pages.folders.onFoldersUpdated(json);
+          }
         });
 
         // 扫描状态（来自工作线程）：只记录状态，数据由 get_library 等按需拉取
@@ -711,6 +723,11 @@
       }
 
       App.state.tagEditorPath = settings.tag_editor_path || '';
+
+      // 恢复侧栏宽窄模式与拖拽宽度（宽侧栏模式）
+      if (App.navLayout && App.navLayout.applySettings) {
+        App.navLayout.applySettings(settings);
+      }
     });
 
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
@@ -2313,7 +2330,150 @@
     });
   }
 
+  // ── 侧栏宽窄模式与拖拽调宽 ────────────────────────────────────────────
+  // rail（96px 固定）↔ drawer（宽侧栏，右缘可拖拽调宽）。
+  // - 形态切换走 body.nav-wide；宽度走 #app-root 的 --nav-w；
+  //   模式切换的动画在 .app-root 上，拖拽中复用 body.is-resizing 压掉。
+  // - 持久化 nav_wide / nav_width（save_settings，键随意即存）。
+  // - 列宽 = 抽屉宽 + 16（左右各 8px 外边距），换算见 NAV_DRAG_CHROME。
+  var NAV_RAIL_W = 96;
+  var NAV_WIDE_DEFAULT = 248;
+  var NAV_WIDE_MIN = 170;
+  var NAV_WIDE_MAX = 480;
+  var NAV_DRAG_CHROME = 16;
+
+  var _navLastWideWidth = NAV_WIDE_DEFAULT;
+  var _navLastDragEnd = 0;
+
+  function _navIsWide() {
+    return document.body.classList.contains('nav-wide');
+  }
+
+  function _navSetWidth(appRoot, px) {
+    appRoot.style.setProperty('--nav-w', px + 'px');
+  }
+
+  function _navApplyMode(appRoot, wide, width) {
+    document.body.classList.toggle('nav-wide', !!wide);
+    if (wide) {
+      if (width) _navLastWideWidth = width;
+      _navSetWidth(appRoot, _navLastWideWidth);
+    } else {
+      appRoot.style.removeProperty('--nav-w');
+    }
+  }
+
+  function _navPersist(wide, width) {
+    if (!(App.utils && App.utils.call)) return;
+    var payload = { nav_wide: !!wide };
+    if (wide && width) payload.nav_width = Math.round(width);
+    App.utils.call('save_settings', JSON.stringify(payload)).catch(function (err) {
+      console.error('[nav] 保存侧栏布局失败:', err);
+    });
+  }
+
+  function _initNavMode() {
+    var appRoot = document.getElementById('app-root');
+    var drawer = document.getElementById('nav-drawer');
+    var handle = document.getElementById('nav-drawer-handle');
+    if (!appRoot || !drawer || !handle) return;
+
+    var drag = null;
+    handle.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return;
+      drag = {
+        pointerId: e.pointerId,
+        wasWide: _navIsWide(),
+        wideActive: _navIsWide(),
+        startX: e.clientX,
+        curW: _navIsWide() ? _navLastWideWidth : NAV_RAIL_W,
+      };
+      try { handle.setPointerCapture(e.pointerId); } catch (err) { /* noop */ }
+      handle.classList.add('dragging');
+      document.body.classList.add('is-resizing');
+      document.body.style.cursor = 'ew-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+
+    handle.addEventListener('pointermove', function (e) {
+      if (!drag) return;
+      var rect = drawer.getBoundingClientRect();
+      var w = (e.clientX - rect.left) + NAV_DRAG_CHROME;
+      var maxW = Math.min(NAV_WIDE_MAX,
+        Math.max(NAV_WIDE_MIN + 40, Math.floor(window.innerWidth * 0.5)));
+      if (w >= NAV_WIDE_MIN) {
+        drag.curW = Math.min(maxW, w);
+        if (!drag.wideActive) {
+          drag.wideActive = true;
+          document.body.classList.add('nav-wide');
+        }
+        _navSetWidth(appRoot, drag.curW);
+      } else if (drag.wideActive) {
+        drag.curW = NAV_RAIL_W;
+        drag.wideActive = false;
+        document.body.classList.remove('nav-wide');
+        appRoot.style.removeProperty('--nav-w');
+      }
+    });
+
+    function _endDrag(e) {
+      if (!drag) return;
+      var wasWide = drag.wasWide;
+      var curW = drag.curW;
+      drag = null;
+      _navLastDragEnd = Date.now();
+      handle.classList.remove('dragging');
+      document.body.classList.remove('is-resizing');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      try { handle.releasePointerCapture(e.pointerId); } catch (err) { /* noop */ }
+      if (_navIsWide()) {
+        if (curW && curW !== NAV_RAIL_W) _navLastWideWidth = curW;
+        _navPersist(true, _navLastWideWidth);
+      } else if (wasWide) {
+        _navPersist(false);
+      }
+    }
+    handle.addEventListener('pointerup', _endDrag);
+    handle.addEventListener('pointercancel', _endDrag);
+    handle.addEventListener('lostpointercapture', _endDrag);
+
+    // 双击把手＝在 rail 与默认宽之间切换（拖拽后立刻双击不触发）
+    handle.addEventListener('dblclick', function () {
+      if (Date.now() - _navLastDragEnd < 350) return;
+      var wide = !_navIsWide();
+      _navApplyMode(appRoot, wide, wide ? NAV_WIDE_DEFAULT : undefined);
+      _navPersist(wide, wide ? NAV_WIDE_DEFAULT : undefined);
+    });
+  }
+
+  App.navLayout = {
+    applySettings: function (settings) {
+      var appRoot = document.getElementById('app-root');
+      if (!appRoot) return;
+      var w = Number(settings.nav_width);
+      if (isFinite(w) && w >= NAV_WIDE_MIN && w <= NAV_WIDE_MAX) {
+        _navLastWideWidth = Math.round(w);
+      }
+      // 启动恢复布局是"落位"不是"动画"：临时复用 is-resizing 压掉过渡
+      document.body.classList.add('is-resizing');
+      setTimeout(function () {
+        document.body.classList.remove('is-resizing');
+      }, 150);
+      var wide = !!settings.nav_wide;
+      document.body.classList.toggle('nav-wide', wide);
+      if (wide) {
+        _navSetWidth(appRoot, _navLastWideWidth);
+      } else {
+        appRoot.style.removeProperty('--nav-w');
+      }
+    },
+    isWide: _navIsWide,
+  };
+
   document.addEventListener('DOMContentLoaded', function () {
+    _initNavMode();
     _initFileDrop();
     _initAudioEngine();
     _initAutoMixAnalysis();

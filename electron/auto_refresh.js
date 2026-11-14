@@ -22,7 +22,8 @@ class LibraryWatcher {
   }
 
   get _enabled() {
-    return this._settings.get('library_auto_watch', true) !== false;
+    return this._settings.get('library_auto_refresh', false) === true
+      && this._settings.get('library_auto_watch', true) !== false;
   }
 
   start() {
@@ -226,7 +227,8 @@ class RemoteSyncScheduler {
   }
 
   get _enabled() {
-    return this._settings.get('subsonic_auto_sync', true) !== false;
+    return this._settings.get('library_auto_refresh', false) === true
+      && this._settings.get('subsonic_auto_sync', true) !== false;
   }
 
   get _intervalMin() {

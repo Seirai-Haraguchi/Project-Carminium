@@ -53,6 +53,7 @@ const DEFAULTS = {
   taskbar_lyrics_double_line: true,
   taskbar_lyrics_show_translation: true,
   artist_separators: ';',
+  album_smart_grouping: true,
   tag_editor_path: '',
   cache_dir: '',
   stream_cache_enabled: false,
@@ -89,6 +90,8 @@ const DEFAULTS = {
   vbe_a3: 0.85,
   vbe_trans_drive: 2.0,
   vbe_reson_freq: 2200,
+  // Background scans and remote refreshes can be expensive, so opt in.
+  library_auto_refresh: false,
   library_auto_watch: true,
   library_watch_poll_minutes: 10,
   library_watch_debounce_ms: 3000,

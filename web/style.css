@@ -362,6 +362,12 @@
 
   --md-comp-seglist-inset:             12px;
 
+  /* 内容页列表（曲目 / 媒体库）的左右缩进必须和各页 .page-header(28)、.search-bar(28)
+     完全相等——差 4px 都能看出两条竖线没对齐。别再自己发明 6/12。 */
+  --track-list-inset:                   28px;
+  /* 曲目行高：56 在"实色卡片 + 2px 缝"下偏薄，抬到 60 */
+  --track-row-height:                   60px;
+
   --md-comp-settings-switch-w:         56px;
   --md-comp-settings-switch-h:         34px;
 
@@ -620,7 +626,8 @@ body.is-resizing *::after {
 
 .app-root {
   display: grid;
-  grid-template-columns: var(--m3e-nav-rail-width) 1fr;
+  /* 侧栏列宽：rail 模式默认 96px；宽侧栏（drawer）模式下 JS 把 --nav-w 写成用户拖出的宽度 */
+  grid-template-columns: var(--nav-w, var(--m3e-nav-rail-width)) 1fr;
   grid-template-rows: 36px 1fr;
   grid-template-areas:
     "title title"
@@ -629,6 +636,8 @@ body.is-resizing *::after {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  /* 模式切换（rail ↔ drawer）时的宽度动画；拖拽中由 body.is-resizing 压掉 */
+  transition: grid-template-columns var(--motion-spatial-default);
 }
 .title-bar { grid-area: title; }
 .nav-drawer { grid-area: nav; }
@@ -655,6 +664,66 @@ body.is-resizing *::after {
   clip-path: inset(0 round var(--island-radius));
   padding: 16px 0;
   gap: 12px;
+  /* 拖拽热区（.nav-drawer-handle）以右缘定位 */
+  position: relative;
+}
+
+/* ── 宽侧栏（导航抽屉）模式 ───────────────────────────────────────────
+   rail（96px 固定）↔ drawer（可拖拽调宽，body.nav-wide 切换形态）。
+   JS 持久化 nav_wide / nav_width；拖拽过程复用 body.is-resizing 压过渡。 */
+body.nav-wide .nav-drawer {
+  align-items: stretch;
+  padding: 16px 12px;
+}
+body.nav-wide .nav-item {
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 12px;
+  min-height: 48px;
+  padding: 2px 0;
+}
+body.nav-wide .nav-label {
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0.25px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 拖拽热区：贴侧栏右缘整条；把手条 hover 显形、拖拽中着色。
+   nav-drawer 的 overflow/clip-path 只裁超出，不碍事。 */
+.nav-drawer-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 100%;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.nav-drawer-handle::after {
+  content: '';
+  width: 4px;
+  height: 64px;
+  margin-right: 3px;
+  border-radius: var(--shape-full);
+  background: var(--md-outline-variant);
+  opacity: 0;
+  transition: opacity var(--motion-effects-fast),
+              background var(--motion-effects-fast);
+}
+.nav-drawer-handle:hover::after,
+.nav-drawer-handle.dragging::after {
+  opacity: 1;
+}
+.nav-drawer-handle.dragging::after {
+  background: var(--md-primary);
 }
 
 .nav-section {
@@ -994,12 +1063,9 @@ body.is-resizing *::after {
   display: block;
 }
 .playlist-search-wrapper {
-  position: sticky;
-  top: 0;
-  z-index: 9;
-  background-color: color-mix(in srgb, var(--md-surface-container-lowest) 80%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  /* 不再吸顶：搜索框改成“滚出标题区后浮到底部”（pages/page_dock.js），
+     两套吸顶同时存在只会互相打架。 */
+  position: relative;
 }
 .nav-submenu-item-name {
   flex: 1;
@@ -1153,16 +1219,34 @@ body.is-resizing *::after {
 
 .vl-track-row-wrapper {
   display: block;
-  padding: 0;
+  /* 虚拟行的分段间隙：上下各 1px（= 2px gap）；行高由 --track-row-height 定，
+     A-Z 索引按同一常量算偏移 */
+  padding: 1px 0;
   margin: 0;
 }
 .vl-track-row-wrapper > .track-row {
   display: grid;
   grid-template-columns: 40px 1fr auto auto;
   align-items: center;
-  gap: 12px;
-  padding: 6px 12px;
-  min-height: 56px;
+  gap: var(--md-comp-seglist-item-spacing);
+  /* 54 = 60 - 2(缝)；9+40(封面)+9 正好 */
+  padding: calc((var(--track-row-height) - 42px) / 2) var(--md-comp-list-item-padding-inline);
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+/* 艺人列表虚拟行：同样是 wrapper 上下各 1px 提供 2px 缝，内层撑满剩下的高度。
+   行高由 artists.js 的 ROW_HEIGHT(64) 决定，不要在这儿写死。 */
+.vl-artist-row-wrapper {
+  display: block;
+  padding: 1px 0;
+  margin: 0;
+}
+.vl-artist-row-wrapper > .artist-row {
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
 }
 
 .content-pane::-webkit-scrollbar-track,
@@ -1170,8 +1254,8 @@ body.is-resizing *::after {
   background: transparent;
 }
 
+/* 吸顶/贴顶的块要自己收圆角，否则会顶破内容岛的圆角（.page-top 不吸顶，不用管） */
 .content-pane .page-header,
-.content-pane .page-sticky-header,
 .content-pane .detail-header.hero {
   border-top-left-radius: var(--island-radius);
   border-top-right-radius: var(--island-radius);
@@ -1268,23 +1352,15 @@ body.is-resizing *::after {
 }
 .page-actions { display: flex; gap: 8px; align-items: center; }
 
-.page-sticky-header {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  background-color: color-mix(in srgb, var(--md-surface-container-lowest) 80%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+/* 页首标题区（原 .page-sticky-header）。**不再吸顶**：吸顶这件事让给底部的
+   悬浮搜索框 —— 标题区整块滚出内容区之后，.search-bar 连同筛选指示浮到
+   内容区底部（见 pages/page_dock.js），滚回来原位还回。 */
+.page-top {
+  position: relative;
 }
-.page-sticky-header .page-header {
+.page-top .page-header {
   position: static;
   background: transparent;
-}
-.page-sticky-header .search-bar {
-  background-color: color-mix(in srgb, var(--md-surface-container) 70%, transparent);
-}
-.page-sticky-header .search-bar:focus-within {
-  background-color: color-mix(in srgb, var(--md-surface-container-lowest) 85%, transparent);
 }
 
 .search-bar {
@@ -1429,35 +1505,93 @@ body.is-resizing *::after {
   gap: 12px;
 }
 
+/* ── 曲目列表 ＝ M3E 分段列表 ──────────────────────────────────────────
+   整列＝一张卡：行静置 extra-small(4)、首行顶角/末行底角 large(16) 收口，
+   hover medium(12)、选中/播放 large(16)。令牌与 .md-seglist 同源。
+   ⚠️ 行间距靠 gap 撑；虚拟列表（.vl-track-list）容器里只有一个 spacer，
+   gap 不生效 —— 那边的 2px 由 .vl-track-row-wrapper 的上下 1px 负责。
+   ⚠️ 虚拟列表的首尾行由 .vl-first/.vl-last 标记（virtual_list.js 维护），
+   不能用 :first-child —— 滚动时 DOM 首个元素会跟着缓冲区漂。
+   ⚠️ hover/active 用 :not(.selected):not(.playing) 排除：选中/播放行底色
+   是 secondary-container / primary 混色，再叠 on-surface 状态层会发灰。
+   ⚠️ 首尾圆角规则必须写在 hover/active 之后，否则首行 hover 时顶角被改小。 */
 .track-list {
   list-style: none;
-  padding: 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--md-comp-seglist-gap);
+  /* 上 8：首行不要贴着 sticky 头的底边；两侧不再贴岛边（6 会和搜索框的 28 断裂） */
+  padding: 8px var(--track-list-inset) var(--md-comp-list-padding-block);
 }
 
 .track-row {
+  --_seg-top: var(--md-comp-seglist-item-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-shape);
   display: grid;
   grid-template-columns: 40px 1fr auto auto;
   align-items: center;
-  gap: 12px;
-  padding: 6px 12px;
-  border-radius: var(--shape-sm);
+  gap: var(--md-comp-seglist-item-spacing);
+  padding: 10px var(--md-comp-list-item-padding-inline);
+  min-height: var(--track-row-height);
+  border-radius: var(--_seg-top) var(--_seg-top) var(--_seg-bottom) var(--_seg-bottom);
+  background-color: var(--md-comp-seglist-item-container);
   cursor: pointer;
-  transition: background var(--motion-short) var(--ease-standard);
-  min-height: 56px;
   position: relative;
   user-select: none;
+  transition: background-color var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast);
 }
-.track-row:hover { background: var(--md-state-hover); }
+.track-row:where(:not(.selected):not(.playing)):hover {
+  --_seg-top: var(--md-comp-seglist-item-hover-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-hover-shape);
+  background-color: color-mix(in srgb,
+    var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity),
+    var(--md-comp-seglist-item-container));
+}
+.track-row:where(:not(.selected):not(.playing)):active {
+  --_seg-top: var(--md-comp-seglist-item-hover-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-hover-shape);
+  background-color: color-mix(in srgb,
+    var(--md-on-surface) var(--md-sys-state-pressed-state-layer-opacity),
+    var(--md-comp-seglist-item-container));
+}
 .track-row.selected {
-  background: color-mix(in srgb, var(--md-primary) 12%, transparent);
+  --_seg-top: var(--md-comp-seglist-item-selected-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-selected-shape);
+  background-color: var(--md-comp-seglist-item-selected-container);
 }
-.track-row.selected .track-title {
-  color: var(--md-primary);
+.track-row.selected .track-title { color: var(--md-on-secondary-container); }
+.track-row.selected .track-num,
+.track-row.selected .track-artist-album,
+.track-row.selected .track-duration {
+  color: color-mix(in srgb, var(--md-on-secondary-container) 78%, transparent);
 }
 .track-row.playing {
-  background: color-mix(in srgb, var(--md-primary) 8%, transparent);
+  --_seg-top: var(--md-comp-seglist-item-selected-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-selected-shape);
+  background-color: color-mix(in srgb,
+    var(--md-primary) 12%, var(--md-comp-seglist-item-container));
 }
 .track-row.playing .track-title { color: var(--md-primary); font-weight: 600; }
+
+/* 分段收口：**每个 A-Z 分组＝一张卡**——组首行顶角、组末行底角取容器形状(16)，
+   组内行静置 4px。这样首尾天然正确（第一组头、最后一组尾自动是大圆角），
+   滚动时也只跟"相邻是不是分组头"有关，不依赖视口位置。
+   无分组的列表（搜索过滤 / 艺人页）靠 :first-child / .vl-first 兜底。
+   ⚠️ 权重必须压过 hover/active（那两条用 :where 把权重压回 0,2,0）。 */
+.az-section-header + .track-row,
+.az-section-header + .vl-track-row-wrapper > .track-row,
+.track-list > .track-row:first-child,
+.vl-track-row-wrapper.vl-first > .track-row {
+  --_seg-top: var(--md-comp-seglist-container-shape);
+}
+
+.track-row:has(+ .az-section-header),
+.vl-track-row-wrapper:has(+ .az-section-header) > .track-row,
+.track-list > .track-row:last-child,
+.vl-track-row-wrapper.vl-last > .track-row {
+  --_seg-bottom: var(--md-comp-seglist-container-shape);
+}
 
 .track-num {
   font-size: 13px;
@@ -1481,10 +1615,10 @@ body.is-resizing *::after {
 .track-mini-cover {
   width: 40px;
   height: 40px;
-  border-radius: var(--shape-xs);
+  border-radius: var(--shape-sm);
   overflow: hidden;
   flex-shrink: 0;
-  background: var(--md-surface-container);
+  background: var(--md-surface-container-high);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1498,15 +1632,17 @@ body.is-resizing *::after {
 
 .track-body { min-width: 0; }
 .track-title {
-  font-size: 14px;
-  font-weight: 500;
+  font-size: var(--md-sys-typescale-body-medium-size);
+  line-height: var(--md-sys-typescale-body-medium-line);
+  font-weight: var(--md-sys-typescale-emphasized-body-font-weight);
   color: var(--md-on-surface);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .track-artist-album {
-  font-size: 12px;
+  font-size: var(--md-comp-settings-sub-size);
+  line-height: var(--md-comp-settings-sub-line);
   color: var(--md-on-surface-variant);
   white-space: nowrap;
   overflow: hidden;
@@ -1603,21 +1739,23 @@ body.is-resizing *::after {
   margin-top: 2px;
 }
 
+/* 分组头在虚拟列表里占满整格 56px（VirtualList 不认 getHeight），
+   所以靠 padding-top 把字母压向自己那一组的起始位置：上方松、下方紧 */
 .az-section-header {
   display: flex;
   align-items: center;
-  padding: 16px 16px 6px;
-  margin-top: 4px;
+  padding: 26px var(--md-comp-list-item-padding-inline) 4px;
+  margin-top: 0;
 }
 .az-section-header:first-child {
-  margin-top: 0;
   padding-top: 8px;
 }
 .az-section-letter {
-  font-size: 14px;
-  font-weight: 700;
+  font-size: var(--md-sys-typescale-title-small-size);
+  line-height: var(--md-sys-typescale-title-small-line);
+  font-weight: var(--md-sys-typescale-emphasized-title-font-weight);
   color: var(--md-on-surface-variant);
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -1711,18 +1849,64 @@ body.is-resizing *::after {
   cursor: default;
 }
 
-.artist-list { padding: 0 16px 24px; }
+/* ── 艺人列表 ＝ M3E 分段列表 ──────────────────────────────────────────
+   与 .track-list 同一套形状/状态层/缩进，三个入口共用：
+   artists.js（虚拟）、search.js（搜索结果）、liked.js（喜爱·艺术家）。
+   ⚠️ 虚拟列表容器里只有 spacer，gap 不生效 —— 2px 缝由
+   .vl-artist-row-wrapper 的上下 1px 提供。
+   ⚠️ 首尾/分组收口规则必须写在 hover/active 之后（hover 用 :where 压权重）。 */
+.artist-list,
+.search-artist-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--md-comp-seglist-gap);
+  padding: 8px var(--track-list-inset) var(--md-comp-list-padding-block);
+}
 .artist-row {
+  --_seg-top: var(--md-comp-seglist-item-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-shape);
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 8px 12px;
-  border-radius: var(--shape-sm);
+  gap: var(--md-comp-seglist-item-spacing);
+  padding: 8px var(--md-comp-list-item-padding-inline);
+  border-radius: var(--_seg-top) var(--_seg-top) var(--_seg-bottom) var(--_seg-bottom);
+  background-color: var(--md-comp-seglist-item-container);
   cursor: pointer;
-  transition: background var(--motion-short) var(--ease-standard);
   min-height: 64px;
+  transition: background-color var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast);
 }
-.artist-row:hover { background: var(--md-state-hover); }
+.artist-row:where(:not(.selected):not(.playing)):hover {
+  --_seg-top: var(--md-comp-seglist-item-hover-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-hover-shape);
+  background-color: color-mix(in srgb,
+    var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity),
+    var(--md-comp-seglist-item-container));
+}
+.artist-row:where(:not(.selected):not(.playing)):active {
+  --_seg-top: var(--md-comp-seglist-item-hover-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-hover-shape);
+  background-color: color-mix(in srgb,
+    var(--md-on-surface) var(--md-sys-state-pressed-state-layer-opacity),
+    var(--md-comp-seglist-item-container));
+}
+
+/* 分段收口：每个 A-Z 分组一张卡；无分组的搜索/喜爱页靠首末项兜底。 */
+.az-section-header + .artist-row,
+.az-section-header + .vl-artist-row-wrapper > .artist-row,
+.artist-list > .artist-row:first-child,
+.search-artist-list > .artist-row:first-child,
+.vl-artist-row-wrapper.vl-first > .artist-row {
+  --_seg-top: var(--md-comp-seglist-container-shape);
+}
+.artist-row:has(+ .az-section-header),
+.vl-artist-row-wrapper:has(+ .az-section-header) > .artist-row,
+.artist-list > .artist-row:last-child,
+.search-artist-list > .artist-row:last-child,
+.vl-artist-row-wrapper.vl-last > .artist-row {
+  --_seg-bottom: var(--md-comp-seglist-container-shape);
+}
+
 .artist-avatar {
   width: 44px;
   height: 44px;
@@ -1740,11 +1924,23 @@ body.is-resizing *::after {
 .artist-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .artist-info { flex: 1; min-width: 0; }
 .artist-name {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: var(--md-sys-typescale-body-medium-size);
+  line-height: var(--md-sys-typescale-body-medium-line);
+  font-weight: var(--md-sys-typescale-emphasized-body-font-weight);
   color: var(--md-on-surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.artist-meta { font-size: 13px; color: var(--md-on-surface-variant); }
+.artist-meta {
+  font-size: var(--md-comp-settings-sub-size);
+  line-height: var(--md-comp-settings-sub-line);
+  color: var(--md-on-surface-variant);
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .artist-chevron { color: var(--md-on-surface-variant); font-size: 20px; }
 
 /* 喜爱页：曲目 / 专辑 / 艺术家三个分类（覆盖 .np-pivot 的居中） */
@@ -3489,19 +3685,16 @@ padding: 0;
   padding: 0;
 }
 
+/* 队列栏比内容页窄，左右用 16（＝ fullscreen 下 .np-pivot 的 margin）。
+   inset 由容器自己给；虚拟行的 2px 缝交给 .vl-queue-row-wrapper，
+   不再往 spacer 上叠 padding（会挤掉最后一行）。 */
 .np-panel--queue .np-queue-list {
-  padding: 8px;
+  --np-queue-inset: 16px;
+  padding: 8px var(--np-queue-inset) 12px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-}
-
-.np-queue-list.np-queue-vl {
-  padding: 0;
-}
-.np-queue-list.np-queue-vl > div {
-  padding: 8px 0;
 }
 
 .np-lyrics-wrap {
@@ -3550,6 +3743,17 @@ padding: 0;
     opacity 0.42s cubic-bezier(0.2, 0, 0, 1),
     color 0.42s cubic-bezier(0.2, 0, 0, 1);
 }
+
+/* 长句折行：一句按空格拆成多行时，每行一个块，各行间距沿用 line-height */
+.np-lyrics-line .np-lyrics-phrase {
+  display: block;
+}
+/* 音译/翻译整组下移，和原文最后一行之间留一点缝，别糊成一坨 */
+.np-lyrics-phrase + .np-lyrics-romaji,
+.np-lyrics-phrase + .np-lyrics-trans {
+  margin-top: 3px;
+}
+
 .np-lyrics-line.np-near {
   will-change: opacity, filter;
   transition:
@@ -5023,6 +5227,54 @@ padding: 0;
   color: var(--md-primary);
 }
 
+/* 窗口内信息对话框（曲目属性）：cmd-dialog 的结构化只读内容 */
+.cmd-dialog.info-dialog {
+  max-width: 460px;
+}
+.info-dialog .cmd-dialog-body {
+  max-height: min(56vh, 420px);
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.info-dialog-rows {
+  display: flex;
+  flex-direction: column;
+}
+.info-dialog-row {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 5px 0;
+}
+.info-dialog-row.is-text {
+  display: block;
+}
+.info-dialog-label {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--md-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+.info-dialog-value {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--md-on-surface);
+  overflow-wrap: anywhere;
+}
+.info-dialog-value.is-selectable {
+  user-select: text;
+  -webkit-user-select: text;
+}
+.info-dialog-value.is-path {
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  word-break: break-all;
+}
+.info-dialog-gap {
+  height: 8px;
+}
+
 .sync-overlay {
   position: fixed;
   inset: 0;
@@ -5407,22 +5659,68 @@ select.cmd-text-field__input + .cmd-text-field__label {
   font-variant-numeric: tabular-nums; 
 }
 
+/* ── 接下来播放 ＝ M3E 分段列表 ────────────────────────────────────────
+   形状/状态层/收口与 .track-list 同源；current 对应 selected 行。
+   虚拟列表：el 是 .vl-queue-row-wrapper（上下各 1px 提供 2px 缝），
+   真正带底色的是内层的 .np-queue-item —— 拖拽/点击仍认这个类名。 */
+.vl-queue-row-wrapper {
+  display: block;
+  padding: 1px 0;
+  margin: 0;
+}
+.vl-queue-row-wrapper > .np-queue-item {
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
+}
 .np-queue-item {
+  --_seg-top: var(--md-comp-seglist-item-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-shape);
   display: grid;
   grid-template-columns: 20px 40px 1fr auto auto;
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  border-radius: var(--shape-sm);
+  border-radius: var(--_seg-top) var(--_seg-top) var(--_seg-bottom) var(--_seg-bottom);
+  background-color: var(--md-comp-seglist-item-container);
   cursor: pointer;
-  transition: background var(--motion-short) var(--ease-standard), opacity var(--motion-short) var(--ease-standard);
+  transition: background-color var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast),
+              opacity var(--motion-short) var(--ease-standard);
   min-height: 56px;
   position: relative;
 }
-.np-queue-item:hover { background: var(--md-state-hover); }
-.np-queue-item.current { background: var(--md-secondary-container); }
+.np-queue-item:where(:not(.current)):hover {
+  --_seg-top: var(--md-comp-seglist-item-hover-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-hover-shape);
+  background-color: color-mix(in srgb,
+    var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity),
+    var(--md-comp-seglist-item-container));
+}
+.np-queue-item:where(:not(.current)):active {
+  --_seg-top: var(--md-comp-seglist-item-hover-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-hover-shape);
+  background-color: color-mix(in srgb,
+    var(--md-on-surface) var(--md-sys-state-pressed-state-layer-opacity),
+    var(--md-comp-seglist-item-container));
+}
+.np-queue-item.current {
+  --_seg-top: var(--md-comp-seglist-item-selected-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-selected-shape);
+  background-color: var(--md-comp-seglist-item-selected-container);
+}
 .np-queue-item.current .np-queue-title { color: var(--md-on-secondary-container); font-weight: 600; }
 .np-queue-item.current .np-queue-artist { color: var(--md-on-secondary-container); opacity: 0.8; }
+
+/* 首尾收口；权重压过 hover/active（那两条用 :where 压回 0,2,0） */
+.np-queue-list > .np-queue-item:first-child,
+.vl-queue-row-wrapper.vl-first > .np-queue-item {
+  --_seg-top: var(--md-comp-seglist-container-shape);
+}
+.np-queue-list > .np-queue-item:last-child,
+.vl-queue-row-wrapper.vl-last > .np-queue-item {
+  --_seg-bottom: var(--md-comp-seglist-container-shape);
+}
 .np-queue-drag {
   display: flex;
   align-items: center;
@@ -5450,7 +5748,9 @@ select.cmd-text-field__input + .cmd-text-field__label {
 }
 .np-queue-item.dragging {
   opacity: 0.4;
-  background: var(--md-surface-container-high);
+  background-color: color-mix(in srgb,
+    var(--md-on-surface) var(--md-sys-state-pressed-state-layer-opacity),
+    var(--md-comp-seglist-item-container));
 }
 .np-queue-item.drag-over-top::before,
 .np-queue-item.drag-over-bottom::before {
@@ -5497,22 +5797,46 @@ select.cmd-text-field__input + .cmd-text-field__label {
 }
 .np-queue-item:hover .np-queue-remove { opacity: 1; }
 
-.folder-list { padding: 0 28px 24px; }
+/* ── 媒体库列表 ＝ M3E 分段列表（形状/状态层与 .track-list 同一套令牌） ── */
+.folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--md-comp-seglist-gap);
+  padding: 8px var(--track-list-inset) var(--md-comp-list-padding-block);
+}
 .folder-row {
+  --_seg-top: var(--md-comp-seglist-item-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-shape);
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  border-radius: var(--shape-md);
-  background: var(--md-surface-container);
-  border: 1px solid transparent;
-  margin-bottom: 6px;
-  transition: background var(--motion-short) var(--ease-standard),
-              border-color var(--motion-short) var(--ease-standard);
+  gap: var(--md-comp-seglist-item-spacing);
+  padding: 9px var(--md-comp-list-item-padding-inline);
+  min-height: var(--md-comp-list-min-height-2line);
+  border-radius: var(--_seg-top) var(--_seg-top) var(--_seg-bottom) var(--_seg-bottom);
+  background-color: var(--md-comp-seglist-item-container);
+  transition: background-color var(--motion-effects-fast),
+              border-radius var(--motion-spatial-fast);
 }
 .folder-row:hover {
-  background: var(--md-surface-container-high);
-  border-color: var(--md-outline-variant);
+  --_seg-top: var(--md-comp-seglist-item-hover-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-hover-shape);
+  background-color: color-mix(in srgb,
+    var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity),
+    var(--md-comp-seglist-item-container));
+}
+.folder-row:active {
+  --_seg-top: var(--md-comp-seglist-item-hover-shape);
+  --_seg-bottom: var(--md-comp-seglist-item-hover-shape);
+  background-color: color-mix(in srgb,
+    var(--md-on-surface) var(--md-sys-state-pressed-state-layer-opacity),
+    var(--md-comp-seglist-item-container));
+}
+/* 首尾收口，同 .track-list */
+.folder-list > .folder-row:first-child {
+  --_seg-top: var(--md-comp-seglist-container-shape);
+}
+.folder-list > .folder-row:last-child {
+  --_seg-bottom: var(--md-comp-seglist-container-shape);
 }
 .folder-icon-badge {
   display: inline-flex;
@@ -5550,7 +5874,7 @@ select.cmd-text-field__input + .cmd-text-field__label {
 }
 .folder-icon { font-size: 20px; font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
 .folder-info { flex: 1; min-width: 0; }
-.folder-path { font-size: 14px; font-weight: 500; color: var(--md-on-surface); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-path { font-size: var(--md-comp-settings-label-size); line-height: var(--md-comp-settings-label-line); font-weight: var(--md-sys-typescale-emphasized-body-font-weight); color: var(--md-on-surface); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .folder-meta {
   display: flex;
   align-items: center;
@@ -5566,7 +5890,7 @@ select.cmd-text-field__input + .cmd-text-field__label {
   gap: 3px;
   padding: 2px 8px;
   border-radius: var(--shape-full);
-  background: var(--md-surface-container-highest);
+  background: var(--md-surface-container-high);
   color: var(--md-on-surface-variant);
   font-size: 11px;
   line-height: 16px;
@@ -6825,14 +7149,6 @@ select.cmd-text-field__input + .cmd-text-field__label {
   padding: 0;
   text-align: left;
 }
-.detail-type  {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  color: var(--md-primary);
-  margin-bottom: 6px;
-}
 .detail-name  {
   font-size: 32px;
   font-weight: 700;
@@ -6908,11 +7224,16 @@ select.cmd-text-field__input + .cmd-text-field__label {
   font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
 
+/* ── Hero 式详情头（艺人页拿到横版横幅时才加 .hero） ─────────────────
+   构成：全幅横幅 → 取色过渡层 → 文案（居中，压在画面下沿）。
+   过渡不用黑蒙版：底部取「画面下沿的实际颜色」（JS 写入 --artist-fade-rgb，
+   已归到内容岛背景的亮度段）再化到内容岛背景色，所以是画面自己的颜色流进 UI；
+   图片自身另有一层 mask 做软化。                                            */
 .detail-header.hero {
   display: block;
   position: relative;
-  height: clamp(280px, 42vh, 420px);
-  margin: 0 0 16px;
+  height: clamp(320px, 48vh, 460px);
+  margin: 0;
   padding: 0;
   border-bottom: none;
   overflow: hidden;
@@ -6926,37 +7247,177 @@ select.cmd-text-field__input + .cmd-text-field__label {
   background-size: cover;
   background-position: center 28%;
   background-repeat: no-repeat;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 52%, rgba(0,0,0,0.90) 72%, rgba(0,0,0,0.52) 86%, rgba(0,0,0,0.14) 95%, transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 0%, #000 52%, rgba(0,0,0,0.90) 72%, rgba(0,0,0,0.52) 86%, rgba(0,0,0,0.14) 95%, transparent 100%);
+  /* 视差由 JS 写 transform（translate3d）——入场动画只能用 scale/filter，
+     否则动画期间会盖掉行内 transform，滚动时图会「卡住一下再跳」 */
+  will-change: transform;
   animation: hero-fade-in 480ms var(--ease-standard);
 }
 @keyframes hero-fade-in {
-  from { opacity: 0; transform: scale(1.02); filter: blur(8px); }
+  from { opacity: 0; scale: 1.02; filter: blur(8px); }
   55%  { filter: blur(2px); }
-  to   { opacity: 1; transform: scale(1); filter: blur(0); }
+  to   { opacity: 1; scale: 1; filter: blur(0); }
 }
+/* 过渡层（不再用黑色压暗——黑会把画面本身的设计盖掉）：
+   ① 底部：JS 取「画面在 hero 底边那一带」的平均色（--artist-fade-rgb），
+      先从它化开，再收到内容岛背景色，所以是「画面自己的颜色 → 软件背景」；
+   ② 文案背后只留一层同色相、压暗过的极淡晕影（--artist-scrim-rgb），
+      让白字站得住，但看不出是一块黑。 */
 .detail-header.hero .detail-cover-gradient {
   display: block;
   position: absolute;
-  left: 0; right: 0; bottom: 0;
-  height: 68%;
+  inset: 0;
   z-index: 1;
-  background: linear-gradient(to top, rgba(0,0,0,0.74) 0%, rgba(0,0,0,0.36) 45%, rgba(0,0,0,0) 100%);
   pointer-events: none;
+  background:
+    linear-gradient(to top,
+      var(--md-surface-container-lowest) 0%,
+      rgba(var(--artist-fade-rgb, 12, 14, 17), 0.94) 12%,
+      rgba(var(--artist-fade-rgb, 12, 14, 17), 0.62) 24%,
+      rgba(var(--artist-fade-rgb, 12, 14, 17), 0.28) 38%,
+      rgba(var(--artist-fade-rgb, 12, 14, 17), 0) 54%),
+    radial-gradient(ellipse 112% 68% at 50% 86%,
+      rgba(var(--artist-scrim-rgb, 12, 14, 17), 0.46) 0%,
+      rgba(var(--artist-scrim-rgb, 12, 14, 17), 0.18) 58%,
+      rgba(var(--artist-scrim-rgb, 12, 14, 17), 0) 86%);
 }
+/* 视差时真正的接缝：这条「短」渐变挂在 hero 盒上（跟着盒走），
+   所以不管滚到哪，内容顶端那条边永远是化开的；
+   而长的那条取色过渡是钉在图上跟着图走的。 */
+.detail-header.hero::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  /* 高度要盖住「页签行」那一截：视差时页签会浮在被钉住的画面上，
+     没有这层垫底，浅色主题下页签文字直接糊进亮图里 */
+  height: 108px;
+  z-index: 2;
+  pointer-events: none;
+  background: linear-gradient(to top,
+    var(--md-surface-container-lowest) 0%,
+    color-mix(in srgb, var(--md-surface-container-lowest) 78%, transparent) 40%,
+    color-mix(in srgb, var(--md-surface-container-lowest) 26%, transparent) 74%,
+    transparent 100%);
+}
+
 .detail-header.hero .detail-meta {
   position: absolute;
-  left: 28px;
-  right: 28px;
-  bottom: 22px;
-  z-index: 2;
+  left: 0;
+  right: 0;
+  bottom: 13%;
+  padding: 0 28px;
+  z-index: 3;
+  text-align: center;
 }
-.detail-header.hero .detail-type  { color: rgba(255,255,255,0.85); }
 .detail-header.hero .detail-name  {
   color: #fff;
-  font-size: 40px;
-  text-shadow: 0 2px 14px rgba(0,0,0,0.4);
+  font-size: clamp(34px, 3.4vw, 50px);
+  line-height: 1.14;
+  letter-spacing: -0.01em;
+  /* 贴边一层紧紧的暗影负责「离背景脱开」，外面再一层大半径的柔光负责体积感；
+     比压一层黑蒙版省画面，亮图上也站得住 */
+  text-shadow: 0 1px 3px rgba(0,0,0,0.55), 0 6px 26px rgba(0,0,0,0.42);
 }
-.detail-header.hero .detail-sub   { color: rgba(255,255,255,0.82); text-shadow: 0 1px 8px rgba(0,0,0,0.35); }
-.detail-header.hero .detail-actions { margin-top: 18px; }
+.detail-header.hero .detail-sub {
+  margin-top: 6px;
+  color: rgba(255,255,255,0.92);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.55), 0 4px 18px rgba(0,0,0,0.40);
+}
+.detail-header.hero .detail-actions {
+  margin-top: 18px;
+  justify-content: center;
+}
+
+/* ── 圆图布局（没拿到横版横幅的艺人）：竖排居中 ─────────────────────
+   和 hero 版共用同一套重心——图在上、名字居中、按钮居中；
+   只是没有横幅可铺，所以不压暗、不接色，分隔线也去掉（下面紧跟页签行）。 */
+.detail-header:not(.hero):has(#detail-avatar) {
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  text-align: center;
+  padding: 20px 0 28px;
+  border-bottom: none;
+}
+.detail-header:not(.hero):has(#detail-avatar) .detail-cover { margin-left: 0; }
+/* 晕开的光：还是原来那圈模糊底（强度/半径都不动），只把形状改成圆，
+   跟圆头像同一个圆心——原来那 24px 圆角在圆图背后会露出四个「角」。 */
+.detail-header:not(.hero):has(#detail-avatar) .detail-cover-blur {
+  border-radius: var(--shape-full);
+}
+.detail-header:not(.hero):has(#detail-avatar) .detail-meta {
+  flex: 0 0 auto;
+  max-width: 100%;
+  text-align: center;
+}
+.detail-header:not(.hero):has(#detail-avatar) .detail-name {
+  margin-top: 22px;
+  font-size: clamp(28px, 2.8vw, 40px);
+}
+.detail-header:not(.hero):has(#detail-avatar) .detail-alias { justify-content: center; }
+.detail-header:not(.hero):has(#detail-avatar) .detail-actions {
+  margin-top: 20px;
+  justify-content: center;
+}
+
+/* ── 专辑 / 歌单详情：封面 + 文字栏 ─────────────────────────────────
+   文字栏：标题 → 艺人/作者（着色一行）→ 元信息 → 按钮沉到封面底边。
+   用 .detail-meta-stacked 这个修饰类圈定，艺人页的 .detail-meta 不受影响。 */
+.detail-meta-stacked {
+  display: flex;
+  flex-direction: column;
+  /* 整栏靠底：文案贴着按钮，富余的空白全留在标题上方
+     （原来「标题顶对齐 + 按钮底对齐」会在中间撑出一大片空档） */
+  justify-content: flex-end;
+  align-self: stretch;
+  min-width: 0;
+}
+.detail-meta-stacked .detail-name {
+  font-size: clamp(24px, 2.4vw, 34px);
+  line-height: 1.22;
+}
+.detail-byline {
+  margin: 8px 0 0;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--md-primary);
+}
+.detail-byline-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--md-primary);
+  cursor: pointer;
+  text-align: left;
+  border-radius: var(--md-sys-shape-corner-small);
+  transition: color var(--motion-short) var(--ease-standard);
+}
+.detail-byline-btn:hover { text-decoration: underline; }
+.detail-byline-text { color: var(--md-primary); }
+.detail-byline-more {
+  margin-left: 6px;
+  font-weight: 400;
+  color: var(--md-on-surface-variant);
+}
+.detail-byline .playlist-owner { margin: 0; }
+.detail-byline .playlist-owner-name {
+  color: var(--md-primary);
+  max-width: none;
+}
+.detail-meta-line {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--md-on-surface-variant);
+}
+.detail-meta-stacked .detail-actions {
+  margin-top: 24px;
+  padding-top: 0;
+}
 
 .detail-alias {
   display: flex;
@@ -6978,6 +7439,7 @@ select.cmd-text-field__input + .cmd-text-field__label {
   line-height: 1;
   white-space: nowrap;
 }
+.detail-header.hero .detail-alias { justify-content: center; }
 .detail-header.hero .detail-alias .alias-chip {
   background: rgba(255, 255, 255, 0.20);
   color: rgba(255,255,255,0.95);
@@ -7265,12 +7727,38 @@ select.cmd-text-field__input + .cmd-text-field__label {
 .artist-edit-status[hidden] { display: none; }
 
 .artist-detail-body {
+  position: relative;
+  z-index: 3;
   padding: 0 0 24px;
+}
+/* hero 布局：页签行上提，吃进 hero 底部那截渐隐，
+   让「N 张专辑 · N 首曲目」贴在图片化开的那一段上，不额外占纵向空间。 */
+.detail-header.hero + .artist-detail-body {
+  margin-top: -28px;
+}
+
+.artist-pivot-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* 左右必须和 `.track-list`（=--track-list-inset）落在同一条竖线上：
+     页签胶囊是实心色块，差几像素一眼就能看出两条边不齐 */
+  margin: 0 var(--track-list-inset) 4px;
 }
 
 .artist-pivot {
-  margin: 0 12px 4px;
+  margin: 0;
   padding: 8px 0;
+  justify-content: flex-start;
+}
+
+.artist-pivot-meta {
+  margin: 0 0 0 auto;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--md-on-surface-variant);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .artist-panel {
@@ -7284,9 +7772,22 @@ select.cmd-text-field__input + .cmd-text-field__label {
   padding: 4px 12px 24px;
 }
 
+.artist-alias-block {
+  padding: 12px var(--track-list-inset) 0;
+}
+.artist-alias-block[hidden] { display: none; }
+.artist-alias-label {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--md-on-surface-variant);
+}
+.artist-alias-block .detail-alias { margin-top: 0; }
+
 .artist-bio-text {
   margin: 0;
-  padding: 8px 24px 24px;
+  padding: 8px var(--track-list-inset) 24px;
   font-size: 14px;
   line-height: 1.85;
   color: var(--md-on-surface-variant);
@@ -8343,8 +8844,8 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
 }
 
 /* ===== 搜索页 =====
-   独立页，不复用主页的 .ym-* 。三段结构：页头 + 搜索框 + 范围 chips，
-   全部塞进 .page-sticky-header 里吸顶；结果区按 scope 渲染。 */
+   独立页，不复用主页的 .ym-* 。三段结构：页头 + 范围 chips + 搜索框，
+   都放在 .page-top 里跟着滚；滚出标题区后 chips 与搜索框一起浮到底部。 */
 .search-page {
   padding: 0 0 40px;
 }
@@ -8398,8 +8899,9 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
 }
 .search-see-all:hover { background: var(--md-state-hover); }
 .search-see-all .material-symbols-rounded { font-size: 16px; }
-.search-track-list { padding: 0 12px 8px; }
-.search-artist-list { padding: 0 16px 8px; }
+.search-track-list { padding-bottom: var(--md-comp-list-padding-block); }
+/* 左右/上方缩进继承上面的 .artist-list 配方，这里只调紧搜索结果的底部留白 */
+.search-artist-list { padding-bottom: 8px; }
 .search-cover-fallback {
   width: 100%;
   height: 100%;
@@ -8996,18 +9498,6 @@ body.window-fullscreen.np-fullscreen .now-playing-pane.fullscreen {
   margin: 4px 0;
 }
 
-.detail-meta .playlist-owner-name {
-  color: rgba(255, 255, 255, 0.75);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-}
-
-.detail-meta .playlist-owner-avatar-wrap {
-  background: rgba(255, 255, 255, 0.15);
-}
-
-.detail-meta .playlist-owner-avatar-wrap .material-symbols-rounded {
-  color: rgba(255, 255, 255, 0.8);
-}
 
 .title-bar-center {
   -webkit-app-region: no-drag;
@@ -9533,3 +10023,257 @@ body.onboarding-active .title-bar-settings { display: none; }
   --mq-fade-l: 12px;
   --mq-fade-r: 20px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   窗口空间提示（.space-hint）
+   ──────────────────────────────────────────────────────────────────
+   窗口缩到「内容已经挤了、但还没被最小尺寸拦住」的区间时，
+   整个窗口先压一层蒙版，再在窗口对应边浮出一张提示卡：
+   宽不足 → 右缘中段、箭头向右；高不足 → 下缘中点、箭头向下。
+   纯提示层，pointer-events: none，跟当前是哪一页无关。
+   ═══════════════════════════════════════════════════════════════════ */
+.space-hint-layer {
+  position: fixed;
+  inset: 0;
+  /* 要压住 .title-bar（z-index: 1000）和全屏标题栏（1100）——否则蒙层只能盖到标题栏以下。
+     仍在右键菜单（10000）与各类对话框（100000+）之下 */
+  z-index: 1200;
+  pointer-events: none;
+}
+
+/* 蒙层：判断的是"窗口"够不够，所以整个窗口（含标题栏）都压下去，卡浮在上面。
+   纯视觉层，pointer-events: none，标题栏按钮照样能点 */
+.space-hint-scrim {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, #000 34%, transparent);
+  -webkit-backdrop-filter: blur(2px) saturate(0.85);
+  backdrop-filter: blur(2px) saturate(0.85);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--motion-medium) var(--ease-standard),
+    visibility 0s linear var(--motion-medium);
+}
+.space-hint-layer.is-active .space-hint-scrim {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity var(--motion-medium) var(--ease-standard),
+    visibility 0s linear 0s;
+}
+
+/* 两张卡贴着窗口边：宽 → 右缘中段，高 → 下缘中点（不再避让右侧播放面板） */
+.space-hint-anchor {
+  position: absolute;
+}
+.space-hint-anchor[data-axis='x'] {
+  right: 18px;
+  top: 50%;
+  translate: 0 -50%;
+}
+.space-hint-anchor[data-axis='y'] {
+  bottom: 18px;
+  left: 50%;
+  translate: -50% 0;
+}
+
+.space-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: max-content;
+  max-width: 360px;
+  padding: 16px 20px 18px;
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  background: var(--md-surface-bright);
+  text-align: right;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(10px);
+  transition:
+    opacity var(--motion-medium) var(--ease-standard),
+    transform var(--motion-spatial-default),
+    visibility 0s linear var(--motion-medium);
+}
+.space-hint-anchor[data-axis='y'] .space-hint {
+  text-align: center;
+  transform: translateY(10px);
+}
+
+.space-hint-anchor.is-visible .space-hint {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition:
+    opacity var(--motion-medium) var(--ease-standard),
+    transform var(--motion-spatial-default),
+    visibility 0s linear 0s;
+}
+
+.space-hint-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.space-hint-anchor[data-axis='y'] .space-hint-head {
+  justify-content: center;
+}
+
+.space-hint-title {
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 500;
+  letter-spacing: 0.15px;
+  color: var(--md-primary);
+  white-space: nowrap;
+}
+
+.space-hint-arrow {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--md-primary);
+}
+.space-hint-anchor[data-axis='y'] .space-hint-arrow svg {
+  transform: rotate(90deg);
+}
+.space-hint-anchor.is-visible .space-hint-arrow {
+  animation: space-hint-nudge-x 1.9s ease-in-out infinite;
+}
+.space-hint-anchor[data-axis='y'].is-visible .space-hint-arrow {
+  animation-name: space-hint-nudge-y;
+}
+
+@keyframes space-hint-nudge-x {
+  0%, 100% { transform: translateX(0); }
+  50%      { transform: translateX(5px); }
+}
+@keyframes space-hint-nudge-y {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(5px); }
+}
+
+.space-hint-desc {
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0.25px;
+  color: var(--md-on-surface-variant);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .space-hint,
+  .space-hint-anchor.is-visible .space-hint,
+  .space-hint-scrim,
+  .space-hint-layer.is-active .space-hint-scrim {
+    transition: opacity var(--motion-medium) var(--ease-standard);
+  }
+  .space-hint-anchor.is-visible .space-hint-arrow {
+    animation: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   底部悬浮搜索框（pages/page_dock.js）
+   ──────────────────────────────────────────────────────────────────
+   页面滚出标题区之后，搜索框连同压在上面的筛选指示搬到这里，贴着内容区
+   下缘浮住；滚回去原位还回。
+
+   形态：**不是卡片**，是内容区底部的一层自下而上的渐隐（内容区自己的
+   底色渐变到透明，观感就是内容区下缘的内阴影），搜索框和筛选指示落在
+   这层渐隐里。
+
+   🔴 定位用 `position: sticky; bottom: 0`，**挂在 #page-container 末尾**：
+   宽/左右/圆角全由布局自己给，不用 JS 算任何坐标。⚠️ 别退回
+   `position: fixed` + JS 写 left/width/bottom —— 那要靠
+   getBoundingClientRect 换算视口坐标，播放面板收放或窗口缩放时对不上，
+   整条会飘到播放面板上去（真机踩过）。
+   ═══════════════════════════════════════════════════════════════════ */
+.page-dock {
+  display: none; /* 不用时完全不占位：露着会在页面尾部白占一截高度 */
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  /* 左右 28 = 曲目行/页首搜索框的同一道沟，撑满后三者的边对齐 */
+  padding: 36px 28px 14px;
+  border-bottom-left-radius: var(--island-radius);
+  border-bottom-right-radius: var(--island-radius);
+  /* 底＝内容区底色。不透明段要完整盖住悬浮件自己的区域（底下不许透出曲目，
+     88% 那版封面和歌名从缝里漏出来，一坨很脏）；渐隐只发生在悬浮件上方的
+     留白里，前段快速跌下去 —— 比整片大渐隐轻得多，行也不会被拦腰切断 */
+  background: linear-gradient(to top,
+      var(--md-surface-container-lowest) 0%,
+      var(--md-surface-container-lowest) calc(100% - 44px),
+      color-mix(in srgb, var(--md-surface-container-lowest) 50%, transparent) calc(100% - 16px),
+      transparent 100%);
+  pointer-events: none;
+}
+.page-dock.is-docked {
+  display: flex;
+}
+.page-dock > * {
+  pointer-events: auto;
+  /* 撑满内容区宽度：筛选指示和搜索框一起宽。原来卡 720，长一点的 chip
+     差几十像素就掉第二行，右边一大片空白（用户："这个就不能撑宽吗"） */
+  width: 100%;
+}
+
+/* 🔴 dock 里**只有**筛选指示 + 搜索框，页面标题/操作按钮不跟着沉底
+   （整块页首沉底被用户否掉）。下面别加 .page-dock .page-header 之类的规则。 */
+
+/* 胶囊：渐隐层上是实色的，给一丝 elevation 让它自己浮出来 */
+.page-dock .search-bar {
+  margin: 0;
+  background: var(--md-surface-container);
+  box-shadow: var(--md-sys-elevation-level1);
+}
+.page-dock .search-bar:hover {
+  background: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity), var(--md-surface-container));
+}
+.page-dock .search-bar:focus-within {
+  background: var(--md-surface-container-high);
+}
+
+/* 筛选指示：排在搜索框上面（原位也是这个顺序），多行时这一排自己滚 */
+.page-dock .music-filter-chips,
+.page-dock .search-scope,
+.page-dock .np-pivot {
+  padding: 0;
+  max-height: 104px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* 这排已经进入渐隐区，透底的 chip 会把底下的曲目透上来 → 一律换实色 */
+.page-dock .search-scope .chip {
+  background: var(--md-surface-container);
+}
+.page-dock .search-scope .chip.active {
+  background: var(--md-secondary-container);
+  border-color: var(--md-secondary-container);
+}
+/* 「喜爱」页的视图切换：原位是透明底的一行 tab，浮起来得自带一层浅底 */
+.page-dock .np-pivot {
+  justify-content: flex-start;
+  align-self: flex-start;
+  padding: 4px;
+  background: var(--md-surface-container-high);
+  border-radius: var(--md-sys-shape-corner-full);
+}
+
+/* 退场影子（page_dock.js 克隆出来的那一份）：钉在内容区自身坐标系里
+   （absolute + top 由 JS 按内容坐标写），只负责把淡出演完。 */
+.page-dock.page-dock-ghost {
+  display: flex;
+  position: absolute;
+  left: 0;
+  right: 0;
+  margin-top: 0;
+  pointer-events: none;
+}
+.page-dock.page-dock-ghost > * { pointer-events: none; }
+
+/* 它在流里占着自己那份高度：滚到最底时正好收在内容区下缘（最后一行停在
+   渐隐层上沿），往下滚的过程中 sticky 把它顶到视口底部、压在曲目上面。 */

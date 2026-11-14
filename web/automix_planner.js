@@ -12,15 +12,15 @@
   if (typeof root !== 'undefined') root.AutoMixPlanner = api;
 })(typeof self !== 'undefined' ? self : this, function () {
 
-  var VERSION = 4;
+  var VERSION = 5;
   var DEFAULTS = {
     minBars: 2,
     bars: 4,
     radicalBars: 8,
-    maxStretch: 0.03,
-    maxStretchWsola: 0.10, // 仅保留配置兼容；播放层没有 WSOLA，规划器绝不采用它。
+    maxStretch: 0.18,
+    maxStretchWsola: 0.18,
     minDurationMs: 1600,
-    maxDurationMs: 24000,
+    maxDurationMs: 44000,
     scanTailMs: 75000,
     scanHeadMs: 45000,
     safeDurationMs: 4000,
@@ -44,6 +44,24 @@
   function r3(v) { return Math.round(v * 1000) / 1000; }
   function meanConfidence(a, b, fallback) {
     return Math.min(num(a, fallback), num(b, fallback));
+  }
+
+  function stretchCapability(a, b, opts) {
+    var tempo = meanConfidence(a && a.tempo && a.tempo.confidence,
+      b && b.tempo && b.tempo.confidence, 0);
+    var rhythm = meanConfidence(a && a.beats && a.beats.confidence,
+      b && b.beats && b.beats.confidence, 0);
+    var vocals = meanConfidence(a && a.flags && a.flags.vocalConfidence,
+      b && b.flags && b.flags.vocalConfidence, 0);
+    var transients = meanConfidence(a && a.flags && a.flags.transientConfidence,
+      b && b.flags && b.flags.transientConfidence, 0.5);
+    var cap = clamp(num(opts.maxStretch, 0.18), 0.04, 0.22);
+    cap *= 0.70 + 0.30 * Math.min(1, (tempo + rhythm) / 2);
+    cap *= 1 - 0.22 * Math.max(0, vocals - 0.55);
+    cap *= 1 - 0.16 * Math.max(0, transients - 0.75);
+    return { maxStretch: clamp(cap, 0.04, 0.22), tempoConfidence: tempo,
+      rhythmConfidence: rhythm, vocalConfidence: vocals,
+      transientConfidence: transients };
   }
 
   // profile 在生命周期内不变；网格统计被每个候选反复查询，缓存是避免
@@ -327,7 +345,7 @@
     var availB = durationB > 0 ? (durationB - B.tMs) / barRef : Infinity;
     var maxBars = Math.floor(Math.min(availA, availB));
     var desired = opts.radical ? opts.radicalBars : opts.bars;
-    var allowed = [8, 4, 2, 1].filter(function (bars) {
+    var allowed = [32, 24, 16, 12, 8, 4, 2, 1].filter(function (bars) {
       return bars <= maxBars && bars >= opts.minBars && bars <= desired;
     });
     var bars = allowed.length ? allowed[0] : Math.max(opts.minBars, Math.min(desired, maxBars));
@@ -385,6 +403,10 @@
           if (pairing.known && Math.abs(pairing.ratio - 1) > 1e-3) {
             list.push(baseCandidate('tempo-ramp', A, B, a, b, longDuration, grid.bars, pairing.ratio, longInterval));
           }
+          if (longDuration >= 12000) {
+            list.push(baseCandidate('beatmatched-long-blend', A, B, a, b,
+              longDuration, grid.bars, pairing.ratio, longInterval));
+          }
         }
         var va = longInterval.a.vocal, vb = longInterval.b.vocal;
         var vocalConflict = va.known && vb.known ? clamp(va.mean, 0, 1) * clamp(vb.mean, 0, 1) : 0;
@@ -431,14 +453,14 @@
     if (durationA > 0 && candidate.exitMs + candidate.durationMs > durationA + 1) why.push('overlap_exceeds_current_track');
     if (durationB > 0 && candidate.entryMs + candidate.durationMs > durationB + 1) why.push('overlap_exceeds_next_track');
     if (!(candidate.ratio > 0) || !isFinite(candidate.ratio)) why.push('invalid_rate');
-    if (Math.abs(candidate.ratio - 1) > opts.maxStretch + 1e-6) why.push('rate_capability_exceeded');
+    if (Math.abs(candidate.ratio - 1) > stretchCapability(a, b, opts).maxStretch + 1e-6) why.push('rate_quality_ceiling_exceeded');
     if (opts.nextStreaming && Math.abs(candidate.ratio - 1) > 1e-6) {
       why.push('streaming_next_has_no_rate_control');
     }
-    if (Math.abs(candidate.ratio - 1) > 1e-6 && candidate.strategy !== 'beatmatch' && candidate.strategy !== 'tempo-ramp') {
+    if (Math.abs(candidate.ratio - 1) > 1e-6 && candidate.strategy !== 'beatmatch' && candidate.strategy !== 'beatmatched-long-blend' && candidate.strategy !== 'tempo-ramp') {
       why.push('strategy_cannot_change_rate');
     }
-    if (candidate.strategy === 'beatmatch' || candidate.strategy === 'tempo-ramp') {
+    if (candidate.strategy === 'beatmatch' || candidate.strategy === 'beatmatched-long-blend' || candidate.strategy === 'tempo-ramp') {
       if (!pairing.known) why.push('tempo_grid_required');
       if (!hasGrid(a) || !hasGrid(b) || candidate.pointA.beatIndex < 0 || candidate.pointB.beatIndex < 0) {
         why.push('aligned_beat_grid_required');
@@ -637,7 +659,11 @@
     }
     if (candidate.strategy === 'tempo-ramp') {
       if (rhythmEvidence) strategyBonus += 0.045 + 0.05 * num(terms.tempo, 0) * num(terms.phase, 0);
-      why.push('small_tempo_ramp_within_native_three_percent_limit');
+      why.push('confidence_bounded_tempo_ramp');
+    }
+    if (candidate.strategy === 'beatmatched-long-blend') {
+      if (rhythmEvidence) strategyBonus += 0.07 + 0.04 * num(terms.phrase, 0) * num(terms.phase, 0);
+      why.push('phrase_length_pitch_preserving_beatmatch');
     }
     if (candidate.strategy === 'phrase-cut') {
       if (terms.phrase !== null && weights.phrase > 0) {
@@ -766,6 +792,12 @@
       bpmCurrent: num(a.tempo && a.tempo.primary, 0),
       bpmNext: num(b.tempo && b.tempo.primary, 0),
       bpmTempoAdjust: chosen.ratio,
+      tempoProcessor: Math.abs(chosen.ratio - 1) > 1e-6 ? 'soundtouch-wsola' : 'bypass',
+      // The renderer reports verified execution separately. Planning a WSOLA
+      // candidate is not evidence that this particular deck completed it.
+      pitchPreserved: Math.abs(chosen.ratio - 1) <= 1e-6,
+      pitchPreservingRequested: Math.abs(chosen.ratio - 1) > 1e-6,
+      stretchQualityCeiling: stretchCapability(a, b, opts).maxStretch,
       tempoRampMs: chosen.strategy === 'tempo-ramp' ? Math.round((medianBeatMs(a) || 500) * 8) : 0,
       score: chosen.total, terms: chosen.terms, confidence: chosen.confidence,
       eq: buildEq(chosen),
@@ -884,9 +916,8 @@
 
   function plan(a, b, options) {
     var opts = Object.assign({}, DEFAULTS, options || {});
-    // 正式播放能力没有 WSOLA；即使调用方传 true，也仍使用原生 ±3% 速率上限。
-    opts.wsola = false;
-    opts.maxStretch = Math.min(0.03, Math.max(0, num(opts.maxStretch, 0.03)));
+    opts.wsola = options && options.wsola === false ? false : true;
+    opts.maxStretch = clamp(num(opts.maxStretch, DEFAULTS.maxStretch), 0, 0.22);
     if (opts.albumSequence) return albumSequencePlan(a, b, opts, albumEdgesInfo(a, b, opts));
     if (!a || !b) return fallbackPlan(opts, a ? 'missing_next_profile' : 'missing_current_profile');
 

@@ -20,7 +20,7 @@
 
   page.render = function (container) {
     container.innerHTML = `
-      <div class="page-sticky-header">
+      <div class="page-top">
         <div class="page-header">
           <div class="page-header-left">
             <h1 class="page-title" data-i18n="liked.title">喜爱的音乐</h1>
@@ -122,11 +122,29 @@
     return String(album || '') + '\u0000' + String(albumArtist || '');
   }
 
+  // 智能分组后一张专辑对应多个自然键（album_keys），喜爱页的播放/统计都要按全量匹配。
+  function _albumKeysOf(album) {
+    return (album && album.album_keys && album.album_keys.length)
+      ? album.album_keys
+      : [{ album: album ? album.album : '', album_artist: album ? album.album_artist : '' }];
+  }
+
+  function _albumArtistLabel(album) {
+    var names = (album.album_artists && album.album_artists.length)
+      ? album.album_artists
+      : [album.album_artist];
+    if (names.length > 1) {
+      return App.i18n.t('albums.multiArtist', { artist: album.album_artist || names[0], count: names.length, more: names.length - 1 });
+    }
+    return album.album_artist;
+  }
+
   function _tracksForAlbums(albums) {
     const all = (App.state && App.state.allTracks) || [];
-    const keys = new Set(albums.map(function (a) {
-      return _albumKey(a.album, a.album_artist);
-    }));
+    const keys = new Set();
+    albums.forEach(function (a) {
+      _albumKeysOf(a).forEach(function (k) { keys.add(_albumKey(k.album, k.album_artist)); });
+    });
     return all.filter(function (t) {
       return keys.has(_albumKey(t.album, t.album_artist || t.artist));
     });
@@ -224,6 +242,7 @@
         return App.utils.matchItem(filterStr, a, [
           { text: 'album', key: 'sort_key' },
           { text: 'album_artist', key: 'album_artist_sort_key' },
+          { text: 'album_artists_text' },
         ]);
       });
     }
@@ -260,7 +279,7 @@
         </div>
         <div class="album-info">
           <p class="album-name">${App.utils.esc(album.album)}</p>
-          <p class="album-meta">${App.utils.esc(album.album_artist)} · ${album.year || '?'} · ${App.i18n.t('albums.trackCountShort', { count: album.track_count })}</p>
+          <p class="album-meta">${App.utils.esc(_albumArtistLabel(album))} · ${album.year || '?'} · ${App.i18n.t('albums.trackCountShort', { count: album.track_count })}</p>
         </div>
       `;
 
@@ -269,7 +288,8 @@
       });
       card.querySelector('.liked-remove-btn').addEventListener('click', function (e) {
         e.stopPropagation();
-        App.backend.toggle_liked_album(album.album, album.album_artist);
+        const key = album.liked_key || { album: album.album, album_artist: album.album_artist };
+        App.backend.toggle_liked_album(key.album, key.album_artist);
       });
       frag.appendChild(card);
     });

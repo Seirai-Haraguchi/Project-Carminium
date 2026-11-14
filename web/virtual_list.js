@@ -257,6 +257,16 @@
         currentY += itemHeight;
       }
       if (created > 0) this._content.appendChild(frag);
+
+      // 首尾标记（.vl-first/.vl-last）：列表首行/末行的收口圆角靠它。
+      // 不能用 :first-child —— 滚动时 DOM 里的第一行是缓冲区的第一行，会漂，
+      // 表现为列表中部突然冒出一个大圆角行。
+      var lastIdx = n - 1;
+      for (var m = 0; m < this._activeNodes.length; m++) {
+        var nd = this._activeNodes[m];
+        nd.el.classList.toggle('vl-first', nd.index === 0);
+        nd.el.classList.toggle('vl-last', nd.index === lastIdx);
+      }
     }
 
     _recycleAll() {

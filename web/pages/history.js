@@ -11,7 +11,7 @@
 
   page.render = function (container) {
     container.innerHTML = `
-      <div class="page-sticky-header">
+      <div class="page-top">
         <div class="page-header">
           <div class="page-header-left">
             <h1 class="page-title" data-i18n="history.title">播放历史</h1>

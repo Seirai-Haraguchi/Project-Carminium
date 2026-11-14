@@ -656,24 +656,30 @@
         } catch (e) {  }
       });
     } else if (item.id === 'info') {
+      var _t = App.i18n.t;
+      var unknown = _t('common.unknown');
       if (isMulti) {
-        var info = App.i18n.t('cm.infoSelectedTitle') + '\n' +
-                   App.i18n.t('cm.infoCount', { count: selectedTracks.length }) + '\n' +
-                   App.i18n.t('cm.infoTotalDuration', { duration: App.utils.formatDuration(selectedTracks.reduce(function (s, t) { return s + (t.duration_ms || 0); }, 0)) });
-        alert(info);
+        App.utils.infoDialog({
+          title: _t('cm.fileInfo'),
+          rows: [
+            _t('cm.infoCount', { count: selectedTracks.length }),
+            _t('cm.infoTotalDuration', { duration: App.utils.formatDuration(selectedTracks.reduce(function (s, t) { return s + (t.duration_ms || 0); }, 0)) })
+          ]
+        });
       } else {
-        var _t = App.i18n.t;
-        var unknown = _t('common.unknown');
         var sizeMB = track.file_size ? (track.file_size / (1024 * 1024)).toFixed(2) + ' MB' : unknown;
-        var bitrateStr = track.bitrate ? Math.round(track.bitrate/1000) + ' kbps' : unknown;
-        var info = _t('cm.infoTitle') + '\n' +
-                   _t('cm.infoFieldTitle', { value: track.title || unknown }) + '\n' +
-                   _t('cm.infoFieldArtist', { value: track.artist || unknown }) + '\n' +
-                   _t('cm.infoFieldAlbum', { value: track.album || unknown }) + '\n' +
-                   _t('cm.infoFieldBitrate', { value: bitrateStr }) + '\n' +
-                   _t('cm.infoFieldSize', { value: sizeMB }) + '\n' +
-                   _t('cm.infoFieldPath', { value: track.path });
-        alert(info);
+        var bitrateStr = track.bitrate ? Math.round(track.bitrate / 1000) + ' kbps' : unknown;
+        App.utils.infoDialog({
+          title: _t('cm.fileInfo'),
+          rows: [
+            { label: _t('cm.infoLabelTitle'), value: track.title || unknown },
+            { label: _t('cm.infoLabelArtist'), value: track.artist || unknown },
+            { label: _t('cm.infoLabelAlbum'), value: track.album || unknown },
+            { label: _t('cm.infoLabelBitrate'), value: bitrateStr },
+            { label: _t('cm.infoLabelSize'), value: sizeMB },
+            { label: _t('cm.infoLabelPath'), value: track.path || unknown, path: true }
+          ]
+        });
       }
     }
     }
@@ -802,10 +808,16 @@
 
   function _getAlbumTracks(album) {
     var allTracks = (App.state && App.state.allTracks) ? App.state.allTracks : [];
+    // 智能分组后一张卡片可能是多个 (album, album_artist) 自然键拼起来的，
+    // 这里必须按全部 keys 过滤，否则菜单里只列出主艺人的那几首。
+    var keys = (album.album_keys && album.album_keys.length)
+      ? album.album_keys
+      : [{ album: album.album, album_artist: album.album_artist }];
+    var set = new Set(keys.map(function (k) {
+      return String(k.album || '') + '\u0000' + String(k.album_artist || '');
+    }));
     return allTracks.filter(function (t) {
-      if (t.album !== album.album) return false;
-      var tArtist = t.album_artist || t.artist;
-      return tArtist === album.album_artist;
+      return set.has(String(t.album || '') + '\u0000' + String(t.album_artist || t.artist || ''));
     }).sort(function (a, b) {
       var da = (a.disc_number || 0), db = (b.disc_number || 0);
       if (da !== db) return da - db;
@@ -832,6 +844,11 @@
 
     var albumName = album.album || App.i18n.t('common.unknownAlbum');
     var albumArtist = album.album_artist || App.i18n.t('common.unknownArtist');
+    // 合并出来的专辑：主艺人 + 「等 N 位」，别只写主艺人让人以为菜单漏了曲子。
+    var artistCount = (album.album_artists && album.album_artists.length) || 1;
+    if (artistCount > 1 && album.album_artist) {
+      albumArtist = App.i18n.t('albums.multiArtist', { artist: album.album_artist, count: artistCount, more: artistCount - 1 });
+    }
 
     header.innerHTML =
       coverHtml +

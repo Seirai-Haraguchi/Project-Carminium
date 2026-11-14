@@ -79,8 +79,6 @@ const _DISABLE_FEATURES_NORMAL = [
   'WebNFC',
   'Vulkan',
   'HeavyAdPrivacy',
-  'SkiaGraphite',
-  'Canvas2DLayers',
   'WebRtc',
   'WebCodecs',
   'WebLocks',
@@ -134,7 +132,6 @@ const _DISABLE_FEATURES_NORMAL = [
   'DocumentReport',
   'MediaDrm',
   'UserMediaCaptureAllOrigins',
-  'GpuMemoryBufferVideoPipeline',
   'PictureInPicture',
   'DocumentPictureInPicture',
   'ContactsPicker',
@@ -250,8 +247,6 @@ const _DISABLE_FEATURES_AGGRESSIVE = [
   'SiteSettings',
   'SiteSettingsDataModel',
   'TopChromeUI',
-  'ZeroCopyRasterizer',
-  'GpuMemoryBufferVideoFramePool',
 ].join(',');
 
 const _ENABLE_FEATURES_MEM = [
@@ -261,11 +256,8 @@ const _ENABLE_FEATURES_MEM = [
   'CalculateNativeWinOcclusion',
   'ReduceAcceptLanguage',
   'BackForwardCache',
-  'CompositeBGColorAfterPaint',
-  'ReduceImageSize',
   'LazyFrameLoading',
   'LazyImageLoading',
-  'CompositingOptimizations',
   'SkipOOMKill',
   'PartiallySkipEarlyMainResourceLoading',
   'MemoryCachePruning',
@@ -311,21 +303,11 @@ if (_memOptLevel === 'off') {
   app.commandLine.appendSwitch('enable-features', _ENABLE_FEATURES_MEM);
 
   if (_memOptLevel === 'aggressive') {
-    app.commandLine.appendSwitch('disable-gpu');
-    app.commandLine.appendSwitch('disable-color-correct-rendering');
-    app.commandLine.appendSwitch('force-color-profile', 'srgb');
     app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
-    app.commandLine.appendSwitch('disable-gpu-driver-bug-workarounds');
     app.commandLine.appendSwitch('disable-accelerated-video-decode');
     app.commandLine.appendSwitch('disable-accelerated-mjpeg-decode');
-    app.commandLine.appendSwitch('disable-webgl-image-chromium');
-    app.commandLine.appendSwitch('disable-2d-canvas-image-chromium');
     app.commandLine.appendSwitch('disable-frame-rate-overlay');
 
-    app.commandLine.appendSwitch('disable-gpu-sandbox');
-    app.commandLine.appendSwitch('no-sandbox');
-
-    app.commandLine.appendSwitch('enable-low-end-device-mode');
   }
 }
 
@@ -973,6 +955,11 @@ function createMainWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
     if (bridge) bridge.close();
+    // 任务栏歌词/小窗都是独立的 BrowserWindow，只要它们还活着
+    // window-all-closed 就永远不会触发：主窗一关必须自己走退出流程，
+    // 否则进程留在后台，歌词继续挂在任务栏上，而且再点图标会被单实例锁吞掉。
+    shutdown();
+    app.quit();
   });
 
   return mainWindow;
@@ -1160,10 +1147,24 @@ async function initializeApp() {
 }
 
 
+// before-quit / window-all-closed / 主窗 closed 都会走到这里，只允许执行一次：
+// 第二次进来时 player/library 已经 close，重复收尾会抛错。
+let _shutdownDone = false;
+
 function shutdown() {
+  if (_shutdownDone) return;
+  _shutdownDone = true;
   try {
     const { getInstance: getMemoryManager } = require('./memory_manager');
     getMemoryManager().stop();
+  } catch {  }
+  // 先拆附加窗口再停播放：任务栏歌词/缩略图都挂在 player 事件上，
+  // 反过来会先被 stop 的 state_changed 推一次状态。
+  try {
+    if (taskbarLyrics) taskbarLyrics.dispose();
+  } catch {  }
+  try {
+    if (thumbar) thumbar.dispose();
   } catch {  }
   try {
     if (player) player.stop();
@@ -1171,12 +1172,6 @@ function shutdown() {
   savePlaybackState();
   try {
     if (discordRpc) discordRpc.stop();
-  } catch {  }
-  try {
-    if (thumbar) thumbar.dispose();
-  } catch {  }
-  try {
-    if (taskbarLyrics) taskbarLyrics.dispose();
   } catch {  }
   try {
     if (bridge) bridge.close();
@@ -1226,6 +1221,7 @@ app.on('before-quit', () => {
 });
 
 app.on('activate', () => {
+  if (_shutdownDone) return;
   if (BrowserWindow.getAllWindows().length === 0) {
     createMainWindow();
     if (bridge) bridge.setMainWindow(mainWindow);

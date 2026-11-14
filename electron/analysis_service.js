@@ -16,6 +16,7 @@ const path = require('path');
 const { Worker } = require('worker_threads');
 
 const WORKER_PATH = path.join(__dirname, 'analysis_worker.js');
+const IDLE_WORKER_TIMEOUT_MS = 30_000;
 
 class AnalysisService {
   constructor(opts) {
@@ -30,6 +31,7 @@ class AnalysisService {
     this._inflight = new Map();    // trackId → Promise
     this._queue = [];
     this._active = false;
+    this._idleTimer = null;
     this._stats = { analyzed: 0, failures: 0, cacheHits: 0, totalCostMs: 0 };
   }
 
@@ -37,6 +39,10 @@ class AnalysisService {
 
   _ensureWorker() {
     if (this._worker) return this._worker;
+    if (this._idleTimer) {
+      clearTimeout(this._idleTimer);
+      this._idleTimer = null;
+    }
     const w = new Worker(WORKER_PATH, { stdio: 'ignore' });
     w.on('message', (msg) => {
       if (!msg) return;
@@ -59,6 +65,22 @@ class AnalysisService {
     if (w.unref) w.unref();
     this._worker = w;
     return w;
+  }
+
+  _scheduleIdleShutdown() {
+    if (this._idleTimer) clearTimeout(this._idleTimer);
+    if (!this._worker || this._active || this._queue.length) {
+      this._idleTimer = null;
+      return;
+    }
+    this._idleTimer = setTimeout(() => {
+      this._idleTimer = null;
+      if (!this._active && !this._queue.length && this._worker) {
+        try { this._worker.terminate(); } catch { }
+        this._worker = null;
+      }
+    }, IDLE_WORKER_TIMEOUT_MS);
+    if (this._idleTimer.unref) this._idleTimer.unref();
   }
 
   /**
@@ -124,6 +146,7 @@ class AnalysisService {
         try { self._worker.unref(); } catch (_) {}
       }
       self._pump();
+      self._scheduleIdleShutdown();
     };
 
     let worker;
@@ -164,6 +187,10 @@ class AnalysisService {
 
   dispose() {
     this._queue.length = 0;
+    if (this._idleTimer) {
+      clearTimeout(this._idleTimer);
+      this._idleTimer = null;
+    }
     if (this._worker) {
       try { this._worker.terminate(); } catch {  }
       this._worker = null;

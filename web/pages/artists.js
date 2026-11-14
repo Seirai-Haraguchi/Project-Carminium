@@ -22,6 +22,26 @@
 
   const _avatarProbeCache = new Map();
 
+  /**
+   * 按「专辑名 + 某首曲目的自然键」在列表接口的专辑里找对应的（可能被智能分组合并过的）卡片。
+   * 合并后主键可能是别的艺人组合，所以必须查 album_keys，不能只比 album_artist。
+   */
+  function _findMergedAlbum(albumName, track) {
+    const list = (App.state && App.state.allAlbums) || [];
+    if (!albumName || !track) return null;
+    const keyArtist = String(track.album_artist || track.artist || '');
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i];
+      if (a.album !== albumName) continue;
+      if (String(a.album_artist || '') === keyArtist) return a;
+      const keys = a.album_keys || [];
+      for (let j = 0; j < keys.length; j++) {
+        if (keys[j].album === albumName && String(keys[j].album_artist || '') === keyArtist) return a;
+      }
+    }
+    return null;
+  }
+
   // 用户换过头像的艺人：name → 版本号。加在 URL 上破除 HTTP 缓存
   // （cover-server 对这些端点给了 max-age，不加版本会看到旧图）。
   // 表放在 window 上，your_mix 等页面的 artistImageUrl() 调用也能吃到新版本。
@@ -33,6 +53,93 @@
   function _seedImageVersion(artist) {
     if (!artist || !artist.name || !artist.override_at) return;
     if (!_imageVersion[artist.name]) _imageVersion[artist.name] = artist.override_at;
+  }
+
+  // hero 底部接色：用「画面在 hero 底边那一带」的实际颜色去和内容岛背景过渡，
+  // 而不是压一层黑——黑压暗会把艺人图本身的设计盖掉。
+  // --artist-fade-rgb 用于过渡层，--artist-scrim-rgb 是它的压暗版，只垫在文案背后。
+  function _cssRGB(str) {
+    var m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(String(str || ''));
+    return m ? [+m[1], +m[2], +m[3]] : null;
+  }
+
+  function _applyHeroTone(headerEl, imgEl) {
+    if (!headerEl || !headerEl.classList.contains('hero') || !imgEl) return;
+    if (!App.utils.extractCoverBottomColor) return;
+    var box = headerEl.getBoundingClientRect();
+    var rgb = App.utils.extractCoverBottomColor(imgEl, box.width, box.height, 0.28);
+    if (!rgb) return;
+
+    var lumOf = function (c) { return (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255; };
+
+    // 取到的只是「画面下沿的颜色」，还得把它归到内容岛背景的同一亮度段：
+    // 亮图 + 暗界面如果直接接色，交界处会撞出一条明晃晃的灰带。
+    // 归亮度只做等比缩放，色相/彩度原样保留，所以看着仍然是画面自己的颜色。
+    var paneEl = document.getElementById('content-pane');
+    var pane = _cssRGB(paneEl ? getComputedStyle(paneEl).backgroundColor : '') || [12, 14, 17];
+    var paneLum = lumOf(pane);
+    var target = paneLum + (paneLum > 0.5 ? -0.16 : 0.10);
+    var k = Math.max(0.12, Math.min(target / Math.max(lumOf(rgb), 0.04), 2.2));
+    var fade = rgb.map(function (v) {
+      return Math.max(0, Math.min(255, Math.round(v * k)));
+    });
+    // 文案背后那层单独定亮度档（≈0.30）：它只负责让白字站得住，
+    // 跟过渡层的亮度是两回事——浅色主题下过渡层很亮，但垫字的那层不能跟着变亮。
+    var ks = Math.max(0.10, Math.min(0.30 / Math.max(lumOf(rgb), 0.04), 2.4));
+    headerEl.style.setProperty('--artist-fade-rgb', fade.join(', '));
+    headerEl.style.setProperty('--artist-scrim-rgb', rgb.map(function (v) {
+      return Math.max(0, Math.min(255, Math.round(v * ks)));
+    }).join(', '));
+  }
+
+  // ── hero 视差 ───────────────────────────────────────────────────────
+  // 内容岛在滚，hero 图反向位移同样的距离 → 图看起来钉在视口上，
+  // 下面的元素一路滑上来把它盖掉。
+  // ⚠️ 不能用 background-attachment: fixed：那会把背景升成 viewport 层盖住整个内容区
+  // （项目里踩过的坑），而且它跟 mask/取色渐变也不兼容。
+  var _heroImgEl = null;
+  var _heroBoxEl = null;
+  var _heroToneEl = null;
+  var _heroRaf = 0;
+
+  function _heroParallaxTick() {
+    _heroRaf = 0;
+    var pane = document.getElementById('content-pane');
+    if (!_heroImgEl || !_heroBoxEl || !pane) return;
+    var y = pane.scrollTop;
+    var h = _heroBoxEl.offsetHeight || 0;
+    // 超出 hero 自身高度就没必要再位移了（整块已经滚出视口）
+    if (y < 0) y = 0;
+    else if (y > h) y = h;
+    var tf = 'translate3d(0, ' + y + 'px, 0)';
+    _heroImgEl.style.transform = tf;
+    // 取色过渡层跟着图一起钉住：让它始终贴着「图的下沿」，
+    // 否则它会跟着盒子上滑，把本来干净的画面上半截糊掉。
+    // 内容顶端那条接缝交给 hero 自己的 ::after 短渐变（那个挂盒上）。
+    if (_heroToneEl && _heroToneEl.isConnected) _heroToneEl.style.transform = tf;
+  }
+
+  function _heroParallaxSchedule() {
+    if (_heroRaf) return;
+    _heroRaf = requestAnimationFrame(_heroParallaxTick);
+  }
+
+  var _heroScrollBound = false;
+  function _bindHeroParallax(box, img) {
+    _heroBoxEl = box;
+    _heroImgEl = img;
+    _heroToneEl = box.querySelector('.detail-cover-gradient');
+    if (!_heroScrollBound) {
+      var pane = document.getElementById('content-pane');
+      if (!pane) return;
+      _heroScrollBound = true;
+      pane.addEventListener('scroll', function () {
+        // 换页/换艺人后旧节点已经不在了，直接松手，不再排帧
+        if (!_heroImgEl || !_heroImgEl.isConnected) { _heroImgEl = null; _heroBoxEl = null; return; }
+        _heroParallaxSchedule();
+      }, { passive: true });
+    }
+    _heroParallaxTick();
   }
 
   function _imageUrl(name) {
@@ -75,7 +182,7 @@
     _likeBtnEl = null;
     _currentArtistName = '';
     container.innerHTML = `
-      <div class="page-sticky-header">
+      <div class="page-top">
         <div class="page-header">
           <div class="page-header-left">
             <h1 class="page-title" data-i18n="artists.title">艺术家</h1>
@@ -430,13 +537,18 @@
           }
         } else {
           const artist = item.artist;
-          el.className = 'artist-row vl-item';
+          // VirtualList cell owns only the 2px segment gap; the inner row is the
+          // actual M3E list item (same structure as .vl-track-row-wrapper).
+          el.className = 'vl-artist-row-wrapper vl-item';
+          el.onclick = null;
 
           const name = artist.name || '';
           const bg = App.utils.hashColor(name);
           _seedImageVersion(artist);
 
-          el.innerHTML =
+          const row = document.createElement('div');
+          row.className = 'artist-row';
+          row.innerHTML =
             '<div class="artist-avatar" data-artist="' + App.utils.esc(name) + '" style="background:' + bg + ';color:#fff;">' +
               '<span style="font-size:20px;font-weight:700;color:#fff;">' + App.utils.initial(name) + '</span>' +
             '</div>' +
@@ -446,9 +558,11 @@
               App.i18n.t('music.trackCount', { count: artist.track_count }) + '</p>' +
             '</div>' +
             '<span class="material-symbols-rounded artist-chevron">chevron_right</span>';
+          el.innerHTML = '';
+          el.appendChild(row);
 
           const url = _imageUrl(name);
-          const avEl = el.querySelector('.artist-avatar');
+          const avEl = row.querySelector('.artist-avatar');
           if (url && avEl) {
             const state = _avatarProbeState(name, url);
             if (state === 'ok') {
@@ -469,7 +583,7 @@
             }
           }
 
-          el.onclick = function () { _renderDetail(container, artist); };
+          row.onclick = function () { _renderDetail(container, artist); };
         }
       },
     });
@@ -500,6 +614,9 @@
   function _renderDetail(container, artist) {
 
     App.scrollMemory.save('artists');
+    // 上一个艺人残留的别名/简介会让「简介」页签在数据回来前先亮起来，先清掉
+    _aliasRest = [];
+    _bioText = '';
     container.innerHTML = `
       <div class="detail-header">
         <div class="detail-cover" id="detail-cover">
@@ -511,10 +628,8 @@
         </div>
         <div class="detail-cover-gradient"></div>
         <div class="detail-meta">
-          <p class="detail-type" data-i18n="artists.title">艺术家</p>
           <h1 class="detail-name">${App.utils.esc(artist.name)}</h1>
-          <p class="detail-sub">${App.i18n.t('artists.albumCount', { count: artist.album_count })} · ${App.i18n.t('music.trackCount', { count: artist.track_count })}</p>
-          <p class="detail-alias" id="detail-alias" hidden></p>
+          <p class="detail-sub" id="detail-alias" hidden></p>
           <div class="detail-actions">
             <button class="detail-icon-btn" id="btn-edit-artist" data-i18n-title="artists.editInfo" data-i18n-aria-label="artists.editInfo">
               <span class="material-symbols-rounded">edit</span>
@@ -529,10 +644,13 @@
         </div>
       </div>
       <div class="artist-detail-body" id="artist-detail-body">
-        <div class="np-pivot artist-pivot" role="tablist">
-          <button class="np-pivot-tab active" data-tab="songs" role="tab" aria-selected="true" data-i18n="artists.songs">歌曲</button>
-          <button class="np-pivot-tab" data-tab="albums" role="tab" aria-selected="false" data-i18n="artists.albums">专辑</button>
-          <button class="np-pivot-tab" data-tab="about" role="tab" aria-selected="false" data-i18n="artists.about" id="artist-about-tab" style="display:none">简介</button>
+        <div class="artist-pivot-row">
+          <div class="np-pivot artist-pivot" role="tablist">
+            <button class="np-pivot-tab active" data-tab="songs" role="tab" aria-selected="true" data-i18n="artists.songs">歌曲</button>
+            <button class="np-pivot-tab" data-tab="albums" role="tab" aria-selected="false" data-i18n="artists.albums">专辑</button>
+            <button class="np-pivot-tab" data-tab="about" role="tab" aria-selected="false" data-i18n="artists.about" id="artist-about-tab" style="display:none">简介</button>
+          </div>
+          <p class="artist-pivot-meta" id="artist-pivot-meta"></p>
         </div>
         <div class="artist-panel active" data-panel="songs" id="artist-panel-songs">
           <ul class="track-list" id="artist-songs-list"></ul>
@@ -541,6 +659,10 @@
           <div class="album-grid artist-album-grid" id="artist-album-grid"></div>
         </div>
         <div class="artist-panel" data-panel="about" id="artist-panel-about" hidden>
+          <div class="artist-alias-block" id="artist-alias-block" hidden>
+            <p class="artist-alias-label" data-i18n="artists.editTabAlias">别名</p>
+            <p class="detail-alias" id="detail-alias-rest"></p>
+          </div>
           <p class="artist-bio-text" id="artist-bio-text"></p>
         </div>
       </div>
@@ -586,14 +708,28 @@
       for (var j = 0; j < alTracks.length; j++) {
         if (alTracks[j].has_cover) { coverTrack = alTracks[j]; break; }
       }
+      // 智能分组会把同一个唱片名下的多个 (album, album_artist) 拼成一张卡片；
+      // 这里按「这张唱片在本艺人的曲目里的自然键」去列表接口对齐，
+      // 否则卡片上的曲目数/封面/年份会只算这位艺人的那几首，和点进去看到的不一致。
+      var merged = _findMergedAlbum(alName, alTracks[0]);
       return {
         name: alName,
         tracks: alTracks,
-        cover_track_id: coverTrack ? coverTrack.id : null,
-        track_count: alTracks.length,
-        year: alTracks[0] ? alTracks[0].year : null,
+        cover_track_id: (merged && merged.cover_track_id) || (coverTrack ? coverTrack.id : null),
+        track_count: (merged && merged.track_count) || alTracks.length,
+        year: (merged && merged.year) || (alTracks[0] ? alTracks[0].year : null),
       };
     });
+
+    // 「N 张专辑 · N 首曲目」不再占 hero 里的一行，改为贴在页签行右侧
+    // （hero 底部的过渡区里，不额外吃纵向空间）。数字取自本次实际渲染的
+    // 曲目/专辑集合，比列表接口给的 album_count 更贴合下面看到的列表。
+    var pivotMetaEl = document.getElementById('artist-pivot-meta');
+    if (pivotMetaEl) {
+      pivotMetaEl.textContent =
+        App.i18n.t('artists.albumCount', { count: _allArtistAlbums.length }) + ' · ' +
+        App.i18n.t('music.trackCount', { count: tracks.length });
+    }
 
     _renderSongsPanel();
     _renderAlbumsPanel();
@@ -636,6 +772,7 @@
       heroImg.style.backgroundColor = placeholderColor;
       if (url) heroImg.style.backgroundImage = 'url(' + url + ')';
       headerEl.insertBefore(heroImg, headerEl.firstChild);
+      _bindHeroParallax(headerEl, heroImg);
     };
 
     _seedImageVersion(artist);
@@ -656,6 +793,7 @@
       bProbe.onload = function () {
         if (bProbe.naturalWidth >= bProbe.naturalHeight) applyHero(bUrl);
         applyArtistColor(bProbe);
+        _applyHeroTone(headerEl, bProbe);
       };
       bProbe.onerror = function () {  };
       bProbe.src = bUrl;
@@ -688,34 +826,57 @@
     _refreshArtistMeta(artist);
   }
 
-  function _paintAliasChips(aliases) {
-    var el = document.getElementById('detail-alias');
-    if (!el || !el.isConnected) return;
-    var list = Array.isArray(aliases) ? aliases : [];
-    if (!list.length) {
-      el.innerHTML = '';
-      el.hidden = true;
-      return;
+  // 别名分两处放：第一个当名字下面的副标题，其余收进「简介」页签。
+  // （hero 里塞一排 chips 会把名字压成三行，视觉重心也不对）
+  var _aliasRest = [];
+  var _bioText = '';
+
+  function _updateAboutTab() {
+    var tab = document.getElementById('artist-about-tab');
+    if (!tab) return;
+    if (_bioText || _aliasRest.length) {
+      tab.style.display = '';
+    } else if (!tab.classList.contains('active')) {
+      // 页签正被打开时不要把它藏掉，否则面板会空白无退路
+      tab.style.display = 'none';
     }
-    el.innerHTML = list.map(function (a) {
-      return '<span class="alias-chip">' + App.utils.esc(String(a)) + '</span>';
-    }).join('');
-    el.hidden = false;
+  }
+
+  function _paintAliasChips(aliases) {
+    var list = (Array.isArray(aliases) ? aliases : []).map(function (a) {
+      return String(a == null ? '' : a).trim();
+    }).filter(Boolean);
+
+    var subEl = document.getElementById('detail-alias');
+    if (subEl && subEl.isConnected) {
+      subEl.textContent = list.length ? list[0] : '';
+      subEl.hidden = !list.length;
+    }
+
+    _aliasRest = list.slice(1);
+    var blockEl = document.getElementById('artist-alias-block');
+    var restEl = document.getElementById('detail-alias-rest');
+    if (blockEl && restEl && restEl.isConnected) {
+      restEl.innerHTML = _aliasRest.map(function (a) {
+        return '<span class="alias-chip">' + App.utils.esc(a) + '</span>';
+      }).join('');
+      blockEl.hidden = !_aliasRest.length;
+    }
+    _updateAboutTab();
   }
 
   function _paintBio(text) {
-    var tab = document.getElementById('artist-about-tab');
     var el = document.getElementById('artist-bio-text');
     if (!el || !el.isConnected) return;
     var t = String(text || '').trim();
+    _bioText = t;
     if (!t) {
       el.textContent = '';
-      // 「简介」页签正被打开时不要把它藏掉，否则面板会空白无退路
-      if (tab && !tab.classList.contains('active')) tab.style.display = 'none';
+      _updateAboutTab();
       return;
     }
     el.textContent = t;
-    if (tab) tab.style.display = '';
+    _updateAboutTab();
   }
 
   // 别名 chips 与「简介」页签的内容都来自 cover-server（优先返回用户覆盖层）。
@@ -784,6 +945,7 @@
       if (heroImg && probe.naturalWidth >= probe.naturalHeight) {
         heroImg.style.backgroundImage = 'url(' + url + ')';
       }
+      _applyHeroTone(headerEl, probe);
     };
     probe.onerror = function () {
       // 用户把自定义图删了、自动源又没有：退回首字母占位

@@ -529,7 +529,7 @@ let _lyricLineEls = null;
   var BG_BLUR_SOURCE_MAX = 192;
   var BG_BAKE_BLUR = 8;
   var BG_BAKE_JPEG_QUALITY = 0.7;
-  var BG_BLUR_CACHE_LIMIT = 8;
+  var BG_BLUR_CACHE_LIMIT = 2;
   var _bgBlurSourceCache = new Map();
 
   function _clearBgBlurSourceCache() {
@@ -1796,6 +1796,8 @@ let _lyricLineEls = null;
     const useJpDistinct = lyricFontSettings.lyrics_jp_use_distinct !== false;
     const jpFont = lyricFontSettings.lyrics_jp_font || "";
     const baseFont = lyricFontSettings.lyrics_font || "";
+    // 单行宽度上限（em）：超了就按空格折行，见 _appendLineBody
+    var lyricMaxEm = _lyricMaxEm();
 
     if (hasJapanese && useJpDistinct) {
       els.lyrics.classList.add('jp');
@@ -1941,52 +1943,7 @@ let _lyricLineEls = null;
                    singerOrder.indexOf(line.singer) % 2 === 1) {
           div.classList.add('np-lyrics-align-right');
         }
-        if (line.words && line.words.length) {
-          _appendWords(div, line.words);
-        } else {
-          div.textContent = line.text;
-        }
-        if (line.bgLines && line.bgLines.length) {
-          for (var bgi = 0; bgi < line.bgLines.length; bgi++) {
-            var bgLine = line.bgLines[bgi];
-            var bgEl = document.createElement('span');
-            bgEl.className = 'np-lyrics-bg';
-            if (bgLine.singer && !/^v\d+$/i.test(bgLine.singer)) {
-              var bgSingerEl = document.createElement('span');
-              bgSingerEl.className = 'np-lyrics-singer';
-              bgSingerEl.textContent = bgLine.singer;
-              bgEl.appendChild(bgSingerEl);
-            }
-            if (bgLine.words && bgLine.words.length) {
-              _appendWords(bgEl, bgLine.words);
-            } else {
-              bgEl.textContent = bgLine.text;
-            }
-            div.appendChild(bgEl);
-          }
-        }
-        if (line.romaji) {
-          var romaji = document.createElement('span');
-          romaji.className = 'np-lyrics-romaji';
-          _applyLineFont(romaji, false, baseFont, jpFont);
-          if (line.romajiWords && line.romajiWords.length) {
-            _appendWords(romaji, line.romajiWords);
-          } else {
-            romaji.textContent = line.romaji;
-          }
-          div.appendChild(romaji);
-        }
-        if (line.translation) {
-          var trans = document.createElement('span');
-          trans.className = 'np-lyrics-trans';
-          _applyLineFont(trans, false, baseFont, jpFont);
-          if (line.translationWords && line.translationWords.length) {
-            _appendWords(trans, line.translationWords);
-          } else {
-            trans.textContent = line.translation;
-          }
-          div.appendChild(trans);
-        }
+        _appendLineBody(div, line, lyricMaxEm, baseFont, jpFont);
         frag.appendChild(div);
       }
       while (ilCursor < interludes.length) { frag.appendChild(interludes[ilCursor].el); ilCursor++; }
@@ -2014,7 +1971,7 @@ let _lyricLineEls = null;
         var div = document.createElement('div');
         div.className = 'np-lyrics-line np-lyrics-static';
         _applyLineFont(div, lineHasJp && useJpDistinct, baseFont, jpFont);
-        div.textContent = staticLines[i];
+        _appendLineBody(div, { text: staticLines[i] }, lyricMaxEm, baseFont, jpFont);
         frag.appendChild(div);
       }
       els.lyrics.appendChild(frag);
@@ -2089,6 +2046,334 @@ let _lyricLineEls = null;
       }
       container.appendChild(span);
       if (trail) container.appendChild(document.createTextNode(trail));
+    }
+  }
+
+  // ─── 长句按空格折行 ─────────────────────────────────────────────────────
+  // 歌词面板宽度固定，一行塞太多字会顶到边、剩下的被 CSS 在任意字间断开。
+  // 歌词原文本身就用空格分句，所以超过行宽上限时直接"空格→换行"，
+  // 翻译/音译按同样的行数跟着拆开，保证每一句下面是自己那半句。
+  const LYRIC_LINE_FILL = 0.8;       // 行宽上限 = 内容宽度 × 0.8
+  const LYRIC_WIDTH_FALLBACK = 400;  // 面板未布局（display:none）时的兜底内容宽度
+  const LYRIC_EM_SPACE = 0.28;
+  const LYRIC_EM_HALF = 0.55;
+  const LYRIC_ONE_PER_LINE_MAX = 3;  // 分句数 ≤ 3 时每句独占一行
+
+  function _lyricContentWidth() {
+    if (!els.lyrics) return 0;
+    var cs = getComputedStyle(els.lyrics);
+    var w = els.lyrics.clientWidth -
+      (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+    return w > 80 ? w : 0;
+  }
+
+  function _lyricMaxEm() {
+    var px = _lyricContentWidth() || LYRIC_WIDTH_FALLBACK;
+    var fs = lyricsFontSize > 0 ? lyricsFontSize : 16;
+    return (px * LYRIC_LINE_FILL) / fs;
+  }
+
+  // 单字符宽度估算（em）：全角 1、空格 0.28、其余按半角
+  function _charEm(code) {
+    if (code === 32 || code === 9) return LYRIC_EM_SPACE;
+    if (code === 0x3000) return 1;
+    if ((code >= 0x1100 && code <= 0x115f) ||
+        (code >= 0x2e80 && code <= 0x303e) ||
+        (code >= 0x3041 && code <= 0x33ff) ||
+        (code >= 0x3400 && code <= 0x4dbf) ||
+        (code >= 0x4e00 && code <= 0x9fff) ||
+        (code >= 0xa000 && code <= 0xa4cf) ||
+        (code >= 0xac00 && code <= 0xd7a3) ||
+        (code >= 0xf900 && code <= 0xfaff) ||
+        (code >= 0xfe30 && code <= 0xfe4f) ||
+        (code >= 0xff00 && code <= 0xff60) ||
+        (code >= 0xffe0 && code <= 0xffe6)) return 1;
+    return LYRIC_EM_HALF;
+  }
+
+  function _textEm(s) {
+    var em = 0;
+    for (var i = 0; i < s.length; i++) {
+      var code = s.charCodeAt(i);
+      if (code >= 0xd800 && code <= 0xdbff && i + 1 < s.length) { i++; em += 1; continue; }
+      em += _charEm(code);
+    }
+    return em;
+  }
+
+  // 需要几行、每行几句（返回每行占的分句数）；不需要折行时返回 null
+  function _planLineBreaks(ems, maxEm) {
+    var n = ems.length;
+    if (n < 2 || !(maxEm > 0)) return null;
+
+    var cum = [];
+    var total = 0;
+    for (var i = 0; i < n; i++) {
+      total += ems[i] + (i > 0 ? LYRIC_EM_SPACE : 0);
+      cum.push(total);
+    }
+    if (total <= maxEm) return null;
+
+    var counts = [];
+    var oneEach = function () {
+      for (var j = 0; j < n; j++) counts.push(1);
+      return counts;
+    };
+    if (n <= LYRIC_ONE_PER_LINE_MAX) return oneEach();
+
+    // 分句多（英文长句）时按宽度均衡分组：断点取最接近目标宽度的那个，
+    // 否则会拆出"前一行塞满、后一行只剩一个词"的碎行。
+    var lines = Math.ceil(total / maxEm);
+    if (lines >= n) return oneEach();
+    var target = total / lines;
+    var start = 0;
+    var startPos = 0;
+    for (var line = 0; line < lines; line++) {
+      var linesLeft = lines - line - 1;
+      var maxEnd = n - linesLeft;        // 这一行最晚只能占到 maxEnd - 1
+      var want = startPos + target;
+      var best = start;
+      var bestDiff = Infinity;
+      for (var e = start; e < maxEnd; e++) {
+        var diff = Math.abs(cum[e] - want);
+        if (diff < bestDiff) { bestDiff = diff; best = e; }
+      }
+      counts.push(best - start + 1);
+      startPos = cum[best] + LYRIC_EM_SPACE;
+      start = best + 1;
+    }
+    if (start < n) counts[counts.length - 1] += n - start;
+    return counts.length >= 2 ? counts : null;
+  }
+
+  // 逐词数组按词间空白切成 [{ from, to, em }]；纯空白词只当分隔符
+  function _wordRuns(words) {
+    var runs = [];
+    var cur = null;
+    var pendingBreak = false;
+    for (var i = 0; i < words.length; i++) {
+      var text = words[i].text || '';
+      var core = text.replace(/\s+/g, '');
+      if (!core) {
+        if (runs.length) pendingBreak = true;
+        continue;
+      }
+      if (!cur || pendingBreak || /^\s/.test(text)) {
+        cur = { from: i, to: i + 1, em: 0 };
+        runs.push(cur);
+      } else {
+        cur.to = i + 1;
+      }
+      pendingBreak = /\s$/.test(text);
+      cur.em += _textEm(core);
+    }
+    return runs;
+  }
+
+  function _runWords(words, from, to) {
+    var out = [];
+    for (var i = from; i < to; i++) {
+      var w = words[i];
+      var text = w.text || '';
+      if (i === from) text = text.replace(/^\s+/, '');
+      if (i === to - 1) text = text.replace(/\s+$/, '');
+      if (!text) continue;
+      out.push({ start: w.start, end: w.end, text: text });
+    }
+    if (!out.length) {
+      for (var j = from; j < to; j++) out.push(words[j]);
+    }
+    return out;
+  }
+
+  function _splitPhraseText(text) {
+    var raw = String(text == null ? '' : text).split(/[\s\u3000]+/);
+    var out = [];
+    for (var i = 0; i < raw.length; i++) if (raw[i]) out.push(raw[i]);
+    return out;
+  }
+
+  // 每行占原句的字符比例，翻译/音译按它分配
+  function _groupRatios(groups) {
+    var lens = [];
+    var total = 0;
+    for (var i = 0; i < groups.length; i++) {
+      var s = groups[i].text;
+      if (s === undefined) {
+        s = '';
+        for (var w = 0; w < groups[i].words.length; w++) s += groups[i].words[w].text;
+      }
+      var n = _segmentGraphemes(s.replace(/\s+/g, '')).length;
+      if (n < 1) n = 1;
+      lens.push(n);
+      total += n;
+    }
+    var out = [];
+    for (var j = 0; j < lens.length; j++) out.push(lens[j] / total);
+    return out;
+  }
+
+  // 把翻译/音译拆成 ratios.length 段。只能按**已有空格**分：
+  // 词数不够分就整段保留（宁可它自己按 CSS 换行，也不硬按字数切开）。
+  function _splitAuxText(text, ratios) {
+    var s = String(text == null ? '' : text).trim();
+    if (!s) return null;
+    var toks = _splitPhraseText(s);
+    if (toks.length < ratios.length) return [s];
+    return _distributeAuxTokens(toks, ratios);
+  }
+
+  function _distributeAuxTokens(tokens, ratios) {
+    var k = ratios.length;
+    var out = [];
+    var i;
+    // 词数不够分：一句一个（比例分配在这种情况下会把词全堆在第一行）
+    if (tokens.length <= k) {
+      for (i = 0; i < k; i++) out.push(tokens[i] || '');
+      return out;
+    }
+    var total = 0;
+    for (i = 0; i < tokens.length; i++) total += tokens[i].length;
+    var gi = 0;
+    var acc = 0;
+    var bucket = [];
+    for (i = 0; i < tokens.length; i++) {
+      bucket.push(tokens[i]);
+      acc += tokens[i].length;
+      var linesLeft = k - 1 - gi;
+      var tokensLeft = tokens.length - 1 - i;
+      if (linesLeft <= 0) continue;
+      var reach = acc >= total * ratios[gi];
+      // 剩下的词刚好够后面每行一个时，必须立刻收尾
+      if (tokensLeft >= linesLeft && (reach || tokensLeft <= linesLeft)) {
+        out.push(bucket.join(' '));
+        bucket = [];
+        acc = 0;
+        gi++;
+      }
+    }
+    if (bucket.length) out.push(bucket.join(' '));
+    while (out.length < k) out.push('');
+    return out;
+  }
+
+  // 把翻译/音译拆成 ratios.length 段：只能按**已有空格**分，
+  // 词数不够就整段保留（宁可它自己按 CSS 换行，也不按字数硬切）
+  function _splitAuxText(text, ratios) {
+    var s = String(text == null ? '' : text).trim();
+    if (!s) return null;
+    var toks = _splitPhraseText(s);
+    if (toks.length < ratios.length) return [s];
+    return _distributeAuxTokens(toks, ratios);
+  }
+
+  function _appendAuxSpan(host, cls, text, words, baseFont, jpFont) {
+    if (!text) return;
+    var el = document.createElement('span');
+    el.className = cls;
+    _applyLineFont(el, false, baseFont, jpFont);
+    if (words && words.length) _appendWords(el, words);
+    else el.textContent = text;
+    host.appendChild(el);
+  }
+
+  // 一行歌词的正文：按需把一句拆成多个 .np-lyrics-phrase 块（原文一组、
+  // 音译一组、翻译一组，各自按自己的空格换行）。
+  function _appendLineBody(div, line, maxEm, baseFont, jpFont) {
+    var words = (line.words && line.words.length) ? line.words : null;
+    var runs = null;
+    var phrases = null;
+    var ems = [];
+    var i;
+
+    if (words) {
+      runs = _wordRuns(words);
+      for (i = 0; i < runs.length; i++) ems.push(runs[i].em);
+    } else {
+      phrases = _splitPhraseText(line.text);
+      for (i = 0; i < phrases.length; i++) ems.push(_textEm(phrases[i]));
+    }
+
+    var counts = _planLineBreaks(ems, maxEm);
+    var groups = [];
+    if (!counts) {
+      groups.push(words ? { words: words } : { text: line.text });
+    } else {
+      var cursor = 0;
+      for (i = 0; i < counts.length; i++) {
+        if (words) {
+          var from = runs[cursor].from;
+          var to = runs[cursor + counts[i] - 1].to;
+          groups.push({ words: _runWords(words, from, to) });
+        } else {
+          groups.push({ text: phrases.slice(cursor, cursor + counts[i]).join(' ') });
+        }
+        cursor += counts[i];
+      }
+    }
+
+    var multi = groups.length > 1;
+    // 逐词行原本只有一个"末词"，拆句后每句都有自己的末词：
+    // 其 end 还停在整句结尾，会让这句最后一个字一路填色到下一句唱完
+    if (multi && words) {
+      for (i = 0; i < groups.length - 1; i++) {
+        var gWords = groups[i].words;
+        var nextStart = groups[i + 1].words.length ? groups[i + 1].words[0].start : null;
+        if (nextStart !== null && gWords.length) {
+          var lastWord = gWords[gWords.length - 1];
+          if (lastWord.end > nextStart) lastWord.end = nextStart;
+        }
+      }
+    }
+    var ratios = multi ? _groupRatios(groups) : null;
+    var romajiParts = multi ? _splitAuxText(line.romaji, ratios) : null;
+    var transParts = multi ? _splitAuxText(line.translation, ratios) : null;
+
+    if (!multi) {
+      if (words) _appendWords(div, line.words);
+      else div.textContent = line.text;
+      _appendAuxSpan(div, 'np-lyrics-romaji', line.romaji, line.romajiWords, baseFont, jpFont);
+      _appendAuxSpan(div, 'np-lyrics-trans', line.translation, line.translationWords, baseFont, jpFont);
+    } else {
+      // 原文每句一块，各占一行
+      for (i = 0; i < groups.length; i++) {
+        var host = document.createElement('div');
+        host.className = 'np-lyrics-phrase';
+        if (groups[i].words) _appendWords(host, groups[i].words);
+        else host.textContent = groups[i].text;
+        div.appendChild(host);
+      }
+      // 音译、翻译各自成组整体下移，行数与原句一致（不插在原文行之间）
+      for (i = 0; i < groups.length; i++) {
+        if (romajiParts && romajiParts[i]) {
+          _appendAuxSpan(div, 'np-lyrics-romaji', romajiParts[i], null, baseFont, jpFont);
+        }
+      }
+      for (i = 0; i < groups.length; i++) {
+        if (transParts && transParts[i]) {
+          _appendAuxSpan(div, 'np-lyrics-trans', transParts[i], null, baseFont, jpFont);
+        }
+      }
+    }
+
+    if (line.bgLines && line.bgLines.length) {
+      for (var bgi = 0; bgi < line.bgLines.length; bgi++) {
+        var bgLine = line.bgLines[bgi];
+        var bgEl = document.createElement('span');
+        bgEl.className = 'np-lyrics-bg';
+        if (bgLine.singer && !/^v\d+$/i.test(bgLine.singer)) {
+          var bgSingerEl = document.createElement('span');
+          bgSingerEl.className = 'np-lyrics-singer';
+          bgSingerEl.textContent = bgLine.singer;
+          bgEl.appendChild(bgSingerEl);
+        }
+        if (bgLine.words && bgLine.words.length) {
+          _appendWords(bgEl, bgLine.words);
+        } else {
+          bgEl.textContent = bgLine.text;
+        }
+        div.appendChild(bgEl);
+      }
     }
   }
 
@@ -3637,9 +3922,16 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
   let _queueVL = null;
 
   function _renderQueueItem(el, track, index, currentIndex) {
-    el.className = 'np-queue-item' + (index === currentIndex ? ' current' : '');
-    el.dataset.index = index;
-    el.draggable = true;
+    // The VirtualList cell only owns the 2px segment gap; the inner row carries
+    // the surface / shape morph / state layer (same as .vl-track-row-wrapper).
+    el.className = 'vl-queue-row-wrapper vl-item';
+    el.onclick = null;
+    el.draggable = false;
+
+    const row = document.createElement('div');
+    row.className = 'np-queue-item' + (index === currentIndex ? ' current' : '');
+    row.dataset.index = index;
+    row.draggable = true;
 
     let coverHtml;
     if (track.has_cover) {
@@ -3649,7 +3941,7 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
       coverHtml = `<div class="np-queue-cover" style="background:${bg}">${App.utils.initial(track.album || track.title)}</div>`;
     }
 
-    el.innerHTML = `
+    row.innerHTML = `
       <button class="np-queue-drag" aria-label="${App.i18n.t('np.dragToReorder') || ''}">
         <span class="np-queue-drag-icon"></span>
       </button>
@@ -3663,6 +3955,8 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
         <span class="material-symbols-rounded" style="font-size:18px">close</span>
       </button>
     `;
+    el.innerHTML = '';
+    el.appendChild(row);
   }
 
   np.updateQueue = function (queue, currentIndex) {
@@ -3705,7 +3999,6 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
           }
         },
         renderItem: function (track, index, el) {
-          el.classList.add('vl-item');
           _renderQueueItem(el, track, index, _queueCurrentIndex);
         },
       });

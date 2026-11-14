@@ -41,6 +41,7 @@ try {
 }
 
 const { LibraryWorkerHost } = require('./library_worker_host');
+const { LibraryUpdateWorkerHost } = require('./library_update_worker_host');
 
 const _syncingServers = new Set();
 const _syncingWebDAVServers = new Set();
@@ -303,6 +304,13 @@ class Bridge extends EventEmitter {
     // 库工作线程：扫描 + 长列表计算都在这里跑，主进程只中转状态
     this._scanWorker = new LibraryWorkerHost(settings, (status) => {
       try { this._emit('library_scan_status', _dump(status)); } catch {  }
+    });
+    // Remote updates use a different worker and connection from local scans.
+    this._updateWorker = new LibraryUpdateWorkerHost(settings, (status) => {
+      try {
+        if (status && status.stage === 'playlists_done') this._emitPlaylistsChanged();
+        else this._emit('subsonic_sync_progress', _dump(status));
+      } catch {  }
     });
 
     this._currentTransitionPlan = null;
@@ -1767,7 +1775,7 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
       this._emit('settings_changed', settingsJson);
 
       const AUTO_REFRESH_KEYS = [
-        'library_auto_watch', 'library_watch_poll_minutes', 'library_watch_debounce_ms',
+        'library_auto_refresh', 'library_auto_watch', 'library_watch_poll_minutes', 'library_watch_debounce_ms',
         'subsonic_auto_sync', 'subsonic_sync_interval_minutes',
       ];
       if (AUTO_REFRESH_KEYS.some((k) => k in data)) this.startAutoRefresh();
@@ -2108,307 +2116,68 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     }
   }
 
-  _syncSubsonicServer(serverId) {
-    if (_syncingServers.has(serverId)) {
+  _startLibraryUpdate(kind, serverId, activeSet, getConfig, afterSuccess) {
+    if (activeSet.has(serverId)) {
       return _dump({ ok: false, error: '该服务器正在同步中，请稍候' });
     }
-    _syncingServers.add(serverId);
+    activeSet.add(serverId);
 
     setImmediate(async () => {
-      const { SubsonicClient, SubsonicError, syncServerToLibrary, prefetchCovers } = require('./subsonic');
       try {
-        const cfg = this._lib.getSubsonicServer(serverId);
-        if (!cfg) {
-          this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: '服务器不存在' }));
+        const config = getConfig();
+        if (!config) {
+          this._emit('subsonic_sync_result', _dump({
+            ok: false, server_id: serverId, error: '服务器不存在',
+          }));
           return;
         }
-
-        this._emit('subsonic_sync_progress', _dump({ server_id: serverId, stage: 'start' }));
-
-        const client = new SubsonicClient(
-          cfg.server_url, cfg.username, cfg.password,
-          cfg.protocol_mode || 'subsonic', 60.0
-        );
-
-        let lastEmitTracks = 0;
-        let lastEmitPhase = '';
-
-        const progressCb = (s) => {
-          const cur = parseInt(s.tracks || 0);
-          const phase = s.phase || 'tracks';
-          if (phase !== lastEmitPhase) {
-            lastEmitPhase = phase;
-            lastEmitTracks = cur;
-            this._emit('subsonic_sync_progress', _dump({
-              server_id: serverId, stage: 'progress', phase,
-              artists: s.artists || 0, albums: s.albums || 0, tracks: cur,
-              total: s.total || 0, done: s.done || 0,
-              current_artist: s.current_artist || '', current_album: s.current_album || '',
-            }));
-            return;
-          }
-          if (phase === 'tracks') {
-            if (cur - lastEmitTracks >= 5 || cur === 1) {
-              lastEmitTracks = cur;
-              this._emit('subsonic_sync_progress', _dump({
-                server_id: serverId, stage: 'progress', phase,
-                artists: s.artists || 0, albums: s.albums || 0, tracks: cur,
-                total: s.total || 0, done: s.done || 0,
-                current_artist: s.current_artist || '', current_album: s.current_album || '',
-              }));
-            }
-          } else {
-            this._emit('subsonic_sync_progress', _dump({
-              server_id: serverId, stage: 'progress', phase,
-              artists: s.artists || 0, albums: s.albums || 0, tracks: cur,
-              total: s.total || 0, done: s.done || 0,
-              current_artist: s.current_artist || '', current_album: s.current_album || '',
-            }));
-          }
-        };
-
-        const libraryChangedCb = () => {
-          this._emitLibraryUpdated();
-        };
-
         let stats;
         try {
-          stats = await syncServerToLibrary(client, this._lib, serverId, {
-            prefetchCovers: false,
-            progressCb,
-            libraryChangedCb,
-            libraryChangedInterval: 20,
-          });
-        } catch (e) {
-          if (e instanceof SubsonicError) {
-            this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: e.message, code: e.code }));
-          } else {
-            this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: `同步异常: ${e}` }));
-          }
+          stats = await this._updateWorker.request(kind, { ...config, id: serverId });
+        } catch (error) {
+          this._emit('subsonic_sync_result', _dump({
+            ok: false, server_id: serverId,
+            error: error && error.message ? error.message : String(error),
+            code: error && error.code,
+          }));
           return;
         }
-
-        if (stats.error) {
-          this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: stats.error, warnings: stats.warnings || [] }));
+        if (stats && stats.error) {
+          this._emit('subsonic_sync_result', _dump({
+            ok: false, server_id: serverId, error: stats.error,
+            warnings: stats.warnings || [],
+          }));
           return;
         }
-
-        const pendingCovers = stats.pending_covers || [];
-        try { this._lib.updateSubsonicServerLastSync(serverId); } catch {  }
-
-        this._emitSubsonicServersChanged();
+        try { afterSuccess(serverId); } catch { }
         this._emitLibraryUpdated();
-        this._emit('subsonic_sync_result', _dump({ ok: true, server_id: serverId, stats }));
-
-        setImmediate(async () => {
-          try {
-            const { subsonicTrackId } = require('./library');
-            const playlists = await client.getPlaylists();
-            const serverPLIds = new Set();
-            if (playlists && playlists.length > 0) {
-              for (const pl of playlists) {
-                try {
-                  const remotePL = await client.getPlaylist(pl.id);
-                  if (!remotePL || !remotePL.tracks) continue;
-                  serverPLIds.add(String(pl.id));
-
-                  const existing = this._lib.findRemotePlaylist(serverId, pl.id);
-                  let playlist;
-                  if (existing) {
-                    this._lib.updateRemotePlaylist(existing.id, remotePL.name, remotePL.changed, remotePL.cover_art_id, remotePL.owner);
-                    playlist = existing;
-                  } else {
-                    playlist = this._lib.importRemotePlaylist(serverId, pl.id, remotePL.name, remotePL.changed, remotePL.cover_art_id, remotePL.owner);
-                  }
-
-                  this._lib.upsertSubsonicTracksBatch(serverId, remotePL.tracks);
-                  const trackIds = remotePL.tracks.map((track) => subsonicTrackId(serverId, track.id));
-                  this._lib.replacePlaylistTracks(playlist.id, trackIds);
-
-                  if (remotePL.owner) {
-                    client.getUser(remotePL.owner).then((user) => {
-                      if (user && user.email) {
-                        try { this._lib.updatePlaylistOwnerEmail(playlist.id, user.email); } catch {  }
-                      }
-                    }).catch(() => {});
-                  }
-                } catch (e) {
-                  stats.warnings.push('歌单同步失败(' + pl.id + '): ' + (e && e.message ? e.message : e));
-                }
-              }
-            }
-
-            const localPLs = this._lib.listRemotePlaylists(serverId);
-            for (const lp of localPLs) {
-              if (!serverPLIds.has(String(lp.remote_id))) {
-                try { this._lib.deletePlaylist(lp.id); } catch {  }
-              }
-            }
-
-            this._emitPlaylistsChanged();
-          } catch (e) {
-
-            console.warn('[subsonic] 远程歌单同步失败:', e);
-          }
-        });
-
-        if (pendingCovers.length > 0) {
-          setImmediate(async () => {
-            try {
-              await prefetchCovers(client, this._lib, serverId, pendingCovers);
-            } catch {  }
-          });
-        }
+        this._emit('subsonic_sync_result', _dump({
+          ok: true, server_id: serverId, stats,
+        }));
       } finally {
-        _syncingServers.delete(serverId);
+        activeSet.delete(serverId);
       }
     });
 
     return _dump({ ok: true, started: true, message: '同步已开始' });
+  }
+
+  _syncSubsonicServer(serverId) {
+    return this._startLibraryUpdate('subsonic', serverId, _syncingServers,
+      () => this._lib.getSubsonicServer(serverId),
+      () => this._emitSubsonicServersChanged());
   }
 
   _syncWebDAVServer(serverId) {
-    if (_syncingWebDAVServers.has(serverId)) {
-      return _dump({ ok: false, error: '该服务器正在同步中，请稍候' });
-    }
-    _syncingWebDAVServers.add(serverId);
-
-    setImmediate(async () => {
-      const { WebDAVClient, WebDAVError, syncServerToLibrary } = require('./webdav');
-      try {
-        const cfg = this._lib.getWebDAVServer(serverId);
-        if (!cfg) {
-          this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: '服务器不存在' }));
-          return;
-        }
-
-        this._emit('subsonic_sync_progress', _dump({ server_id: serverId, stage: 'start' }));
-
-        const client = new WebDAVClient(cfg.server_url, cfg.username, cfg.password, 60.0);
-
-        let lastEmitTracks = 0;
-
-        const progressCb = (s) => {
-          const cur = parseInt(s.tracks || 0);
-          if (cur - lastEmitTracks >= 5 || cur === 1 || s.phase !== 'tracks') {
-            lastEmitTracks = cur;
-            this._emit('subsonic_sync_progress', _dump({
-              server_id: serverId, stage: 'progress', phase: s.phase || 'tracks',
-              tracks: cur,
-              current_file: s.current_file || s.current_path || '',
-            }));
-          }
-        };
-
-        const libraryChangedCb = () => {
-          this._emitLibraryUpdated();
-        };
-
-        let stats;
-        try {
-          stats = await syncServerToLibrary(client, this._lib, serverId, {
-            progressCb,
-            libraryChangedCb,
-            libraryChangedInterval: 10,
-          });
-        } catch (e) {
-          if (e instanceof WebDAVError) {
-            this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: e.message, code: e.code }));
-          } else {
-            this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: `同步异常: ${e}` }));
-          }
-          return;
-        }
-
-        if (stats.error) {
-          this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: stats.error, warnings: stats.warnings || [] }));
-          return;
-        }
-
-        try { this._lib.updateWebDAVServerLastSync(serverId); } catch {  }
-
-        this._emitRemoteServersChanged();
-        this._emitLibraryUpdated();
-        this._emit('subsonic_sync_result', _dump({ ok: true, server_id: serverId, stats }));
-      } finally {
-        _syncingWebDAVServers.delete(serverId);
-      }
-    });
-
-    return _dump({ ok: true, started: true, message: '同步已开始' });
+    return this._startLibraryUpdate('webdav', serverId, _syncingWebDAVServers,
+      () => this._lib.getWebDAVServer(serverId),
+      () => this._emitRemoteServersChanged());
   }
 
   _syncSMBServer(serverId) {
-    if (_syncingSMBServers.has(serverId)) {
-      return _dump({ ok: false, error: '该服务器正在同步中，请稍候' });
-    }
-    _syncingSMBServers.add(serverId);
-
-    setImmediate(async () => {
-      const { SMBClient, SMBError, syncServerToLibrary } = require('./smb');
-      let client = null;
-      try {
-        const cfg = this._lib.getSMBServer(serverId);
-        if (!cfg) {
-          this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: '服务器不存在' }));
-          return;
-        }
-
-        this._emit('subsonic_sync_progress', _dump({ server_id: serverId, stage: 'start' }));
-
-        client = new SMBClient(cfg.host, cfg.share_name, cfg.username, cfg.password, cfg.domain || '', 60.0);
-
-        const progressCb = (s) => {
-          this._emit('subsonic_sync_progress', _dump({
-            server_id: serverId, stage: 'progress', phase: s.phase || 'scanning',
-            tracks: s.tracks || 0,
-            current_path: s.current_path || '',
-          }));
-        };
-
-        const libraryChangedCb = () => {
-          this._emitLibraryUpdated();
-        };
-
-        let stats;
-        try {
-          stats = await syncServerToLibrary(client, this._lib, serverId, {
-            progressCb,
-            libraryChangedCb,
-          });
-        } catch (e) {
-          if (e instanceof SMBError) {
-            this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: e.message, code: e.code }));
-          } else {
-            this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: `同步异常: ${e}` }));
-          }
-          return;
-        }
-
-        if (stats.error) {
-          this._emit('subsonic_sync_result', _dump({ ok: false, server_id: serverId, error: stats.error, warnings: stats.warnings || [] }));
-          return;
-        }
-
-        try { this._lib.updateSMBServerLastSync(serverId); } catch {  }
-
-        if (client && client.connected) {
-          try { await client.disconnect(); } catch {  }
-        }
-
-        this._emitRemoteServersChanged();
-        this._emitLibraryUpdated();
-        this._emit('subsonic_sync_result', _dump({ ok: true, server_id: serverId, stats }));
-      } finally {
-
-        if (client && client.connected) {
-          try { await client.disconnect(); } catch {  }
-        }
-        _syncingSMBServers.delete(serverId);
-      }
-    });
-
-    return _dump({ ok: true, started: true, message: '同步已开始' });
+    return this._startLibraryUpdate('smb', serverId, _syncingSMBServers,
+      () => this._lib.getSMBServer(serverId),
+      () => this._emitRemoteServersChanged());
   }
 
   _toggleFloatingWindow() {
@@ -2504,6 +2273,10 @@ player.on('playback_error', (errJson) => this._emit('playback_error', errJson));
     if (this._scanWorker) {
       try { this._scanWorker.stop(); } catch {  }
       this._scanWorker = null;
+    }
+    if (this._updateWorker) {
+      try { this._updateWorker.stop(); } catch {  }
+      this._updateWorker = null;
     }
 
     if (this._libraryUpdatedTimer) {

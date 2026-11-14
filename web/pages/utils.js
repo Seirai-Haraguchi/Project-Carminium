@@ -109,6 +109,45 @@
     }
   };
 
+  // hero 底部接色：返回「图片在给定框里按 cover + 指定纵向锚点显示时，框底边那一带的平均色」。
+  // 取平均而不是主色——过渡要的是画面下沿那片区域的实际颜色，不是最有辨识度的颜色。
+  // 注意必须按 cover 的裁切算，直接用原图底部会取到被裁掉的部分。
+  utils.extractCoverBottomColor = function (imgEl, boxW, boxH, posRatio, bandRatio) {
+    if (!imgEl || !boxW || !boxH) return null;
+    var iw = imgEl.naturalWidth || imgEl.width;
+    var ih = imgEl.naturalHeight || imgEl.height;
+    if (!iw || !ih) return null;
+    var pos = (posRatio == null) ? 0.28 : posRatio;
+    var band = bandRatio || 0.16;
+    var scale = Math.max(boxW / iw, boxH / ih);
+    var srcW = Math.min(iw, boxW / scale);
+    var srcH = Math.min(ih, boxH / scale);
+    var sx = (iw - srcW) / 2;
+    var sy = (ih - srcH) * pos;
+
+    var canvas = document.createElement('canvas');
+    var ctx = canvas.getContext('2d', { willReadFrequently: true });
+    var w = canvas.width = 64;
+    var h = canvas.height = 64;
+    ctx.drawImage(imgEl, sx, sy, srcW, srcH, 0, 0, w, h);
+    try {
+      var data = ctx.getImageData(0, 0, w, h).data;
+      var y0 = Math.max(0, Math.floor(h * (1 - band)));
+      var r = 0, g = 0, b = 0, n = 0;
+      for (var y = y0; y < h; y++) {
+        for (var x = 0; x < w; x++) {
+          var i = (y * w + x) * 4;
+          if (data[i + 3] < 128) continue;
+          r += data[i]; g += data[i + 1]; b += data[i + 2]; n++;
+        }
+      }
+      if (!n) return null;
+      return [Math.round(r / n), Math.round(g / n), Math.round(b / n)];
+    } catch (e) {
+      return null;
+    }
+  };
+
   var COLOR_SCHEMES = {
     tonal_spot: { h1: 0,   h2: 25,  h3: -30, chroma: 'moderate', sScale: 0.65, tScale: 0.72, sMin: 22, tMin: 25, bgSat: { d: 12, l: 14 } },
     fidelity:   { h1: 0,   h2: 20,  h3: -25, chroma: 'faithful', sScale: 0.80, tScale: 0.88, sMin: 25, tMin: 28, bgSat: { d: 14, l: 16 } },
@@ -1158,6 +1197,103 @@
       });
       document.addEventListener('keydown', onKey);
       setTimeout(function () { confirmBtn.focus(); }, 50);
+    });
+  };
+
+  // 窗口内只读信息对话框：替代原生 alert，避免弹出 OS 级模态窗口。
+  // opts.rows 支持 { label, value, path } 或纯字符串；opts.text 按换行拆行。
+  utils.infoDialog = function (opts) {
+    opts = opts || {};
+    return new Promise(function (resolve) {
+      var overlay = document.createElement('div');
+      overlay.className = 'cmd-dialog-overlay';
+      var dlg = document.createElement('div');
+      dlg.className = 'cmd-dialog info-dialog';
+      dlg.setAttribute('role', 'dialog');
+      dlg.setAttribute('aria-modal', 'true');
+      dlg.setAttribute('tabindex', '-1');
+      dlg.style.outline = 'none';
+
+      var titleEl = document.createElement('div');
+      titleEl.className = 'cmd-dialog-title';
+      titleEl.textContent = opts.title || '';
+      dlg.appendChild(titleEl);
+
+      var bodyEl = document.createElement('div');
+      bodyEl.className = 'cmd-dialog-body';
+      var rowsWrap = document.createElement('div');
+      rowsWrap.className = 'info-dialog-rows';
+
+      function addTextLine(text) {
+        var line = document.createElement('div');
+        line.className = 'info-dialog-row is-text';
+        var v = document.createElement('span');
+        v.className = 'info-dialog-value is-selectable';
+        v.textContent = text;
+        line.appendChild(v);
+        rowsWrap.appendChild(line);
+      }
+
+      var rows = opts.rows || [];
+      if (opts.text != null) rows = String(opts.text).split('\n');
+      rows.forEach(function (row) {
+        if (row == null) return;
+        if (row === '') {
+          var gap = document.createElement('div');
+          gap.className = 'info-dialog-gap';
+          rowsWrap.appendChild(gap);
+          return;
+        }
+        if (typeof row === 'string') { addTextLine(row); return; }
+        var line = document.createElement('div');
+        line.className = 'info-dialog-row';
+        var l = document.createElement('span');
+        l.className = 'info-dialog-label';
+        l.textContent = row.label || '';
+        var v = document.createElement('span');
+        v.className = 'info-dialog-value is-selectable' + (row.path ? ' is-path' : '');
+        v.textContent = row.value == null ? '' : String(row.value);
+        line.appendChild(l);
+        line.appendChild(v);
+        rowsWrap.appendChild(line);
+      });
+      bodyEl.appendChild(rowsWrap);
+      dlg.appendChild(bodyEl);
+
+      var actions = document.createElement('div');
+      actions.className = 'cmd-dialog-actions';
+      var confirmBtn = document.createElement('button');
+      confirmBtn.className = 'cmd-dialog-btn cmd-dialog-btn--confirm';
+      confirmBtn.textContent = opts.confirmText || App.i18n.t('common.confirm');
+      actions.appendChild(confirmBtn);
+      dlg.appendChild(actions);
+
+      overlay.appendChild(dlg);
+      document.body.appendChild(overlay);
+      requestAnimationFrame(function () { overlay.classList.add('open'); });
+
+      var done = false;
+      function close(result) {
+        if (done) return;
+        done = true;
+        overlay.classList.remove('open');
+        document.removeEventListener('keydown', onKey);
+        setTimeout(function () {
+          if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+          resolve(result);
+        }, 180);
+      }
+      function onKey(e) {
+        if (e.key === 'Escape') close(false);
+        else if (e.key === 'Enter') close(true);
+      }
+      confirmBtn.addEventListener('click', function () { close(true); });
+      overlay.addEventListener('click', function (e) {
+        if (e.target === overlay) close(false);
+      });
+      document.addEventListener('keydown', onKey);
+      // 只读内容不抢焦点：焦点落容器而非按钮，避免 focus ring 抢视线
+      setTimeout(function () { dlg.focus(); }, 50);
     });
   };
 

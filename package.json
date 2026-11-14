@@ -23,6 +23,7 @@
     "build:portable": "node scripts/sync-version.js && electron-builder --win portable",
     "build:linux": "node scripts/sync-version.js && npm run build:native:linux && electron-builder --linux",
     "build:all": "npm run build:native && npm run rebuild && npm run build"
+    ,"test:automix": "node scripts/bench/automix_upgrade_test.js"
   },
   "engines": {
     "node": ">=22.12.0"

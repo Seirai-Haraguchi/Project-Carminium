@@ -11,6 +11,51 @@
   let sortMode = 'az';
 
   let _vl = null;
+  let _albumCoverObserver = null;
+
+  // Album cards can be numerous. Keep cover URLs out of <img src> until the
+  // card is close to the viewport, and release the decoded image when it is
+  // far away again. This avoids decoding hundreds of full-size covers while
+  // keeping scrolling smooth and letting the browser HTTP cache serve them
+  // immediately when they come back into view.
+  function _resetAlbumCoverObserver() {
+    if (_albumCoverObserver) {
+      _albumCoverObserver.disconnect();
+      _albumCoverObserver = null;
+    }
+  }
+
+  function _observeAlbumCovers(grid) {
+    _resetAlbumCoverObserver();
+    const images = grid.querySelectorAll('img[data-cover-src]');
+    if (!images.length) return;
+
+    function load(img) {
+      if (img.hasAttribute('src') || !img.dataset.coverSrc) return;
+      img.src = img.dataset.coverSrc;
+    }
+
+    if (typeof IntersectionObserver === 'undefined') {
+      images.forEach(load);
+      return;
+    }
+
+    const scrollRoot = document.getElementById('content-pane');
+    _albumCoverObserver = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        const img = entry.target;
+        if (entry.isIntersecting) {
+          load(img);
+        } else if (img.hasAttribute('src')) {
+          // Removing src releases the decoded bitmap. The HTTP cache means
+          // revisiting the card does not normally download the cover again.
+          img.removeAttribute('src');
+        }
+      });
+    }, { root: scrollRoot || null, rootMargin: '600px 0px' });
+
+    images.forEach(function (img) { _albumCoverObserver.observe(img); });
+  }
 
   // 详情页的心形按钮：事件回来时按 App.state 重绘，避免乐观更新与实际状态分叉。
   let _likeBtnEl = null;
@@ -29,9 +74,53 @@
 
   page.onLikedAlbumsChanged = function () {
     if (_likeBtnEl && _currentAlbum) {
-      _paintAlbumLikeBtn(_likeBtnEl, App.isAlbumLiked(_currentAlbum.album, _currentAlbum.album_artist));
+      _paintAlbumLikeBtn(_likeBtnEl, !!_likedKeyOf(_currentAlbum));
     }
   };
+
+  /**
+   * 智能分组后一张专辑可能由多个 (album, album_artist) 自然键拼成，
+   * 播放/喜爱/曲目筛选都必须按「全部 keys」判定，不能只看主键。
+   */
+  function _albumKeys(album) {
+    return (album && album.album_keys && album.album_keys.length)
+      ? album.album_keys
+      : [{ album: album ? album.album : '', album_artist: album ? album.album_artist : '' }];
+  }
+
+  function _albumKeyId(album, albumArtist) {
+    return String(album || '') + '\u0000' + String(albumArtist || '');
+  }
+
+  function _albumMatches(album, target) {
+    if (!album || !target) return false;
+    if (album.album !== target.album) return false;
+    if (album.album_artist === target.album_artist) return true;
+    return _albumKeys(album).some(function (k) {
+      return k.album === target.album && k.album_artist === target.album_artist;
+    });
+  }
+
+  /** 合并专辑里任意一个自然键被喜爱，整张就算已喜爱。 */
+  function _likedKeyOf(album) {
+    var keys = _albumKeys(album);
+    for (var i = 0; i < keys.length; i++) {
+      if (App.isAlbumLiked(keys[i].album, keys[i].album_artist)) return keys[i];
+    }
+    return null;
+  }
+
+  /** 卡片/详情里那一行艺人：多艺人时主艺人 + 「等 N 位」。 */
+  function _artistLabel(album) {
+    var names = (album.album_artists && album.album_artists.length)
+      ? album.album_artists
+      : [album.album_artist];
+    var primary = album.album_artist || names[0];
+    if (names.length > 1) {
+      return App.i18n.t('albums.multiArtist', { artist: primary, count: names.length, more: names.length - 1 });
+    }
+    return primary;
+  }
 
   const SORT_OPTIONS = [
     { key: 'az', label: 'A-Z', icon: 'sort_by_alpha' },
@@ -41,10 +130,11 @@
   ];
 
   page.render = function (container, params) {
+    _resetAlbumCoverObserver();
     _likeBtnEl = null;
     _currentAlbum = null;
     container.innerHTML = `
-      <div class="page-sticky-header">
+      <div class="page-top">
         <div class="page-header">
           <div class="page-header-left">
             <h1 class="page-title" data-i18n="albums.title">专辑</h1>
@@ -94,7 +184,7 @@
     allAlbums = (App.state && App.state.allAlbums) ? App.state.allAlbums : [];
     if (params && params.album && params.album_artist) {
       const target = allAlbums.find(function (a) {
-        return a.album === params.album && a.album_artist === params.album_artist;
+        return _albumMatches(a, params);
       });
       if (target) {
         _renderDetail(container, target);
@@ -271,6 +361,10 @@
     const grid = document.getElementById('album-grid');
     if (!grid) return;
 
+    // Detach the previous observer before replacing the grid contents. This
+    // also prevents it from retaining detached image elements after search or
+    // sorting changes.
+    _resetAlbumCoverObserver();
     if (window.App.azIndex) App.azIndex.reset();
 
     if (_vl) { _vl.destroy(); _vl = null; }
@@ -278,6 +372,7 @@
     let list = filterStr ? allAlbums.filter(a => App.utils.matchItem(filterStr, a, [
       { text: 'album', key: 'sort_key' },
       { text: 'album_artist', key: 'album_artist_sort_key' },
+      { text: 'album_artists_text' },
     ])) : allAlbums;
 
     list = _sortAlbums(list);
@@ -326,7 +421,9 @@
 
         let coverHtml = '';
         if (album.cover_track_id) {
-          coverHtml = `<img src="${window.coverUrl(album.cover_track_id, 512)}" alt="" loading="lazy">`;
+          // 256px is sufficient for the responsive card (minimum column is
+          // 156px) and uses a quarter of the decoded bitmap memory of 512px.
+          coverHtml = `<img data-cover-src="${window.coverUrl(album.cover_track_id, 256)}" alt="" width="256" height="256" loading="lazy" decoding="async" fetchpriority="low">`;
         } else {
           const bg = App.utils.hashColor(album.album);
           coverHtml = `
@@ -340,7 +437,7 @@
           <div class="album-cover">${coverHtml}</div>
           <div class="album-info">
             <p class="album-name">${App.utils.esc(album.album)}</p>
-            <p class="album-meta">${App.utils.esc(album.album_artist)} · ${album.year || '?'} · ${App.i18n.t('albums.trackCountShort', { count: album.track_count })}</p>
+            <p class="album-meta">${App.utils.esc(_artistLabel(album))} · ${album.year || '?'} · ${App.i18n.t('albums.trackCountShort', { count: album.track_count })}</p>
           </div>
         `;
 
@@ -350,11 +447,29 @@
       });
     });
     grid.appendChild(frag);
+    _observeAlbumCovers(grid);
   }
 
   function _renderDetail(container, album) {
 
+    _resetAlbumCoverObserver();
+
     App.scrollMemory.save('albums');
+
+    // 标题下面那一行＝艺人（着色）。库里确实有这个艺人时才做成可点的，
+    // 否则退化成纯文本——点了跳去艺术家页却是「列表」，比不能点更糟。
+    // 智能分组把多张同名片拼成一张时，主艺人后面跟一句「等 N 位」。
+    const albumArtist = album.album_artist || '';
+    const artistKnown = !!albumArtist &&
+      (App.state.allArtists || []).some(function (a) { return a.name === albumArtist; });
+    const artistCount = (album.album_artists && album.album_artists.length) || 1;
+    const moreHtml = artistCount > 1
+      ? '<span class="detail-byline-more">' + App.i18n.t('albums.andMoreArtists', { count: artistCount, more: artistCount - 1 }) + '</span>'
+      : '';
+    const artistHtml = !albumArtist ? '' :
+      (artistKnown
+        ? '<button type="button" class="detail-byline-btn" id="detail-artist-link">' + App.utils.esc(albumArtist) + '</button>' + moreHtml
+        : '<span class="detail-byline-text">' + App.utils.esc(albumArtist) + '</span>' + moreHtml);
 
     container.innerHTML = `
       <div class="detail-header">
@@ -366,10 +481,10 @@
           <div class="detail-cover-main" id="detail-cover-main"></div>
         </div>
         <div class="detail-cover-gradient"></div>
-        <div class="detail-meta">
-          <p class="detail-type" data-i18n="albums.title">专辑</p>
+        <div class="detail-meta detail-meta-stacked">
           <h1 class="detail-name">${App.utils.esc(album.album)}</h1>
-          <p class="detail-sub">${App.utils.esc(album.album_artist)} · ${album.year || App.i18n.t('music.unknownYear')} · ${App.i18n.t('albums.trackCountShort', { count: album.track_count })}</p>
+          ${artistHtml ? '<p class="detail-byline">' + artistHtml + '</p>' : ''}
+          <p class="detail-meta-line">${album.year || App.i18n.t('music.unknownYear')} · ${App.i18n.t('albums.trackCountShort', { count: album.track_count })}</p>
           <div class="detail-actions">
             <button class="detail-play-btn" id="btn-play-album">
               <span class="material-symbols-rounded">play_arrow</span><span data-i18n="albums.play">播放</span>
@@ -405,10 +520,11 @@
     }
 
     const allTracks = (App.state && App.state.allTracks) ? App.state.allTracks : [];
+    const keySet = new Set(_albumKeys(album).map(function (k) {
+      return _albumKeyId(k.album, k.album_artist);
+    }));
     const tracks = allTracks.filter(function (t) {
-      if (t.album !== album.album) return false;
-      const tArtist = t.album_artist || t.artist;
-      return tArtist === album.album_artist;
+      return keySet.has(_albumKeyId(t.album, t.album_artist || t.artist));
     }).sort(function (a, b) {
       const da = (a.disc_number || 0), db = (b.disc_number || 0);
       if (da !== db) return da - db;
@@ -432,16 +548,26 @@
       App.backend.play_from_list(JSON.stringify(tracks), 0);
     });
 
+    const artistLink = document.getElementById('detail-artist-link');
+    if (artistLink) {
+      artistLink.addEventListener('click', function () {
+        App.navigate('artists', { artist: albumArtist });
+      });
+    }
+
     const likeBtn = document.getElementById('btn-like-album');
     _likeBtnEl = likeBtn;
-    _currentAlbum = { album: album.album, album_artist: album.album_artist };
-    _paintAlbumLikeBtn(likeBtn, App.isAlbumLiked(album.album, album.album_artist));
+    _currentAlbum = album;
+    _paintAlbumLikeBtn(likeBtn, !!_likedKeyOf(album));
     if (likeBtn) {
       likeBtn.addEventListener('click', () => {
         // 乐观更新：liked_albums_changed 事件回来后再校准一次。
+        // 合并专辑里已经有一个键被喜爱时，点一下要撤掉「那个」键，不能又插新键。
         const next = !likeBtn.classList.contains('liked');
+        const liked = _likedKeyOf(album);
+        const target = liked || { album: album.album, album_artist: album.album_artist };
         _paintAlbumLikeBtn(likeBtn, next);
-        App.backend.toggle_liked_album(album.album, album.album_artist);
+        App.backend.toggle_liked_album(target.album, target.album_artist);
       });
     }
   }

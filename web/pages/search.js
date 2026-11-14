@@ -43,12 +43,23 @@
 
     container.innerHTML = `
       <div class="search-page">
-        <div class="page-sticky-header">
+        <div class="page-top">
           <div class="page-header">
             <div class="page-header-left">
               <h1 class="page-title" data-i18n="search.title">搜索</h1>
               <p class="page-subtitle" id="search-subtitle"></p>
             </div>
+          </div>
+          <!-- 筛选指示（scope）排在搜索框**上面**：滚出标题区后整组浮到底部时，
+               胶囊贴底边，chips 只能往上叠（见 page_dock.js）。 -->
+          <div class="search-scope" id="search-scope" role="tablist">
+            ${SCOPES.map(function (s) {
+              const on = s.id === scope;
+              return '<button class="chip search-scope-chip' + (on ? ' active' : '') + '"' +
+                ' type="button" role="tab" data-scope="' + s.id + '"' +
+                ' aria-selected="' + (on ? 'true' : 'false') + '">' +
+                _esc(App.i18n.t(s.key)) + '</button>';
+            }).join('')}
           </div>
           <!-- 搜索框复用全局 .search-bar，只加一个 --hero 变体把高度抬到 52。 -->
           <div class="search-bar search-bar--hero">
@@ -62,15 +73,6 @@
                     data-i18n-title="search.clear" data-i18n-aria-label="search.clear" title="清除">
               <span class="material-symbols-rounded">close</span>
             </button>
-          </div>
-          <div class="search-scope" id="search-scope" role="tablist">
-            ${SCOPES.map(function (s) {
-              const on = s.id === scope;
-              return '<button class="chip search-scope-chip' + (on ? ' active' : '') + '"' +
-                ' type="button" role="tab" data-scope="' + s.id + '"' +
-                ' aria-selected="' + (on ? 'true' : 'false') + '">' +
-                _esc(App.i18n.t(s.key)) + '</button>';
-            }).join('')}
           </div>
         </div>
         <div class="search-body" id="search-body"></div>
@@ -295,6 +297,7 @@
         return App.utils.matchItem(q, a, [
           { text: 'album', key: 'sort_key' },
           { text: 'album_artist', key: 'album_artist_sort_key' },
+          { text: 'album_artists_text' },
         ]);
       }),
       function (a) { return a.album || ''; }, q

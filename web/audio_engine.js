@@ -1246,7 +1246,15 @@
 
       var rawAdjust = this._transitionPlan ? this._transitionPlan.bpmTempoAdjust : 0;
       var incomingRate = this._userRate;
-      if (typeof rawAdjust === 'number' && isFinite(rawAdjust) && rawAdjust > 0 && rawAdjust !== 1.0) {
+      // AutoMix tempo plans are pitch-preserving. Until the worker/native
+      // processor is attached to this deck, never silently fall back to
+      // AudioBufferSourceNode.playbackRate: that is resampling and audibly
+      // shifts vocals/instruments. A neutral-rate blend is the safe fallback.
+      var pitchProcessorRequested = this._transitionPlan &&
+        this._transitionPlan.tempoProcessor === 'soundtouch-wsola' &&
+        this._transitionPlan.pitchPreservingRequested === true;
+      if (typeof rawAdjust === 'number' && isFinite(rawAdjust) && rawAdjust > 0 &&
+          rawAdjust !== 1.0 && !pitchProcessorRequested) {
 
         var clamped = Math.max(0.80, Math.min(1.25, rawAdjust));
         var half = Math.sqrt(clamped);
@@ -1266,6 +1274,9 @@
           ' (cur=' + (this._transitionPlan ? this._transitionPlan.bpmCurrent : '?') +
           ' next=' + (this._transitionPlan ? this._transitionPlan.bpmNext : '?') + ' bpm)');
       } else {
+        if (rawAdjust !== 0 && rawAdjust !== 1.0 && pitchProcessorRequested) {
+          console.warn('[AudioEngine] Pitch-preserving processor unavailable; keeping neutral deck rate');
+        }
         this._tempoAdjustActive = 0;
       }
 
