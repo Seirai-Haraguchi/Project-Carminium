@@ -215,7 +215,7 @@ jobs:
             Write-Host "Removed koffi CMake build artifacts"
           }
 
-      - name: Build Electron app (portable)
+      - name: Build Electron app (portable + nsis + dir)
         shell: pwsh
         run: |
           $maxRetries = 3
@@ -223,7 +223,9 @@ jobs:
           do {
             $retryCount++
             Write-Host "Build attempt $retryCount of $maxRetries"
-            npx electron-builder --win portable --${{ matrix.arch }} --publish never
+            # Keep `dir` in the target list so win-unpacked / win-arm64-unpacked
+            # stay on disk for the FFmpeg and playback verification steps.
+            npx electron-builder --win portable nsis dir --${{ matrix.arch }} --publish never
             if ($LASTEXITCODE -eq 0) { break }
             if ($retryCount -lt $maxRetries) {
               Write-Host "Build failed, retrying in 15 seconds..."
@@ -232,14 +234,20 @@ jobs:
           } while ($retryCount -lt $maxRetries)
           if ($LASTEXITCODE -ne 0) { throw "Build failed after $maxRetries attempts" }
 
-      - name: Rename artifact with architecture
+      - name: Rename artifacts with architecture
         shell: pwsh
         run: |
           $version = node -p "require('./package.json').version"
-          $source = Get-ChildItem dist-electron\*.exe | Select-Object -First 1
-          $destination = "dist-electron\Carminium-$version-windows-${{ matrix.arch }}.exe"
-          Move-Item $source.FullName $destination -Force
-          Write-Host "Created $destination"
+          $portable = Get-ChildItem dist-electron\*.exe | Where-Object { $_.Name -match 'portable' } | Select-Object -First 1
+          $setup = Get-ChildItem dist-electron\*.exe | Where-Object { $_.Name -match 'Setup' } | Select-Object -First 1
+          if (-not $portable) { throw "portable .exe not found" }
+          if (-not $setup) { throw "NSIS setup .exe not found" }
+          $portableDest = "dist-electron\Carminium-$version-windows-${{ matrix.arch }}-portable.exe"
+          $setupDest = "dist-electron\Carminium-$version-windows-${{ matrix.arch }}-setup.exe"
+          Move-Item $portable.FullName $portableDest -Force
+          Move-Item $setup.FullName $setupDest -Force
+          Write-Host "Created $portableDest"
+          Write-Host "Created $setupDest"
 
       - name: Verify packaged FFmpeg (Windows)
         shell: pwsh
@@ -283,7 +291,10 @@ jobs:
           #    binaries. GitHub-hosted Windows runners ship 7-Zip; if missing,
           #    we still validated the exact tree the portable exe is built from.
           $sevenZip = 'C:\Program Files\7-Zip\7z.exe'
-          $exe = (Get-ChildItem dist-electron\*.exe | Select-Object -First 1).FullName
+          # Only the portable exe carries the app-*.7z payload; the NSIS
+          # setup exe is a different container and must not be inspected here.
+          $exe = (Get-ChildItem dist-electron\*portable*.exe | Select-Object -First 1).FullName
+          if (-not $exe) { throw 'portable exe not found for payload check' }
           if (-not (Test-Path $sevenZip)) {
             Write-Host '::warning::7-Zip not found on runner; skipping portable payload check'
             return
@@ -436,7 +447,10 @@ jobs:
           # start means the Electron binary and all native modules loaded.
           # stdout/stderr are captured so startup failures (e.g. a native
           # module that fails to load) are visible in the job log.
-          $exe = (Get-ChildItem dist-electron\*.exe | Select-Object -First 1).FullName
+          # Only the portable exe is a runnable app; the NSIS setup .exe is an
+          # installer and must never be picked for the startup smoke test.
+          $exe = (Get-ChildItem dist-electron\*portable*.exe | Select-Object -First 1).FullName
+          if (-not $exe) { throw "portable exe not found for smoke test" }
           Write-Host "Smoke testing: $exe"
           $out = "$env:RUNNER_TEMP\smoke-stdout.txt"
           $err = "$env:RUNNER_TEMP\smoke-stderr.txt"
@@ -664,8 +678,130 @@ jobs:
             dist-electron/*.AppImage
           retention-days: 7
 
+  # macOS: BtbN/FFmpeg-Builds has no macOS assets, so use the pinned
+  # ffmpeg-static release. One runner per architecture keeps the Zig dylib and
+  # the native addons on the same architecture as the packaged app.
+  build-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: macos-15-intel
+            expected-arch: x86_64
+            zig-target: x86_64-macos
+            ffmpeg-asset: ffmpeg-darwin-x64
+            ffprobe-asset: ffprobe-darwin-x64
+          - arch: arm64
+            runner: macos-15
+            expected-arch: arm64
+            zig-target: aarch64-macos
+            ffmpeg-asset: ffmpeg-darwin-arm64
+            ffprobe-asset: ffprobe-darwin-arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      FFMPEG_VERSION: 'b6.1.1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Zig (macOS)
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci --include=optional --prefer-offline --no-audit --no-fund
+
+      - name: Sync version
+        run: node scripts/sync-version.js
+
+      - name: Download ffmpeg/ffprobe (macOS)
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/eugeneware/ffmpeg-static/releases/download/${FFMPEG_VERSION}"
+          mkdir -p electron/bin/darwin
+          for pair in "${{ matrix.ffmpeg-asset }}:ffmpeg" "${{ matrix.ffprobe-asset }}:ffprobe"; do
+            asset="${pair%%:*}"
+            dest="${pair##*:}"
+            echo "Downloading ${asset} -> electron/bin/darwin/${dest}"
+            curl -fsSL --retry 3 --retry-delay 2 "${BASE}/${asset}" -o "electron/bin/darwin/${dest}"
+            chmod +x "electron/bin/darwin/${dest}"
+            "electron/bin/darwin/${dest}" -version | head -n 1
+            archs=$(lipo -archs "electron/bin/darwin/${dest}")
+            echo "${dest}: ${archs}"
+            [[ "${archs}" == *"${{ matrix.expected-arch }}"* ]] || { echo "::error::${dest} is not ${{ matrix.expected-arch }}"; exit 1; }
+          done
+          # A static build that starts but cannot decode is useless.
+          electron/bin/darwin/ffmpeg -hide_banner -loglevel error \
+            -f lavfi -i 'sine=frequency=440:duration=0.2' -f f32le -ar 44100 -ac 2 -y /tmp/carminium-ffmpeg-smoke.pcm
+          test "$(stat -f%z /tmp/carminium-ffmpeg-smoke.pcm)" -ge 10000
+          rm -f /tmp/carminium-ffmpeg-smoke.pcm
+
+      - name: Build native library (Zig)
+        working-directory: native
+        run: zig version && zig build copy copy-legacy -Doptimize=ReleaseFast -Dcpu=baseline -Dtarget=${{ matrix.zig-target }}
+
+      - name: Verify native library (macOS)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s electron/bin/darwin/carminium_audio.dylib
+          archs=$(lipo -archs electron/bin/darwin/carminium_audio.dylib)
+          echo "dylib archs: ${archs}"
+          [[ "${archs}" == *"${{ matrix.expected-arch }}"* ]]
+          otool -L electron/bin/darwin/carminium_audio.dylib
+
+      - name: Rebuild native addons
+        run: npx @electron/rebuild -f -w better-sqlite3
+
+      - name: Build Electron app (dmg)
+        run: npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
+
+      - name: Verify packaged app (macOS)
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg=$(ls -1 dist-electron/*.dmg 2>/dev/null | head -n 1)
+          test -n "${dmg}" || { echo "::error::no .dmg produced"; exit 1; }
+          echo "Checking ${dmg}"
+          mount=$(hdiutil attach -nobrowse -readonly "${dmg}" | awk -F'\t' '/\/Volumes\//{print $NF}' | tail -n 1)
+          test -n "${mount}" || { echo "::error::failed to mount dmg"; exit 1; }
+          trap 'hdiutil detach "${mount}" -quiet || true' EXIT
+          app=$(ls -d "${mount}"/*.app 2>/dev/null | head -n 1)
+          test -n "${app}" || { echo "::error::no .app inside dmg"; exit 1; }
+          res="${app}/Contents/Resources"
+          test -s "${res}/carminium_audio.dylib"
+          test -s "${res}/app.asar.unpacked/electron/bin/darwin/carminium_audio.dylib"
+          test -x "${res}/app.asar.unpacked/electron/bin/darwin/ffmpeg"
+          test -x "${res}/app.asar.unpacked/electron/bin/darwin/ffprobe"
+          "${res}/app.asar.unpacked/electron/bin/darwin/ffmpeg" -version | head -n 1
+          appExe=$(ls -1 "${app}/Contents/MacOS" | head -n 1)
+          appArchs=$(lipo -archs "${app}/Contents/MacOS/${appExe}")
+          echo "app archs: ${appArchs}"
+          [[ "${appArchs}" == *"${{ matrix.expected-arch }}"* ]]
+          echo "macOS dmg verified."
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}-artifacts
+          path: dist-electron/*.dmg
+          retention-days: 7
+
   release:
-    needs: [build-windows, build-linux]
+    needs: [build-windows, build-linux, build-macos]
     runs-on: ubuntu-latest
     steps:
       - name: Download Windows artifacts
@@ -679,6 +815,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: linux-artifacts
+          path: artifacts
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: macos-*-artifacts
+          merge-multiple: true
           path: artifacts
 
       - name: Fetch random hitokoto
@@ -717,7 +860,12 @@ jobs:
 
             - 如需反馈问题或提出功能建议，请前往 [Issues](../../issues) 提交，并尽量附上复现步骤、系统版本和相关日志。
             - 如需提交 PR，请先阅读项目贡献说明，在独立分支完成修改并提交测试结果，然后创建 Pull Request。
-            - 发布包问题请注明使用的版本号和平台架构（Windows x64、Windows ARM64 或 Linux x64）。
+            - 发布包问题请注明使用的版本号和平台架构（Windows x64 / ARM64、macOS x64 / ARM64 或 Linux x64）。
+
+            ### 安装包
+            - **Windows:** `-setup.exe`（NSIS 安装版）/ `-portable.exe`（免安装便携版）
+            - **macOS:** `.dmg`（未签名，首次打开需在「系统设置 → 隐私与安全性」中允许）
+            - **Linux:** `.deb` / `.AppImage`
 
           files: artifacts/*
         env:

@@ -50,9 +50,12 @@ pub fn build(b: *std.Build) void {
     }
 
     if (is_macos) {
-        mod.linkSystemLibrary("CoreAudio", .{});
-        mod.linkSystemLibrary("AudioToolbox", .{});
-        mod.linkSystemLibrary("CoreFoundation", .{});
+        // CoreAudio / AudioToolbox / CoreFoundation are macOS frameworks, not
+        // plain system libraries: `-lCoreAudio` cannot be resolved by ld64.
+        // linkFramework emits the required `-framework <name>` flags.
+        mod.linkFramework("CoreAudio", .{});
+        mod.linkFramework("AudioToolbox", .{});
+        mod.linkFramework("CoreFoundation", .{});
         mod.linkSystemLibrary("pthread", .{});
     }
 
