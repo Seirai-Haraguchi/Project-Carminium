@@ -1,65 +1,26 @@
-name: Nightly Build & Prerelease
+# Nightly packages are uploaded ONLY as GitHub Actions artifacts.
+# This workflow never creates or updates a GitHub Release / prerelease.
+name: Nightly Build
 
 on:
   schedule:
     # 每天 UTC 16:00 运行（北京时间次日 00:00）
+    # 注：GitHub 会在仓库连续 60 天无活动后自动禁用定时任务。
     - cron: '0 16 * * *'
   workflow_dispatch:
 
+# Read-only token: nightly must never push commits, tags or releases.
+permissions:
+  contents: read
+
 jobs:
   # ─────────────────────────────────────────────
-  # 1. 更新版本号日期并提交
-  # ─────────────────────────────────────────────
-  update-version:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      version: ${{ steps.update.outputs.version }}
-      date: ${{ steps.update.outputs.date }}
-      changed: ${{ steps.update.outputs.changed }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: 'package-lock.json'
-
-      - name: Update version date
-        id: update
-        run: |
-          output=$(node scripts/update-nightly-version.js)
-          echo "$output"
-          VERSION=$(echo "$output" | grep '^NIGHTLY_VERSION=' | cut -d= -f2)
-          DATE=$(echo "$output" | grep '^NIGHTLY_DATE=' | cut -d= -f2)
-          CHANGED=$(echo "$output" | grep '^NIGHTLY_CHANGED=' | cut -d= -f2)
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "date=${DATE}" >> "$GITHUB_OUTPUT"
-          echo "changed=${CHANGED}" >> "$GITHUB_OUTPUT"
-
-      - name: Commit & push
-        if: steps.update.outputs.changed == 'true'
-        continue-on-error: true
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add version.json package.json
-          git commit -m "chore(nightly): update version date to ${{ steps.update.outputs.version }}"
-          git push
-
-  # ─────────────────────────────────────────────
-  # 2. Windows 构建
+  # 1. Windows 构建（x64 + ARM64）
+  #    每个 job 各自运行 scripts/update-nightly-version.js 生成当天版本号，
+  #    只用于本地产物命名，不写回仓库、不依赖上游版本更新 job。
   # ─────────────────────────────────────────────
   build-windows:
-    needs: update-version
-    # 定时触发：仅版本变更时构建；手动触发：始终构建
-    if: needs.update-version.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+    # 每天都构建，不再受"版本号是否已变更"门控；产物只进 Actions artifacts。
     strategy:
       fail-fast: false
       matrix:
@@ -162,7 +123,10 @@ jobs:
 
       - name: Build native library (Zig)
         working-directory: native
-        run: zig version && zig build copy copy-legacy -Doptimize=ReleaseFast ${{ matrix.zig-target }}
+        # Pin the CPU baseline: with the default `native` CPU model the DLL is
+        # built for whatever CPU the hosted runner happens to have, and can die
+        # with 0xc000001d (illegal instruction) on user machines during playback.
+        run: zig version && zig build copy copy-legacy -Doptimize=ReleaseFast -Dcpu=baseline ${{ matrix.zig-target }}
 
       # Guard: prove the DLL is pure aarch64 machine code (PE Machine = 0xAA64),
       # regardless of the compiler binary's own architecture.
@@ -285,8 +249,12 @@ jobs:
           # win-unpacked and assert its machine type. The NSIS portable
           # wrapper itself is x86 by design; the payload inside is what
           # this step guards.
-          $root = "dist-electron\win-unpacked"
-          if (-not (Test-Path $root)) { throw "win-unpacked not found at $root" }
+          # electron-builder emits win-arm64-unpacked for ARM64 and
+          # win-unpacked for x64. Hardcoding the latter made every nightly
+          # ARM64 job fail with "win-unpacked not found".
+          $outDir = if ('${{ matrix.arch }}' -eq 'arm64') { 'win-arm64-unpacked' } else { 'win-unpacked' }
+          $root = "dist-electron\$outDir"
+          if (-not (Test-Path $root)) { throw "$outDir not found at $root" }
           $expected = if ('${{ matrix.arch }}' -eq 'arm64') { 0xAA64 } else { 0x8664 }
           function Get-PEMachine([string]$Path) {
             $fs = [IO.File]::OpenRead($Path); $br = New-Object IO.BinaryReader($fs)
@@ -382,8 +350,9 @@ jobs:
           # Run the unpacked packaged app (the portable exe is built from this
           # exact tree). Unlike the NSIS portable wrapper it forwards the main
           # process stdout/stderr, so startup failures show their real error.
-          $exe = "dist-electron\win-unpacked\Project Carminium.exe"
-          if (-not (Test-Path $exe)) { Write-Host "win-unpacked exe not found, skipping"; exit 0 }
+          $outDir = if ('${{ matrix.arch }}' -eq 'arm64') { 'win-arm64-unpacked' } else { 'win-unpacked' }
+          $exe = "dist-electron\$outDir\Project Carminium.exe"
+          if (-not (Test-Path $exe)) { Write-Host "$outDir exe not found, skipping"; exit 0 }
           $out = "$env:RUNNER_TEMP\unp-stdout.txt"
           $err = "$env:RUNNER_TEMP\unp-stderr.txt"
           $env:ELECTRON_ENABLE_LOGGING = '1'
@@ -488,12 +457,10 @@ jobs:
           retention-days: 7
 
   # ─────────────────────────────────────────────
-  # 3. Linux 构建
+  # 2. Linux 构建
   # ─────────────────────────────────────────────
   build-linux:
-    needs: update-version
-    # 定时触发：仅版本变更时构建；手动触发：始终构建
-    if: needs.update-version.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+    # 与 build-windows 一样无条件运行，产物只进 Actions artifacts。
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -620,7 +587,7 @@ jobs:
 
       - name: Build native library (Zig)
         working-directory: native
-        run: zig build copy copy-legacy -Doptimize=ReleaseFast
+        run: zig build copy copy-legacy -Doptimize=ReleaseFast -Dcpu=baseline
 
       - name: Verify pre-build artifacts (Linux)
         shell: bash
@@ -676,68 +643,5 @@ jobs:
             dist-electron/*.AppImage
           retention-days: 7
 
-  # ─────────────────────────────────────────────
-  # 4. 创建 GitHub Prerelease
-  # ─────────────────────────────────────────────
-  release:
-    needs: [update-version, build-windows, build-linux]
-    if: needs.update-version.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download Windows artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: windows-*-artifacts
-          merge-multiple: true
-          path: artifacts
-
-      - name: Download Linux artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: linux-artifacts
-          path: artifacts
-
-      - name: List artifacts
-        run: ls -lh artifacts/
-
-      - name: Create or update prerelease
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: nightly-${{ needs.update-version.outputs.date }}
-          name: Nightly ${{ needs.update-version.outputs.version }}
-          prerelease: true
-          make_latest: 'false'
-          allowUpdates: true
-          body: |
-            ## Nightly Build
-
-            **版本:** `${{ needs.update-version.outputs.version }}`
-            **构建日期:** `${{ needs.update-version.outputs.date }}`
-
-            > ⚠️ 这是自动构建的 nightly 版本，可能不稳定。
-
-            ### 下载
-            - **Windows:** `.exe` (portable) — 免安装便携版
-            - **Linux:** `.deb` — Debian/Ubuntu 安装包
-            - **Linux:** `.AppImage` — 免安装直接运行
-          files: artifacts/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Cleanup old nightly releases
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # 删除 7 天前的 nightly releases
-          CUTOFF=$(date -d "7 days ago" +%Y%m%d)
-          echo "Cleaning up nightly releases older than ${CUTOFF}"
-          gh release list --limit 100 | grep 'Nightly' | while IFS= read -r line; do
-            TAG=$(echo "$line" | awk '{print $1}')
-            TAG_DATE=$(echo "$TAG" | grep -oP '\d{8}')
-            if [ -n "$TAG_DATE" ] && [ "$TAG_DATE" -lt "$CUTOFF" ]; then
-              echo "Deleting old nightly release: ${TAG}"
-              gh release delete "$TAG" --yes --cleanup-tag
-            fi
-          done
+  # 产物（Windows x64 / ARM64 便携版、Linux .deb / .AppImage）由各构建 job
+  # 直接上传为 Actions artifacts，保留 7 天。不再创建 / 更新 GitHub Release。
