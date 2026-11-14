@@ -796,24 +796,30 @@ jobs:
           test -d "${res}" || { echo "::error::Contents/Resources missing from ${app}"; exit 1; }
           # Log the real layout once. electron-builder puts extraResources and
           # asarUnpack payloads at slightly different levels per target, so a
-          # hard-coded path is brittle. Write to a temp file first: piping find
-          # into head under `pipefail` would make find die of SIGPIPE.
-          find "${res}" -maxdepth 4 -print > /tmp/carminium-resources-tree.txt
+          # hard-coded path is brittle. macOS ships BSD find: no -maxdepth and
+          # no -quit, and piping find into head dies of SIGPIPE under pipefail.
+          # Materialise every find result to a temp file first.
+          find "${res}" -print > /tmp/carminium-resources-tree.txt
           echo "--- Resources tree (first 100 entries) ---"
           head -n 100 /tmp/carminium-resources-tree.txt
           echo "--- bundled binaries ---"
-          find "${res}" \( -name 'carminium_audio.dylib' -o -name 'ffmpeg' -o -name 'ffprobe' \) -type f -print
+          find "${res}" \( -name 'carminium_audio.dylib' -o -name 'ffmpeg' -o -name 'ffprobe' \) -type f -print > /tmp/carminium-bundled.txt
+          cat /tmp/carminium-bundled.txt
           for name in carminium_audio.dylib ffmpeg ffprobe; do
             count=$(find "${res}" -name "${name}" -type f | wc -l | tr -d ' ')
             echo "${name}: ${count} copy/copies in Resources"
             test "${count}" -ge 1 || { echo "::error::${name} missing from the .app"; exit 1; }
           done
-          find "${res}" -name ffmpeg -type f -perm -111 > /tmp/carminium-ffmpeg-paths.txt
-          ffmpegPath=$(head -n 1 /tmp/carminium-ffmpeg-paths.txt || true)
-          test -n "${ffmpegPath}" || { echo "::error::bundled ffmpeg is not executable"; exit 1; }
+          find "${res}" -name ffmpeg -type f -print > /tmp/carminium-ffmpeg-paths.txt
+          ffmpegPath=""
+          while IFS= read -r p; do
+            if [ -x "${p}" ]; then ffmpegPath="${p}"; break; fi
+          done < /tmp/carminium-ffmpeg-paths.txt
+          test -n "${ffmpegPath}" || { echo "::error::no executable bundled ffmpeg"; exit 1; }
           "${ffmpegPath}" -version > /tmp/carminium-packaged-ffmpeg-version.txt 2>&1
           head -n 1 /tmp/carminium-packaged-ffmpeg-version.txt
-          appExe=$(find "${app}/Contents/MacOS" -maxdepth 1 -type f -print -quit)
+          find "${app}/Contents/MacOS" -type f -print > /tmp/carminium-app-exes.txt
+          appExe=$(head -n 1 /tmp/carminium-app-exes.txt || true)
           test -n "${appExe}" || { echo "::error::app executable missing"; exit 1; }
           appArchs=$(lipo -archs "${appExe}")
           echo "app archs: ${appArchs}"
